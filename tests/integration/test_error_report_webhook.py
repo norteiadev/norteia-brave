@@ -27,9 +27,12 @@ pytestmark = pytest.mark.integration
 WEBHOOK_SECRET = "test-webhook-secret-e2e-789"
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def webhook_client():
-    """FastAPI TestClient with BRAVE_WEBHOOK_SECRET set."""
+    """FastAPI TestClient with BRAVE_WEBHOOK_SECRET set and fakeredis for rate limit."""
+    import fakeredis as fakeredis_mod
+    from brave.api import deps
+
     os.environ["BRAVE_WEBHOOK_SECRET"] = WEBHOOK_SECRET
     os.environ.setdefault(
         "BRAVE_DB_URL",
@@ -37,7 +40,11 @@ def webhook_client():
     )
     from brave.api.main import app
 
-    return TestClient(app, raise_server_exceptions=False)
+    # Override Redis with a fresh fakeredis instance per test to isolate rate limits
+    _fake_redis = fakeredis_mod.FakeRedis()
+    app.dependency_overrides[deps.get_redis] = lambda: _fake_redis
+    yield TestClient(app, raise_server_exceptions=False)
+    app.dependency_overrides.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +53,12 @@ def webhook_client():
 
 
 def _create_mar_record(db_session: Session, source_ref: str) -> None:
-    """Create a full Nascente → Rio (routing=mar) → Mar pipeline record."""
+    """Create a full Nascente → Rio (routing=mar) → Mar pipeline record.
+
+    Uses source_ref in the payload to ensure unique content_hash per test run.
+    This prevents Stage 1 dedup from returning a cached NascenteRecord from
+    a prior test (all-zero embeddings in Phase 1 would cause Stage 2 false matches).
+    """
     nascente = store_raw(
         session=db_session,
         source="mtur",
@@ -54,7 +66,7 @@ def _create_mar_record(db_session: Session, source_ref: str) -> None:
         entity_type="destination",
         uf="BA",
         payload={
-            "name": "Test Destination",
+            "name": f"Test Destination {source_ref}",  # Unique per test → unique content_hash
             "municipio": "Test Municipio",
             "origem_value": 100.0,
             "completude_value": 100.0,

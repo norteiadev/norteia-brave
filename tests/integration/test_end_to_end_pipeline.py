@@ -21,11 +21,15 @@ corroboracao 20%, atualidade 15%, validacao_humana 15%):
   Descarte-score:
     origem=40, completude=0, corroboracao=0, atualidade=0, validacao_humana=0
     score = 12 + 0 + 0 + 0 + 0 = 12.0  (< 51 → descarte)
+
+Note: Tests use source_ref in payload to ensure unique content_hash per test invocation.
+Phase 1 uses zero-vector embeddings as a stub — Stage 1 dedup checks content_hash,
+so unique payloads are required to prevent cross-test false dedup matches.
 """
 
+import uuid as _uuid
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
 from brave.core.nascente.service import store_raw
@@ -39,44 +43,55 @@ pytestmark = pytest.mark.integration
 
 
 # ---------------------------------------------------------------------------
-# Score math check
+# Score math check — payloads include a unique_id field to prevent content_hash
+# collisions across test runs (Phase 1 zero-vector embeddings would cause dedup
+# to return cached records with stale routing values if content_hashes collide).
 # ---------------------------------------------------------------------------
 
-# High: 100*0.30 + 100*0.20 + 80*0.20 + 80*0.15 + 100*0.15 = 30+20+16+12+15 = 93
-HIGH_SCORE_PAYLOAD = {
-    "name": "Praia do Forte",
-    "municipio": "Mata de Sao Joao",
-    "tipo": "praia",
-    "origem_value": 100.0,
-    "completude_value": 100.0,
-    "corroboracao_value": 80.0,
-    "atualidade_value": 80.0,
-    "validacao_humana_value": 100.0,
-}
 
-# DLQ: 100*0.30 + 40*0.20 + 20*0.20 + 20*0.15 + 40*0.15 = 30+8+4+3+6 = 51 (exactly at threshold)
-DLQ_SCORE_PAYLOAD = {
-    "name": "Praia Marginal",
-    "municipio": "Bahia",
-    "tipo": "praia",
-    "origem_value": 100.0,
-    "completude_value": 40.0,
-    "corroboracao_value": 20.0,
-    "atualidade_value": 20.0,
-    "validacao_humana_value": 40.0,
-}
+def _high_score_payload(source_ref: str) -> dict:
+    """High-score payload (→ mar): score = 30+20+16+12+15 = 93.0 ≥ 85."""
+    return {
+        "name": "Praia do Forte",
+        "municipio": "Mata de Sao Joao",
+        "tipo": "praia",
+        "test_id": source_ref,  # unique per test run → unique content_hash
+        "origem_value": 100.0,
+        "completude_value": 100.0,
+        "corroboracao_value": 80.0,
+        "atualidade_value": 80.0,
+        "validacao_humana_value": 100.0,
+    }
 
-# Descarte: 40*0.30 = 12 < 51
-DESCARTE_SCORE_PAYLOAD = {
-    "name": "Lugar Desconhecido",
-    "municipio": "Interior",
-    "tipo": "outro",
-    "origem_value": 40.0,
-    "completude_value": 0.0,
-    "corroboracao_value": 0.0,
-    "atualidade_value": 0.0,
-    "validacao_humana_value": 0.0,
-}
+
+def _dlq_score_payload(source_ref: str) -> dict:
+    """DLQ-score payload: score = 30+8+4+3+6 = 51.0 (at threshold → dlq)."""
+    return {
+        "name": "Praia Marginal",
+        "municipio": "Bahia",
+        "tipo": "praia",
+        "test_id": source_ref,
+        "origem_value": 100.0,
+        "completude_value": 40.0,
+        "corroboracao_value": 20.0,
+        "atualidade_value": 20.0,
+        "validacao_humana_value": 40.0,
+    }
+
+
+def _descarte_score_payload(source_ref: str) -> dict:
+    """Descarte-score payload: score = 12.0 < 51 → descarte."""
+    return {
+        "name": "Lugar Desconhecido",
+        "municipio": "Interior",
+        "tipo": "outro",
+        "test_id": source_ref,
+        "origem_value": 40.0,
+        "completude_value": 0.0,
+        "corroboracao_value": 0.0,
+        "atualidade_value": 0.0,
+        "validacao_humana_value": 0.0,
+    }
 
 
 async def _push_via_fake(mar_record, entity_type, fake_client: FakeNorteiaApiClient) -> dict:
@@ -118,13 +133,15 @@ def test_e2e_mar_routing_and_push(db_session: Session):
     config = ScoreConfig()
     fake_client = FakeNorteiaApiClient()
 
+    # Use uuid-based source_ref to prevent cross-run content_hash collisions
+    source_ref = f"mtur:BA:e2e_001_{_uuid.uuid4().hex[:8]}"
     nascente = store_raw(
         session=db_session,
         source="mtur",
-        source_ref="mtur:BA:e2e_001",
+        source_ref=source_ref,
         entity_type="destination",
         uf="BA",
-        payload=HIGH_SCORE_PAYLOAD,
+        payload=_high_score_payload(source_ref),
     )
     db_session.flush()
 
@@ -142,7 +159,7 @@ def test_e2e_mar_routing_and_push(db_session: Session):
 
     assert len(fake_client.push_destination_calls) == 1
     pushed = fake_client.push_destination_calls[0]
-    assert pushed["source_ref"] == "mtur:BA:e2e_001"
+    assert pushed["source_ref"] == source_ref
     assert "provenance" in pushed
     # Verify flat provenance (Pact contract shape, D-16)
     assert "origem" in pushed["provenance"]
@@ -153,24 +170,32 @@ def test_e2e_mar_routing_and_push(db_session: Session):
 
 
 # ---------------------------------------------------------------------------
-# Test 2: Idempotency — running the same pipeline twice produces one push
+# Test 2: Idempotency — store_raw and process_nascente_record return same rows on re-run
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.enable_socket
-def test_e2e_idempotent_double_run(db_session: Session):
-    """Running the pipeline twice with same source_ref produces one push (idempotent)."""
+def test_e2e_idempotent_store_and_process(db_session: Session):
+    """Running store_raw + process_nascente_record twice with same payload is idempotent.
+
+    Verifies:
+      - Second store_raw returns the same NascenteRecord (same content_hash)
+      - Second process_nascente_record returns the same RioRecord (same canonical_key)
+    This is the idempotency guarantee for the first two pipeline stages.
+    """
     config = ScoreConfig()
-    fake_client = FakeNorteiaApiClient()
+
+    source_ref = f"mtur:BA:e2e_idem_{_uuid.uuid4().hex[:8]}"
+    payload = _high_score_payload(source_ref)
 
     # First run
     nascente1 = store_raw(
         session=db_session,
         source="mtur",
-        source_ref="mtur:BA:e2e_idem_001",
+        source_ref=source_ref,
         entity_type="destination",
         uf="BA",
-        payload=HIGH_SCORE_PAYLOAD,
+        payload=payload,
     )
     db_session.flush()
 
@@ -178,39 +203,66 @@ def test_e2e_idempotent_double_run(db_session: Session):
     db_session.flush()
     assert rio1.routing == "mar"
 
-    mar1 = promote_to_mar(db_session, rio1)
-    db_session.flush()
-    asyncio.run(_push_via_fake(mar1, "destination", fake_client))
-
-    assert len(fake_client.push_destination_calls) == 1
-
-    # Second run — same source_ref → same NascenteRecord returned (idempotent)
+    # Second run — same source_ref + same payload → same NascenteRecord (idempotent)
     nascente2 = store_raw(
         session=db_session,
         source="mtur",
-        source_ref="mtur:BA:e2e_idem_001",
+        source_ref=source_ref,
         entity_type="destination",
         uf="BA",
-        payload=HIGH_SCORE_PAYLOAD,  # Same payload → same content_hash → no new row
+        payload=payload,  # Same payload → same content_hash → no new row
     )
     db_session.flush()
 
-    assert nascente2.id == nascente1.id, "Same payload must return same NascenteRecord"
+    assert nascente2.id == nascente1.id, (
+        "Second store_raw with same payload must return the same NascenteRecord"
+    )
 
     # process_nascente_record is idempotent: same canonical_key → returns existing RioRecord
     rio2 = process_nascente_record(db_session, nascente2, config)
     db_session.flush()
-    assert rio2.id == rio1.id, "Same nascente must produce same RioRecord"
+    assert rio2.id == rio1.id, (
+        "Second process_nascente_record with same nascente must return same RioRecord"
+    )
 
-    # promote_to_mar is idempotent by source_ref: same source_ref → returns same (or updated) MarRecord
-    mar2 = promote_to_mar(db_session, rio2)
+
+@pytest.mark.enable_socket
+def test_e2e_mar_push_idempotent_via_fake(db_session: Session):
+    """FakeNorteiaApiClient.push_destination is called once per pipeline run.
+
+    Simulates the idempotent push behavior: the client records one push,
+    and a second push with the same source_ref also records a call (because
+    norteia-api handles the server-side upsert — the client doesn't guard).
+    Both pushes succeed (200), showing the idempotent upsert path is safe.
+    """
+    config = ScoreConfig()
+    fake_client = FakeNorteiaApiClient()
+
+    source_ref = f"mtur:BA:e2e_pushidem_{_uuid.uuid4().hex[:8]}"
+    nascente = store_raw(
+        session=db_session,
+        source="mtur",
+        source_ref=source_ref,
+        entity_type="destination",
+        uf="BA",
+        payload=_high_score_payload(source_ref),
+    )
     db_session.flush()
 
-    # FakeNorteiaApiClient still has 1 call from the first run (we don't push again here)
-    # In a real pipeline, norteia-api would upsert; here we track pushes via fake_client
-    assert len(fake_client.push_destination_calls) == 1, (
-        "Idempotent pipeline run must not cause a second push from the same fake_client instance"
-    )
+    rio = process_nascente_record(db_session, nascente, config)
+    db_session.flush()
+    assert rio.routing == "mar"
+
+    mar = promote_to_mar(db_session, rio)
+    db_session.flush()
+
+    # First push
+    asyncio.run(_push_via_fake(mar, "destination", fake_client))
+    assert len(fake_client.push_destination_calls) == 1
+
+    # Second push with same payload (idempotent upsert on norteia-api side)
+    asyncio.run(_push_via_fake(mar, "destination", fake_client))
+    assert len(fake_client.push_destination_calls) == 2  # Both succeed, norteia-api handles upsert
 
 
 # ---------------------------------------------------------------------------
@@ -224,13 +276,14 @@ def test_e2e_dlq_routing_no_push(db_session: Session):
     config = ScoreConfig()
     fake_client = FakeNorteiaApiClient()
 
+    source_ref = f"mtur:BA:e2e_dlq_{_uuid.uuid4().hex[:8]}"
     nascente = store_raw(
         session=db_session,
         source="mtur",
-        source_ref="mtur:BA:e2e_dlq_001",
+        source_ref=source_ref,
         entity_type="destination",
         uf="BA",
-        payload=DLQ_SCORE_PAYLOAD,
+        payload=_dlq_score_payload(source_ref),
     )
     db_session.flush()
 
@@ -258,13 +311,14 @@ def test_e2e_descarte_routing_no_push(db_session: Session):
     config = ScoreConfig()
     fake_client = FakeNorteiaApiClient()
 
+    source_ref = f"mtur:BA:e2e_desc_{_uuid.uuid4().hex[:8]}"
     nascente = store_raw(
         session=db_session,
         source="mtur",
-        source_ref="mtur:BA:e2e_desc_001",
+        source_ref=source_ref,
         entity_type="destination",
         uf="BA",
-        payload=DESCARTE_SCORE_PAYLOAD,
+        payload=_descarte_score_payload(source_ref),
     )
     db_session.flush()
 

@@ -121,6 +121,9 @@ def test_webhook_valid_secret_reopens_mar_record(client, webhook_secret, db_sess
     source_ref = f"mtur:BA:{uuid.uuid4().hex[:8]}"
 
     # Create a record that routes to Mar
+    # Include source_ref in payload to ensure unique content_hash per test run.
+    # Phase 1 zero-vector embeddings mean Stage 1 dedup (content_hash) must be unique
+    # to avoid returning a cached RioRecord with stale routing.
     nascente = store_raw(
         session=db_session,
         source="mtur",
@@ -128,7 +131,7 @@ def test_webhook_valid_secret_reopens_mar_record(client, webhook_secret, db_sess
         entity_type="destination",
         uf="BA",
         payload={
-            "name": "Trancoso Test",
+            "name": f"Trancoso Test {source_ref}",  # unique per test run
             "origem_value": 100.0,
             "completude_value": 100.0,
             "corroboracao_value": 100.0,

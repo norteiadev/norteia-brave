@@ -57,11 +57,11 @@ class NorteiaApiClient:
 
     def __init__(
         self,
-        base_url: str,
+        base_url: str | Any,
         service_token: str,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._base_url = base_url.rstrip("/")
+        self._base_url = str(base_url).rstrip("/")
         self._service_token = service_token
         self._injected_client = http_client
         self._client: httpx.AsyncClient | None = None
