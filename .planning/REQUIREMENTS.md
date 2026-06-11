@@ -9,17 +9,17 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 
 ### Brave Core
 
-- [ ] **CORE-01**: Pipeline stores raw, source-tagged, versioned payloads (JSONB) from any lane/entity in Nascente, immutable (never mutated)
-- [ ] **CORE-02**: Rio explodes a Nascente payload, dedups (exact hash blocking → fuzzy/embedding via pgvector), normalizes names/coords/addresses, and labels with the Norteia taxonomy
-- [ ] **CORE-03**: A scored record routes three ways by config thresholds: Mar (≥85), DLQ (51–84.9), descarte (≤50)
-- [ ] **CORE-04**: Mar holds canonical records, versioned by supersession, supporting invalidation and update
+- [x] **CORE-01**: Pipeline stores raw, source-tagged, versioned payloads (JSONB) from any lane/entity in Nascente, immutable (never mutated)
+- [x] **CORE-02**: Rio explodes a Nascente payload, dedups (exact hash blocking → fuzzy/embedding via pgvector), normalizes names/coords/addresses, and labels with the Norteia taxonomy
+- [x] **CORE-03**: A scored record routes three ways by config thresholds: Mar (≥85), DLQ (51–84.9), descarte (≤50)
+- [x] **CORE-04**: Mar holds canonical records, versioned by supersession, supporting invalidation and update
 - [ ] **CORE-05**: Pipeline pushes a Mar record to norteia-api idempotently, keyed by canonical key / `source_ref` (re-push never duplicates)
-- [ ] **CORE-06**: Every record carries provenance/lineage (sources + per-criterion §7.6 breakdown + decisions) through to the Mar push
-- [ ] **CORE-07**: DLQ is a durable, actionable queue (not a log): records carry reason codes and are workable from the dashboard
-- [ ] **CORE-08**: Pipeline can reprocess / re-score a record on demand idempotently (triggered by config change, new corroboration, human validation, or error report) without double-publishing
+- [x] **CORE-06**: Every record carries provenance/lineage (sources + per-criterion §7.6 breakdown + decisions) through to the Mar push
+- [x] **CORE-07**: DLQ is a durable, actionable queue (not a log): records carry reason codes and are workable from the dashboard
+- [x] **CORE-08**: Pipeline can reprocess / re-score a record on demand idempotently (triggered by config change, new corroboration, human validation, or error report) without double-publishing
 - [ ] **CORE-09**: Pipeline classifies errors as transient (backoff retry) vs permanent (route to DLQ/descarte)
 - [ ] **CORE-10**: Celery + Redis run the pipeline 24/7 with beat scheduling and fan-out by UF (single-beat, idempotent tasks, poison-message quarantine)
-- [ ] **CORE-11**: Every external system (Places, OTA, Apify, WhatsApp, Mtur, NotebookLM, NorteiaApi) sits behind a client interface with a fake
+- [x] **CORE-11**: Every external system (Places, OTA, Apify, WhatsApp, Mtur, NotebookLM, NorteiaApi) sits behind a client interface with a fake
 - [ ] **CORE-12**: FastAPI exposes webhooks (WhatsApp/email), REST for the dashboard, and lane ingest, with idempotent webhook receivers
 
 ### Score Engine §7.6
@@ -74,7 +74,7 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 
 ### Testability
 
-- [ ] **TEST-01**: Full suite runs 100% offline via docker-compose (Postgres+Redis); real externals are opt-in by flag; CI runs keyless
+- [x] **TEST-01**: Full suite runs 100% offline via docker-compose (Postgres+Redis); real externals are opt-in by flag; CI runs keyless
 - [ ] **TEST-02**: Score engine and DesmembramentoAgent have unit tests covering Mar/DLQ/descarte cases
 - [ ] **TEST-03**: HTTP boundaries faked with respx/VCR, LLM faked, webhooks fixture-driven; norteia-api contract covered by Pact
 
@@ -116,17 +116,17 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CORE-01 | Phase 1 | Pending |
-| CORE-02 | Phase 1 | Pending |
-| CORE-03 | Phase 1 | Pending |
-| CORE-04 | Phase 1 | Pending |
+| CORE-01 | Phase 1 | Complete |
+| CORE-02 | Phase 1 | Complete |
+| CORE-03 | Phase 1 | Complete |
+| CORE-04 | Phase 1 | Complete |
 | CORE-05 | Phase 1 | Pending |
-| CORE-06 | Phase 1 | Pending |
-| CORE-07 | Phase 1 | Pending |
-| CORE-08 | Phase 1 | Pending |
+| CORE-06 | Phase 1 | Complete |
+| CORE-07 | Phase 1 | Complete |
+| CORE-08 | Phase 1 | Complete |
 | CORE-09 | Phase 1 | Pending |
 | CORE-10 | Phase 1 | Pending |
-| CORE-11 | Phase 1 | Pending |
+| CORE-11 | Phase 1 | Complete |
 | CORE-12 | Phase 1 | Pending |
 | SCORE-01 | Phase 1 | Pending |
 | SCORE-02 | Phase 1 | Pending |
@@ -137,7 +137,7 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | OBS-04 | Phase 1 | Pending |
 | CNTR-01 | Phase 1 | Pending |
 | CNTR-02 | Phase 1 | Pending |
-| TEST-01 | Phase 1 | Pending |
+| TEST-01 | Phase 1 | Complete |
 | TEST-03 | Phase 1 | Pending |
 | DEST-01 | Phase 2 | Pending |
 | DEST-02 | Phase 2 | Pending |

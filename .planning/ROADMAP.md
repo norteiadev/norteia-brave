@@ -39,7 +39,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Project scaffold: uv, docker-compose, SQLAlchemy models, Alembic migrations (HNSW), pydantic-settings config, 8 client Protocol boundaries
+- [x] 01-01-PLAN.md — Project scaffold: uv, docker-compose, SQLAlchemy models, Alembic migrations (HNSW), pydantic-settings config, 8 client Protocol boundaries
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -105,7 +105,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Brave Core, Score Gate, Boundary & Contract | 0/3 | Not started | - |
+| 1. Brave Core, Score Gate, Boundary & Contract | 1/3 | In Progress|  |
 | 2. Destinos Lane | 0/TBD | Not started | - |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 0/TBD | Not started | - |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
