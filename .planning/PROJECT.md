@@ -14,7 +14,12 @@ Only **validated, reliability-scored canonical records reach the platform** — 
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ **Brave core pipeline** (Nascente → Rio → Mar/DLQ/descarte) with the pure, calibrable §7.6 score gate, idempotent reprocess/re-score, and supersession versioning — Phase 1
+- ✓ **Entity-agnostic medallion data model** (table-per-layer + routing/sub_state, partial-unique active source_ref, HNSW pgvector dedup) — Phase 1
+- ✓ **Client boundary** — all 8 external systems behind Protocol interfaces + fakes; 100%-offline keyless suite (149 tests) — Phase 1
+- ✓ **24/7 orchestration** (Celery + celery-redbeat, idempotent tasks, poison quarantine) — Phase 1
+- ✓ **Observability** (`llm_generations`, enforcing USD cost guard, per-layer metrics, audit, FastAPI surface) — Phase 1
+- ✓ **Frozen idempotent Mar→norteia-api Pact contract** + error-report webhook (shared-secret auth) — Phase 1
 
 ### Active
 
@@ -109,4 +114,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-11 after initialization*
+*Last updated: 2026-06-11 after Phase 1 (Brave Core, Score Gate, Boundary & Contract) completion*
