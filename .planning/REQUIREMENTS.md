@@ -37,8 +37,8 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 
 ### Ingestion Contract & Feedback Loop
 
-- [ ] **CNTR-01**: The Mar→norteia-api ingestion contract is frozen and verified by a Pact contract test
-- [ ] **CNTR-02**: A community error-report webhook reopens a published record back into Rio/DLQ (self-healing loop)
+- [x] **CNTR-01**: The Mar→norteia-api ingestion contract is frozen and verified by a Pact contract test
+- [x] **CNTR-02**: A community error-report webhook reopens a published record back into Rio/DLQ (self-healing loop)
 
 ### Lane: Destinos
 
@@ -135,8 +135,8 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | OBS-02 | Phase 1 | Complete |
 | OBS-03 | Phase 1 | Complete |
 | OBS-04 | Phase 1 | Complete |
-| CNTR-01 | Phase 1 | Pending |
-| CNTR-02 | Phase 1 | Pending |
+| CNTR-01 | Phase 1 | Complete |
+| CNTR-02 | Phase 1 | Complete |
 | TEST-01 | Phase 1 | Complete |
 | TEST-03 | Phase 1 | Complete |
 | DEST-01 | Phase 2 | Pending |

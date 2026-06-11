@@ -13,7 +13,7 @@ Brave is a medallion ETL pipeline (Nascente → Rio → Mar/DLQ) gated by a dete
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Brave Core, Score Gate, Boundary & Contract** - Entity-agnostic Nascente/Rio/Mar/DLQ engine with the pure §7.6 score gate, client boundary, observability, 24/7 orchestration, and the frozen Mar→norteia-api Pact contract
+- [x] **Phase 1: Brave Core, Score Gate, Boundary & Contract** - Entity-agnostic Nascente/Rio/Mar/DLQ engine with the pure §7.6 score gate, client boundary, observability, 24/7 orchestration, and the frozen Mar→norteia-api Pact contract (completed 2026-06-11)
 - [ ] **Phase 2: Destinos Lane** - Mtur/NotebookLM/Desmembramento producers → Rio/score → DLQ → batch-by-state human validation → Mar, proving the full path end-to-end
 - [ ] **Phase 3: Atrativos Lane (WhatsApp + Compliance)** - Discovery → ContactFinder → Signal → human WhatsApp gate → automated owner-validation outreach → re-score, with LGPD + BSP enforced before the first real message
 - [ ] **Phase 4: Dashboard (Territorial CMS)** - Brave monitor, DLQ batch review, WhatsApp gate UI, conversations/funnels, and Cost/LLM views behind Bearer auth
@@ -47,7 +47,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-03-PLAN.md — NorteiaApiClient real impl, Pact consumer contract test, end-to-end pipeline integration test, error-report webhook wiring
+- [x] 01-03-PLAN.md — NorteiaApiClient real impl, Pact consumer contract test, end-to-end pipeline integration test, error-report webhook wiring
 
 ### Phase 2: Destinos Lane
 
@@ -105,7 +105,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Brave Core, Score Gate, Boundary & Contract | 2/3 | In Progress|  |
+| 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete   | 2026-06-11 |
 | 2. Destinos Lane | 0/TBD | Not started | - |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 0/TBD | Not started | - |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
