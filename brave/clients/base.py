@@ -1,0 +1,209 @@
+"""Client Protocol boundary definitions for all 8 external systems (D-09, D-18).
+
+Every external system sits behind a typed typing.Protocol interface.
+Production code accepts these protocol types; tests inject fakes from tests/fakes/.
+
+Protocols use structural typing — no isinstance() checks anywhere.
+Runtime-checkable is intentionally False: Protocol is the static boundary,
+not a runtime check.
+
+Eight protocols (CORE-11):
+  1. LLMClientProtocol         — LLM extraction (OpenRouter/DeepSeek + Anthropic)
+  2. NorteiaApiClientProtocol  — Mar push to norteia-api
+  3. PlacesClientProtocol      — Google Places (New API) search/details
+  4. OTAClientProtocol         — OTA price check (ticketed attractions)
+  5. ApifyClientProtocol       — IG/X scraping (best-effort signal)
+  6. WhatsAppClientProtocol    — WhatsApp Business API template messages
+  7. MturClientProtocol        — Mtur municipality catalog
+  8. NotebookLMClientProtocol  — NotebookLM structured reports
+"""
+
+from typing import Any, Protocol
+
+
+class LLMClientProtocol(Protocol):
+    """LLM structured-output extraction client (D-09).
+
+    Uses instructor + Mode.Tools by default (DeepSeek supports function calling).
+    Every call must log to llm_generations and check the USD cost guard (D-20).
+    """
+
+    async def extract(
+        self,
+        prompt: str,
+        schema: type,
+        mode: str = "tools",
+    ) -> Any:
+        """Extract structured data from a prompt using the given Pydantic schema.
+
+        Args:
+            prompt: Instruction + context to send to the LLM.
+            schema: Pydantic model class to validate the response against.
+            mode: instructor mode string ("tools" | "json" | "md_json").
+
+        Returns:
+            An instance of `schema` with the extracted data.
+        """
+        ...
+
+
+class NorteiaApiClientProtocol(Protocol):
+    """Client for pushing canonical records to norteia-api (D-15, D-16).
+
+    Push is idempotent by source_ref (norteia-api upserts on canonical key).
+    Shape verified by Pact consumer test in tests/contract/.
+    """
+
+    async def push_destination(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Push a canonical destination Mar record to norteia-api.
+
+        Args:
+            payload: Mar push payload matching the Pact contract shape.
+
+        Returns:
+            Response dict from norteia-api (at minimum: {"id": ..., "source_ref": ...}).
+        """
+        ...
+
+    async def push_attraction(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Push a canonical attraction Mar record to norteia-api.
+
+        Args:
+            payload: Mar push payload matching the Pact contract shape.
+
+        Returns:
+            Response dict from norteia-api (at minimum: {"id": ..., "source_ref": ...}).
+        """
+        ...
+
+
+class PlacesClientProtocol(Protocol):
+    """Google Places (New API) client — Discovery and Signal agents (Phase 3).
+
+    Uses the New Places API (google-maps-places 0.9.x) for business_status,
+    weekday_text, reviews[].publishTime fields required by SignalAgent.
+    """
+
+    async def text_search(self, query: str, uf: str) -> list[dict[str, Any]]:
+        """Search for places matching a text query within a UF.
+
+        Args:
+            query: Text search string (e.g. "praias em Porto Seguro").
+            uf: Two-letter state code to restrict results.
+
+        Returns:
+            List of place dicts (place_id, name, formatted_address, ...).
+        """
+        ...
+
+    async def place_details(self, place_id: str) -> dict[str, Any]:
+        """Fetch full details for a Google Place.
+
+        Args:
+            place_id: Google Places place_id (persist for caching per D-17).
+
+        Returns:
+            Full place detail dict including business_status, weekday_text, reviews.
+        """
+        ...
+
+
+class OTAClientProtocol(Protocol):
+    """OTA (Online Travel Agency) price check client — optional signal (Phase 3).
+
+    Used only for ticketed attractions; best-effort corroboration signal.
+    """
+
+    async def price_check(self, place_id: str) -> dict[str, Any] | None:
+        """Check if an attraction has OTA pricing data.
+
+        Args:
+            place_id: Internal or OTA-specific place identifier.
+
+        Returns:
+            Price data dict, or None if the attraction has no OTA listing.
+        """
+        ...
+
+
+class ApifyClientProtocol(Protocol):
+    """Apify scraping client — IG/X social signals (Phase 3, best-effort).
+
+    Best-effort signal: Apify reads IG business profiles and recent posts.
+    Meta ToS gray area — read-only signal only (no automated DM).
+    """
+
+    async def scrape_ig(self, handle: str) -> dict[str, Any]:
+        """Scrape Instagram business profile for activity signals.
+
+        Args:
+            handle: IG handle (e.g. "@praiabonita_ba").
+
+        Returns:
+            Dict with follower count, last post date, post frequency, ...
+        """
+        ...
+
+
+class WhatsAppClientProtocol(Protocol):
+    """WhatsApp Business API client — outreach messages (Phase 3).
+
+    Uses approved templates only (BSP compliance).
+    Human gate must approve who to contact before any automated outreach.
+    """
+
+    async def send_template(
+        self,
+        to: str,
+        template: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Send an approved WhatsApp template message.
+
+        Args:
+            to: Recipient phone number in E.164 format.
+            template: Approved template name (BSP-approved).
+            params: Template parameters dict.
+
+        Returns:
+            Delivery status dict from BSP (message_sid, status, ...).
+        """
+        ...
+
+
+class MturClientProtocol(Protocol):
+    """Mtur municipality catalog client — Destinos lane (Phase 2).
+
+    Fetches the categorized Mtur municipality list (Oferta Principal/
+    Complementar/Apoio) which seeds the Destinos lane with origem=100.
+    """
+
+    async def fetch_municipalities(self, uf: str) -> list[dict[str, Any]]:
+        """Fetch Mtur-categorized municipalities for a UF.
+
+        Args:
+            uf: Two-letter state code.
+
+        Returns:
+            List of municipality dicts (ibge_code, name, category, ...).
+        """
+        ...
+
+
+class NotebookLMClientProtocol(Protocol):
+    """NotebookLM structured report client — Destinos lane (Phase 2).
+
+    Fetches structured tourism reports for destinos not covered by Mtur
+    (origem=80 for NotebookLM-sourced records).
+    """
+
+    async def fetch_report(self, municipio: str) -> dict[str, Any]:
+        """Fetch a structured NotebookLM tourism report for a municipality.
+
+        Args:
+            municipio: Municipality name (e.g. "Lençóis, BA").
+
+        Returns:
+            Structured report dict with tourism highlights, taxonomy labels, ...
+        """
+        ...

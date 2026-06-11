@@ -13,6 +13,10 @@ venv/
 htmlcov/
 .coverage
 
+# Pact contract artifacts
+pacts/
+*.pact.json
+
 # Node (dashboard)
 node_modules/
 .next/
