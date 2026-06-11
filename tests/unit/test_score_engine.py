@@ -25,7 +25,8 @@ from brave.core.score.schemas import ScoreInput, ScoreResult
         # Low values → descarte: 12+4+0+0+0 = 16.0
         (40, 20, 0, 0, 0, 16.0, "descarte"),
         # Boundary: exactly 85.0 → mar
-        (100, 100, 75, 100, 100, 85.0, "mar"),
+        # 100*30/100 + 100*20/100 + 100*20/100 + 100*15/100 + 0*15/100 = 30+20+20+15+0 = 85.0
+        (100, 100, 100, 100, 0, 85.0, "mar"),
         # Boundary: exactly 84.9 → dlq
         # weight_origem=30, weight_completude=20, weight_corroboracao=20,
         # weight_atualidade=15, weight_validacao_humana=15

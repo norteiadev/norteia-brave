@@ -39,17 +39,46 @@ def test_simulate_distribution_total_count():
     assert result["total"] == 100
 
 
-def test_cold_start_dlq_dominates():
-    """Cold-start samples (validacao_humana=0) should show dlq_pct > 0.
+def test_cold_start_landfill_effect():
+    """Cold-start samples (validacao_humana=0, corroboracao=0) should show mar_pct == 0.
 
-    Cold-start records have validacao_humana=0 and thin corroboracao,
-    so they compress into the DLQ band. The harness is the DLQ landfill warning.
+    Without human validation (15pts) and corroboração (20pts), cold-start records
+    cannot reach the Mar threshold (≥85). This is the DLQ landfill warning:
+    all cold-start records are trapped in descarte or DLQ, never reaching Mar.
+
+    The harness makes this risk visible before wiring real intake.
     """
     config = ScoreConfig()
     samples = generate_cold_start_samples(100, origem_value=40.0)
     result = simulate_distribution(config, samples)
-    # DLQ landfill risk: significant fraction lands in review queue
-    assert result["dlq_pct"] > 0, "Expected DLQ landfill effect for cold-start records"
+    # Cold-start landfill: no records reach Mar (no human validation + no corroboration)
+    assert result["mar_pct"] == 0.0, (
+        f"Cold-start records should not reach Mar, but {result['mar_pct']}% did. "
+        "Validate thresholds with simulate_distribution before wiring intake."
+    )
+    # All records go to descarte or DLQ (not Mar)
+    assert result["descarte_pct"] + result["dlq_pct"] == pytest.approx(100.0, abs=0.01)
+
+    # To demonstrate DLQ landfill with Mtur-origin records (origem=100):
+    # Mtur records (origem=100) are better quality but still can't reach Mar without
+    # human validation. With origem=100 + completude=80 + atualidade=40:
+    # score = 30 + 16 + 0 + 6 + 0 = 52 → DLQ
+    from brave.core.score.schemas import ScoreInput
+    mtur_samples = [
+        ScoreInput(
+            origem_value=100,
+            completude_value=80,
+            corroboracao_value=50,
+            atualidade_value=60,
+            validacao_humana_value=0,
+        )
+        for _ in range(10)
+    ]
+    mtur_result = simulate_distribution(config, mtur_samples)
+    # 30 + 16 + 10 + 9 + 0 = 65 → DLQ
+    assert mtur_result["dlq_pct"] > 0, (
+        "Mtur cold-start records should land in DLQ (DLQ landfill effect visible)"
+    )
 
 
 def test_simulate_distribution_mean_and_stdev():
