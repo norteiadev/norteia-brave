@@ -32,6 +32,7 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -165,11 +166,21 @@ class RioRecord(Base):
 class MarRecord(Base):
     """Mar layer: canonical records published to norteia-api.
 
-    source_ref is UNIQUE — idempotent push keyed by source_ref (D-15).
-    Supersession by appending a new row + superseded_by_id FK (D-03).
+    source_ref is unique among ACTIVE rows only — idempotent push keyed by
+    source_ref (D-15). Supersession appends a new active row and points the old
+    row's superseded_by_id at it (D-03), so uniqueness must exclude superseded
+    rows; enforced by the partial unique index uq_mar_active_source_ref.
     """
 
     __tablename__ = "mar_records"
+    __table_args__ = (
+        Index(
+            "uq_mar_active_source_ref",
+            "source_ref",
+            unique=True,
+            postgresql_where=text("superseded_by_id IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -178,9 +189,10 @@ class MarRecord(Base):
         UUID(as_uuid=True), ForeignKey("rio_records.id"), nullable=False
     )
     entity_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    # Unique: idempotent push keyed by source_ref (D-15)
+    # Idempotent push keyed by source_ref (D-15); uniqueness enforced only on
+    # active rows via partial index uq_mar_active_source_ref (see __table_args__)
     source_ref: Mapped[str] = mapped_column(
-        String(256), nullable=False, unique=True, index=True
+        String(256), nullable=False, index=True
     )
     canonical: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     provenance: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
@@ -191,8 +203,13 @@ class MarRecord(Base):
     parent_mar_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("mar_records.id"), nullable=True
     )
+    # DEFERRABLE INITIALLY DEFERRED: supersession writes the new active row and
+    # repoints the old row's superseded_by_id within one transaction; the self-FK
+    # is validated at COMMIT so the in-flight circular reference is legal.
     superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("mar_records.id"), nullable=True
+        UUID(as_uuid=True),
+        ForeignKey("mar_records.id", deferrable=True, initially="DEFERRED"),
+        nullable=True,
     )
     published_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

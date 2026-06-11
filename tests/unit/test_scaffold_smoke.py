@@ -146,15 +146,24 @@ class TestModels:
         assert hasattr(MarRecord, "score_version")
 
     def test_mar_source_ref_is_unique(self) -> None:
-        """MarRecord.source_ref must be UNIQUE (D-15: idempotent push)."""
-        from brave.core.models import MarRecord
-        from sqlalchemy import inspect as sa_inspect
+        """MarRecord.source_ref is unique among ACTIVE rows only (D-15 + D-03).
 
-        mapper = sa_inspect(MarRecord)
-        source_ref_col = mapper.columns["source_ref"]
-        assert source_ref_col.unique, (
-            "MarRecord.source_ref must be UNIQUE for idempotent push (D-15)"
+        A plain global UNIQUE would forbid supersession (D-03 keeps the old row
+        alongside the new active row). Uniqueness is enforced by the partial index
+        uq_mar_active_source_ref (WHERE superseded_by_id IS NULL).
+        """
+        from brave.core.models import MarRecord
+
+        partial = next(
+            (idx for idx in MarRecord.__table__.indexes
+             if idx.name == "uq_mar_active_source_ref"),
+            None,
         )
+        assert partial is not None, (
+            "MarRecord must declare the partial unique index uq_mar_active_source_ref"
+        )
+        assert partial.unique, "uq_mar_active_source_ref must be a UNIQUE index"
+        assert "source_ref" in {c.name for c in partial.columns}
 
     def test_nascente_has_superseded_by_id(self) -> None:
         """NascenteRecord must have superseded_by_id for supersession (D-03)."""

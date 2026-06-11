@@ -29,9 +29,11 @@ so unique payloads are required to prevent cross-test false dedup matches.
 
 import uuid as _uuid
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
+from brave.core.models import MarRecord
 from brave.core.nascente.service import store_raw
 from brave.core.rio.routing import process_nascente_record
 from brave.core.mar.service import promote_to_mar
@@ -333,3 +335,98 @@ def test_e2e_descarte_routing_no_push(db_session: Session):
     # Descarte records are NOT pushed
     assert len(fake_client.push_destination_calls) == 0
     assert len(fake_client.push_attraction_calls) == 0
+
+
+@pytest.mark.integration
+@pytest.mark.enable_socket
+def test_promote_to_mar_is_idempotent_on_stable_source_ref(db_session: Session):
+    """Re-promoting the SAME stable source_ref with unchanged data is a no-op.
+
+    Regression for the Phase 1 verification blocker: promote_to_mar previously
+    inserted a superseding row sharing source_ref, violating the source_ref
+    UNIQUE constraint on the second call (IntegrityError). It must now (a) return
+    the existing active row unchanged when data is identical, and (b) keep exactly
+    one ACTIVE MarRecord per source_ref. Uses a STABLE source_ref (no uuid suffix)
+    so the second promote actually exercises the idempotent path.
+    """
+    config = ScoreConfig()
+    source_ref = "mtur:BA:stable_idem_001"
+    payload = _high_score_payload(source_ref)
+
+    nascente = store_raw(
+        session=db_session,
+        source="mtur",
+        source_ref=source_ref,
+        entity_type="destination",
+        uf="BA",
+        payload=payload,
+    )
+    db_session.flush()
+    rio = process_nascente_record(db_session, nascente, config)
+    db_session.flush()
+    assert rio.routing == "mar"
+
+    mar_first = promote_to_mar(db_session, rio)
+    db_session.flush()
+
+    # Second promote with identical data must NOT raise and must return the SAME row.
+    mar_second = promote_to_mar(db_session, rio)
+    db_session.flush()
+    assert mar_second.id == mar_first.id, "re-promote of unchanged data must be a no-op"
+
+    # Exactly one ACTIVE MarRecord exists for this source_ref.
+    active = db_session.scalars(
+        select(MarRecord).where(
+            MarRecord.source_ref == source_ref,
+            MarRecord.superseded_by_id.is_(None),
+        )
+    ).all()
+    assert len(active) == 1, f"expected exactly one active Mar row, found {len(active)}"
+
+
+@pytest.mark.integration
+@pytest.mark.enable_socket
+def test_promote_to_mar_supersedes_on_changed_score(db_session: Session):
+    """When data changes, promote_to_mar supersedes the old row safely (D-03).
+
+    The new row becomes active; the old row gets superseded_by_id set; exactly one
+    active row per source_ref remains (partial unique index uq_mar_active_source_ref),
+    with no IntegrityError.
+    """
+    config = ScoreConfig()
+    source_ref = "mtur:BA:stable_supersede_001"
+
+    nascente = store_raw(
+        session=db_session,
+        source="mtur",
+        source_ref=source_ref,
+        entity_type="destination",
+        uf="BA",
+        payload=_high_score_payload(source_ref),
+    )
+    db_session.flush()
+    rio = process_nascente_record(db_session, nascente, config)
+    db_session.flush()
+
+    mar_first = promote_to_mar(db_session, rio)
+    db_session.flush()
+
+    # Mutate the scored record so the next promote sees changed data, then supersede.
+    rio.score = float(rio.score) - 5.0
+    db_session.flush()
+    mar_second = promote_to_mar(db_session, rio)
+    db_session.flush()
+
+    assert mar_second.id != mar_first.id, "changed data must create a superseding row"
+    db_session.refresh(mar_first)
+    assert mar_first.superseded_by_id == mar_second.id, "old row must point at new row"
+    assert mar_second.parent_mar_id == mar_first.id
+
+    active = db_session.scalars(
+        select(MarRecord).where(
+            MarRecord.source_ref == source_ref,
+            MarRecord.superseded_by_id.is_(None),
+        )
+    ).all()
+    assert len(active) == 1, f"expected exactly one active Mar row, found {len(active)}"
+    assert active[0].id == mar_second.id

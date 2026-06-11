@@ -69,7 +69,21 @@ def promote_to_mar(
     )
 
     if existing is not None:
-        # Supersession pattern (D-03): create new, point old → new
+        # Idempotent no-op (D-15): re-promoting unchanged data (e.g. a CLI
+        # re-run or a reprocess that did not change the score) returns the
+        # existing active row without writing — "re-push is a no-op upsert".
+        if (
+            float(existing.reliability_score) == reliability_score
+            and existing.canonical == canonical
+            and existing.provenance == provenance
+            and existing.score_version == score_version
+        ):
+            return existing
+
+        # Supersession pattern (D-03): the data changed (e.g. re-score after
+        # human validation). Append a NEW active row and mark the old one
+        # superseded BEFORE the single flush — at flush only the new row is
+        # active, so the partial unique index uq_mar_active_source_ref holds.
         new_mar = MarRecord(
             id=uuid.uuid4(),
             rio_id=rio_record.id,
@@ -81,9 +95,8 @@ def promote_to_mar(
             score_version=score_version,
             parent_mar_id=existing.id,
         )
-        session.add(new_mar)
-        session.flush()
         existing.superseded_by_id = new_mar.id
+        session.add(new_mar)
         session.flush()
         return new_mar
 
