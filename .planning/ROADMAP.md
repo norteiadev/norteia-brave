@@ -30,7 +30,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A Mar record pushes to norteia-api idempotently keyed by `source_ref` (re-push is a no-op upsert), carries full per-criterion provenance/lineage, and the push shape is frozen and verified by a passing Pact consumer contract test.
   4. Every external system (Places/OTA/Apify/WhatsApp/Mtur/NotebookLM/LLM/NorteiaApi) sits behind a client interface with a fake; the entire suite runs offline via docker-compose (Postgres+Redis) with no real network and no keys in CI.
   5. The pipeline records every LLM call with USD cost in `llm_generations`, an enforcing USD cost guard halts/throttles on budget breach, per-layer Brave metrics + queue/worker health + audit logs are exposed via FastAPI, and a community error-report webhook reopens a published record back into Rio/DLQ.
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Project scaffold: uv, docker-compose, SQLAlchemy models, Alembic migrations (HNSW), pydantic-settings config, 8 client Protocol boundaries
+- [ ] 01-02-PLAN.md — §7.6 score engine + simulation harness, Rio pipeline (dedup/normalize/label/route), Nascente/Mar services, Celery tasks + redbeat, observability (cost guard/llm_tracker/audit), FastAPI surface
+- [ ] 01-03-PLAN.md — NorteiaApiClient real impl, Pact consumer contract test, end-to-end pipeline integration test, error-report webhook wiring
 
 ### Phase 2: Destinos Lane
 **Goal**: Destinos flow through the proven core from three producers (Mtur origem=100, NotebookLM origem=80, DesmembramentoAgent origem=40) into the DLQ, where a steward validates them batch-by-state (BA/RJ/SP/SC/CE/PE first) to set validação humana=100 and promote them to Mar and push to `destinations`.
@@ -79,7 +84,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Brave Core, Score Gate, Boundary & Contract | 0/TBD | Not started | - |
+| 1. Brave Core, Score Gate, Boundary & Contract | 0/3 | Not started | - |
 | 2. Destinos Lane | 0/TBD | Not started | - |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 0/TBD | Not started | - |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
