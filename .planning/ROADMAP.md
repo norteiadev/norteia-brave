@@ -105,7 +105,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete   | 2026-06-11 |
+| 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
 | 2. Destinos Lane | 0/TBD | Not started | - |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 0/TBD | Not started | - |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
