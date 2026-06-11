@@ -112,17 +112,62 @@ Explicitly excluded. Documented to prevent scope creep.
 
 ## Traceability
 
-Populated during roadmap creation. Each v1 requirement maps to exactly one phase.
+Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for phase detail.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (to be filled by roadmapper) | — | Pending |
+| CORE-01 | Phase 1 | Pending |
+| CORE-02 | Phase 1 | Pending |
+| CORE-03 | Phase 1 | Pending |
+| CORE-04 | Phase 1 | Pending |
+| CORE-05 | Phase 1 | Pending |
+| CORE-06 | Phase 1 | Pending |
+| CORE-07 | Phase 1 | Pending |
+| CORE-08 | Phase 1 | Pending |
+| CORE-09 | Phase 1 | Pending |
+| CORE-10 | Phase 1 | Pending |
+| CORE-11 | Phase 1 | Pending |
+| CORE-12 | Phase 1 | Pending |
+| SCORE-01 | Phase 1 | Pending |
+| SCORE-02 | Phase 1 | Pending |
+| SCORE-03 | Phase 1 | Pending |
+| OBS-01 | Phase 1 | Pending |
+| OBS-02 | Phase 1 | Pending |
+| OBS-03 | Phase 1 | Pending |
+| OBS-04 | Phase 1 | Pending |
+| CNTR-01 | Phase 1 | Pending |
+| CNTR-02 | Phase 1 | Pending |
+| TEST-01 | Phase 1 | Pending |
+| TEST-03 | Phase 1 | Pending |
+| DEST-01 | Phase 2 | Pending |
+| DEST-02 | Phase 2 | Pending |
+| DEST-03 | Phase 2 | Pending |
+| DEST-04 | Phase 2 | Pending |
+| DEST-05 | Phase 2 | Pending |
+| TEST-02 | Phase 2 | Pending |
+| ATR-01 | Phase 3 | Pending |
+| ATR-02 | Phase 3 | Pending |
+| ATR-03 | Phase 3 | Pending |
+| ATR-04 | Phase 3 | Pending |
+| ATR-05 | Phase 3 | Pending |
+| ATR-06 | Phase 3 | Pending |
+| COMP-01 | Phase 3 | Pending |
+| COMP-02 | Phase 3 | Pending |
+| COMP-03 | Phase 3 | Pending |
+| DASH-01 | Phase 4 | Pending |
+| DASH-02 | Phase 4 | Pending |
+| DASH-03 | Phase 4 | Pending |
+| DASH-04 | Phase 4 | Pending |
+| DASH-05 | Phase 4 | Pending |
+| DASH-06 | Phase 4 | Pending |
 
 **Coverage:**
-- v1 requirements: 38 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 38 ⚠️
+- v1 requirements: 44 total (CORE 12 · SCORE 3 · OBS 4 · CNTR 2 · DEST 5 · ATR 6 · DASH 6 · COMP 3 · TEST 3)
+- Mapped to phases: 44 ✓
+- Unmapped: 0 ✓
+
+> Note: the prior header count of "38" was a miscount of the enumerated IDs; the canonical v1 set is the 44 IDs above, all mapped.
 
 ---
 *Requirements defined: 2026-06-11*
-*Last updated: 2026-06-11 after initial definition*
+*Last updated: 2026-06-11 after roadmap creation (traceability populated, coverage 44/44)*
