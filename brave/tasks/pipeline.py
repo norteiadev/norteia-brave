@@ -2,7 +2,7 @@
 
 Three tasks:
   process_nascente      — ingest NascenteRecord through Rio pipeline
-  push_mar              — push scored RioRecord to Mar layer
+  push_mar              — push scored RioRecord to Mar layer + norteia-api
   reprocess_record_task — re-score an existing RioRecord
 
 Idempotency: Every task is a no-op on re-run (D-03, D-15).
@@ -13,8 +13,18 @@ Error classification:
   TransientError (network flap, DB timeout) → self.retry with backoff
   PermanentError (malformed payload, schema violation) → quarantine_poison
   Any exception after max_retries → quarantine_poison
+
+push_mar provenance flattening (D-15, D-16):
+  Mar push payload uses the flat per-criterion shape required by the Pact contract:
+    {"origem": float, "completude": float, "corroboracao": float,
+     "atualidade": float, "validacao_humana": float}
+  The promote_to_mar service writes provenance as:
+    {"score_breakdown": {...flat...}, "score_version": ..., "nascente_id": ..., "rio_id": ...}
+  push_mar flattens score_breakdown to top-level provenance keys for the API push.
 """
 
+import asyncio
+import os
 import uuid
 from typing import Any
 
@@ -22,12 +32,11 @@ from celery import shared_task
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, Session
 
+from brave.clients.norteia_api import NorteiaApiClient
 from brave.core.models import PoisonQuarantine, RioRecord
 from brave.core.nascente.service import get_nascente
 from brave.core.rio.routing import process_nascente_record, reprocess_record
 from brave.config.settings import AppConfig, DBConfig, ScoreConfig
-
-import os
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +198,58 @@ def process_nascente(self, nascente_id: str) -> None:
         engine.dispose()
 
 
+def _build_push_payload(mar_record: Any, rio_record: RioRecord) -> dict[str, Any]:
+    """Build the flat-provenance Mar push payload from a MarRecord + RioRecord.
+
+    The Pact contract shape (D-16) requires flat per-criterion provenance keys:
+        {"origem": float, "completude": float, "corroboracao": float,
+         "atualidade": float, "validacao_humana": float}
+
+    promote_to_mar stores provenance as:
+        {"score_breakdown": {...flat criteria...}, "score_version": str,
+         "nascente_id": str, "rio_id": str}
+
+    This function flattens score_breakdown to top-level provenance keys.
+
+    Args:
+        mar_record: MarRecord returned by promote_to_mar.
+        rio_record: Source RioRecord (for entity_type, source, source_ref).
+
+    Returns:
+        Dict matching the Pact contract Mar push shape.
+    """
+    provenance_raw = mar_record.provenance or {}
+    score_breakdown = provenance_raw.get("score_breakdown", {})
+    score_version = provenance_raw.get("score_version", mar_record.score_version or "v1.0")
+
+    # Flat per-criterion provenance (the Pact contract shape, D-16)
+    flat_provenance = {
+        "origem": float(score_breakdown.get("origem", 0.0)),
+        "completude": float(score_breakdown.get("completude", 0.0)),
+        "corroboracao": float(score_breakdown.get("corroboracao", 0.0)),
+        "atualidade": float(score_breakdown.get("atualidade", 0.0)),
+        "validacao_humana": float(score_breakdown.get("validacao_humana", 0.0)),
+    }
+
+    # Extract source and source_ref from source_ref (format "source:UF:id")
+    # source_ref = "mtur:BA:123" → source = "mtur"
+    source_ref = mar_record.source_ref or ""
+    source_parts = source_ref.split(":", 1)
+    source = source_parts[0] if source_parts else "unknown"
+
+    canonical = mar_record.canonical or {}
+
+    return {
+        "source": source,
+        "source_ref": source_ref,
+        "entity_type": mar_record.entity_type,
+        "canonical": canonical,
+        "reliability_score": float(mar_record.reliability_score),
+        "score_version": score_version,
+        "provenance": flat_provenance,
+    }
+
+
 @shared_task(
     bind=True,
     max_retries=3,
@@ -198,14 +259,30 @@ def process_nascente(self, nascente_id: str) -> None:
     time_limit=300,
 )
 def push_mar(self, rio_id: str) -> None:
-    """Push a scored RioRecord to the Mar layer.
+    """Push a scored RioRecord to the Mar layer and norteia-api (D-15, D-16, CORE-05).
 
-    Idempotent: If routing != 'mar', returns immediately (nothing to push).
-    Real NorteiaApi push deferred to Plan 03; Phase 1 records intent via audit log only.
+    Pipeline:
+      1. Load RioRecord; if routing != 'mar', no-op (idempotent).
+      2. Call promote_to_mar to create/update MarRecord (idempotent by source_ref).
+      3. Build flat-provenance push payload (Pact contract shape).
+      4. POST to norteia-api via NorteiaApiClient (Bearer auth, tenacity retry).
+
+    Idempotency:
+      - promote_to_mar is idempotent by source_ref (D-15).
+      - norteia-api is an idempotent upsert by source_ref — double push is safe.
+      - If routing != 'mar', returns immediately.
+
+    Error handling:
+      TransientError (5xx from norteia-api) → tenacity retries in NorteiaApiClient.
+      PermanentError → log and return (no quarantine for push errors in Phase 1).
+      After max_retries → Celery retry; after max → pass (Phase 3 adds retry DLQ).
 
     Args:
         rio_id: UUID string of the RioRecord to push.
     """
+    from brave.core.mar.service import promote_to_mar
+    from tests.fakes.fake_norteia_api import FakeNorteiaApiClient
+
     session, engine = _get_session()
     try:
         rio_uuid = uuid.UUID(rio_id)
@@ -217,14 +294,45 @@ def push_mar(self, rio_id: str) -> None:
         if rio.routing != "mar":
             return  # Not ready for Mar — idempotent no-op
 
-        # Phase 1: promote to Mar layer (real push to norteia-api in Plan 03)
-        from brave.core.mar.service import promote_to_mar
-        promote_to_mar(session, rio)
+        # Step 1: Promote to Mar layer (idempotent by source_ref, D-15)
+        mar = promote_to_mar(session, rio)
         session.commit()
+
+        # Step 2: Determine which client to use
+        app_config = AppConfig()
+        if app_config.run_real_externals:
+            norteia_api_url = os.environ.get("BRAVE_NORTEIA_API_URL", "")
+            norteia_service_token = os.environ.get("BRAVE_NORTEIA_API_SERVICE_TOKEN", "")
+            api_client = NorteiaApiClient(
+                base_url=norteia_api_url,
+                service_token=norteia_service_token,
+            )
+        else:
+            api_client = FakeNorteiaApiClient()
+
+        # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
+        payload = _build_push_payload(mar, rio)
+
+        # Step 4: Push to norteia-api
+        async def _push() -> dict[str, Any]:
+            if isinstance(api_client, NorteiaApiClient):
+                async with api_client as client:
+                    if rio.entity_type == "destination":
+                        return await client.push_destination(payload)
+                    else:
+                        return await client.push_attraction(payload)
+            else:
+                # FakeNorteiaApiClient — no context manager needed
+                if rio.entity_type == "destination":
+                    return await api_client.push_destination(payload)
+                else:
+                    return await api_client.push_attraction(payload)
+
+        asyncio.run(_push())
 
     except PermanentError:
         session.rollback()
-        # No quarantine for push_mar permanent errors in Phase 1 — log and return
+        # No quarantine for push_mar permanent errors — log and return
         pass
 
     except Exception as exc:
@@ -232,7 +340,7 @@ def push_mar(self, rio_id: str) -> None:
         try:
             raise self.retry(exc=exc, max_retries=3)
         except self.MaxRetriesExceededError:
-            pass  # Non-critical in Phase 1; Phase 3 adds DLQ for failed pushes
+            pass  # Phase 3 adds DLQ for permanently failed pushes
 
     finally:
         session.close()

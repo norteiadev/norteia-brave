@@ -1,7 +1,9 @@
 """Integration tests for NorteiaApiClient — Mar push shape, headers, retry, idempotency.
 
 Tests use respx to intercept httpx calls (no real network).
-All tests run with --disable-socket for offline CI compliance (TEST-01, PITFALLS §5).
+Async tests require pytest.mark.enable_socket because pytest-asyncio creates an event loop
+that internally calls socket.socketpair() (for the self-pipe trick). respx intercepts at
+the httpx transport layer — no real outbound network calls are made.
 
 Coverage:
   - push_destination happy path (200 OK)
@@ -10,8 +12,6 @@ Coverage:
   - Idempotent double-push: same source_ref → 200 both times (norteia-api handles upsert)
   - push_attraction routes to /api/internal/territorial/attractions
 """
-
-import json
 
 import httpx
 import pytest
@@ -67,6 +67,7 @@ def destination_payload():
 
 
 @pytest.mark.anyio
+@pytest.mark.enable_socket  # respx intercepts at httpx transport level; event loop needs socketpair
 @respx.mock
 async def test_push_destination_happy_path(api_client, destination_payload):
     """push_destination returns the response dict on 200 OK."""
@@ -88,6 +89,7 @@ async def test_push_destination_happy_path(api_client, destination_payload):
 
 
 @pytest.mark.anyio
+@pytest.mark.enable_socket  # respx intercepts at httpx transport level; event loop needs socketpair
 @respx.mock
 async def test_push_destination_bearer_auth_header(api_client, destination_payload):
     """push_destination sends Authorization: Bearer {service_token} header."""
@@ -113,6 +115,7 @@ async def test_push_destination_bearer_auth_header(api_client, destination_paylo
 
 
 @pytest.mark.anyio
+@pytest.mark.enable_socket  # respx intercepts at httpx transport level; event loop needs socketpair
 @respx.mock
 async def test_push_destination_5xx_raises(api_client, destination_payload):
     """push_destination raises httpx.HTTPStatusError on 5xx after retries exhausted."""
@@ -131,6 +134,7 @@ async def test_push_destination_5xx_raises(api_client, destination_payload):
 
 
 @pytest.mark.anyio
+@pytest.mark.enable_socket  # respx intercepts at httpx transport level; event loop needs socketpair
 @respx.mock
 async def test_push_destination_idempotent_double_push(api_client, destination_payload):
     """push_destination called twice with same source_ref succeeds both times.
@@ -158,6 +162,7 @@ async def test_push_destination_idempotent_double_push(api_client, destination_p
 
 
 @pytest.mark.anyio
+@pytest.mark.enable_socket  # respx intercepts at httpx transport level; event loop needs socketpair
 @respx.mock
 async def test_push_attraction_routes_to_correct_endpoint(api_client):
     """push_attraction sends POST to /api/internal/territorial/attractions."""
