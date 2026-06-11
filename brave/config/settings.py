@@ -77,6 +77,19 @@ class DBConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="BRAVE_DB_")
 
 
+class WebhookConfig(BaseSettings):
+    """Webhook authentication configuration.
+
+    BRAVE_WEBHOOK_SECRET is required for the error-report webhook endpoint.
+    The secret is compared with hmac.compare_digest (constant-time) — never logged.
+    T-02-01: Static shared-secret enforced in Phase 1 (future enhancement: HMAC-of-body).
+    """
+
+    secret: str = Field(default="", description="Shared secret for X-Webhook-Secret header")
+
+    model_config = SettingsConfigDict(env_prefix="BRAVE_WEBHOOK_")
+
+
 class AppConfig(BaseSettings):
     """Composite application configuration.
 

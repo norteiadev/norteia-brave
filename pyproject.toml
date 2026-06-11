@@ -79,3 +79,6 @@ ignore = ["alembic"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "integration: marks tests that require docker-compose services (DB + Redis)",
+]

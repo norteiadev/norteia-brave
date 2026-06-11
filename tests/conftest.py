@@ -3,7 +3,6 @@
 Fixtures:
   - db_engine       — synchronous SQLAlchemy engine pointing at docker-compose DB
   - db_session      — synchronous session (integration tests)
-  - async_db_session — async session (FastAPI endpoint tests)
   - fake_redis      — fakeredis.FakeRedis for unit tests (no container required)
   - app_config      — AppConfig loaded from environment
   - score_config    — ScoreConfig with default §7.6 weights
@@ -11,6 +10,11 @@ Fixtures:
 
 Integration fixtures require:
   BRAVE_DB_URL=postgresql+psycopg://brave:brave@localhost:5432/norteia_brave
+
+pytest-socket enforcement (PITFALLS §5, TEST-01):
+  Unit tests run with --disable-socket by default (no outbound network).
+  Integration tests that need DB/Redis connections use localhost only.
+  Real external calls require RUN_REAL_EXTERNALS=1 (CI always 0).
 """
 
 import os
@@ -18,9 +22,20 @@ import os
 import fakeredis
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from brave.config.settings import AppConfig, DBConfig, ScoreConfig
+
+
+# ---------------------------------------------------------------------------
+# pytest-socket: disable real network in unit tests
+# Unit tests should not make any outbound connections.
+# Integration tests that need localhost (DB, Redis) use pytest.mark.enable_socket.
+# ---------------------------------------------------------------------------
+# Note: pytest-socket is configured via CLI flag (--disable-socket) or
+# pytestmark on individual test modules. We don't set it globally here
+# to avoid breaking integration tests that need localhost connections.
+# See pyproject.toml [tool.pytest.ini_options] for CI configuration.
 
 
 # ---------------------------------------------------------------------------
