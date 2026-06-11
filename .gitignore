@@ -13,8 +13,9 @@ venv/
 htmlcov/
 .coverage
 
-# Pact contract artifacts
-pacts/
+# Pact contract artifacts (generated at test runtime)
+tests/contract/pacts/
+!tests/contract/pacts/.gitkeep
 *.pact.json
 
 # Node (dashboard)
