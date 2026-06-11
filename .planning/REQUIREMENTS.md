@@ -13,27 +13,27 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 - [x] **CORE-02**: Rio explodes a Nascente payload, dedups (exact hash blocking → fuzzy/embedding via pgvector), normalizes names/coords/addresses, and labels with the Norteia taxonomy
 - [x] **CORE-03**: A scored record routes three ways by config thresholds: Mar (≥85), DLQ (51–84.9), descarte (≤50)
 - [x] **CORE-04**: Mar holds canonical records, versioned by supersession, supporting invalidation and update
-- [ ] **CORE-05**: Pipeline pushes a Mar record to norteia-api idempotently, keyed by canonical key / `source_ref` (re-push never duplicates)
+- [x] **CORE-05**: Pipeline pushes a Mar record to norteia-api idempotently, keyed by canonical key / `source_ref` (re-push never duplicates)
 - [x] **CORE-06**: Every record carries provenance/lineage (sources + per-criterion §7.6 breakdown + decisions) through to the Mar push
 - [x] **CORE-07**: DLQ is a durable, actionable queue (not a log): records carry reason codes and are workable from the dashboard
 - [x] **CORE-08**: Pipeline can reprocess / re-score a record on demand idempotently (triggered by config change, new corroboration, human validation, or error report) without double-publishing
-- [ ] **CORE-09**: Pipeline classifies errors as transient (backoff retry) vs permanent (route to DLQ/descarte)
-- [ ] **CORE-10**: Celery + Redis run the pipeline 24/7 with beat scheduling and fan-out by UF (single-beat, idempotent tasks, poison-message quarantine)
+- [x] **CORE-09**: Pipeline classifies errors as transient (backoff retry) vs permanent (route to DLQ/descarte)
+- [x] **CORE-10**: Celery + Redis run the pipeline 24/7 with beat scheduling and fan-out by UF (single-beat, idempotent tasks, poison-message quarantine)
 - [x] **CORE-11**: Every external system (Places, OTA, Apify, WhatsApp, Mtur, NotebookLM, NorteiaApi) sits behind a client interface with a fake
-- [ ] **CORE-12**: FastAPI exposes webhooks (WhatsApp/email), REST for the dashboard, and lane ingest, with idempotent webhook receivers
+- [x] **CORE-12**: FastAPI exposes webhooks (WhatsApp/email), REST for the dashboard, and lane ingest, with idempotent webhook receivers
 
 ### Score Engine §7.6
 
-- [ ] **SCORE-01**: Score engine computes a reliability score as a pure function: origem 30% · completude 20% · corroboração 20% · atualidade 15% · validação humana 15%
-- [ ] **SCORE-02**: Weights and Mar/DLQ/descarte thresholds are calibrable via config; scores are versioned against the weight set used
-- [ ] **SCORE-03**: One engine serves both destino and atrativo, unit-tested on Mar/DLQ/descarte boundary cases
+- [x] **SCORE-01**: Score engine computes a reliability score as a pure function: origem 30% · completude 20% · corroboração 20% · atualidade 15% · validação humana 15%
+- [x] **SCORE-02**: Weights and Mar/DLQ/descarte thresholds are calibrable via config; scores are versioned against the weight set used
+- [x] **SCORE-03**: One engine serves both destino and atrativo, unit-tested on Mar/DLQ/descarte boundary cases
 
 ### Observability
 
-- [ ] **OBS-01**: Pipeline records every LLM call in an `llm_generations` table (per-lane, per-model, with USD cost)
-- [ ] **OBS-02**: A USD cost guard enforces a spend ceiling and halts/throttles when exceeded
-- [ ] **OBS-03**: Pipeline exposes per-layer Brave metrics (volume, rates, throughput) and queue/worker health via FastAPI
-- [ ] **OBS-04**: Pipeline writes audit logs for steward and pipeline actions
+- [x] **OBS-01**: Pipeline records every LLM call in an `llm_generations` table (per-lane, per-model, with USD cost)
+- [x] **OBS-02**: A USD cost guard enforces a spend ceiling and halts/throttles when exceeded
+- [x] **OBS-03**: Pipeline exposes per-layer Brave metrics (volume, rates, throughput) and queue/worker health via FastAPI
+- [x] **OBS-04**: Pipeline writes audit logs for steward and pipeline actions
 
 ### Ingestion Contract & Feedback Loop
 
@@ -76,7 +76,7 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 
 - [x] **TEST-01**: Full suite runs 100% offline via docker-compose (Postgres+Redis); real externals are opt-in by flag; CI runs keyless
 - [ ] **TEST-02**: Score engine and DesmembramentoAgent have unit tests covering Mar/DLQ/descarte cases
-- [ ] **TEST-03**: HTTP boundaries faked with respx/VCR, LLM faked, webhooks fixture-driven; norteia-api contract covered by Pact
+- [x] **TEST-03**: HTTP boundaries faked with respx/VCR, LLM faked, webhooks fixture-driven; norteia-api contract covered by Pact
 
 ## v2 Requirements
 
@@ -120,25 +120,25 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | CORE-02 | Phase 1 | Complete |
 | CORE-03 | Phase 1 | Complete |
 | CORE-04 | Phase 1 | Complete |
-| CORE-05 | Phase 1 | Pending |
+| CORE-05 | Phase 1 | Complete |
 | CORE-06 | Phase 1 | Complete |
 | CORE-07 | Phase 1 | Complete |
 | CORE-08 | Phase 1 | Complete |
-| CORE-09 | Phase 1 | Pending |
-| CORE-10 | Phase 1 | Pending |
+| CORE-09 | Phase 1 | Complete |
+| CORE-10 | Phase 1 | Complete |
 | CORE-11 | Phase 1 | Complete |
-| CORE-12 | Phase 1 | Pending |
-| SCORE-01 | Phase 1 | Pending |
-| SCORE-02 | Phase 1 | Pending |
-| SCORE-03 | Phase 1 | Pending |
-| OBS-01 | Phase 1 | Pending |
-| OBS-02 | Phase 1 | Pending |
-| OBS-03 | Phase 1 | Pending |
-| OBS-04 | Phase 1 | Pending |
+| CORE-12 | Phase 1 | Complete |
+| SCORE-01 | Phase 1 | Complete |
+| SCORE-02 | Phase 1 | Complete |
+| SCORE-03 | Phase 1 | Complete |
+| OBS-01 | Phase 1 | Complete |
+| OBS-02 | Phase 1 | Complete |
+| OBS-03 | Phase 1 | Complete |
+| OBS-04 | Phase 1 | Complete |
 | CNTR-01 | Phase 1 | Pending |
 | CNTR-02 | Phase 1 | Pending |
 | TEST-01 | Phase 1 | Complete |
-| TEST-03 | Phase 1 | Pending |
+| TEST-03 | Phase 1 | Complete |
 | DEST-01 | Phase 2 | Pending |
 | DEST-02 | Phase 2 | Pending |
 | DEST-03 | Phase 2 | Pending |

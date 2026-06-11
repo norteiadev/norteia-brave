@@ -43,7 +43,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — §7.6 score engine + simulation harness, Rio pipeline (dedup/normalize/label/route), Nascente/Mar services, Celery tasks + redbeat, observability (cost guard/llm_tracker/audit), FastAPI surface
+- [x] 01-02-PLAN.md — §7.6 score engine + simulation harness, Rio pipeline (dedup/normalize/label/route), Nascente/Mar services, Celery tasks + redbeat, observability (cost guard/llm_tracker/audit), FastAPI surface
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -105,7 +105,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Brave Core, Score Gate, Boundary & Contract | 1/3 | In Progress|  |
+| 1. Brave Core, Score Gate, Boundary & Contract | 2/3 | In Progress|  |
 | 2. Destinos Lane | 0/TBD | Not started | - |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 0/TBD | Not started | - |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
