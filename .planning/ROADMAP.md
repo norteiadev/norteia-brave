@@ -83,7 +83,7 @@ Plans:
 
 **Wave 3** *(depends on Wave 2)*
 
-- [ ] 02-07-PLAN.md — NotebookLMIngest lane with IBGE corroboration boost (D-02; load-bearing for Mar promotion)
+- [x] 02-07-PLAN.md — NotebookLMIngest lane with IBGE corroboration boost (D-02; load-bearing for Mar promotion)
 - [ ] 02-08-PLAN.md — DesmembramentoAgent with validate-or-quarantine + unit tests (DEST-03, TEST-02)
 
 **Wave 4** *(depends on Wave 3 — phase acceptance gate)*
@@ -131,6 +131,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
-| 2. Destinos Lane | 6/9 | In Progress|  |
+| 2. Destinos Lane | 7/9 | In Progress|  |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 0/TBD | Not started | - |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
