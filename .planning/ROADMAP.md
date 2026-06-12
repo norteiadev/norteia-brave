@@ -14,7 +14,7 @@ Brave is a medallion ETL pipeline (Nascente → Rio → Mar/DLQ) gated by a dete
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Brave Core, Score Gate, Boundary & Contract** - Entity-agnostic Nascente/Rio/Mar/DLQ engine with the pure §7.6 score gate, client boundary, observability, 24/7 orchestration, and the frozen Mar→norteia-api Pact contract (completed 2026-06-11)
-- [ ] **Phase 2: Destinos Lane** - Mtur/NotebookLM/Desmembramento producers → Rio/score → DLQ → batch-by-state human validation → Mar, proving the full path end-to-end
+- [x] **Phase 2: Destinos Lane** - Mtur/NotebookLM/Desmembramento producers → Rio/score → DLQ → batch-by-state human validation → Mar, proving the full path end-to-end (completed 2026-06-12)
 - [ ] **Phase 3: Atrativos Lane (WhatsApp + Compliance)** - Discovery → ContactFinder → Signal → human WhatsApp gate → automated owner-validation outreach → re-score, with LGPD + BSP enforced before the first real message
 - [ ] **Phase 4: Dashboard (Territorial CMS)** - Brave monitor, DLQ batch review, WhatsApp gate UI, conversations/funnels, and Cost/LLM views behind Bearer auth
 
@@ -88,7 +88,7 @@ Plans:
 
 **Wave 4** *(depends on Wave 3 — phase acceptance gate)*
 
-- [ ] 02-09-PLAN.md — End-to-end integration tests: full Destinos lane offline suite (all five requirements verified)
+- [x] 02-09-PLAN.md — End-to-end integration tests: full Destinos lane offline suite (all five requirements verified)
 
 ### Phase 3: Atrativos Lane (WhatsApp + Compliance)
 
@@ -131,6 +131,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
-| 2. Destinos Lane | 8/9 | In Progress|  |
+| 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 0/TBD | Not started | - |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
