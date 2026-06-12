@@ -33,12 +33,27 @@ os.environ.setdefault(
 )
 
 
+# Steward secret for the mutating DLQ endpoints (T-02-06-01 / CR-01).
+STEWARD_SECRET = "test-steward-secret"
+os.environ.setdefault("BRAVE_STEWARD_SECRET", STEWARD_SECRET)
+
+
 @pytest.fixture(scope="module")
 def client():
-    """FastAPI TestClient for validate endpoint tests."""
+    """FastAPI TestClient that authenticates as a steward by default.
+
+    Sends X-Steward-Secret on every request so the existing business-logic tests
+    exercise the validate/validate-batch endpoints. Auth itself is covered
+    separately by test_validate_requires_steward_secret (bare client).
+    """
     from brave.api.main import app
 
-    return TestClient(app, raise_server_exceptions=False)
+    os.environ["BRAVE_STEWARD_SECRET"] = STEWARD_SECRET
+    return TestClient(
+        app,
+        raise_server_exceptions=False,
+        headers={"X-Steward-Secret": STEWARD_SECRET},
+    )
 
 
 def _make_dlq_record(db_session: Session, uf: str = "BA", corroboracao: float = 50.0) -> RioRecord:
@@ -436,3 +451,55 @@ def test_mtur_lane_end_to_end(db_session: Session):
         f"(score={rio.score})"
     )
     assert fake_mtur.calls == [uf]
+
+
+# ---------------------------------------------------------------------------
+# Steward authentication on mutating DLQ endpoints (T-02-06-01 / CR-01)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_validate_requires_steward_secret(db_session: Session):
+    """Mutating DLQ endpoints reject callers without a valid X-Steward-Secret.
+
+    The validate / validate-batch / reprocess / descarte endpoints promote records
+    to Mar and push to the production norteia-api — a write-to-production trust
+    boundary. Without the steward secret they must return 401 BEFORE any mutation.
+    """
+    from brave.api.main import app
+
+    os.environ["BRAVE_STEWARD_SECRET"] = STEWARD_SECRET
+    rio = _make_dlq_record(db_session, uf="BA", corroboracao=50.0)
+
+    # Bare client — no default auth header.
+    bare = TestClient(app, raise_server_exceptions=False)
+
+    # Missing header → 401, record stays in DLQ.
+    r = bare.patch(f"/api/v1/dlq/{rio.id}/validate")
+    assert r.status_code == 401, f"expected 401 without steward secret, got {r.status_code}"
+
+    # Wrong secret → 401.
+    r = bare.patch(
+        f"/api/v1/dlq/{rio.id}/validate",
+        headers={"X-Steward-Secret": "wrong-secret"},
+    )
+    assert r.status_code == 401, f"expected 401 with wrong secret, got {r.status_code}"
+
+    # validate-batch and reprocess and descarte are likewise guarded.
+    r = bare.post("/api/v1/dlq/validate-batch?uf=BA&entity_type=destination")
+    assert r.status_code == 401
+    r = bare.patch(f"/api/v1/dlq/{rio.id}/reprocess")
+    assert r.status_code == 401
+    r = bare.patch(f"/api/v1/dlq/{rio.id}/descarte")
+    assert r.status_code == 401
+
+    # Correct secret → not 401 (record still in DLQ, untouched by the rejected calls).
+    db_session.expire_all()
+    fresh = db_session.get(RioRecord, rio.id)
+    assert fresh.routing == "dlq", "record must not have mutated on rejected calls"
+
+    r = bare.patch(
+        f"/api/v1/dlq/{rio.id}/validate",
+        headers={"X-Steward-Secret": STEWARD_SECRET},
+    )
+    assert r.status_code == 202, f"expected 202 with valid steward secret, got {r.status_code}"

@@ -9,15 +9,14 @@ Provides:
 """
 
 import os
-from typing import Generator
+from collections.abc import Generator
 
 import fakeredis
 from redis import Redis
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from brave.config.settings import AppConfig, DBConfig, LLMConfig, WebhookConfig
-
+from brave.config.settings import AppConfig, StewardConfig, WebhookConfig
 
 # ---------------------------------------------------------------------------
 # Config singletons (lazily initialized)
@@ -32,6 +31,11 @@ def get_config() -> AppConfig:
 def get_webhook_config() -> WebhookConfig:
     """Return WebhookConfig (BRAVE_WEBHOOK_SECRET)."""
     return WebhookConfig()
+
+
+def get_steward_config() -> StewardConfig:
+    """Return StewardConfig (BRAVE_STEWARD_SECRET) for mutating DLQ endpoints."""
+    return StewardConfig()
 
 
 # ---------------------------------------------------------------------------

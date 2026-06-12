@@ -104,6 +104,23 @@ class WebhookConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="BRAVE_WEBHOOK_")
 
 
+class StewardConfig(BaseSettings):
+    """Steward authentication for mutating DLQ endpoints (T-02-06-01 / CR-01).
+
+    BRAVE_STEWARD_SECRET gates the DLQ reprocess/validate/validate-batch/descarte
+    endpoints — these promote records to Mar and push to the production norteia-api,
+    a write-to-production trust boundary. Compared with hmac.compare_digest
+    (constant-time) — never logged. Fail-closed: an unset secret rejects all callers.
+
+    Phase 4 (DASH-06) replaces this with the dashboard's Bearer-header auth; this is
+    the minimal internal guard so the boundary is not open before then.
+    """
+
+    secret: str = Field(default="", description="Shared secret for X-Steward-Secret header")
+
+    model_config = SettingsConfigDict(env_prefix="BRAVE_STEWARD_")
+
+
 class AppConfig(BaseSettings):
     """Composite application configuration.
 

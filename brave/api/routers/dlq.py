@@ -7,17 +7,44 @@ PATCH /api/v1/dlq/{rio_id}/validate       — steward validate: set validacao_hu
 POST  /api/v1/dlq/validate-batch          — batch validate all DLQ records for a UF (D-08)
 """
 
+import hmac
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brave.api.deps import get_db
+from brave.api.deps import get_db, get_steward_config
+from brave.config.settings import StewardConfig
 from brave.core.models import RioRecord
 from brave.observability.audit import write_audit
 
 router = APIRouter()
+
+
+def require_steward(
+    x_steward_secret: str | None = Header(None, alias="X-Steward-Secret"),
+    steward_config: StewardConfig = Depends(get_steward_config),
+) -> None:
+    """Authenticate a steward on the mutating DLQ endpoints (T-02-06-01 / CR-01).
+
+    These endpoints set validacao_humana=100, re-score into Mar, and push to the
+    production norteia-api — a write-to-production trust boundary. Mirrors the
+    webhook auth pattern: constant-time hmac compare, fail-closed (an unset
+    BRAVE_STEWARD_SECRET rejects every caller), 401 before any DB work, secret
+    never logged. Phase 4 (DASH-06) supersedes this with dashboard Bearer auth.
+    """
+    expected = steward_config.secret
+    if not x_steward_secret or not expected:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Steward-Secret header required",
+        )
+    if not hmac.compare_digest(x_steward_secret, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid X-Steward-Secret",
+        )
 
 
 @router.get("/api/v1/dlq")
@@ -56,7 +83,11 @@ def list_dlq(
     ]
 
 
-@router.patch("/api/v1/dlq/{rio_id}/reprocess", status_code=202)
+@router.patch(
+    "/api/v1/dlq/{rio_id}/reprocess",
+    status_code=202,
+    dependencies=[Depends(require_steward)],
+)
 def reprocess_dlq_record(
     rio_id: uuid.UUID,
     db: Session = Depends(get_db),
@@ -73,11 +104,13 @@ def reprocess_dlq_record(
     # Dispatch Celery task
     try:
         from brave.tasks.pipeline import reprocess_record_task
+
         reprocess_record_task.delay(str(rio_id))
     except Exception:
         # In tests/dev without Celery broker, fall back to synchronous reprocess
         from brave.config.settings import ScoreConfig
         from brave.core.rio.routing import reprocess_record
+
         reprocess_record(db, rio_id, ScoreConfig())
 
     write_audit(
@@ -91,7 +124,11 @@ def reprocess_dlq_record(
     return {"status": "accepted", "rio_id": str(rio_id)}
 
 
-@router.patch("/api/v1/dlq/{rio_id}/validate", status_code=202)
+@router.patch(
+    "/api/v1/dlq/{rio_id}/validate",
+    status_code=202,
+    dependencies=[Depends(require_steward)],
+)
 def validate_dlq_record(
     rio_id: uuid.UUID,
     db: Session = Depends(get_db),
@@ -116,6 +153,7 @@ def validate_dlq_record(
     # CRITICAL: reassign + flag_modified — SQLAlchemy does not auto-track in-place
     # JSON column mutations (Pitfall 3, T-02-06-04).
     from sqlalchemy.orm.attributes import flag_modified
+
     normalized = dict(rio.normalized or {})
     normalized["validacao_humana_value"] = 100.0
     rio.normalized = normalized
@@ -126,6 +164,7 @@ def validate_dlq_record(
     # Never call process_nascente_record here — it returns early if canonical_key exists (Pitfall 4)
     from brave.config.settings import ScoreConfig
     from brave.core.rio.routing import reprocess_record
+
     reprocess_record(db, rio_id, ScoreConfig())
 
     db.refresh(rio)
@@ -134,10 +173,12 @@ def validate_dlq_record(
     if rio.routing == "mar":
         try:
             from brave.tasks.pipeline import push_destination_task
+
             push_destination_task.delay(str(rio_id))
         except Exception:
             # Sync fallback: no Celery broker in tests/dev
             from brave.core.mar.service import promote_to_mar
+
             promote_to_mar(db, rio)
 
     write_audit(
@@ -152,7 +193,11 @@ def validate_dlq_record(
     return {"status": "accepted", "rio_id": str(rio_id), "routing": rio.routing}
 
 
-@router.post("/api/v1/dlq/validate-batch", status_code=202)
+@router.post(
+    "/api/v1/dlq/validate-batch",
+    status_code=202,
+    dependencies=[Depends(require_steward)],
+)
 def validate_batch(
     uf: str = Query(..., description="Two-letter UF code (e.g. 'BA')"),
     entity_type: str = Query("destination"),
@@ -171,11 +216,13 @@ def validate_batch(
     """
     rows = list(
         db.scalars(
-            select(RioRecord).where(
+            select(RioRecord)
+            .where(
                 RioRecord.routing == "dlq",
                 RioRecord.uf == uf,
                 RioRecord.entity_type == entity_type,
-            ).limit(limit)
+            )
+            .limit(limit)
         ).all()
     )
 
@@ -183,6 +230,7 @@ def validate_batch(
     for rio in rows:
         # Inline single-record validate logic (same flag_modified + reprocess pattern)
         from sqlalchemy.orm.attributes import flag_modified as _flag_modified
+
         normalized = dict(rio.normalized or {})
         normalized["validacao_humana_value"] = 100.0
         rio.normalized = normalized
@@ -191,15 +239,18 @@ def validate_batch(
 
         from brave.config.settings import ScoreConfig as _ScoreConfig
         from brave.core.rio.routing import reprocess_record as _reprocess_record
+
         _reprocess_record(db, rio.id, _ScoreConfig())
         db.refresh(rio)
 
         if rio.routing == "mar":
             try:
                 from brave.tasks.pipeline import push_destination_task
+
                 push_destination_task.delay(str(rio.id))
             except Exception:
                 from brave.core.mar.service import promote_to_mar
+
                 promote_to_mar(db, rio)
 
         write_audit(
@@ -216,7 +267,11 @@ def validate_batch(
     return {"status": "accepted", "uf": uf, "validated": validated}
 
 
-@router.patch("/api/v1/dlq/{rio_id}/descarte", status_code=200)
+@router.patch(
+    "/api/v1/dlq/{rio_id}/descarte",
+    status_code=200,
+    dependencies=[Depends(require_steward)],
+)
 def descarte_dlq_record(
     rio_id: uuid.UUID,
     db: Session = Depends(get_db),
