@@ -38,7 +38,7 @@ def _run_fixture() -> None:
     from brave.core.nascente.service import store_raw
     from brave.core.rio.routing import process_nascente_record
     from brave.core.mar.service import promote_to_mar
-    from tests.fakes.fake_norteia_api import FakeNorteiaApiClient
+    from brave.clients.null_norteia_api import NullNorteiaApiClient
 
     engine = create_engine(db_url, echo=False)
     SessionFactory = sessionmaker(bind=engine)
@@ -86,8 +86,8 @@ def _run_fixture() -> None:
         mar = promote_to_mar(session, rio)
         session.commit()
 
-        # Push via FakeNorteiaApiClient (offline)
-        fake_client = FakeNorteiaApiClient()
+        # Push via the in-package offline stub (no network, production-safe)
+        fake_client = NullNorteiaApiClient()
 
         # Build flat-provenance payload
         provenance_raw = mar.provenance or {}
@@ -110,11 +110,11 @@ def _run_fixture() -> None:
             },
         }
 
-        async def _push() -> None:
-            await fake_client.push_destination(push_payload)
+        async def _push() -> dict:
+            return await fake_client.push_destination(push_payload)
 
-        asyncio.run(_push())
-        push_status = "recorded" if fake_client.push_destination_calls else "skipped"
+        push_result = asyncio.run(_push())
+        push_status = "recorded" if push_result.get("source_ref") else "skipped"
 
         print(
             f"Nascente: {nascente.id} | Score: {score:.1f} | "

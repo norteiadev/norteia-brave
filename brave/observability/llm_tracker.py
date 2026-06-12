@@ -84,9 +84,11 @@ class LLMTracker:
         # Invoke the LLM call
         result = await call_fn()
 
-        # Record spend (D-20): real cost from response in Phase 2+; 0.0 stub in Phase 1
-        if usd_cost > 0.0:
-            record_spend(redis_client, usd_cost)
+        # Record spend (D-20): always advance the daily counter so the cost guard
+        # reflects real usage (CR-04). usd_cost is a 0.0 stub in Phase 1 and the
+        # real per-call cost from Phase 2+; recording 0.0 is a harmless no-op that
+        # also keeps the daily key/TTL alive.
+        record_spend(redis_client, usd_cost)
 
         # Log to llm_generations table (OBS-01)
         # NOTE: Do NOT include prompt content — potential PII (T-02-04)

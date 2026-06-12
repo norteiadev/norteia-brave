@@ -281,7 +281,7 @@ def push_mar(self, rio_id: str) -> None:
         rio_id: UUID string of the RioRecord to push.
     """
     from brave.core.mar.service import promote_to_mar
-    from tests.fakes.fake_norteia_api import FakeNorteiaApiClient
+    from brave.clients.null_norteia_api import NullNorteiaApiClient
 
     session, engine = _get_session()
     try:
@@ -308,7 +308,7 @@ def push_mar(self, rio_id: str) -> None:
                 service_token=norteia_service_token,
             )
         else:
-            api_client = FakeNorteiaApiClient()
+            api_client = NullNorteiaApiClient()
 
         # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
         payload = _build_push_payload(mar, rio)

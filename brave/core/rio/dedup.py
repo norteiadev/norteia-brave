@@ -49,11 +49,17 @@ def find_duplicate(
     Returns:
         Matching RioRecord if a duplicate is found, None otherwise.
     """
-    # Stage 1: Exact content hash check
-    # We check NascenteRecord.content_hash → then find the linked RioRecord
+    # Stage 1: Exact content-hash check, BLOCKED by the same territorial key as
+    # Stage 2 (UF + entity_type). content_hash is indexed but not unique, so an
+    # unscoped lookup could return a record from a different UF/entity and return
+    # an arbitrary linked RioRecord — violating the never-compare-across-UF
+    # invariant (CR-02). Scoping the hash match keeps homonym municípios in
+    # different states (e.g. São Domingos/BA vs São Domingos/SE) from colliding.
     existing_nascente = session.scalar(
         select(NascenteRecord).where(
             NascenteRecord.content_hash == content_hash,
+            NascenteRecord.uf == uf,
+            NascenteRecord.entity_type == entity_type,
         )
     )
     if existing_nascente is not None:
