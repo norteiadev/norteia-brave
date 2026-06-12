@@ -48,14 +48,19 @@ PACT_DIR.mkdir(exist_ok=True)
 # Fixture payloads (matching the Pact contract shape — D-16)
 # ---------------------------------------------------------------------------
 
+# D-10 (Phase 2): ibge_code added to canonical to support IBGE → municipality_id
+# resolution in norteia-api. Breaking change from Phase 1 frozen contract — coordinate
+# with norteia-api Laravel team (Trilha 5) to update provider verification.
+# source_ref format updated to "mtur:{uf}:{ibge_code}" (IBGE code replaces sequential id).
 DESTINATION_PAYLOAD = {
     "source": "mtur",
-    "source_ref": "mtur:BA:123",
+    "source_ref": "mtur:BA:2927408",
     "entity_type": "destination",
     "canonical": {
         "name": "Trancoso",
         "uf": "BA",
         "municipio": "Porto Seguro",
+        "ibge_code": "2927408",
     },
     "reliability_score": 87.5,
     "score_version": "v1.0",
@@ -104,7 +109,7 @@ def test_push_destination_contract():
         .with_header("Authorization", "Bearer test-service-token")
         .with_body(DESTINATION_PAYLOAD)
         .will_respond_with(200)
-        .with_body({"id": "550e8400-e29b-41d4-a716-446655440000", "source_ref": "mtur:BA:123"})
+        .with_body({"id": "550e8400-e29b-41d4-a716-446655440000", "source_ref": "mtur:BA:2927408"})
     )
 
     with pact.serve() as mock:
@@ -119,7 +124,7 @@ def test_push_destination_contract():
     pact.write_file(str(PACT_DIR))
 
     assert "source_ref" in result
-    assert result["source_ref"] == "mtur:BA:123"
+    assert result["source_ref"] == "mtur:BA:2927408"
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +145,7 @@ def test_push_destination_idempotent_contract():
         .with_header("Authorization", "Bearer test-service-token")
         .with_body(DESTINATION_PAYLOAD)
         .will_respond_with(200)
-        .with_body({"id": "550e8400-e29b-41d4-a716-446655440001", "source_ref": "mtur:BA:123"})
+        .with_body({"id": "550e8400-e29b-41d4-a716-446655440001", "source_ref": "mtur:BA:2927408"})
     )
 
     with pact.serve() as mock:
