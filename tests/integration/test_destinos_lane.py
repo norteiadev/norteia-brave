@@ -8,6 +8,13 @@ Tests:
   - POST /api/v1/dlq/validate-batch?uf=BA: validates all DLQ records for UF
   - Both endpoints write audit rows with action='dlq_validated' and actor='steward'
 
+NotebookLMIngest corroboration tests (D-02, DEST-02):
+  - test_notebooklm_corroboration_boosts_mtur: DB-level proof that calling
+    NotebookLMIngest.produce('BA') on a municipality that already has a Mtur RioRecord
+    boosts normalized['corroboracao_value'] by >=50 on the surviving record.
+    If flag_modified was omitted or the IBGE-match query did not fire, the value
+    remains 0.0 and this test fails.
+
 All tests are integration-marked (require docker-compose postgres).
 """
 
@@ -245,3 +252,125 @@ def test_validate_batch_limit_bounds(client):
 
     r = client.post("/api/v1/dlq/validate-batch?uf=BA&limit=1001")
     assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# NotebookLMIngest corroboration boost (D-02, DEST-02, RISK-02)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_notebooklm_corroboration_boosts_mtur(db_session: Session):
+    """DB-level proof: NotebookLMIngest.produce('BA') boosts corroboracao_value on a
+    pre-existing Mtur RioRecord that shares the same IBGE code.
+
+    Setup:
+      1. Ingest a Mtur RioRecord for Porto Seguro (IBGE 2927408) via store_raw +
+         process_nascente_record — simulates the post-02-05 state.
+      2. Force routing='dlq' so the RioRecord is a live record eligible for boost.
+
+    Action:
+      3. Call NotebookLMIngest.produce('BA') with a FakeNotebookLMClient that returns
+         a non-empty report for "Porto Seguro:BA:2927408".
+
+    Assertion:
+      4. Re-read the Mtur RioRecord from DB (expire_all to bypass ORM cache).
+      5. Assert normalized['corroboracao_value'] >= 50.0
+         — if flag_modified was omitted or the IBGE-match query did not fire,
+         the value remains 0.0 and this test fails.
+
+    This is the load-bearing corroboration test: without it, Mtur records score max
+    80.0 after human validation and never cross the Mar threshold (RESEARCH.md Pitfall 2).
+    """
+    import asyncio
+
+    from brave.config.settings import ScoreConfig
+    from brave.core.models import NascenteRecord, RioRecord
+    from brave.core.nascente.service import store_raw
+    from brave.core.rio.routing import process_nascente_record
+    from brave.lanes.destinos.notebooklm import NotebookLMIngest
+    from tests.fakes.fake_notebooklm import FakeNotebookLMClient
+
+    uf = "BA"
+    ibge_code = "2927408"
+    municipio_key = f"Porto Seguro:{uf}:{ibge_code}"
+
+    # Step 1: Seed a Mtur RioRecord for Porto Seguro (simulates 02-05 state)
+    unique_tag = uuid.uuid4().hex[:8]
+    source_ref = f"mtur:{uf}:{ibge_code}-{unique_tag}"
+
+    nascente = store_raw(
+        session=db_session,
+        source="mtur",
+        source_ref=source_ref,
+        entity_type="destination",
+        uf=uf,
+        payload={
+            "name": "Porto Seguro",
+            "municipio_id": ibge_code,
+            "uf": uf,
+            "origem_value": 100.0,
+            "completude_value": 100.0,
+            "corroboracao_value": 0.0,
+            "atualidade_value": 70.0,
+            "validacao_humana_value": 0.0,
+            "canonical": {
+                "name": "Porto Seguro",
+                "uf": uf,
+                "municipio": "Porto Seguro",
+                "ibge_code": ibge_code,
+            },
+        },
+    )
+
+    config = ScoreConfig()
+    rio = process_nascente_record(db_session, nascente, config)
+
+    # Step 2: Force routing to 'dlq' — NotebookLMIngest queries routing.in_(["dlq","mar"])
+    rio.routing = "dlq"
+    db_session.flush()
+    mtur_rio_id = rio.id
+
+    # Confirm baseline: corroboracao starts at 0
+    assert rio.normalized is not None
+    assert float(rio.normalized.get("corroboracao_value", 0.0)) == 0.0, (
+        "Pre-condition failed: expected corroboracao_value=0.0 before NotebookLM ingest"
+    )
+
+    # Step 3: Run NotebookLMIngest.produce('BA') with a fake client that returns
+    # a non-empty report for the municipio_key.
+    fake_nb = FakeNotebookLMClient(
+        reports={
+            municipio_key: {
+                "name": "Porto Seguro",
+                "highlights": ["beaches", "history"],
+                "publish_date": "2024-01-15",
+            }
+        }
+    )
+
+    mtur_municipalities = [
+        {"ibge_code": ibge_code, "name": "Porto Seguro", "uf": uf}
+    ]
+
+    lane = NotebookLMIngest(
+        notebooklm_client=fake_nb,
+        session=db_session,
+        config=config,
+        mtur_municipalities=mtur_municipalities,
+    )
+    asyncio.run(lane.produce(uf))
+
+    # Step 4: Re-read from DB, bypassing ORM cache
+    db_session.expire_all()
+    updated_rio = db_session.get(RioRecord, mtur_rio_id)
+    assert updated_rio is not None
+
+    # Step 5: Assert corroboracao_value was boosted by >= 50
+    assert updated_rio.normalized is not None
+    actual_corroboracao = float(updated_rio.normalized.get("corroboracao_value", 0.0))
+    assert actual_corroboracao >= 50.0, (
+        f"Expected corroboracao_value >= 50.0 but got {actual_corroboracao}. "
+        "flag_modified was likely omitted OR the IBGE exact-match query did not fire "
+        "(check routing.in_(['dlq','mar']) filter and municipio_id match)."
+    )
