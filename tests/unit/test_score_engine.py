@@ -45,9 +45,10 @@ from brave.core.score.schemas import ScoreInput, ScoreResult
         # 100*30/100 + 70*20/100 + 0+0+0 = 30+14=44, not enough
         # 100*30/100 + 100*20/100 + 5*20/100 + 0 + 0 = 30+20+1=51 ✓
         (100, 100, 5, 0, 0, 51.0, "dlq"),
-        # Boundary: exactly 50.9 → descarte
+        # Boundary: exactly 50.9 → dlq (≥ threshold_dlq=40, the Phase 2 calibrated default)
         # 100*30/100 + 100*20/100 + 4.5*20/100 + 0 + 0 = 30+20+0.9 = 50.9 ✓
-        (100, 100, 4.5, 0, 0, 50.9, "descarte"),
+        # Updated: Phase 2 threshold_dlq calibration (D-05) — 50.9 ≥ 40.0 → dlq
+        (100, 100, 4.5, 0, 0, 50.9, "dlq"),
     ],
 )
 def test_compute_score_routing(
@@ -141,7 +142,8 @@ def test_compute_score_carries_score_version():
 
 
 def test_compute_score_default_version():
-    """Default score_version is 'v1.0'."""
+    """Default score_version is 'v1.1' (Phase 2 threshold_dlq calibration, D-05)."""
+    # Updated: Phase 2 threshold_dlq calibration (D-05) bumped score_version from v1.0 to v1.1.
     config = ScoreConfig()
     inp = ScoreInput(
         origem_value=50,
@@ -151,7 +153,7 @@ def test_compute_score_default_version():
         validacao_humana_value=50,
     )
     result = compute_score(inp, config)
-    assert result.score_version == "v1.0"
+    assert result.score_version == "v1.1"
 
 
 # ---------------------------------------------------------------------------
