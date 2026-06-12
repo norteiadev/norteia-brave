@@ -27,7 +27,6 @@ from sqlalchemy.orm import Session
 
 from brave.core.models import AuditLog, RioRecord
 
-
 os.environ.setdefault(
     "BRAVE_DB_URL",
     "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave",
@@ -38,6 +37,7 @@ os.environ.setdefault(
 def client():
     """FastAPI TestClient for validate endpoint tests."""
     from brave.api.main import app
+
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -48,9 +48,8 @@ def _make_dlq_record(db_session: Session, uf: str = "BA", corroboracao: float = 
     With corroboracao=50 + validacao_humana=100: score will be >=85 → 'mar'.
     With corroboracao=0 + validacao_humana=100: score will be 80.0 → still 'dlq'.
     """
-    from brave.core.models import NascenteRecord
-    from brave.core.nascente.service import store_raw
     from brave.config.settings import ScoreConfig
+    from brave.core.nascente.service import store_raw
     from brave.core.rio.routing import process_nascente_record
 
     unique_tag = uuid.uuid4().hex[:8]
@@ -226,9 +225,7 @@ def test_validate_batch_writes_audit_row(client, db_session):
     assert r.status_code == 202
 
     # At least one dlq_validated audit row exists for CE records
-    count = db_session.scalar(
-        select(AuditLog).where(AuditLog.action == "dlq_validated")
-    )
+    count = db_session.scalar(select(AuditLog).where(AuditLog.action == "dlq_validated"))
     assert count is not None, "No audit row found with action='dlq_validated' after batch validate"
 
 
@@ -285,7 +282,7 @@ def test_notebooklm_corroboration_boosts_mtur(db_session: Session):
     import asyncio
 
     from brave.config.settings import ScoreConfig
-    from brave.core.models import NascenteRecord, RioRecord
+    from brave.core.models import RioRecord
     from brave.core.nascente.service import store_raw
     from brave.core.rio.routing import process_nascente_record
     from brave.lanes.destinos.notebooklm import NotebookLMIngest
@@ -349,9 +346,7 @@ def test_notebooklm_corroboration_boosts_mtur(db_session: Session):
         }
     )
 
-    mtur_municipalities = [
-        {"ibge_code": ibge_code, "name": "Porto Seguro", "uf": uf}
-    ]
+    mtur_municipalities = [{"ibge_code": ibge_code, "name": "Porto Seguro", "uf": uf}]
 
     lane = NotebookLMIngest(
         notebooklm_client=fake_nb,
@@ -374,3 +369,70 @@ def test_notebooklm_corroboration_boosts_mtur(db_session: Session):
         "flag_modified was likely omitted OR the IBGE exact-match query did not fire "
         "(check routing.in_(['dlq','mar']) filter and municipio_id match)."
     )
+
+
+@pytest.mark.integration
+def test_mtur_lane_end_to_end(db_session: Session):
+    """Headline acceptance: a single Mtur municipality flows seed → Nascente → Rio → DLQ.
+
+    Exercises the full MturSeedIngest producer path (DEST-01, DEST-04):
+      - MturSeedIngest.produce('BA') with a FakeMturClient (Porto Seguro, Oferta Principal)
+      - A NascenteRecord with source='mtur' is written
+      - The Rio record lands in 'dlq' by default (cold start, no human validation)
+
+    Score math (threshold_dlq=40, threshold_mar=85): origem=100→30, atualidade=70→10.5,
+    corroboracao=0, validacao_humana=0. Score = 30 + completude·0.2 + 10.5, which is
+    >=40.5 and <85 for any completude value → routing='dlq' (never descarte, never mar).
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from brave.config.settings import ScoreConfig
+    from brave.core.models import NascenteRecord, RioRecord
+    from brave.lanes.destinos.mtur import MturSeedIngest
+    from tests.fakes.fake_mtur import FakeMturClient
+
+    uf = "BA"
+    ibge_code = "2927408"
+    source_ref = f"mtur:{uf}:{ibge_code}"
+
+    fake_mtur = FakeMturClient(
+        fixtures=[
+            {
+                "ibge_code": ibge_code,
+                "name": "Porto Seguro",
+                "categoria": "Oferta Principal",
+                "uf": uf,
+            }
+        ]
+    )
+
+    lane = MturSeedIngest(
+        mtur_client=fake_mtur,
+        session=db_session,
+        config=ScoreConfig(),
+    )
+    asyncio.run(lane.produce(uf))
+    db_session.flush()
+
+    # A NascenteRecord with source='mtur' was written for Porto Seguro (DEST-01)
+    nascente = db_session.scalar(
+        select(NascenteRecord).where(
+            NascenteRecord.source == "mtur",
+            NascenteRecord.source_ref == source_ref,
+        )
+    )
+    assert nascente is not None, "expected a Mtur NascenteRecord after produce('BA')"
+    assert nascente.entity_type == "destination"
+    assert nascente.payload["origem_value"] == 100.0
+    assert nascente.payload["canonical"]["ibge_code"] == ibge_code
+
+    # The Rio record landed in DLQ by default — cold start, no human validation (DEST-04)
+    rio = db_session.scalar(select(RioRecord).where(RioRecord.canonical_key == source_ref))
+    assert rio is not None, "expected a RioRecord after produce('BA')"
+    assert rio.routing == "dlq", (
+        f"expected cold-start Mtur destino to route to 'dlq', got '{rio.routing}' "
+        f"(score={rio.score})"
+    )
+    assert fake_mtur.calls == [uf]
