@@ -20,6 +20,7 @@ Only **validated, reliability-scored canonical records reach the platform** — 
 - ✓ **24/7 orchestration** (Celery + celery-redbeat, idempotent tasks, poison quarantine) — Phase 1
 - ✓ **Observability** (`llm_generations`, enforcing USD cost guard, per-layer metrics, audit, FastAPI surface) — Phase 1
 - ✓ **Frozen idempotent Mar→norteia-api Pact contract** + error-report webhook (shared-secret auth) — Phase 1
+- ✓ **Destinos lane** — MturSeedIngest (origem=100, bundled seed CSV), NotebookLMIngest (origem=80, IBGE-match corroboração boost), DesmembramentoAgent (origem=40, instructor Mode.Tools + validate-or-quarantine), DLQ steward validate + batch-by-state → Mar → idempotent push to `destinations`; origem=40 firewall + threshold_dlq=40 calibration; 191 offline tests — Phase 2
 
 ### Active
 
@@ -114,4 +115,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-11 after Phase 1 (Brave Core, Score Gate, Boundary & Contract) completion*
+*Last updated: 2026-06-12 after Phase 2 (Destinos Lane) completion*
