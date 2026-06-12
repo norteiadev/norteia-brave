@@ -53,7 +53,7 @@ class TestScoreConfig:
     def test_threshold_dlq(self) -> None:
         from brave.config.settings import ScoreConfig
 
-        assert ScoreConfig().threshold_dlq == 51.0
+        assert ScoreConfig().threshold_dlq == 40.0  # calibrated in Phase 2 (D-05): descarte black-hole fix
 
     def test_weights_sum_to_100(self) -> None:
         from brave.config.settings import ScoreConfig
@@ -71,7 +71,7 @@ class TestScoreConfig:
     def test_score_version_default(self) -> None:
         from brave.config.settings import ScoreConfig
 
-        assert ScoreConfig().score_version == "v1.0"
+        assert ScoreConfig().score_version == "v1.1"  # bumped in Phase 2 (D-05) with threshold_dlq recalibration
 
 
 # ---------------------------------------------------------------------------
