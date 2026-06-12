@@ -104,7 +104,28 @@ Plans:
   4. The WhatsAppAgent runs automated outreach (BSP API + n8n thin transport + LangGraph logic): Sonnet asks PT-BR (identifies Norteia + opt-out), DeepSeek extracts existe?/funcionando?/horários/valor, and owner-validation boosts the score → re-score → Mar/DLQ.
   5. The lane enforces LGPD (legal basis + Norteia identification + opt-out + consent log + minimization) and BSP (approved templates, 24h window, human gate + ramp, opt-out, auto-pause on degraded quality rating) as hard, code-enforced, offline-tested gates that block sending before the first real message.
 
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+**Wave 1** *(package gate + scaffold — run first)*
+
+- [ ] 03-01-PLAN.md — Package legitimacy gate (langgraph-checkpoint-postgres), ConsentLog model + Alembic migration 0004, WhatsAppConfig + RampConfig settings, atrativos schemas (AtrativoResult/ContactResult/SignalResult/ConversationExtractionResult), FakeApifyClient + FakeWhatsAppClient + NullWhatsAppClient
+
+**Wave 2** *(depends on Wave 1)*
+
+- [ ] 03-02-PLAN.md — Discovery producers: DiscoveryAgent (parent-resolution + place_id cache), ContactFinderAgent, SignalAgent (CLOSED_* hard descarte + Apify best-effort), state_machine.advance_sub_state, RealPlacesClient + RealApifyClient, discover_atrativo_task + find_contacts_task + gather_signals_task Celery tasks
+
+**Wave 3** *(depends on Wave 1, parallel with Wave 2)*
+
+- [ ] 03-03-PLAN.md — Compliance gate: send_path_gate (8 D-11 conditions, 9 unit tests), consent_log (write/is_opted_out/record_opt_out/lookup), quality_rating (Redis flag), atrativos_gate FastAPI router (list/approve/reject/inbound/quality-rating endpoints)
+
+**Wave 4** *(depends on Wave 2 + Wave 3)*
+
+- [ ] 03-04-PLAN.md — WhatsApp conversation: LangGraph WhatsAppAgent (Sonnet ask + DeepSeek extract + AsyncPostgresSaver), TwilioWhatsAppClient, outreach_task + resume_conversation_task + push_attraction_task
+
+**Wave 5** *(depends on Wave 4 — phase acceptance gate)*
+
+- [ ] 03-05-PLAN.md — End-to-end integration tests: full Atrativos lane offline suite (all 5 success criteria + all 9 requirements verified)
 
 ### Phase 4: Dashboard (Territorial CMS)
 
@@ -132,5 +153,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
 | 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
-| 3. Atrativos Lane (WhatsApp + Compliance) | 0/TBD | Not started | - |
+| 3. Atrativos Lane (WhatsApp + Compliance) | 0/5 | Not started | - |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
