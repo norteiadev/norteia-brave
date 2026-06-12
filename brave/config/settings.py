@@ -56,7 +56,10 @@ class LLMConfig(BaseSettings):
     """
 
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_api_key: str = Field(default="", alias="openrouter_api_key")
+    # No alias: with env_prefix the key resolves ONLY from BRAVE_LLM_OPENROUTER_API_KEY.
+    # An alias would let a bare `openrouter_api_key` env var shadow the prefixed key
+    # (secret-shadowing, CR-02). field name + populate_by_name still allows kwargs.
+    openrouter_api_key: str = Field(default="")
 
     # Primary slug validated for Mode.Tools + function-calling before use
     deepseek_primary_slug: str = "deepseek/deepseek-chat"
@@ -69,7 +72,8 @@ class LLMConfig(BaseSettings):
     usd_daily_budget: float = 10.0
 
     # Anthropic (Claude Sonnet — Phase 3 WhatsApp; stubbed in Phase 1)
-    anthropic_api_key: str = Field(default="", alias="anthropic_api_key")
+    # No alias (CR-02): resolves ONLY from BRAVE_LLM_ANTHROPIC_API_KEY.
+    anthropic_api_key: str = Field(default="")
 
     model_config = SettingsConfigDict(env_prefix="BRAVE_LLM_", populate_by_name=True)
 
