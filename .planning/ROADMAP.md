@@ -63,7 +63,32 @@ Plans:
   4. A steward validates destinos in the DLQ batch-by-state (BA/RJ/SP/SC/CE/PE first), setting validação humana=100, which re-scores them into Mar and pushes them to `destinations`.
   5. The score engine and DesmembramentoAgent have unit tests covering Mar/DLQ/descarte boundary cases, all running offline.
 
-**Plans**: TBD
+**Plans**: 9 plans
+
+Plans:
+**Wave 0** *(pre-conditions — run before any lane code)*
+
+- [ ] 02-01-PLAN.md — Pact contract update: add ibge_code to canonical dict (RISK-01; breaking change; coordinate with norteia-api Laravel team)
+- [ ] 02-02-PLAN.md — Score calibration: run simulation harness, lower threshold_dlq to 40 (D-05; resolves descarte black-hole for DesmembramentoAgent)
+
+**Wave 1** *(parallel — no file conflicts)*
+
+- [ ] 02-03-PLAN.md — Schemas + client impls + fakes: DesmembramentoResult schema, MturClient+NullMturClient, NotebookLMClient+NullNotebookLMClient, FakeMturClient, FakeNotebookLMClient, Mtur seed CSV
+- [ ] 02-04-PLAN.md — push_destination_task Celery task (mirrors push_mar; always calls push_destination)
+
+**Wave 2** *(depends on Wave 0 + Wave 1)*
+
+- [ ] 02-05-PLAN.md — MturSeedIngest lane + producer score boundary unit tests (D-06 firewall, TEST-02)
+- [ ] 02-06-PLAN.md — DLQ validate + validate-batch endpoints (D-07, D-08; flag_modified guard; steward→Mar→push)
+
+**Wave 3** *(depends on Wave 2)*
+
+- [ ] 02-07-PLAN.md — NotebookLMIngest lane with IBGE corroboration boost (D-02; load-bearing for Mar promotion)
+- [ ] 02-08-PLAN.md — DesmembramentoAgent with validate-or-quarantine + unit tests (DEST-03, TEST-02)
+
+**Wave 4** *(depends on Wave 3 — phase acceptance gate)*
+
+- [ ] 02-09-PLAN.md — End-to-end integration tests: full Destinos lane offline suite (all five requirements verified)
 
 ### Phase 3: Atrativos Lane (WhatsApp + Compliance)
 
@@ -106,6 +131,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
-| 2. Destinos Lane | 0/TBD | Not started | - |
+| 2. Destinos Lane | 0/9 | Not started | - |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 0/TBD | Not started | - |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
