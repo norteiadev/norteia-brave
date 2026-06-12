@@ -35,7 +35,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, Session
 
 from brave.clients.norteia_api import NorteiaApiClient
-from brave.core.models import PoisonQuarantine, RioRecord
+from brave.core.models import RioRecord
 from brave.core.nascente.service import get_nascente
 from brave.core.rio.routing import process_nascente_record, reprocess_record
 from brave.config.settings import AppConfig, DBConfig, ScoreConfig
@@ -73,43 +73,14 @@ def _get_session() -> tuple[Session, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Poison quarantine helper
+# Poison quarantine helper (re-exported from brave.core.quarantine — D-18)
 # ---------------------------------------------------------------------------
 
-
-def quarantine_poison(
-    session: Session,
-    nascente_id: uuid.UUID | None,
-    task_name: str,
-    error: str,
-    payload: dict | None = None,
-) -> PoisonQuarantine:
-    """Insert a PoisonQuarantine row for a permanently failed task.
-
-    This is DISTINCT from the §7.6 review DLQ (routing='dlq' on RioRecord).
-    PoisonQuarantine = Celery operational failure.
-    §7.6 DLQ = score gate routing for human review.
-
-    Args:
-        session:     SQLAlchemy Session.
-        nascente_id: The nascente_id being processed (if known).
-        task_name:   The Celery task name (e.g., "brave.process_nascente").
-        error:       Error message or traceback summary.
-        payload:     Optional payload dict for debugging.
-
-    Returns:
-        The created PoisonQuarantine row.
-    """
-    quarantine = PoisonQuarantine(
-        id=uuid.uuid4(),
-        nascente_id=nascente_id,
-        task_name=task_name,
-        error_message=error,
-        payload=payload or {},
-    )
-    session.add(quarantine)
-    session.flush()
-    return quarantine
+# quarantine_poison is defined in brave/core/quarantine.py so that lane code
+# (e.g. DesmembramentoAgent in brave/lanes/destinos/) can import it from core
+# without depending on the tasks layer.  This re-export keeps existing callers
+# working without any change.
+from brave.core.quarantine import quarantine_poison  # noqa: F401 (re-export)
 
 
 # ---------------------------------------------------------------------------
