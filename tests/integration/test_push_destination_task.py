@@ -139,33 +139,41 @@ def test_push_destination_task_promotes_mar_routing(db_session):
 @pytest.mark.integration
 def test_push_destination_task_always_calls_push_destination():
     """push_destination_task always calls push_destination, never push_attraction."""
+    from brave.tasks.pipeline import push_destination_task
     import inspect
-    import brave.tasks.pipeline as pipeline_module
 
-    source = inspect.getsource(pipeline_module)
+    source = inspect.getsource(push_destination_task)
 
-    # Find the push_destination_task function source
-    # Locate push_destination_task definition
-    task_start = source.find("def push_destination_task(")
-    assert task_start != -1, "push_destination_task not found in pipeline.py"
+    # Strip docstring — only check actual code lines for push_attraction references
+    # A call to push_attraction in the code (not docstring) would appear as:
+    #   client.push_attraction(  or  api_client.push_attraction(
+    lines = source.splitlines()
+    code_lines = []
+    in_docstring = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('"""') or stripped.startswith("'''"):
+            if in_docstring:
+                in_docstring = False
+                continue
+            # Check if it's a one-liner docstring
+            quote = '"""' if stripped.startswith('"""') else "'''"
+            if stripped.count(quote) >= 2:
+                # One-liner — skip it
+                continue
+            in_docstring = True
+            continue
+        if in_docstring:
+            continue
+        code_lines.append(line)
 
-    # Extract the function body (everything after the def line until next @shared_task or EOF)
-    task_body = source[task_start:]
-    # Find the next top-level function/decorator after push_destination_task
-    next_task = task_body.find("\n@shared_task", 1)
-    next_def = task_body.find("\ndef ", 1)
-    # Take the smaller of the two (nearest boundary)
-    end = min(
-        next_task if next_task > 0 else len(task_body),
-        next_def if next_def > 0 else len(task_body),
+    code_only = "\n".join(code_lines)
+
+    assert "push_destination" in code_only, (
+        "push_destination_task must call push_destination in its implementation"
     )
-    task_source = task_body[:end]
-
-    assert "push_destination" in task_source, (
-        "push_destination_task must call push_destination"
-    )
-    assert "push_attraction" not in task_source, (
-        "push_destination_task must NEVER call push_attraction (destination-specific per D-09)"
+    assert "push_attraction" not in code_only, (
+        "push_destination_task must NEVER call push_attraction in its code (D-09)"
     )
 
 

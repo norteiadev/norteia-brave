@@ -1,9 +1,11 @@
 """Celery pipeline tasks (D-05, D-06, CORE-10).
 
-Three tasks:
+Four tasks:
   process_nascente      — ingest NascenteRecord through Rio pipeline
   push_mar              — push scored RioRecord to Mar layer + norteia-api
   reprocess_record_task — re-score an existing RioRecord
+  push_destination_task — Phase 2 destino-specific push (D-09). Always calls
+                          push_destination — not entity-agnostic.
 
 Idempotency: Every task is a no-op on re-run (D-03, D-15).
 Poison quarantine: After max_retries failures, the task goes to PoisonQuarantine,
@@ -373,6 +375,99 @@ def reprocess_record_task(self, rio_id: str) -> None:
             raise self.retry(exc=exc, max_retries=3)
         except self.MaxRetriesExceededError:
             pass
+    finally:
+        session.close()
+        engine.dispose()
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    name="brave.push_destination",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=300,
+)
+def push_destination_task(self, rio_id: str) -> None:
+    """Promote a validated DLQ destino to Mar and push to norteia-api (D-09).
+
+    Phase 2 destino-specific push. Always calls push_destination — not
+    entity-agnostic. Called by the DLQ validate endpoint after routing
+    transitions to "mar".
+
+    Pipeline:
+      1. Load RioRecord; if routing != 'mar', no-op (idempotent).
+      2. Call promote_to_mar to create/update MarRecord (idempotent by source_ref).
+      3. Build flat-provenance push payload (Pact contract shape).
+      4. POST to norteia-api via push_destination (never push_attraction).
+
+    Idempotency:
+      - promote_to_mar is idempotent by source_ref (D-15).
+      - norteia-api is an idempotent upsert by source_ref — double push is safe.
+      - If routing != 'mar', returns immediately.
+
+    Error handling:
+      PermanentError → log and return (no quarantine for push errors).
+      After max_retries → Celery retry; after max → pass (Phase 3 adds retry DLQ).
+
+    Args:
+        rio_id: UUID string of the RioRecord to push.
+    """
+    from brave.core.mar.service import promote_to_mar
+    from brave.clients.null_norteia_api import NullNorteiaApiClient
+
+    session, engine = _get_session()
+    try:
+        rio_uuid = uuid.UUID(rio_id)
+        rio = session.get(RioRecord, rio_uuid)
+        if rio is None:
+            raise PermanentError(f"RioRecord {rio_id} not found")
+
+        # Idempotency: only process mar-routed records
+        if rio.routing != "mar":
+            return  # Not ready for Mar — idempotent no-op
+
+        # Step 1: Promote to Mar layer (idempotent by source_ref, D-15)
+        mar = promote_to_mar(session, rio)
+        session.commit()
+
+        # Step 2: Determine which client to use
+        app_config = AppConfig()
+        if app_config.run_real_externals:
+            norteia_api_url = os.environ.get("BRAVE_NORTEIA_API_URL", "")
+            norteia_service_token = os.environ.get("BRAVE_NORTEIA_API_SERVICE_TOKEN", "")
+            api_client = NorteiaApiClient(
+                base_url=norteia_api_url,
+                service_token=norteia_service_token,
+            )
+        else:
+            api_client = NullNorteiaApiClient()
+
+        # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
+        payload = _build_push_payload(mar, rio)
+
+        # Step 4: Push to norteia-api — always push_destination (D-09)
+        async def _push() -> dict[str, Any]:
+            if isinstance(api_client, NorteiaApiClient):
+                async with api_client as client:
+                    return await client.push_destination(payload)
+            else:
+                return await api_client.push_destination(payload)
+
+        asyncio.run(_push())
+
+    except PermanentError:
+        session.rollback()
+        # No quarantine for push_destination_task permanent errors — log and return
+        pass
+
+    except Exception as exc:
+        session.rollback()
+        try:
+            raise self.retry(exc=exc, max_retries=3)
+        except self.MaxRetriesExceededError:
+            pass  # Phase 3 adds DLQ for permanently failed pushes
+
     finally:
         session.close()
         engine.dispose()
