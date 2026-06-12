@@ -46,7 +46,7 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 - [ ] **DEST-02**: NotebookLMIngest ingests structured reports → Nascente (`source=notebooklm`, origem=80) for destinos absent from Mtur
 - [ ] **DEST-03**: DesmembramentoAgent (§7.4) uses DeepSeek to list real destinos inside each Oferta Principal município (distritos/praias/vilas) → Nascente (origem=40, flagged "LLM-generated, pending validation"), with a mandatory Pydantic+`instructor` 2nd-layer validator
 - [ ] **DEST-04**: Destinos flow through Rio + score and land in DLQ by default (lacking human validation)
-- [ ] **DEST-05**: Steward validates destinos in DLQ batch-by-state (BA/RJ/SP/SC/CE/PE first) → validação humana=100 → Mar → push to `destinations`
+- [x] **DEST-05**: Steward validates destinos in DLQ batch-by-state (BA/RJ/SP/SC/CE/PE first) → validação humana=100 → Mar → push to `destinations`
 
 ### Lane: Atrativos
 
@@ -143,7 +143,7 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | DEST-02 | Phase 2 | Pending |
 | DEST-03 | Phase 2 | Pending |
 | DEST-04 | Phase 2 | Pending |
-| DEST-05 | Phase 2 | Pending |
+| DEST-05 | Phase 2 | Complete |
 | TEST-02 | Phase 2 | Pending |
 | ATR-01 | Phase 3 | Pending |
 | ATR-02 | Phase 3 | Pending |

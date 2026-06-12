@@ -74,7 +74,7 @@ Plans:
 **Wave 1** *(parallel — no file conflicts)*
 
 - [x] 02-03-PLAN.md — Schemas + client impls + fakes: DesmembramentoResult schema, MturClient+NullMturClient, NotebookLMClient+NullNotebookLMClient, FakeMturClient, FakeNotebookLMClient, Mtur seed CSV
-- [ ] 02-04-PLAN.md — push_destination_task Celery task (mirrors push_mar; always calls push_destination)
+- [x] 02-04-PLAN.md — push_destination_task Celery task (mirrors push_mar; always calls push_destination)
 
 **Wave 2** *(depends on Wave 0 + Wave 1)*
 
@@ -131,6 +131,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
-| 2. Destinos Lane | 3/9 | In Progress|  |
+| 2. Destinos Lane | 4/9 | In Progress|  |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 0/TBD | Not started | - |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
