@@ -272,3 +272,66 @@ def test_compute_score_breakdown_values():
     assert result.breakdown.corroboracao == pytest.approx(12.0)
     assert result.breakdown.atualidade == pytest.approx(6.0)
     assert result.breakdown.validacao_humana == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 producer score boundary cases (TEST-02, D-06)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "origem,completude,corroboracao,atualidade,validacao_humana,expected_routing",
+    [
+        # D-06 firewall: origem=40 + validacao=0 → NEVER Mar (max score = 67.0)
+        # 12+20+20+15+0 = 67.0 → dlq (well below threshold_mar=85)
+        (40, 100, 100, 100, 0, "dlq"),
+        # Mtur cold-start safe zone: origins=100, completude=70, atualidade=50
+        # 30+14+0+7.5+0 = 51.5 → dlq (above threshold_dlq=40)
+        (100, 70, 0, 50, 0, "dlq"),
+        # Mtur cold-start descarte risk: low completude/atualidade
+        # 30+4+0+0+0 = 34.0 → descarte (below threshold_dlq=40)
+        (100, 20, 0, 0, 0, "descarte"),
+        # NotebookLM minimum DLQ landing: origem=80, full completude, atualidade=50
+        # 24+20+0+7.5+0 = 51.5 → dlq (above threshold_dlq=40)
+        (80, 100, 0, 50, 0, "dlq"),
+        # After human validation, Mtur + corroboração boost → Mar
+        # 30+20+10+10.5+15 = 85.5 → mar (above threshold_mar=85)
+        (100, 100, 50, 70, 100, "mar"),
+        # After human validation, Mtur without corroboração → DLQ (Pitfall 2)
+        # 30+20+0+15+15 = 80.0 → dlq (below threshold_mar=85)
+        (100, 100, 0, 100, 100, "dlq"),
+        # Desmembramento post-validate, good completude/atualidade → DLQ
+        # 12+20+0+10.5+15 = 57.5 → dlq (origin=40 firewall: max possible is 57.5)
+        (40, 100, 0, 70, 100, "dlq"),
+    ],
+)
+def test_producer_score_boundaries(
+    origem,
+    completude,
+    corroboracao,
+    atualidade,
+    validacao_humana,
+    expected_routing,
+):
+    """Producer score boundary cases for Phase 2 (D-06, TEST-02).
+
+    All scores computed with threshold_dlq=40 (Phase 2 calibration, D-05).
+
+    Key invariants proven:
+    - D-06 firewall: origem=40 + validacao_humana=0 can never reach Mar
+      (max score with origin=40 and no human validation = 67.0 < threshold_mar=85)
+    - Mtur cold-start records land in DLQ (not descarte) with adequate completude/atualidade
+    - After human validation, Mtur records need corroboração >= 50 to cross Mar threshold
+      (Pitfall 2: no corroboração → max 80.0 → DLQ even after validation)
+    - Desmembramento records stay in DLQ even after human validation (origin=40 caps the score)
+    """
+    config = ScoreConfig()
+    inp = ScoreInput(
+        origem_value=origem,
+        completude_value=completude,
+        corroboracao_value=corroboracao,
+        atualidade_value=atualidade,
+        validacao_humana_value=validacao_humana,
+    )
+    result = compute_score(inp, config)
+    assert result.routing == expected_routing
