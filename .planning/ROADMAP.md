@@ -68,12 +68,12 @@ Plans:
 Plans:
 **Wave 0** *(pre-conditions — run before any lane code)*
 
-- [ ] 02-01-PLAN.md — Pact contract update: add ibge_code to canonical dict (RISK-01; breaking change; coordinate with norteia-api Laravel team)
-- [ ] 02-02-PLAN.md — Score calibration: run simulation harness, lower threshold_dlq to 40 (D-05; resolves descarte black-hole for DesmembramentoAgent)
+- [x] 02-01-PLAN.md — Pact contract update: add ibge_code to canonical dict (RISK-01; breaking change; coordinate with norteia-api Laravel team)
+- [x] 02-02-PLAN.md — Score calibration: run simulation harness, lower threshold_dlq to 40 (D-05; resolves descarte black-hole for DesmembramentoAgent)
 
 **Wave 1** *(parallel — no file conflicts)*
 
-- [ ] 02-03-PLAN.md — Schemas + client impls + fakes: DesmembramentoResult schema, MturClient+NullMturClient, NotebookLMClient+NullNotebookLMClient, FakeMturClient, FakeNotebookLMClient, Mtur seed CSV
+- [x] 02-03-PLAN.md — Schemas + client impls + fakes: DesmembramentoResult schema, MturClient+NullMturClient, NotebookLMClient+NullNotebookLMClient, FakeMturClient, FakeNotebookLMClient, Mtur seed CSV
 - [ ] 02-04-PLAN.md — push_destination_task Celery task (mirrors push_mar; always calls push_destination)
 
 **Wave 2** *(depends on Wave 0 + Wave 1)*
@@ -131,6 +131,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
-| 2. Destinos Lane | 0/9 | Not started | - |
+| 2. Destinos Lane | 3/9 | In Progress|  |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 0/TBD | Not started | - |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
