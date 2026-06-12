@@ -78,7 +78,7 @@ Plans:
 
 **Wave 2** *(depends on Wave 0 + Wave 1)*
 
-- [ ] 02-05-PLAN.md — MturSeedIngest lane + producer score boundary unit tests (D-06 firewall, TEST-02)
+- [x] 02-05-PLAN.md — MturSeedIngest lane + producer score boundary unit tests (D-06 firewall, TEST-02)
 - [ ] 02-06-PLAN.md — DLQ validate + validate-batch endpoints (D-07, D-08; flag_modified guard; steward→Mar→push)
 
 **Wave 3** *(depends on Wave 2)*
@@ -131,6 +131,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
-| 2. Destinos Lane | 4/9 | In Progress|  |
+| 2. Destinos Lane | 5/9 | In Progress|  |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 0/TBD | Not started | - |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |

@@ -42,10 +42,10 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 
 ### Lane: Destinos
 
-- [ ] **DEST-01**: MturSeedIngest ingests categorized Mtur municipalities (Oferta Principal/Complementar/Apoio) → Nascente (`source=mtur`, origem=100), linked to `municipality_id`
+- [x] **DEST-01**: MturSeedIngest ingests categorized Mtur municipalities (Oferta Principal/Complementar/Apoio) → Nascente (`source=mtur`, origem=100), linked to `municipality_id`
 - [ ] **DEST-02**: NotebookLMIngest ingests structured reports → Nascente (`source=notebooklm`, origem=80) for destinos absent from Mtur
 - [ ] **DEST-03**: DesmembramentoAgent (§7.4) uses DeepSeek to list real destinos inside each Oferta Principal município (distritos/praias/vilas) → Nascente (origem=40, flagged "LLM-generated, pending validation"), with a mandatory Pydantic+`instructor` 2nd-layer validator
-- [ ] **DEST-04**: Destinos flow through Rio + score and land in DLQ by default (lacking human validation)
+- [x] **DEST-04**: Destinos flow through Rio + score and land in DLQ by default (lacking human validation)
 - [x] **DEST-05**: Steward validates destinos in DLQ batch-by-state (BA/RJ/SP/SC/CE/PE first) → validação humana=100 → Mar → push to `destinations`
 
 ### Lane: Atrativos
@@ -75,7 +75,7 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 ### Testability
 
 - [x] **TEST-01**: Full suite runs 100% offline via docker-compose (Postgres+Redis); real externals are opt-in by flag; CI runs keyless
-- [ ] **TEST-02**: Score engine and DesmembramentoAgent have unit tests covering Mar/DLQ/descarte cases
+- [x] **TEST-02**: Score engine and DesmembramentoAgent have unit tests covering Mar/DLQ/descarte cases
 - [x] **TEST-03**: HTTP boundaries faked with respx/VCR, LLM faked, webhooks fixture-driven; norteia-api contract covered by Pact
 
 ## v2 Requirements
@@ -139,12 +139,12 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | CNTR-02 | Phase 1 | Complete |
 | TEST-01 | Phase 1 | Complete |
 | TEST-03 | Phase 1 | Complete |
-| DEST-01 | Phase 2 | Pending |
+| DEST-01 | Phase 2 | Complete |
 | DEST-02 | Phase 2 | Pending |
 | DEST-03 | Phase 2 | Pending |
-| DEST-04 | Phase 2 | Pending |
+| DEST-04 | Phase 2 | Complete |
 | DEST-05 | Phase 2 | Complete |
-| TEST-02 | Phase 2 | Pending |
+| TEST-02 | Phase 2 | Complete |
 | ATR-01 | Phase 3 | Pending |
 | ATR-02 | Phase 3 | Pending |
 | ATR-03 | Phase 3 | Pending |
