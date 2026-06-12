@@ -30,10 +30,20 @@ class ScoreConfig(BaseSettings):
 
     # Routing thresholds
     threshold_mar: float = 85.0
-    threshold_dlq: float = 51.0
+    # Lowered from 51.0 to 40.0 in Phase 2 (D-05 calibration) so that
+    # DesmembramentoAgent cold-start records (origem=40, corroboração=0)
+    # land in DLQ instead of descarte, enabling steward review.
+    # The §7.6 math proves 51.0 routes ALL Desmembramento records to descarte
+    # (max cold-start score = 47.0 < 51.0 — descarte black-hole).
+    # Re-calibrate on real BA data before national fan-out.
+    # Env override: BRAVE_SCORE_THRESHOLD_DLQ
+    threshold_dlq: float = 40.0
 
-    # Weight-set identity stamp; stored on every scored record (D-13)
-    score_version: str = "v1.0"
+    # Bumped to v1.1 in Phase 2 due to threshold_dlq calibration (40.0 from 51.0).
+    # Old scored records from Phase 1 tests remain valid — score values are
+    # unchanged; only the DLQ/descarte boundary moved.
+    # Env override: BRAVE_SCORE_SCORE_VERSION
+    score_version: str = "v1.1"
 
     model_config = SettingsConfigDict(env_prefix="BRAVE_SCORE_")
 
