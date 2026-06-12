@@ -808,27 +808,31 @@ This carries municipality as a **name string only**, not an IBGE code. Per D-10,
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **DesmembramentoAgent DLQ landing with default thresholds**
    - What we know: with default `threshold_dlq=51`, origen=40 records always hit descarte unless corroboration or threshold is adjusted.
    - What's unclear: should the planner lower `threshold_dlq` to ~40 for Phase 2, or implement explicit corroboration injection?
    - Recommendation: Lower `threshold_dlq` to 40 in `LLMConfig`/`ScoreConfig` for the Desmembramento sweep, then restore after the first state's human validation confirms the distribution. This is exactly what D-05 is for — use simulation.py first.
+   - **RESOLVED:** `threshold_dlq` is lowered to 40 (plan 02-02, ScoreConfig default). Desmembramento cold-start records with origine=40 land in DLQ (score ~42-47 > 40), not descarte. Post-calibration origin=40 records remain in DLQ pending human validation.
 
 2. **Mtur CSV column names**
    - What we know: the dataset is published as open data; 2025 nomenclature change confirmed; expected columns are IBGE code + name + UF + categoria.
    - What's unclear: exact column names in the current downloadable file.
    - Recommendation: Wave 0 task — download the file, inspect columns, finalize the parser. Implement with flexible column detection as fallback.
+   - **RESOLVED:** Parser is column-flexible — `MturClient._load_csv` tries both pre-2025 column names (`co_municipio`, `no_municipio`, `sg_uf`, `categoria`) and March-2025 nomenclature variants using `row.get(name_a) or row.get(name_b)` fallback chains. Keys off IBGE code + UF + categoria; category mapping handles both old (A–E) and new names (plan 02-03).
 
 3. **Corroboração boost mechanism**
    - What we know: D-02 says overlap is resolved by Rio dedup; the Pact corroboration boost is expected to be triggered by dedup.
    - What's unclear: where exactly does the corroboração_value get updated when a NotebookLM record merges with a Mtur record?
    - Recommendation: The dedup code (`find_duplicate`) returns the duplicate record but does not currently update `corroboracao_value`. The lane code must explicitly: after `store_raw`, if an existing RioRecord is found via dedup, UPDATE the surviving record's `normalized["corroboracao_value"]` += boost and call `reprocess_record`. This is Phase 2 lane code, not core change.
+   - **RESOLVED:** Corroboration boost is implemented as an IBGE-exact-match lookup in `NotebookLMIngest.produce` (plan 02-07) — after `store_raw`, the lane queries for an existing RioRecord with matching `municipio_id` + `uf` + `routing in ("dlq","mar")` and boosts `corroboracao_value` += 50 (capped at 100) via `flag_modified` + `reprocess_record`. No pgvector involved (RISK-02 mitigation; embedding stub remains). Not in pgvector dedup code — implemented directly in lane code per D-18 boundary.
 
 4. **NotebookLM client implementation**
    - What we know: `NotebookLMClientProtocol.fetch_report(municipio)` is the seam; no real NotebookLM HTTP client spec exists in the codebase.
    - What's unclear: is NotebookLM accessed via an API, or are reports pre-downloaded as local files?
    - Recommendation: Implement as a local-file-backed client (similar to Mtur) for Phase 2 — reports are structured JSON files under `data/notebooklm/`. This keeps the offline-test mandate intact. A future task can add real HTTP access.
+   - **RESOLVED:** Implemented as a local-file reader — `NotebookLMClient.fetch_report` reads structured JSON files under `data/notebooklm/{uf}/{ibge}.json` (plan 02-03). No HTTP client needed for Phase 2. Preserves the offline-test mandate. Real HTTP access deferred to a future phase.
 
 ---
 
