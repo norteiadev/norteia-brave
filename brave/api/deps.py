@@ -11,7 +11,6 @@ Provides:
 import os
 from collections.abc import Generator
 
-import fakeredis
 from redis import Redis
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -96,17 +95,28 @@ _redis_client = None
 def get_redis() -> Redis:
     """Return a Redis client.
 
-    Uses real Redis in production (BRAVE_DB_REDIS_URL env var).
-    Falls back to fakeredis in test/dev when Redis is not available.
+    CR-02: NEVER silently falls back to fakeredis. The Redis client backs the
+    compliance gate (RED quality auto-pause flag, volume-ramp counter) which the
+    Celery workers read from the SAME real Redis. A fakeredis fallback on a
+    transient connection blip would write the RED pause flag to an in-process
+    instance the workers never see, so sends would continue while quality is RED
+    — a BSP violation. A real Redis failure must surface, not be masked.
+
+    Fakeredis is selectable ONLY by an explicit dev/test flag
+    (BRAVE_USE_FAKEREDIS=1). It is fail-closed by default: with the flag unset,
+    a ping failure raises and the request/webhook fails loudly.
     """
     global _redis_client
     if _redis_client is None:
-        redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-        try:
-            client = Redis.from_url(redis_url, socket_connect_timeout=1)
-            client.ping()
-            _redis_client = client
-        except Exception:
-            # Fallback to fakeredis for development without a Redis container
+        if os.environ.get("BRAVE_USE_FAKEREDIS", "").lower() in ("1", "true", "yes"):
+            # Explicit dev/test opt-in only — never a production fallback.
+            import fakeredis
+
             _redis_client = fakeredis.FakeRedis()
+            return _redis_client
+
+        redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        client = Redis.from_url(redis_url, socket_connect_timeout=1)
+        client.ping()  # let it raise in prod — do NOT swallow (CR-02)
+        _redis_client = client
     return _redis_client

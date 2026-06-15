@@ -20,9 +20,13 @@ Design (RESEARCH.md §Quality Rating Auto-Pause):
   RED    → set key (pause all sends immediately)
 """
 
+import structlog
 from redis import Redis
+from redis.exceptions import RedisError
 
 QUALITY_RED_KEY = "wa:quality_red"
+
+logger = structlog.get_logger(__name__)
 
 
 def is_quality_red(redis_client: Redis) -> bool:
@@ -31,13 +35,24 @@ def is_quality_red(redis_client: Redis) -> bool:
     Called as gate condition 8 in send_path_gate. Pure Redis read — no network,
     no DB. Fully offline-testable with fakeredis.
 
+    CR-02 fail-closed: if Redis cannot be reached to read the flag, treat the
+    rating as RED (return True) so the send is BLOCKED. A RED auto-pause that
+    cannot be verified must never be assumed clear — silently passing would let
+    sends continue during a quality incident (BSP violation).
+
     Args:
         redis_client: Redis client (real or fakeredis).
 
     Returns:
-        True if wa:quality_red key exists (pause is active), False otherwise.
+        True if wa:quality_red key exists OR Redis is unreachable (fail-closed);
+        False only when Redis confirms the flag is absent.
     """
-    return redis_client.exists(QUALITY_RED_KEY) > 0
+    try:
+        return redis_client.exists(QUALITY_RED_KEY) > 0
+    except RedisError as exc:
+        # Fail-closed: cannot confirm quality is OK → block the send.
+        logger.error("quality_flag_check_unreachable_fail_closed", error=str(exc))
+        return True
 
 
 def set_quality_flag(redis_client: Redis, rating: str) -> None:
