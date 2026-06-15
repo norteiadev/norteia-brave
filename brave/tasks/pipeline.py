@@ -442,3 +442,289 @@ def push_destination_task(self, rio_id: str) -> None:
     finally:
         session.close()
         engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — Atrativos lane FSM tasks (D-01/D-02)
+# ---------------------------------------------------------------------------
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name="brave.discover_atrativo",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=600,  # Places API can be slow — 10 min limit
+)
+def discover_atrativo_task(self, uf: str) -> None:
+    """Fan-out attraction discovery for one UF (sub_state → discovered).
+
+    Sweeps Google Places for attractions in the given UF, resolves parent
+    destinos from Mar, extracts via DeepSeek/instructor, and writes to Nascente.
+
+    Idempotency: store_raw is idempotent by content_hash (D-03).
+    Error handling: transient → retry; permanent → quarantine_poison.
+    Client selection: real clients only when run_real_externals=True (D-18).
+
+    Args:
+        uf: Two-letter Brazilian state code (e.g. "BA", "RJ").
+    """
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.core.quarantine import quarantine_poison as _quarantine
+
+    session, engine = _get_session()
+    try:
+        app_config = AppConfig()
+        config = ScoreConfig()
+
+        # Select Places client based on run_real_externals flag
+        if app_config.run_real_externals:
+            places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
+            from brave.clients.places import RealPlacesClient
+            places_client = RealPlacesClient(api_key=places_api_key)
+        else:
+            from tests.fakes.fake_places import FakePlacesClient
+            places_client = FakePlacesClient()
+
+        # Select LLM client based on run_real_externals flag
+        if app_config.run_real_externals:
+            from brave.clients.llm import RealLLMClient  # type: ignore[import]
+            llm_client = RealLLMClient(config=app_config.llm)
+        else:
+            from tests.fakes.fake_llm import FakeLLMClient
+            llm_client = FakeLLMClient()
+
+        agent = DiscoveryAgent(
+            places_client=places_client,
+            llm_client=llm_client,
+            session=session,
+            config=config,
+        )
+
+        asyncio.run(agent.produce(uf))
+        session.commit()
+
+    except PermanentError as exc:
+        session.rollback()
+        q_session, q_engine = _get_session()
+        try:
+            _quarantine(
+                session=q_session,
+                nascente_id=None,
+                task_name="brave.discover_atrativo",
+                error=str(exc),
+                payload={"uf": uf},
+            )
+            q_session.commit()
+        finally:
+            q_session.close()
+            q_engine.dispose()
+
+    except Exception as exc:
+        session.rollback()
+        try:
+            raise self.retry(exc=exc, max_retries=3)
+        except self.MaxRetriesExceededError:
+            q_session, q_engine = _get_session()
+            try:
+                _quarantine(
+                    session=q_session,
+                    nascente_id=None,
+                    task_name="brave.discover_atrativo",
+                    error=str(exc),
+                    payload={"uf": uf},
+                )
+                q_session.commit()
+            finally:
+                q_session.close()
+                q_engine.dispose()
+
+    finally:
+        session.close()
+        engine.dispose()
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name="brave.find_contacts",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=300,
+)
+def find_contacts_task(self, rio_id: str) -> None:
+    """Advance one RioRecord from discovered → contacts_found (ContactFinderAgent).
+
+    Idempotency guard: ContactFinderAgent.run() short-circuits if sub_state != "discovered".
+    Client selection: real clients only when run_real_externals=True (D-18).
+
+    Args:
+        rio_id: UUID string of the RioRecord to advance.
+    """
+    from brave.lanes.atrativos.contact_finder_agent import ContactFinderAgent
+    from brave.core.quarantine import quarantine_poison as _quarantine
+
+    session, engine = _get_session()
+    try:
+        rio_uuid = uuid.UUID(rio_id)
+        rio = session.get(RioRecord, rio_uuid)
+        if rio is None:
+            raise PermanentError(f"RioRecord {rio_id} not found")
+
+        # Idempotency: ContactFinderAgent.run() handles sub_state guard internally
+        app_config = AppConfig()
+
+        if app_config.run_real_externals:
+            places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
+            from brave.clients.places import RealPlacesClient
+            places_client = RealPlacesClient(api_key=places_api_key)
+        else:
+            from tests.fakes.fake_places import FakePlacesClient
+            places_client = FakePlacesClient()
+
+        agent = ContactFinderAgent(
+            places_client=places_client,
+            session=session,
+        )
+
+        asyncio.run(agent.run(rio))
+        session.commit()
+
+    except PermanentError as exc:
+        session.rollback()
+        q_session, q_engine = _get_session()
+        try:
+            _quarantine(
+                session=q_session,
+                nascente_id=None,
+                task_name="brave.find_contacts",
+                error=str(exc),
+                payload={"rio_id": rio_id},
+            )
+            q_session.commit()
+        finally:
+            q_session.close()
+            q_engine.dispose()
+
+    except Exception as exc:
+        session.rollback()
+        try:
+            raise self.retry(exc=exc, max_retries=3)
+        except self.MaxRetriesExceededError:
+            q_session, q_engine = _get_session()
+            try:
+                _quarantine(
+                    session=q_session,
+                    nascente_id=None,
+                    task_name="brave.find_contacts",
+                    error=str(exc),
+                    payload={"rio_id": rio_id},
+                )
+                q_session.commit()
+            finally:
+                q_session.close()
+                q_engine.dispose()
+
+    finally:
+        session.close()
+        engine.dispose()
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name="brave.gather_signals",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=300,
+)
+def gather_signals_task(self, rio_id: str) -> None:
+    """Advance one RioRecord from contacts_found → signals_gathered → score (SignalAgent).
+
+    After SignalAgent.run():
+      - CLOSED_* places → routing=descarte, sub_state=None
+      - Open places → §7.6 scored; borderline → sub_state=aguardando_consulta_whatsapp
+
+    Idempotency guard: SignalAgent.run() short-circuits if sub_state != "contacts_found".
+
+    Args:
+        rio_id: UUID string of the RioRecord to advance.
+    """
+    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.core.quarantine import quarantine_poison as _quarantine
+
+    session, engine = _get_session()
+    try:
+        rio_uuid = uuid.UUID(rio_id)
+        rio = session.get(RioRecord, rio_uuid)
+        if rio is None:
+            raise PermanentError(f"RioRecord {rio_id} not found")
+
+        app_config = AppConfig()
+        config = ScoreConfig()
+
+        if app_config.run_real_externals:
+            places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
+            apify_api_key = os.environ.get("BRAVE_APIFY_API_KEY", "")
+            from brave.clients.places import RealPlacesClient
+            from brave.clients.apify import RealApifyClient
+            places_client = RealPlacesClient(api_key=places_api_key)
+            apify_client = RealApifyClient(api_key=apify_api_key)
+        else:
+            from tests.fakes.fake_places import FakePlacesClient
+            from tests.fakes.fake_apify import FakeApifyClient
+            places_client = FakePlacesClient()
+            apify_client = FakeApifyClient()
+
+        agent = SignalAgent(
+            places_client=places_client,
+            apify_client=apify_client,
+            session=session,
+            config=config,
+        )
+
+        asyncio.run(agent.run(rio))
+        session.commit()
+
+    except PermanentError as exc:
+        session.rollback()
+        q_session, q_engine = _get_session()
+        try:
+            _quarantine(
+                session=q_session,
+                nascente_id=None,
+                task_name="brave.gather_signals",
+                error=str(exc),
+                payload={"rio_id": rio_id},
+            )
+            q_session.commit()
+        finally:
+            q_session.close()
+            q_engine.dispose()
+
+    except Exception as exc:
+        session.rollback()
+        try:
+            raise self.retry(exc=exc, max_retries=3)
+        except self.MaxRetriesExceededError:
+            q_session, q_engine = _get_session()
+            try:
+                _quarantine(
+                    session=q_session,
+                    nascente_id=None,
+                    task_name="brave.gather_signals",
+                    error=str(exc),
+                    payload={"rio_id": rio_id},
+                )
+                q_session.commit()
+            finally:
+                q_session.close()
+                q_engine.dispose()
+
+    finally:
+        session.close()
+        engine.dispose()
