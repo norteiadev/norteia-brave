@@ -280,10 +280,34 @@ async def _send_opening_node(
     }
 
 
+def _persist_window_state(
+    rio: "RioRecord",
+    *,
+    window_open: bool,
+    last_inbound_at: str,
+) -> None:
+    """Persist the 24h-window state to rio.normalized so the gate can read it (WR-04).
+
+    The compliance gate's condition 5 reads ``rio.normalized["window_open"]``.
+    The conversation node previously only returned this in LangGraph state, which
+    the gate never sees — so condition 5 always saw the default True and the 24h
+    window was never enforced. This writes it (with flag_modified, the Phase 2
+    JSONB-mutation lesson) to the key the gate actually reads.
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    normalized = dict(rio.normalized or {})
+    normalized["window_open"] = window_open
+    normalized["last_inbound_at"] = last_inbound_at
+    rio.normalized = normalized
+    flag_modified(rio, "normalized")
+
+
 async def _recv_reply_node(
     state: ConversationState,
     *,
     session: "Session",
+    rio: "RioRecord",
 ) -> dict[str, Any]:
     """Node: receive an inbound reply, detect opt-out, check 24h window.
 
@@ -293,6 +317,11 @@ async def _recv_reply_node(
       - record_opt_out() is called immediately
       - state["opted_out"] = True
       - graph routes to finalize_node (conditional edge in build_graph)
+
+    WR-04: the 24h window is computed against the GENUINE previous inbound
+    timestamp (the one persisted before this reply), then both ``window_open``
+    and the new ``last_inbound_at`` are persisted to rio.normalized so the gate's
+    condition 5 reads a real value instead of the default True.
 
     Returns:
         State update dict.
@@ -308,9 +337,14 @@ async def _recv_reply_node(
     # does not opt the contact out.
     detected_keyword: str | None = _detect_opt_out_keyword(message_text)
 
+    now_iso = now_utc.isoformat()
+
     if detected_keyword is not None:
         # LGPD opt-out must be honored immediately — write record and route to finalize
         record_opt_out(session=session, phone_e164=contact_phone, keyword=detected_keyword)
+        # Persist window state even on opt-out so the gate never reads a stale True
+        # (no send happens on this path, but keep rio.normalized consistent).
+        _persist_window_state(rio, window_open=False, last_inbound_at=now_iso)
         session.flush()
 
         logger.info(
@@ -322,21 +356,21 @@ async def _recv_reply_node(
 
         return {
             "opted_out": True,
-            "last_inbound_at": now_utc.isoformat(),
+            "window_open": False,
+            "last_inbound_at": now_iso,
         }
 
-    # Check 24h window — compare last_inbound_at to now
+    # WR-04: an inbound reply reopens the BSP 24h customer-service window. The
+    # follow-up sent later in this same resume is therefore within the window.
+    # We persist window_open=True keyed to THIS inbound's timestamp; a future
+    # send-time check (e.g. a scheduled re-engagement after a long gap) compares
+    # against last_inbound_at and would mark the window closed once >24h elapses.
     window_open = True
-    if state.get("last_inbound_at"):
-        try:
-            last_at = datetime.fromisoformat(state["last_inbound_at"])
-            if (now_utc - last_at).total_seconds() > 86400:
-                window_open = False
-        except ValueError:
-            pass  # malformed timestamp — treat as open (conservative)
+    _persist_window_state(rio, window_open=window_open, last_inbound_at=now_iso)
+    session.flush()
 
     return {
-        "last_inbound_at": now_utc.isoformat(),
+        "last_inbound_at": now_iso,
         "window_open": window_open,
         "opted_out": False,
     }
@@ -702,6 +736,7 @@ def build_graph(
     recv_reply = functools.partial(
         _recv_reply_node,
         session=session,
+        rio=rio,
     )
     extract_answers = functools.partial(
         _extract_answers_node,

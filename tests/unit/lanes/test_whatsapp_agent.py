@@ -109,7 +109,7 @@ async def test_opt_out_keyword_routes_to_end() -> None:
     state["message_text"] = "SAIR"
 
     with patch("brave.compliance.consent_log.record_opt_out") as mock_opt_out:
-        result = await _recv_reply_node(state, session=session)
+        result = await _recv_reply_node(state, session=session, rio=_make_rio())
 
     # opted_out=True must be in the state update
     assert result.get("opted_out") is True
@@ -133,10 +133,33 @@ async def test_opt_out_keyword_with_politeness_filler() -> None:
     state["message_text"] = "quero sair, obrigado"
 
     with patch("brave.compliance.consent_log.record_opt_out") as mock_opt_out:
-        result = await _recv_reply_node(state, session=session)
+        result = await _recv_reply_node(state, session=session, rio=_make_rio())
 
     assert result.get("opted_out") is True
     mock_opt_out.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_recv_reply_persists_window_state_to_normalized() -> None:
+    """WR-04: recv_reply_node persists window_open + last_inbound_at to rio.normalized.
+
+    The gate reads rio.normalized["window_open"]; the node previously only put it
+    in LangGraph state, so the gate never saw it. After a normal inbound reply the
+    window must be persisted as open.
+    """
+    session = _make_session()
+    rio = _make_rio()
+    rio.normalized = {}  # start with no window key
+    state = _make_initial_state()
+    state["message_text"] = "Sim, estamos funcionando normalmente"
+
+    result = await _recv_reply_node(state, session=session, rio=rio)
+
+    assert result.get("window_open") is True
+    # Persisted where the gate reads it (rio.normalized), not just LangGraph state.
+    assert rio.normalized.get("window_open") is True
+    assert rio.normalized.get("last_inbound_at") == result.get("last_inbound_at")
+    session.flush.assert_called()
 
 
 @pytest.mark.asyncio
@@ -147,7 +170,7 @@ async def test_opt_out_keyword_in_sentence_not_detected() -> None:
     state["message_text"] = "Obrigado mas vamos parar amanhã"
 
     with patch("brave.compliance.consent_log.record_opt_out") as mock_opt_out:
-        result = await _recv_reply_node(state, session=session)
+        result = await _recv_reply_node(state, session=session, rio=_make_rio())
 
     assert result.get("opted_out") is False
     mock_opt_out.assert_not_called()
@@ -181,7 +204,7 @@ async def test_opt_out_no_false_positive_on_substring(message_text: str) -> None
     state["message_text"] = message_text
 
     with patch("brave.compliance.consent_log.record_opt_out") as mock_opt_out:
-        result = await _recv_reply_node(state, session=session)
+        result = await _recv_reply_node(state, session=session, rio=_make_rio())
 
     assert result.get("opted_out") is False, (
         f"false-positive opt-out on legitimate reply: {message_text!r}"
@@ -198,7 +221,7 @@ async def test_opt_out_bare_keyword_variants(message_text: str) -> None:
     state["message_text"] = message_text
 
     with patch("brave.compliance.consent_log.record_opt_out") as mock_opt_out:
-        result = await _recv_reply_node(state, session=session)
+        result = await _recv_reply_node(state, session=session, rio=_make_rio())
 
     assert result.get("opted_out") is True, f"bare keyword not detected: {message_text!r}"
     mock_opt_out.assert_called_once()
