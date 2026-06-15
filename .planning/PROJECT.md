@@ -21,6 +21,7 @@ Only **validated, reliability-scored canonical records reach the platform** — 
 - ✓ **Observability** (`llm_generations`, enforcing USD cost guard, per-layer metrics, audit, FastAPI surface) — Phase 1
 - ✓ **Frozen idempotent Mar→norteia-api Pact contract** + error-report webhook (shared-secret auth) — Phase 1
 - ✓ **Destinos lane** — MturSeedIngest (origem=100, bundled seed CSV), NotebookLMIngest (origem=80, IBGE-match corroboração boost), DesmembramentoAgent (origem=40, instructor Mode.Tools + validate-or-quarantine), DLQ steward validate + batch-by-state → Mar → idempotent push to `destinations`; origem=40 firewall + threshold_dlq=40 calibration; 191 offline tests — Phase 2
+- ✓ **Atrativos lane (WhatsApp + Compliance)** — DiscoveryAgent (Places sweep + DeepSeek map, parent-destino resolved from Mar, place_id cache only), ContactFinderAgent, SignalAgent (CLOSED_* hard descarte, reviews≤30d atualidade, Apify best-effort); persisted resumable `sub_state` FSM (Celery, idempotent, SELECT FOR UPDATE, audit on transition); human WhatsApp gate FastAPI router + Redis volume ramp (CR-04 atomic); LangGraph WhatsAppAgent (Sonnet PT-BR ask + DeepSeek extract, AsyncPostgresSaver persistence, n8n thin transport); owner-validation → re-score → `push_attraction`; hard code-enforced send-path LGPD+BSP gate (consent log, anchored opt-out, 24h window, approved templates, quality-rating auto-pause) — 87 offline unit + 20 integration tests; code review found+fixed 4 blockers + 9 warnings — Phase 3. **Human-UAT pending:** live Twilio send, concurrency stress, 24h-window time-trace.
 
 ### Active
 
@@ -115,4 +116,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-12 after Phase 2 (Destinos Lane) completion*
+*Last updated: 2026-06-15 after Phase 3 (Atrativos Lane — WhatsApp + Compliance) completion*
