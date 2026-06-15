@@ -109,7 +109,7 @@ Plans:
 Plans:
 **Wave 1** *(package gate + scaffold — run first)*
 
-- [ ] 03-01-PLAN.md — Package legitimacy gate (langgraph-checkpoint-postgres), ConsentLog model + Alembic migration 0004, WhatsAppConfig + RampConfig settings, atrativos schemas (AtrativoResult/ContactResult/SignalResult/ConversationExtractionResult), FakeApifyClient + FakeWhatsAppClient + NullWhatsAppClient
+- [x] 03-01-PLAN.md — Package legitimacy gate (langgraph-checkpoint-postgres), ConsentLog model + Alembic migration 0004, WhatsAppConfig + RampConfig settings, atrativos schemas (AtrativoResult/ContactResult/SignalResult/ConversationExtractionResult), FakeApifyClient + FakeWhatsAppClient + NullWhatsAppClient
 
 **Wave 2** *(depends on Wave 1)*
 
@@ -153,5 +153,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
 | 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
-| 3. Atrativos Lane (WhatsApp + Compliance) | 0/5 | Not started | - |
+| 3. Atrativos Lane (WhatsApp + Compliance) | 1/5 | In Progress|  |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
