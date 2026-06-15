@@ -227,3 +227,45 @@ async def test_signal_agent_advances_sub_state_for_open_place() -> None:
     # The agent sets atualidade_value in the normalized dict
     atualidade = rio.normalized.get("atualidade_value", 0)
     assert atualidade > 0, f"Expected atualidade_value > 0 for recent review, got {atualidade}"
+
+
+# ---------------------------------------------------------------------------
+# WR-08: _compute_corroboracao — no catch-all, correct posts_count key
+# ---------------------------------------------------------------------------
+
+
+def test_corroboracao_empty_dict_is_zero() -> None:
+    from brave.lanes.atrativos.signal_agent import _compute_corroboracao
+
+    assert _compute_corroboracao({}) == 0.0
+
+
+def test_corroboracao_inactive_profile_is_zero() -> None:
+    """WR-08: a found-but-inactive / error-shaped dict (0 followers, no posts)
+    must score 0.0 — not 40.0 via the old `or len(ig_data) > 0` catch-all."""
+    from brave.lanes.atrativos.signal_agent import _compute_corroboracao
+
+    assert _compute_corroboracao({"handle": "@x", "followers": 0, "posts_count": 0}) == 0.0
+    assert _compute_corroboracao({"error": "not_found"}) == 0.0
+
+
+def test_corroboracao_active_followers_is_forty() -> None:
+    from brave.lanes.atrativos.signal_agent import _compute_corroboracao
+
+    assert _compute_corroboracao({"followers": 1200}) == 40.0
+
+
+def test_corroboracao_uses_posts_count_key_not_post_count() -> None:
+    """WR-08: the apify client writes 'posts_count' — the old code read 'post_count'."""
+    from brave.lanes.atrativos.signal_agent import _compute_corroboracao
+
+    # Correct key drives the signal.
+    assert _compute_corroboracao({"followers": 0, "posts_count": 12}) == 40.0
+    # Old (wrong) key must NOT drive the signal.
+    assert _compute_corroboracao({"followers": 0, "post_count": 12}) == 0.0
+
+
+def test_corroboracao_recent_last_post_is_forty() -> None:
+    from brave.lanes.atrativos.signal_agent import _compute_corroboracao
+
+    assert _compute_corroboracao({"followers": 0, "last_post": "2026-06-01"}) == 40.0

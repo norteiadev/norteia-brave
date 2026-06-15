@@ -308,8 +308,15 @@ class SignalAgent:
 def _compute_corroboracao(ig_data: dict[str, Any]) -> float:
     """Compute corroboracao_value from Apify IG data.
 
-    Apify confirms active IG presence → 40.0 (partial corroboration).
-    No Apify data or empty → 0.0.
+    A genuinely active IG presence (real followers OR a real post signal) →
+    40.0 (partial corroboration). An empty dict, or a found-but-inactive/
+    error-shaped dict (0 followers, no posts), scores 0.0.
+
+    WR-08: the previous implementation returned 40.0 for ANY non-empty dict via
+    an `or len(ig_data) > 0` catch-all, making the has_followers/has_posts checks
+    dead — an inactive or error-shaped profile still scored full corroboração.
+    It also read "post_count" while the apify client writes "posts_count", so
+    that branch never fired. Both are fixed here.
 
     Args:
         ig_data: Dict from ApifyClientProtocol.scrape_ig(), may be empty.
@@ -320,11 +327,11 @@ def _compute_corroboracao(ig_data: dict[str, Any]) -> float:
     if not ig_data:
         return 0.0
 
-    # Any non-empty Apify result indicates IG presence
-    has_followers = ig_data.get("followers", 0) > 0
-    has_posts = bool(ig_data.get("last_post") or ig_data.get("post_count", 0) > 0)
+    # Real activity signals only — no catch-all on dict non-emptiness.
+    has_followers = int(ig_data.get("followers", 0) or 0) > 0
+    has_posts = bool(ig_data.get("last_post")) or int(ig_data.get("posts_count", 0) or 0) > 0
 
-    if has_followers or has_posts or len(ig_data) > 0:
+    if has_followers or has_posts:
         return 40.0
 
     return 0.0
