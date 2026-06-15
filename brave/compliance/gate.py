@@ -27,7 +27,7 @@ Ramp counter uses CR-04 reserve-before-call hardening (D-07):
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -55,14 +55,18 @@ class ComplianceError(Exception):
 
 
 def _next_utc_midnight() -> datetime:
-    """Return the next UTC midnight as a datetime (for EXPIREAT TTL on ramp counter)."""
+    """Return the next UTC midnight as a datetime (for EXPIREAT TTL on ramp counter).
+
+    WR-05: use timedelta arithmetic. The previous ``replace(day=day + 1)`` raised
+    ValueError on the last day of any month (e.g. day=32 on Jan 31). That
+    exception propagated out of check_and_increment_ramp AFTER the INCR but
+    before the DECR, permanently inflating the daily ramp counter and breaking
+    month-end outreach.
+    """
     now = datetime.now(timezone.utc)
-    # Replace time components with midnight, then advance to next day
-    tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if tomorrow <= now:
-        # Already past midnight of today — advance one full day
-        from datetime import timedelta
-        tomorrow = tomorrow.replace(day=tomorrow.day + 1)
+    tomorrow = (now + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     return tomorrow
 
 

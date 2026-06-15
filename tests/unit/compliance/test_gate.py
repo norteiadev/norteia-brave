@@ -452,3 +452,52 @@ def test_check_and_increment_ramp_decrements_on_cap_breach() -> None:
         check_and_increment_ramp(redis, cap)
 
     assert int(redis.get(key)) == cap, "Counter must be decremented back to cap after breach"
+
+
+# ---------------------------------------------------------------------------
+# WR-05: _next_utc_midnight must not raise on month/year boundaries
+# ---------------------------------------------------------------------------
+
+
+def test_next_utc_midnight_returns_valid_future_midnight() -> None:
+    """_next_utc_midnight returns the next UTC midnight (no ValueError, ever)."""
+    from datetime import datetime, timezone
+
+    from brave.compliance.gate import _next_utc_midnight
+
+    result = _next_utc_midnight()
+    now = datetime.now(timezone.utc)
+    assert result > now
+    assert result.hour == 0 and result.minute == 0 and result.second == 0
+    assert (result - now).total_seconds() <= 86400
+
+
+def test_next_utc_midnight_no_valueerror_on_month_end() -> None:
+    """WR-05 regression: month-end dates (Jan 31, Feb 28, Dec 31) must not raise.
+
+    The old replace(day=day+1) raised 'day is out of range for month' on the last
+    day of a month, which propagated after the ramp INCR and inflated the counter.
+    """
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import patch
+
+    import brave.compliance.gate as gate_mod
+
+    month_end_dates = [
+        datetime(2026, 1, 31, 15, 0, tzinfo=timezone.utc),  # Jan 31 → Feb 1
+        datetime(2026, 2, 28, 23, 30, tzinfo=timezone.utc),  # Feb 28 → Mar 1
+        datetime(2026, 12, 31, 10, 0, tzinfo=timezone.utc),  # Dec 31 → next year
+        datetime(2024, 2, 29, 12, 0, tzinfo=timezone.utc),  # leap-day → Mar 1
+    ]
+    for fixed_now in month_end_dates:
+        class _FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):  # type: ignore[override]
+                return fixed_now
+
+        with patch.object(gate_mod, "datetime", _FixedDatetime):
+            result = gate_mod._next_utc_midnight()
+        expected = (fixed_now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        assert result == expected, f"wrong next-midnight for {fixed_now}"
