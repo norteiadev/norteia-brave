@@ -35,16 +35,26 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 logger = structlog.get_logger(__name__)
 
 
 def _is_twilio_5xx(exc: BaseException) -> bool:
-    """Return True if exc is a Twilio 5xx server error (retryable)."""
+    """Return True if exc is a transient Twilio error (retryable): 5xx or 429.
+
+    WR-01: only server errors (>=500) and rate-limit (429) are retried. 4xx auth /
+    validation errors (401/400/404) are NOT retryable and must fail fast.
+    """
     try:
         from twilio.base.exceptions import TwilioRestException
-        return isinstance(exc, TwilioRestException) and exc.status >= 500
+
+        if not isinstance(exc, TwilioRestException):
+            return False
+        status = getattr(exc, "status", None)
+        if status is None:
+            return False
+        return status >= 500 or status == 429
     except ImportError:
         return False
 
@@ -125,7 +135,10 @@ class TwilioWhatsAppClient:
         return result
 
     @retry(
-        retry=retry_if_exception_type(Exception),
+        # WR-01: retry only transient Twilio 5xx (incl. 429) — never 4xx auth /
+        # malformed-request errors, which must fail fast (retrying a bad send is
+        # wasteful and compounds rate-limit pressure).
+        retry=retry_if_exception(_is_twilio_5xx),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,

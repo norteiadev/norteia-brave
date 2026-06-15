@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 logger = structlog.get_logger(__name__)
 
@@ -35,14 +35,35 @@ logger = structlog.get_logger(__name__)
 
 
 def _is_retryable(exc: BaseException) -> bool:
-    """Determine if an exception is retryable (429 / 5xx / connection error)."""
+    """Determine if an exception is retryable (429 / 5xx / connection error).
+
+    WR-01: this is wired into the @retry predicate on text_search / place_details
+    so that non-transient errors (auth 401/403, invalid-argument 400, not-found)
+    fail fast instead of being retried 3x with backoff.
+    """
     exc_name = type(exc).__name__
     # google-maps-places raises various transport errors
-    if "GoogleAPICallError" in exc_name or "ServiceUnavailable" in exc_name:
+    if (
+        "ServiceUnavailable" in exc_name
+        or "TooManyRequests" in exc_name
+        or "ResourceExhausted" in exc_name
+        or "DeadlineExceeded" in exc_name
+        or "InternalServerError" in exc_name
+        or "Aborted" in exc_name
+    ):
         return True
-    # Rate limit errors typically raise with "429" in message or as Timeout
+    # Rate limit / transport errors typically raise as Timeout / ConnectionError
     if "Timeout" in exc_name or "ConnectionError" in exc_name:
         return True
+    # Retry generic GoogleAPICallError only when its code indicates transient
+    code = getattr(exc, "code", None)
+    if code is not None:
+        try:
+            code_val = int(getattr(code, "value", code))
+            if code_val in (429, 500, 502, 503, 504):
+                return True
+        except (TypeError, ValueError):
+            pass
     return False
 
 
@@ -101,7 +122,7 @@ class RealPlacesClient:
         return self._client
 
     @retry(
-        retry=retry_if_exception_type(Exception),
+        retry=retry_if_exception(_is_retryable),  # WR-01: transient only
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
@@ -154,7 +175,7 @@ class RealPlacesClient:
         return results
 
     @retry(
-        retry=retry_if_exception_type(Exception),
+        retry=retry_if_exception(_is_retryable),  # WR-01: transient only
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,

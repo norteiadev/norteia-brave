@@ -27,7 +27,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 logger = structlog.get_logger(__name__)
 
@@ -38,6 +38,28 @@ logger = structlog.get_logger(__name__)
 
 # Instagram scraper Actor — reads business profile metadata (best-effort, read-only)
 APIFY_IG_ACTOR_ID = "apify/instagram-profile-scraper"
+
+
+# ---------------------------------------------------------------------------
+# Retry policy — transient errors only (WR-01)
+# ---------------------------------------------------------------------------
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Return True for transient Apify errors only (rate-limit / 5xx / transport).
+
+    WR-01: a 4xx (auth, invalid handle/actor, not-found) must fail fast — the
+    SignalAgent catches it and degrades the corroboração signal. Retrying a
+    permanent client error 3x with backoff only delays the (best-effort) lane.
+    """
+    exc_name = type(exc).__name__
+    if "Timeout" in exc_name or "ConnectionError" in exc_name:
+        return True
+    # apify-client raises ApifyApiError with a .status_code attribute
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if isinstance(status, int):
+        return status == 429 or status >= 500
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +98,7 @@ class RealApifyClient:
         self._api_key = api_key
 
     @retry(
-        retry=retry_if_exception_type(Exception),
+        retry=retry_if_exception(_is_retryable),  # WR-01: transient only
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
