@@ -73,3 +73,47 @@ class FakePlacesClient:
 def _check_protocol_compliance() -> None:
     """Compile-time structural typing assertion (not called at runtime)."""
     _client: PlacesClientProtocol = FakePlacesClient()  # noqa: F841
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Signal fixture constants for SignalAgent tests (D-05)
+# ---------------------------------------------------------------------------
+
+SIGNAL_FIXTURE_OPEN: dict[str, Any] = {
+    "place_id": "ChIJtest001",
+    "business_status": "OPERATIONAL",
+    "weekday_text": [
+        "Monday: 9:00 AM – 5:00 PM",
+        "Tuesday: 9:00 AM – 5:00 PM",
+        "Wednesday: 9:00 AM – 5:00 PM",
+        "Thursday: 9:00 AM – 5:00 PM",
+        "Friday: 9:00 AM – 5:00 PM",
+        "Saturday: 10:00 AM – 3:00 PM",
+        "Sunday: Closed",
+    ],
+    "reviews": [
+        {
+            "publishTime": "2026-06-01T12:00:00Z",
+            "rating": 5,
+            "text": "Ótimo lugar! Muito bonito e bem organizado.",
+        }
+    ],
+}
+"""Open-place fixture for SignalAgent tests.
+
+business_status=OPERATIONAL + recent review (within 30 days of 2026-06-15).
+Use to test the happy-path score path: atualidade_value=100, no descarte.
+"""
+
+SIGNAL_FIXTURE_CLOSED: dict[str, Any] = {
+    "place_id": "ChIJtest002",
+    "business_status": "CLOSED_PERMANENTLY",
+    "weekday_text": [],
+    "reviews": [],
+}
+"""Closed-place fixture for SignalAgent tests.
+
+business_status=CLOSED_PERMANENTLY → hard descarte before §7.6 scoring (D-05).
+Use to test that SignalAgent sets routing=descarte and sub_state=None
+without calling route_by_score.
+"""

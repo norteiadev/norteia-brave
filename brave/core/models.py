@@ -7,6 +7,7 @@ Tables (D-01):
   - llm_generations   — LLM call observability (D-20)
   - audit_log         — steward + pipeline audit trail (D-21, OBS-04)
   - poison_quarantine — Celery poison messages (separate from §7.6 DLQ)
+  - consent_log       — LGPD consent and opt-out log per contact (COMP-01, D-11)
 
 Key design decisions implemented here:
   D-01: Table-per-layer (not a mega-table with a state column)
@@ -23,6 +24,7 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -336,3 +338,60 @@ Index(
     RioRecord.municipio_id,
     RioRecord.entity_type,
 )
+
+
+# ---------------------------------------------------------------------------
+# ConsentLog — LGPD consent and opt-out log per contact (COMP-01, D-11)
+# ---------------------------------------------------------------------------
+
+
+class ConsentLog(Base):
+    """LGPD consent and opt-out log per contact (COMP-01, D-11).
+
+    Separate from audit_log because it serves a different query pattern:
+      audit_log   = historical trail (append-only reads)
+      consent_log = real-time suppression lookup (is_opted_out check before every send)
+
+    Indexed on phone_e164 for fast suppression lookups.
+    FK to rio_records.id enforces that every consent row belongs to a valid atrativo (T-03-01-01).
+    """
+
+    __tablename__ = "consent_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    phone_e164: Mapped[str] = mapped_column(
+        String(32), nullable=False, index=True
+    )
+    rio_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("rio_records.id"), nullable=False
+    )
+    legal_basis: Mapped[str] = mapped_column(String(128), nullable=False)
+    norteia_identified: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    opted_out: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    opted_out_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    opted_out_keyword: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    first_contact_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_contact_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    purpose: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="business_validation"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    # Relationship to RioRecord (FK: rio_id)
+    rio: Mapped["RioRecord"] = relationship("RioRecord", foreign_keys=[rio_id])
+
+    def __repr__(self) -> str:
+        return (
+            f"<ConsentLog id={self.id} phone_prefix={self.phone_e164[:5]!r} "
+            f"opted_out={self.opted_out}>"
+        )
