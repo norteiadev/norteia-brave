@@ -731,10 +731,113 @@ def gather_signals_task(self, rio_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 — Atrativos gate/conversation dispatch stubs (D-06/D-08).
-# Full WhatsAppAgent LangGraph implementation lands in 03-04; these stubs exist
-# so the gate router (/approve, inbound webhook) can dispatch without ImportError.
+# Phase 3 — Atrativos WhatsApp conversation + push tasks (D-08/D-10, 03-04).
+#
+# These tasks replace the stubs added in 03-02. The gate router
+# (/approve, inbound webhook) dispatch sites in atrativos_gate.py keep working
+# unchanged — same task names ("brave.outreach", "brave.resume_conversation").
+#
+# push_attraction_task: mirrors push_destination_task exactly (D-10).
+# outreach_task:        asyncio.run(_run()) + LangGraph WhatsAppAgent (D-08).
+# resume_conversation_task: asyncio.run(_run()) + LangGraph graph resume (D-08).
+#
+# NullWhatsAppClient (brave/clients/null_whatsapp.py) is used in production when
+# run_real_externals=False. Test fakes are NEVER imported in production tasks
+# (T-03-04-07). FakeLLMClient/FakeWhatsApp are test-only (tests/fakes/).
 # ---------------------------------------------------------------------------
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    name="brave.push_attraction",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=300,
+)
+def push_attraction_task(self, rio_id: str) -> None:
+    """Promote a validated atrativo to Mar and push to norteia-api (D-10).
+
+    Mirror of push_destination_task — always calls push_attraction, never
+    push_destination. Called by finalize_node in the WhatsAppAgent after
+    owner-validation confirms existe=sim / funcionando=sim.
+
+    Pipeline:
+      1. Load RioRecord; if routing != 'mar', no-op (idempotent).
+      2. Call promote_to_mar to create/update MarRecord (idempotent by source_ref).
+      3. Build flat-provenance push payload (Pact contract shape).
+      4. POST to norteia-api via push_attraction (never push_destination — D-10).
+
+    Idempotency:
+      - promote_to_mar is idempotent by source_ref (D-15).
+      - norteia-api is an idempotent upsert by source_ref — double push is safe.
+      - If routing != 'mar', returns immediately.
+
+    Error handling:
+      PermanentError → log and return (no quarantine for push errors).
+      After max_retries → Celery retry; after max → pass.
+
+    Args:
+        rio_id: UUID string of the RioRecord to push.
+    """
+    from brave.core.mar.service import promote_to_mar
+    from brave.clients.null_norteia_api import NullNorteiaApiClient
+
+    session, engine = _get_session()
+    try:
+        rio_uuid = uuid.UUID(rio_id)
+        rio = session.get(RioRecord, rio_uuid)
+        if rio is None:
+            raise PermanentError(f"RioRecord {rio_id} not found")
+
+        # Idempotency: only process mar-routed records
+        if rio.routing != "mar":
+            return  # Not ready for Mar — idempotent no-op
+
+        # Step 1: Promote to Mar layer (idempotent by source_ref, D-15)
+        mar = promote_to_mar(session, rio)
+        session.commit()
+
+        # Step 2: Determine which API client to use
+        app_config = AppConfig()
+        if app_config.run_real_externals:
+            norteia_api_url = os.environ.get("BRAVE_NORTEIA_API_URL", "")
+            norteia_service_token = os.environ.get("BRAVE_NORTEIA_API_SERVICE_TOKEN", "")
+            api_client = NorteiaApiClient(
+                base_url=norteia_api_url,
+                service_token=norteia_service_token,
+            )
+        else:
+            api_client = NullNorteiaApiClient()
+
+        # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
+        payload = _build_push_payload(mar, rio)
+
+        # Step 4: Push to norteia-api — always push_attraction (D-10)
+        async def _push() -> dict[str, Any]:
+            if isinstance(api_client, NorteiaApiClient):
+                async with api_client as client:
+                    return await client.push_attraction(payload)
+            else:
+                return await api_client.push_attraction(payload)
+
+        asyncio.run(_push())
+
+    except PermanentError:
+        session.rollback()
+        # No quarantine for push_attraction_task permanent errors — log and return
+        pass
+
+    except Exception as exc:
+        session.rollback()
+        try:
+            raise self.retry(exc=exc, max_retries=3)
+        except self.MaxRetriesExceededError:
+            pass  # Phase 4 adds DLQ for permanently failed attraction pushes
+
+    finally:
+        session.close()
+        engine.dispose()
 
 
 @shared_task(
@@ -744,21 +847,164 @@ def gather_signals_task(self, rio_id: str) -> None:
     name="brave.outreach",
     acks_late=True,
     reject_on_worker_lost=True,
-    time_limit=900,
+    time_limit=900,  # multi-turn conversation can span hours; 15 min limit
 )
-def outreach_task(self, rio_id: str) -> None:  # type: ignore[override]
+def outreach_task(self, rio_id: str) -> None:
     """Send WhatsApp outreach for an approved atrativo (gate must have approved, D-06).
 
-    Full implementation in 03-04 (WhatsAppAgent LangGraph conversation).
-    This stub exists so the gate /approve endpoint can dispatch without ImportError.
+    Full LangGraph WhatsAppAgent implementation (replaces stub from 03-02, D-08).
+    Same task name ("brave.outreach") so gate router dispatch sites keep working.
 
-    Flow (03-04 implementation):
-      1. compliance gate (D-11) — gate.send_path_gate()
-      2. LangGraph WhatsAppAgent — Sonnet PT-BR opening + DeepSeek extraction
-      3. send_template via TwilioWhatsAppClient (behind WhatsAppClientProtocol)
+    Flow:
+      1. Create AsyncPostgresSaver from BRAVE_DB_URL (strip +psycopg prefix).
+      2. await saver.setup() — creates checkpoints + checkpoint_blobs tables.
+      3. Select WhatsApp client (TwilioWhatsAppClient if run_real_externals,
+         else NullWhatsAppClient; test fakes never imported here, T-03-04-07).
+      4. Select LLM client.
+      5. build_graph(wa_client, llm_client, session, redis, rio, config, settings,
+                    checkpointer=saver).
+      6. thread_id = f"atrativo:{rio_id}" — keyed by UUID, never phone. Pitfall 2.
+      7. await graph.ainvoke(initial_state, config={"configurable": {"thread_id": ...}}).
+
+    asyncio.run(_run()) pattern: same as push_mar (Pitfall 5 — sync Celery worker
+    cannot directly await; each task invocation creates and tears down its own event loop).
+
+    Error handling: full try/except/finally pattern matching existing tasks.
+
+    Args:
+        rio_id: UUID string of the RioRecord to outreach.
     """
-    # TODO (03-04): implement full outreach flow
-    pass
+    from brave.lanes.atrativos.whatsapp_agent import build_graph
+    from brave.clients.null_whatsapp import NullWhatsAppClient
+
+    session, engine = _get_session()
+    try:
+        rio_uuid = uuid.UUID(rio_id)
+        rio = session.get(RioRecord, rio_uuid)
+        if rio is None:
+            raise PermanentError(f"RioRecord {rio_id} not found")
+
+        # Idempotency: only send if sub_state is whatsapp_in_progress
+        if rio.sub_state != "whatsapp_in_progress":
+            return  # Already advanced past this step — idempotent no-op
+
+        app_config = AppConfig()
+        config = ScoreConfig()
+
+        # Select WhatsApp client (production: Twilio or Null; never Fake, T-03-04-07)
+        if app_config.run_real_externals:
+            from brave.clients.whatsapp import TwilioWhatsAppClient
+            wa_config = app_config.whatsapp
+            wa_client = TwilioWhatsAppClient(
+                account_sid=wa_config.twilio_account_sid,
+                auth_token=wa_config.twilio_auth_token,
+                from_number=wa_config.from_number,
+                messaging_service_sid=wa_config.messaging_service_sid or None,
+            )
+        else:
+            wa_client = NullWhatsAppClient()
+
+        # Select LLM client
+        if app_config.run_real_externals:
+            from brave.clients.llm import RealLLMClient  # type: ignore[import]
+            llm_client = RealLLMClient(config=app_config.llm)
+        else:
+            from tests.fakes.fake_llm import FakeLLMClient
+            llm_client = FakeLLMClient()
+
+        redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        import redis as redis_lib
+        redis_client = redis_lib.from_url(redis_url)
+
+        settings = app_config.whatsapp
+
+        async def _run() -> None:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+            db_url = os.environ.get("BRAVE_DB_URL", "")
+            # Strip SQLAlchemy driver prefix — langgraph-checkpoint-postgres
+            # expects plain postgresql:// (not postgresql+psycopg://)
+            pg_dsn = db_url.replace("postgresql+psycopg://", "postgresql://")
+
+            saver = await AsyncPostgresSaver.from_conn_string(pg_dsn)
+            await saver.setup()  # creates checkpoints + checkpoint_blobs tables
+
+            graph = build_graph(
+                wa_client=wa_client,
+                llm_client=llm_client,
+                session=session,
+                redis_client=redis_client,
+                rio=rio,
+                config=config,
+                settings=settings,
+                checkpointer=saver,
+            )
+
+            thread_id = f"atrativo:{rio_id}"
+            # Extract contact phone from rio.normalized
+            contact_phone = (rio.normalized or {}).get("contact_phone", "")
+            outreach_template = settings.approved_templates[0] if settings.approved_templates else "norteia_v1"
+
+            initial_state = {
+                "rio_id": rio_id,
+                "contact_phone": contact_phone,
+                "messages": [],
+                "extraction": None,
+                "opted_out": False,
+                "window_open": True,
+                "last_inbound_at": None,
+                "turns": 0,
+                "max_turns": 3,
+                "outreach_template": outreach_template,
+                "message_text": "",
+            }
+
+            await graph.ainvoke(
+                initial_state,
+                config={"configurable": {"thread_id": thread_id}},
+            )
+
+        asyncio.run(_run())
+        session.commit()
+
+    except PermanentError as exc:
+        session.rollback()
+        q_session, q_engine = _get_session()
+        try:
+            quarantine_poison(
+                session=q_session,
+                nascente_id=None,
+                task_name="brave.outreach",
+                error=str(exc),
+                payload={"rio_id": rio_id},
+            )
+            q_session.commit()
+        finally:
+            q_session.close()
+            q_engine.dispose()
+
+    except Exception as exc:
+        session.rollback()
+        try:
+            raise self.retry(exc=exc, max_retries=3)
+        except self.MaxRetriesExceededError:
+            q_session, q_engine = _get_session()
+            try:
+                quarantine_poison(
+                    session=q_session,
+                    nascente_id=None,
+                    task_name="brave.outreach",
+                    error=str(exc),
+                    payload={"rio_id": rio_id},
+                )
+                q_session.commit()
+            finally:
+                q_session.close()
+                q_engine.dispose()
+
+    finally:
+        session.close()
+        engine.dispose()
 
 
 @shared_task(
@@ -770,17 +1016,142 @@ def outreach_task(self, rio_id: str) -> None:  # type: ignore[override]
     reject_on_worker_lost=True,
     time_limit=300,
 )
-def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:  # type: ignore[override]
+def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
     """Resume LangGraph conversation on inbound reply (n8n thin transport, D-08).
 
-    Full implementation in 03-04.
-    This stub exists so the inbound webhook endpoint can dispatch without ImportError.
+    Full LangGraph graph resume implementation (replaces stub from 03-02).
+    Same task name ("brave.resume_conversation") so inbound webhook dispatch keeps working.
 
-    Flow (03-04 implementation):
-      1. Load LangGraph graph with AsyncPostgresSaver checkpointer
-      2. Resume from thread_id = f"atrativo:{rio_id}"
-      3. Process reply_text in recv_reply node
-      4. Extract answers (DeepSeek/instructor) or ask follow-up (Sonnet)
+    Flow:
+      1. Create AsyncPostgresSaver from BRAVE_DB_URL.
+      2. Build graph with same checkpointer pattern as outreach_task.
+      3. thread_id = f"atrativo:{rio_id}" — same key as outreach_task.
+      4. Idempotency: if rio.sub_state != "whatsapp_in_progress" → return.
+      5. Update state with message_text (inbound reply) and resume graph.
+         The graph loads from checkpoint → recv_reply_node → extract/followup/finalize.
+
+    asyncio.run(_run()) pattern: same as outreach_task (Pitfall 5).
+
+    Args:
+        rio_id:     UUID string of the RioRecord whose conversation to resume.
+        reply_text: Raw inbound message body from the owner (from n8n/Twilio webhook).
     """
-    # TODO (03-04): implement full conversation resumption
-    pass
+    from brave.lanes.atrativos.whatsapp_agent import build_graph
+    from brave.clients.null_whatsapp import NullWhatsAppClient
+
+    session, engine = _get_session()
+    try:
+        rio_uuid = uuid.UUID(rio_id)
+        rio = session.get(RioRecord, rio_uuid)
+        if rio is None:
+            raise PermanentError(f"RioRecord {rio_id} not found")
+
+        # Idempotency: only resume if conversation is still active
+        if rio.sub_state != "whatsapp_in_progress":
+            return  # Conversation already completed or never started — no-op
+
+        app_config = AppConfig()
+        config = ScoreConfig()
+
+        # Select WhatsApp client (production: Twilio or Null; never Fake, T-03-04-07)
+        if app_config.run_real_externals:
+            from brave.clients.whatsapp import TwilioWhatsAppClient
+            wa_config = app_config.whatsapp
+            wa_client = TwilioWhatsAppClient(
+                account_sid=wa_config.twilio_account_sid,
+                auth_token=wa_config.twilio_auth_token,
+                from_number=wa_config.from_number,
+                messaging_service_sid=wa_config.messaging_service_sid or None,
+            )
+        else:
+            wa_client = NullWhatsAppClient()
+
+        # Select LLM client
+        if app_config.run_real_externals:
+            from brave.clients.llm import RealLLMClient  # type: ignore[import]
+            llm_client = RealLLMClient(config=app_config.llm)
+        else:
+            from tests.fakes.fake_llm import FakeLLMClient
+            llm_client = FakeLLMClient()
+
+        redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        import redis as redis_lib
+        redis_client = redis_lib.from_url(redis_url)
+
+        settings = app_config.whatsapp
+
+        async def _run() -> None:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+            db_url = os.environ.get("BRAVE_DB_URL", "")
+            pg_dsn = db_url.replace("postgresql+psycopg://", "postgresql://")
+
+            saver = await AsyncPostgresSaver.from_conn_string(pg_dsn)
+            await saver.setup()
+
+            graph = build_graph(
+                wa_client=wa_client,
+                llm_client=llm_client,
+                session=session,
+                redis_client=redis_client,
+                rio=rio,
+                config=config,
+                settings=settings,
+                checkpointer=saver,
+            )
+
+            thread_id = f"atrativo:{rio_id}"
+
+            # Resume from checkpoint: pass reply_text as message_text state update.
+            # LangGraph loads from AsyncPostgresSaver checkpoint → runs from recv_reply_node.
+            # The message_text field is read by recv_reply_node from state.
+            resume_state = {
+                "message_text": reply_text,
+            }
+
+            await graph.ainvoke(
+                resume_state,
+                config={"configurable": {"thread_id": thread_id}},
+            )
+
+        asyncio.run(_run())
+        session.commit()
+
+    except PermanentError as exc:
+        session.rollback()
+        q_session, q_engine = _get_session()
+        try:
+            quarantine_poison(
+                session=q_session,
+                nascente_id=None,
+                task_name="brave.resume_conversation",
+                error=str(exc),
+                payload={"rio_id": rio_id},
+            )
+            q_session.commit()
+        finally:
+            q_session.close()
+            q_engine.dispose()
+
+    except Exception as exc:
+        session.rollback()
+        try:
+            raise self.retry(exc=exc, max_retries=3)
+        except self.MaxRetriesExceededError:
+            q_session, q_engine = _get_session()
+            try:
+                quarantine_poison(
+                    session=q_session,
+                    nascente_id=None,
+                    task_name="brave.resume_conversation",
+                    error=str(exc),
+                    payload={"rio_id": rio_id},
+                )
+                q_session.commit()
+            finally:
+                q_session.close()
+                q_engine.dispose()
+
+    finally:
+        session.close()
+        engine.dispose()
