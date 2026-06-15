@@ -34,6 +34,24 @@ Node layout:
 build_graph() factory injects all dependencies via closures. The checkpointer
 parameter is injectable so unit tests can pass MemorySaver instead of
 AsyncPostgresSaver.
+
+KNOWN LIMITATION — sync session across the asyncio boundary (WR-06):
+  The graph nodes mutate a synchronous SQLAlchemy Session (`session.flush()`)
+  from inside `async def` nodes driven by `asyncio.run(_run())` in the Celery
+  task, while AsyncPostgresSaver commits checkpoints on a SEPARATE async
+  connection. The two are NOT in a shared transaction, so on an exception path
+  the checkpoint can commit while the sync session rolls back (or vice-versa),
+  leaving partial state and a possible duplicate-send on task retry.
+
+  Mitigations in place until this is restructured to an async session (deferred):
+    - The FSM-advancing tasks hold a row-level lock (SELECT ... FOR UPDATE) on
+      the RioRecord for the whole task transaction (CR-04), serializing
+      concurrent resumes so two checkpoint resumes cannot interleave sends.
+    - The send path is idempotency-gated on sub_state and the consent-row upsert
+      (WR-09), and the ramp counter reserves before call (CR-04), bounding the
+      blast radius of a single duplicate attempt.
+  A full fix (async session, or moving all DB mutations into the sync task body
+  with nodes returning pure state deltas) is tracked as a follow-up.
 """
 
 from __future__ import annotations
@@ -596,15 +614,27 @@ async def _finalize_node(
 
     from sqlalchemy.orm.attributes import flag_modified
 
+    from brave.core.models import RioRecord
     from brave.core.rio.routing import reprocess_record as _reprocess
 
     extraction = state.get("extraction")
     opted_out = state.get("opted_out", False)
 
+    # WR-07: operate on a SINGLE freshly-fetched record, never the closure-captured
+    # `rio`. After asyncio.run boundaries and intermediate flushes the captured
+    # instance may be detached/stale; mixing it with the reprocessed record can
+    # read stale routing/normalized. Re-fetch here and use `record` throughout.
+    rio_uuid = uuid.UUID(state["rio_id"])
+    record = session.get(RioRecord, rio_uuid)
+    if record is None:
+        # Fall back to the captured instance only if the fetch fails (should not
+        # happen — the record exists for the whole conversation).
+        record = rio
+
     if opted_out:
         # Opt-out path — record is already marked in consent_log by recv_reply_node
-        rio.routing = "dlq"
-        rio.dlq_reason = "owner_opted_out"
+        record.routing = "dlq"
+        record.dlq_reason = "owner_opted_out"
         session.flush()
         logger.info("finalize_opted_out", rio_id=state["rio_id"])
         return {}
@@ -618,14 +648,14 @@ async def _finalize_node(
 
     if not owner_confirmed:
         # No answer or negative answer → DLQ
-        rio.routing = "dlq"
-        rio.dlq_reason = "owner_no_answer"
+        record.routing = "dlq"
+        record.dlq_reason = "owner_no_answer"
         session.flush()
         logger.info("finalize_no_answer", rio_id=state["rio_id"], extraction=extraction)
         return {}
 
     # Owner confirmed — raise validacao_humana_value to 100 and re-score
-    normalized = dict(rio.normalized or {})
+    normalized = dict(record.normalized or {})
     normalized["validacao_humana_value"] = 100.0
 
     # Store extracted data in normalized (horarios, valor)
@@ -634,12 +664,12 @@ async def _finalize_node(
     if extraction.get("valor"):
         normalized["owner_valor"] = extraction["valor"]
 
-    rio.normalized = normalized
-    flag_modified(rio, "normalized")
+    record.normalized = normalized
+    flag_modified(record, "normalized")
     session.flush()
 
     # Re-score via existing reprocess_record (D-10 — no new scoring branch)
-    reprocessed_rio = _reprocess(session, uuid.UUID(state["rio_id"]), score_config)
+    reprocessed_rio = _reprocess(session, rio_uuid, score_config)
     session.flush()
 
     logger.info(
