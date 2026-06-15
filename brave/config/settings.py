@@ -1,11 +1,17 @@
 """Pydantic-settings configuration hierarchy for norteia-brave.
 
 Three root config classes (D-10, D-12):
-  - ScoreConfig  — §7.6 weights and thresholds (env_prefix BRAVE_SCORE_)
-  - LLMConfig    — LLM provider slugs and budget (env_prefix BRAVE_LLM_)
-  - DBConfig     — database and Redis URLs (env_prefix BRAVE_DB_)
+  - ScoreConfig    — §7.6 weights and thresholds (env_prefix BRAVE_SCORE_)
+  - LLMConfig      — LLM provider slugs and budget (env_prefix BRAVE_LLM_)
+  - DBConfig       — database and Redis URLs (env_prefix BRAVE_DB_)
+  - WhatsAppConfig — WhatsApp BSP (Twilio) config (env_prefix BRAVE_WA_)
+  - RampConfig     — volume ramp limits (env_prefix BRAVE_WA_RAMP_)
 
-Plus a composite AppConfig that aggregates all three.
+Plus a composite AppConfig that aggregates all five.
+
+CR-02: No Field(alias=...) on any field in any config class.
+  Aliases let a bare env var shadow the prefixed key (secret-shadowing).
+  All fields resolve ONLY from their exact prefixed env var name.
 """
 
 from pydantic import Field
@@ -121,15 +127,92 @@ class StewardConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="BRAVE_STEWARD_")
 
 
+class WhatsAppConfig(BaseSettings):
+    """WhatsApp BSP configuration (Twilio launch path, D-09).
+
+    No env-var aliases (CR-02): each field resolves from its exact BRAVE_WA_ prefixed
+    name only. An alias would let a bare env var shadow the prefixed key (secret-shadowing).
+
+    Env prefix: BRAVE_WA_
+      BRAVE_WA_TWILIO_ACCOUNT_SID
+      BRAVE_WA_TWILIO_AUTH_TOKEN
+      BRAVE_WA_FROM_NUMBER
+      BRAVE_WA_MESSAGING_SERVICE_SID
+      BRAVE_WA_APPROVED_TEMPLATES   (JSON list string)
+    """
+
+    twilio_account_sid: str = Field(
+        default="",
+        description="Twilio account SID for WhatsApp Business API (starts with AC...).",
+    )
+    twilio_auth_token: str = Field(
+        default="",
+        description="Twilio auth token for WhatsApp API. Never logged.",
+    )
+    from_number: str = Field(
+        default="",
+        description="WhatsApp sender number in E.164 format (e.g. +5511999999999).",
+    )
+    messaging_service_sid: str = Field(
+        default="",
+        description="Twilio MessagingServiceSid for template sending (starts with MG...).",
+    )
+    approved_templates: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Allowlist of pre-registered BSP template names. "
+            "ComplianceError raised if template not in this list (D-11)."
+        ),
+    )
+
+    model_config = SettingsConfigDict(env_prefix="BRAVE_WA_", populate_by_name=True)
+
+
+class RampConfig(BaseSettings):
+    """WhatsApp volume ramp configuration (D-07, RESEARCH.md Pitfall 4).
+
+    Global portfolio-wide daily cap is the primary constraint (Oct 2025 portfolio limits:
+    new portfolios start at 250 unique contacts/24h — ramp conservatively below this).
+    Per-UF cap is an optional additional layer layered on top.
+
+    No env-var aliases (CR-02).
+
+    Env prefix: BRAVE_WA_RAMP_
+      BRAVE_WA_RAMP_DAILY_CAP
+      BRAVE_WA_RAMP_QUALITY_PAUSE_THRESHOLD
+    """
+
+    daily_cap: int = Field(
+        default=50,
+        description=(
+            "Max outreach sends per UTC day across the whole portfolio "
+            "(BRAVE_WA_RAMP_DAILY_CAP). Conservative default: 50 (well under the "
+            "250 cold-start portfolio limit). Ramp up as quality rating improves."
+        ),
+    )
+    quality_pause_threshold: str = Field(
+        default="RED",
+        description=(
+            "Quality rating level that triggers auto-pause "
+            "(BRAVE_WA_RAMP_QUALITY_PAUSE_THRESHOLD). "
+            "Values: RED | YELLOW. RED = pause all sends; YELLOW = reduce cap 50%."
+        ),
+    )
+
+    model_config = SettingsConfigDict(env_prefix="BRAVE_WA_RAMP_", populate_by_name=True)
+
+
 class AppConfig(BaseSettings):
     """Composite application configuration.
 
-    Aggregates ScoreConfig, LLMConfig, DBConfig as nested models.
+    Aggregates ScoreConfig, LLMConfig, WhatsAppConfig, RampConfig as nested models.
     Also exposes top-level feature flags.
     """
 
     score: ScoreConfig = Field(default_factory=ScoreConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
+    ramp: RampConfig = Field(default_factory=RampConfig)
 
     # run_real_externals=True enables real API calls (tests and CI default to False)
     run_real_externals: bool = False
