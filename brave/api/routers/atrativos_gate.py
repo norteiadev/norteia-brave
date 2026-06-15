@@ -167,7 +167,11 @@ def approve_whatsapp_gate(
         HTTPException 404: RioRecord not found.
         HTTPException 409: Already processed (sub_state != aguardando_consulta_whatsapp).
     """
-    rio = db.get(RioRecord, rio_id)
+    # CR-04: lock the row (SELECT ... FOR UPDATE) so two concurrent approve
+    # requests for the same rio_id cannot both pass the 409 guard and both
+    # dispatch an outreach_task. The second blocks on the lock, re-reads the
+    # advanced sub_state, and gets a 409.
+    rio = db.get(RioRecord, rio_id, with_for_update=True)
     if rio is None:
         raise HTTPException(status_code=404, detail="RioRecord not found")
 

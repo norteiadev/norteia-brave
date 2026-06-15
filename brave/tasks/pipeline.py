@@ -896,7 +896,11 @@ def outreach_task(self, rio_id: str) -> None:
     session, engine = _get_session()
     try:
         rio_uuid = uuid.UUID(rio_id)
-        rio = session.get(RioRecord, rio_uuid)
+        # CR-04: lock the row (SELECT ... FOR UPDATE) so the idempotency guard and
+        # the send are serialized — two concurrent dispatches for the same rio_id
+        # cannot both pass the guard and double-send. The second waits on the lock,
+        # re-reads the advanced/changed state, and no-ops.
+        rio = session.get(RioRecord, rio_uuid, with_for_update=True)
         if rio is None:
             raise PermanentError(f"RioRecord {rio_id} not found")
 
@@ -1070,7 +1074,12 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
     session, engine = _get_session()
     try:
         rio_uuid = uuid.UUID(rio_id)
-        rio = session.get(RioRecord, rio_uuid)
+        # CR-04: lock the row so two concurrent inbound webhooks for the same
+        # rio_id (owner double-tap / Twilio re-delivery) cannot both pass the
+        # guard, resume the same checkpoint, and double-send a follow-up. The
+        # second waits on the lock, re-reads the state, and no-ops if the
+        # conversation already advanced past whatsapp_in_progress.
+        rio = session.get(RioRecord, rio_uuid, with_for_update=True)
         if rio is None:
             raise PermanentError(f"RioRecord {rio_id} not found")
 
