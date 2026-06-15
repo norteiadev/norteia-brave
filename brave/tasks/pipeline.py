@@ -30,6 +30,7 @@ import os
 import uuid
 from typing import Any
 
+import structlog
 from celery import shared_task
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, Session
@@ -39,6 +40,21 @@ from brave.core.models import RioRecord
 from brave.core.nascente.service import get_nascente
 from brave.core.rio.routing import process_nascente_record, reprocess_record
 from brave.config.settings import AppConfig, DBConfig, ScoreConfig
+
+logger = structlog.get_logger(__name__)
+
+
+def _extract_contact_phone(rio: "RioRecord") -> str:
+    """Return the canonical E.164 contact phone for an atrativo, or "" if absent.
+
+    CR-03: ContactFinderAgent stores the phone at
+    normalized["contacts"]["phone_e164"]. There is no top-level "contact_phone"
+    key. Reading the wrong key produced "" in production, which keyed every LGPD
+    consent/opt-out/suppression row and the inbound-routing lookup on the empty
+    string. This is the single canonical accessor for the outreach phone.
+    """
+    contacts = (rio.normalized or {}).get("contacts") or {}
+    return contacts.get("phone_e164") or ""
 
 
 # ---------------------------------------------------------------------------
@@ -941,8 +957,20 @@ def outreach_task(self, rio_id: str) -> None:
             )
 
             thread_id = f"atrativo:{rio_id}"
-            # Extract contact phone from rio.normalized
-            contact_phone = (rio.normalized or {}).get("contact_phone", "")
+            # Extract contact phone from the canonical ContactFinder location
+            # (CR-03): normalized["contacts"]["phone_e164"].
+            contact_phone = _extract_contact_phone(rio)
+            if not contact_phone:
+                # No reachable owner — route to DLQ instead of dispatching an
+                # empty send / writing a consent row keyed on "".
+                rio.routing = "dlq"
+                rio.dlq_reason = "no_contact_phone"
+                rio.sub_state = None
+                logger.warning(
+                    "outreach_no_contact_phone",
+                    rio_id=rio_id,
+                )
+                return
             outreach_template = settings.approved_templates[0] if settings.approved_templates else "norteia_v1"
 
             initial_state = {

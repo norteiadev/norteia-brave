@@ -167,6 +167,18 @@ def send_path_gate(
         ComplianceError: If any gate condition fails. Message identifies the condition.
     """
     # ------------------------------------------------------------------
+    # Condition 0 (CR-03): contact_phone must be a real number.
+    # A consent row keyed on "" must NEVER satisfy condition 1 — an empty phone
+    # collapses opt-out/suppression/inbound-routing across all records.
+    # ------------------------------------------------------------------
+    if not contact_phone or not contact_phone.strip():
+        raise ComplianceError(
+            "contact_phone: empty/blank phone number — cannot send. "
+            "A consent/suppression key on the empty string is invalid (CR-03). "
+            "Source the phone from normalized['contacts']['phone_e164']."
+        )
+
+    # ------------------------------------------------------------------
     # Condition 1: Legal basis recorded
     # consent_log must have at least one row for this contact_phone
     # ------------------------------------------------------------------

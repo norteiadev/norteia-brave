@@ -126,6 +126,39 @@ def test_gate_blocks_when_no_legal_basis() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Test 1b: Gate blocks on empty/blank contact_phone (CR-03)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad_phone", ["", "   ", "\t"])
+def test_gate_blocks_empty_contact_phone(bad_phone: str) -> None:
+    """CR-03: an empty/blank contact_phone must be rejected BEFORE the consent
+    lookup, so a consent row keyed on "" can never satisfy condition 1.
+
+    Even if a consent row exists for the empty string, the gate must block.
+    """
+    # session.scalar would return a row for "" if reached — prove we never reach it.
+    session = MagicMock()
+    session.scalar.return_value = FakeConsentLog(phone_e164="", rio_id=uuid.uuid4())
+    redis = fakeredis.FakeRedis()
+    rio = FakeRioRecord()
+    settings = FakeWhatsAppSettings()
+
+    with pytest.raises(ComplianceError, match=r"(?i)(contact_phone|empty|blank)"):
+        send_path_gate(
+            session=session,
+            redis_client=redis,
+            rio=rio,
+            contact_phone=bad_phone,
+            template_name="norteia_validation_v1",
+            params={"body": "Olá, sou da Norteia."},
+            settings=settings,
+        )
+    # Condition 0 short-circuits before any DB lookup.
+    session.scalar.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Test 2: Gate blocks when "Norteia" not in message body
 # ---------------------------------------------------------------------------
 
