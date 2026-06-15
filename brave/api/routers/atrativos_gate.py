@@ -28,6 +28,7 @@ D-07 ramp counter: enforced by send_path_gate (outreach_task layer), not here.
 import hmac
 import uuid
 
+import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -36,6 +37,8 @@ from brave.api.deps import get_db, get_redis, get_steward_config
 from brave.config.settings import StewardConfig
 from brave.core.models import RioRecord
 from brave.observability.audit import write_audit
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -187,14 +190,32 @@ def approve_whatsapp_gate(
     before_state = {"sub_state": rio.sub_state}
     rio.sub_state = "whatsapp_in_progress"
 
-    # Dispatch Celery task (sync fallback when no broker — same pattern as dlq.py)
+    # Dispatch Celery task. WR-02: a "no broker in tests/dev" failure is benign,
+    # but a broker-down failure in production leaves the record stuck in
+    # whatsapp_in_progress with no outreach ever dispatched and invisible to the
+    # gate queue. Distinguish the two: swallow only when run_real_externals is
+    # False (offline), surface (error log + 503) in a real environment.
     try:
         from brave.tasks.pipeline import outreach_task
         outreach_task.delay(str(rio_id))
-    except Exception:
-        # No Celery broker in tests/dev — safe to skip dispatch here
-        # The compliance gate and outreach logic run inside the task
-        pass
+    except Exception as exc:
+        from brave.config.settings import AppConfig
+
+        if AppConfig().run_real_externals:
+            logger.error(
+                "outreach_dispatch_failed",
+                rio_id=str(rio_id),
+                error=str(exc),
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Outreach dispatch failed (broker unavailable). "
+                    "Approval not committed — retry once the broker is reachable."
+                ),
+            ) from exc
+        # Offline (tests/dev): no broker is expected — outreach logic is exercised
+        # by invoking the task directly in tests.
 
     write_audit(
         session=db,
@@ -351,13 +372,25 @@ def inbound_whatsapp_reply(
     if rio_id is None:
         return {"status": "ignored", "reason": "no_active_conversation"}
 
-    # Dispatch Celery task — sync fallback if no broker (same pattern as dlq.py)
+    # Dispatch Celery task. WR-02: swallow only the expected "no broker offline"
+    # case; surface a real broker-down failure so an inbound reply is never
+    # silently dropped (the conversation would stall forever otherwise).
     try:
         from brave.tasks.pipeline import resume_conversation_task
         resume_conversation_task.delay(str(rio_id), message_text)
-    except Exception:
-        # No Celery broker in tests/dev — safe to skip dispatch here
-        # The actual conversation resumption runs inside the task
-        pass
+    except Exception as exc:
+        from brave.config.settings import AppConfig
+
+        if AppConfig().run_real_externals:
+            logger.error(
+                "resume_dispatch_failed",
+                rio_id=str(rio_id),
+                error=str(exc),
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Inbound dispatch failed (broker unavailable). Retry delivery.",
+            ) from exc
+        # Offline (tests/dev): no broker is expected.
 
     return {"status": "accepted"}

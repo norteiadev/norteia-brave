@@ -319,17 +319,22 @@ def push_mar(self, rio_id: str) -> None:
 
         asyncio.run(_push())
 
-    except PermanentError:
+    except PermanentError as exc:
         session.rollback()
-        # No quarantine for push_mar permanent errors — log and return
-        pass
+        # WR-02: a permanently-failed Mar push must not vanish silently.
+        logger.error("push_mar_permanent_failure", rio_id=rio_id, error=str(exc))
 
     except Exception as exc:
         session.rollback()
         try:
             raise self.retry(exc=exc, max_retries=3)
         except self.MaxRetriesExceededError:
-            pass  # Phase 3 adds DLQ for permanently failed pushes
+            # WR-02: surface permanently-failed pushes (DLQ deferred) — at minimum log.
+            logger.error(
+                "push_mar_max_retries_exceeded",
+                rio_id=rio_id,
+                error=str(exc),
+            )
 
     finally:
         session.close()
@@ -361,7 +366,12 @@ def reprocess_record_task(self, rio_id: str) -> None:
         try:
             raise self.retry(exc=exc, max_retries=3)
         except self.MaxRetriesExceededError:
-            pass
+            # WR-02: surface permanently-failed reprocess (no silent drop).
+            logger.error(
+                "reprocess_record_max_retries_exceeded",
+                rio_id=rio_id,
+                error=str(exc),
+            )
     finally:
         session.close()
         engine.dispose()
@@ -443,17 +453,24 @@ def push_destination_task(self, rio_id: str) -> None:
 
         asyncio.run(_push())
 
-    except PermanentError:
+    except PermanentError as exc:
         session.rollback()
-        # No quarantine for push_destination_task permanent errors — log and return
-        pass
+        # WR-02: a permanently-failed destino push must not vanish silently.
+        logger.error(
+            "push_destination_permanent_failure", rio_id=rio_id, error=str(exc)
+        )
 
     except Exception as exc:
         session.rollback()
         try:
             raise self.retry(exc=exc, max_retries=3)
         except self.MaxRetriesExceededError:
-            pass  # Phase 3 adds DLQ for permanently failed pushes
+            # WR-02: surface permanently-failed pushes (DLQ deferred) — at minimum log.
+            logger.error(
+                "push_destination_max_retries_exceeded",
+                rio_id=rio_id,
+                error=str(exc),
+            )
 
     finally:
         session.close()
@@ -839,17 +856,24 @@ def push_attraction_task(self, rio_id: str) -> None:
 
         asyncio.run(_push())
 
-    except PermanentError:
+    except PermanentError as exc:
         session.rollback()
-        # No quarantine for push_attraction_task permanent errors — log and return
-        pass
+        # WR-02: a permanently-failed attraction push must not vanish silently.
+        logger.error(
+            "push_attraction_permanent_failure", rio_id=rio_id, error=str(exc)
+        )
 
     except Exception as exc:
         session.rollback()
         try:
             raise self.retry(exc=exc, max_retries=3)
         except self.MaxRetriesExceededError:
-            pass  # Phase 4 adds DLQ for permanently failed attraction pushes
+            # WR-02: surface permanently-failed pushes (DLQ deferred) — at minimum log.
+            logger.error(
+                "push_attraction_max_retries_exceeded",
+                rio_id=rio_id,
+                error=str(exc),
+            )
 
     finally:
         session.close()
