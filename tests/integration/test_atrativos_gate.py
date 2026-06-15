@@ -137,23 +137,25 @@ def test_list_gate_queue_returns_only_awaiting_records(client, db_session: Sessi
 # ---------------------------------------------------------------------------
 
 
-def test_approve_gate_requires_steward_secret(client, db_session: Session) -> None:
-    """PATCH /approve without X-Steward-Secret → 401 (T-03-03-01)."""
-    rio = _make_rio_record(db_session, sub_state="aguardando_consulta_whatsapp")
-    db_session.commit()
+def test_approve_gate_requires_steward_secret(client) -> None:
+    """PATCH /approve without X-Steward-Secret → 401 (T-03-03-01).
 
-    r = client.patch(f"/api/v1/atrativos/gate/{rio.id}/approve")
+    Auth gate fires before any DB work — no DB fixture needed.
+    Uses a random UUID to ensure no DB lookup occurs before the 401.
+    """
+    r = client.patch(f"/api/v1/atrativos/gate/{uuid.uuid4()}/approve")
     assert r.status_code == 401, (
         f"Expected 401 without X-Steward-Secret, got {r.status_code}"
     )
 
 
-def test_reject_gate_requires_steward_secret(client, db_session: Session) -> None:
-    """PATCH /reject without X-Steward-Secret → 401 (T-03-03-01)."""
-    rio = _make_rio_record(db_session, sub_state="aguardando_consulta_whatsapp")
-    db_session.commit()
+def test_reject_gate_requires_steward_secret(client) -> None:
+    """PATCH /reject without X-Steward-Secret → 401 (T-03-03-01).
 
-    r = client.patch(f"/api/v1/atrativos/gate/{rio.id}/reject")
+    Auth gate fires before any DB work — no DB fixture needed.
+    Uses a random UUID to ensure no DB lookup occurs before the 401.
+    """
+    r = client.patch(f"/api/v1/atrativos/gate/{uuid.uuid4()}/reject")
     assert r.status_code == 401, (
         f"Expected 401 without X-Steward-Secret, got {r.status_code}"
     )

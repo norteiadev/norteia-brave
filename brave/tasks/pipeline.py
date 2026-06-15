@@ -442,3 +442,56 @@ def push_destination_task(self, rio_id: str) -> None:
     finally:
         session.close()
         engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Atrativos lane tasks (D-01, D-06, D-08)
+# Stubs — full implementation in 03-04
+# ---------------------------------------------------------------------------
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    name="brave.outreach",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=900,
+)
+def outreach_task(self, rio_id: str) -> None:  # type: ignore[override]
+    """Send WhatsApp outreach for an approved atrativo (gate must have approved, D-06).
+
+    Full implementation in 03-04 (WhatsAppAgent LangGraph conversation).
+    This stub exists so the gate /approve endpoint can dispatch without ImportError.
+
+    Flow (03-04 implementation):
+      1. compliance gate (D-11) — gate.send_path_gate()
+      2. LangGraph WhatsAppAgent — Sonnet PT-BR opening + DeepSeek extraction
+      3. send_template via TwilioWhatsAppClient (behind WhatsAppClientProtocol)
+    """
+    # TODO (03-04): implement full outreach flow
+    pass
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    name="brave.resume_conversation",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=300,
+)
+def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:  # type: ignore[override]
+    """Resume LangGraph conversation on inbound reply (n8n thin transport, D-08).
+
+    Full implementation in 03-04.
+    This stub exists so the inbound webhook endpoint can dispatch without ImportError.
+
+    Flow (03-04 implementation):
+      1. Load LangGraph graph with AsyncPostgresSaver checkpointer
+      2. Resume from thread_id = f"atrativo:{rio_id}"
+      3. Process reply_text in recv_reply node
+      4. Extract answers (DeepSeek/instructor) or ask follow-up (Sonnet)
+    """
+    # TODO (03-04): implement full conversation resumption
+    pass
