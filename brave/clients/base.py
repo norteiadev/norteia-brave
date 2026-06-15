@@ -22,9 +22,12 @@ from typing import Any, Protocol
 
 
 class LLMClientProtocol(Protocol):
-    """LLM structured-output extraction client (D-09).
+    """LLM client for extraction (DeepSeek/instructor) and generation (Sonnet) (D-08, D-09).
 
-    Uses instructor + Mode.Tools by default (DeepSeek supports function calling).
+    Two methods:
+      extract() — structured extraction via instructor Mode.Tools (DeepSeek).
+      generate() — free-form text generation (Sonnet PT-BR conversation, D-08).
+
     Every call must log to llm_generations and check the USD cost guard (D-20).
     """
 
@@ -36,6 +39,9 @@ class LLMClientProtocol(Protocol):
     ) -> Any:
         """Extract structured data from a prompt using the given Pydantic schema.
 
+        Uses instructor + Mode.Tools (DeepSeek) by default. 2nd-layer Pydantic
+        validation enforced by caller (ConversationExtractionResult).
+
         Args:
             prompt: Instruction + context to send to the LLM.
             schema: Pydantic model class to validate the response against.
@@ -43,6 +49,25 @@ class LLMClientProtocol(Protocol):
 
         Returns:
             An instance of `schema` with the extracted data.
+        """
+        ...
+
+    async def generate(
+        self,
+        messages: list[dict[str, Any]],
+        model: str = "claude-sonnet-4-5",
+    ) -> str:
+        """Generate a free-form text response (Sonnet PT-BR conversation, D-08).
+
+        Used by WhatsAppAgent ask_followup_node to generate PT-BR follow-up
+        questions via Claude Sonnet 4.5 (native Anthropic SDK, not OpenRouter).
+
+        Args:
+            messages: Conversation history list [{role, content}].
+            model:    Model identifier (default: claude-sonnet-4-5).
+
+        Returns:
+            Generated text response string.
         """
         ...
 
