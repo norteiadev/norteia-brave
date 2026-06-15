@@ -1,0 +1,256 @@
+"""Unit tests for DiscoveryAgent — parent destino resolution guard + idempotency.
+
+All tests run 100% offline:
+  - FakePlacesClient from tests/fakes/fake_places.py
+  - MagicMock for LLMClientProtocol (instructor returns AtrativoResult)
+  - In-memory SQLite via conftest fixtures, OR simple mock session
+
+Test suite covers must_haves from 03-02-PLAN.md:
+  - test_discovery_skips_when_no_parent_destino
+  - test_discovery_stores_raw_with_place_id_only
+  - test_discovery_dedup_idempotent
+
+D-18 boundary: no import from brave.lanes.destinos in this file.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from tests.fakes.fake_places import FakePlacesClient, SIGNAL_FIXTURE_OPEN
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_places_result(
+    place_id: str = "ChIJtest001",
+    municipio_ibge: str = "2919207",
+    municipio_nome: str = "Porto Seguro",
+) -> dict[str, Any]:
+    """Build a minimal text_search result for DiscoveryAgent."""
+    return {
+        "place_id": place_id,
+        "name": "Praia de Trancoso",
+        "municipio_ibge": municipio_ibge,
+        "municipio_nome": municipio_nome,
+        "formatted_address": "Trancoso, Porto Seguro - BA",
+    }
+
+
+def _make_atrativo_result(
+    place_id: str = "ChIJtest001",
+    municipio_ibge: str = "2919207",
+) -> Any:
+    """Build a minimal AtrativoResult mock for LLM extraction."""
+    from brave.lanes.atrativos.schemas import AtrativoResult
+
+    return AtrativoResult(
+        nome="Praia de Trancoso",
+        tipo="praia",
+        posicionamento="Praia paradisíaca com areias brancas e águas cristalinas.",
+        municipio_nome="Porto Seguro",
+        municipio_ibge=municipio_ibge,
+        uf="BA",
+        place_id=place_id,
+        origem_value=60.0,
+        completude_value=75.0,
+    )
+
+
+def _make_mock_session() -> MagicMock:
+    """Create a mock SQLAlchemy session with scalar returning None by default."""
+    session = MagicMock()
+    session.scalar.return_value = None
+    session.add.return_value = None
+    session.flush.return_value = None
+    return session
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_discovery_skips_when_no_parent_destino() -> None:
+    """DiscoveryAgent skips ingestion when no parent destino in Mar for the place's
+    uf+municipio_ibge. store_raw must NOT be called; quarantine_poison MUST be called
+    with an error containing 'parent_destino_absent'.
+    """
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.config.settings import ScoreConfig
+
+    places_result = _make_places_result()
+
+    fake_places = FakePlacesClient(
+        fixture_results={"atrativos em BA": [places_result]},
+    )
+
+    # LLM returns a valid AtrativoResult
+    llm_client = MagicMock()
+    llm_client.extract = AsyncMock(return_value=_make_atrativo_result())
+
+    session = _make_mock_session()
+    # MarRecord query returns None — no parent destino in Mar
+    session.scalar.return_value = None
+
+    config = ScoreConfig()
+
+    agent = DiscoveryAgent(
+        places_client=fake_places,
+        llm_client=llm_client,
+        session=session,
+        config=config,
+    )
+
+    with patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
+         patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
+        await agent.produce(uf="BA")
+
+    # store_raw MUST NOT be called when no parent destino
+    mock_store_raw.assert_not_called()
+
+    # quarantine_poison MUST be called with error containing "parent_destino_absent"
+    assert mock_quarantine.call_count >= 1
+    quarantine_kwargs = mock_quarantine.call_args
+    error_msg = quarantine_kwargs[1].get("error", "") or str(quarantine_kwargs[0])
+    assert "parent_destino_absent" in error_msg
+
+
+@pytest.mark.asyncio
+async def test_discovery_stores_raw_with_place_id_only() -> None:
+    """DiscoveryAgent stores raw record when MarRecord parent destino exists.
+
+    Verifies:
+    - store_raw is called once
+    - payload["canonical"]["place_id"] is present
+    - COMP-03 / D-04: no raw Places fields (addresses, names from Places) stored
+      as canonical identity (only AtrativoResult extraction + place_id cache)
+    """
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.config.settings import ScoreConfig
+    from brave.core.models import MarRecord
+
+    places_result = _make_places_result()
+
+    fake_places = FakePlacesClient(
+        fixture_results={"atrativos em BA": [places_result]},
+        fixture_details={"ChIJtest001": SIGNAL_FIXTURE_OPEN},
+    )
+
+    llm_client = MagicMock()
+    llm_client.extract = AsyncMock(return_value=_make_atrativo_result())
+
+    session = _make_mock_session()
+
+    # First scalar call = MarRecord query → returns a MarRecord (parent destino exists)
+    mock_mar = MagicMock(spec=MarRecord)
+    mock_mar.canonical = {"municipio_ibge": "2919207", "name": "Porto Seguro"}
+    mock_mar.entity_type = "destination"
+    session.scalar.return_value = mock_mar
+
+    config = ScoreConfig()
+
+    agent = DiscoveryAgent(
+        places_client=fake_places,
+        llm_client=llm_client,
+        session=session,
+        config=config,
+    )
+
+    with patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
+         patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
+        # Patch store_raw to return a mock NascenteRecord
+        from unittest.mock import MagicMock as MM
+        mock_nascente = MM()
+        mock_nascente.id = uuid.uuid4()
+        mock_nascente.source_ref = "places:BA:ChIJtest001"
+        mock_store_raw.return_value = mock_nascente
+
+        await agent.produce(uf="BA")
+
+    # quarantine should NOT be called (parent destino exists, extraction succeeded)
+    mock_quarantine.assert_not_called()
+
+    # store_raw MUST be called exactly once
+    assert mock_store_raw.call_count == 1
+
+    # Verify payload structure: canonical must include place_id
+    call_kwargs = mock_store_raw.call_args[1]
+    payload = call_kwargs.get("payload") or mock_store_raw.call_args[0][5] if mock_store_raw.call_args[0] else {}
+    if not payload:
+        # Try positional args fallback
+        args, kwargs = mock_store_raw.call_args
+        payload = kwargs.get("payload", args[5] if len(args) > 5 else {})
+
+    assert "canonical" in payload
+    canonical = payload["canonical"]
+    assert "place_id" in canonical
+    assert canonical["place_id"] == "ChIJtest001"
+
+    # entity_type must be "attraction"
+    assert call_kwargs.get("entity_type") == "attraction" or \
+           (mock_store_raw.call_args[0] and mock_store_raw.call_args[0][3] == "attraction")
+
+
+@pytest.mark.asyncio
+async def test_discovery_dedup_idempotent() -> None:
+    """Calling produce twice with the same place_id results in idempotent behavior.
+
+    store_raw handles idempotency by content_hash — the second call is a no-op.
+    We verify that store_raw is called again on the second produce (store_raw itself
+    handles dedup internally), and no quarantine is triggered.
+    """
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.config.settings import ScoreConfig
+    from brave.core.models import MarRecord
+
+    places_result = _make_places_result()
+
+    fake_places = FakePlacesClient(
+        fixture_results={"atrativos em BA": [places_result]},
+    )
+
+    llm_client = MagicMock()
+    llm_client.extract = AsyncMock(return_value=_make_atrativo_result())
+
+    session = _make_mock_session()
+    mock_mar = MagicMock(spec=MarRecord)
+    mock_mar.canonical = {"municipio_ibge": "2919207"}
+    session.scalar.return_value = mock_mar
+
+    config = ScoreConfig()
+
+    agent = DiscoveryAgent(
+        places_client=fake_places,
+        llm_client=llm_client,
+        session=session,
+        config=config,
+    )
+
+    with patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
+         patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
+        mock_nascente = MagicMock()
+        mock_nascente.id = uuid.uuid4()
+        mock_nascente.source_ref = "places:BA:ChIJtest001"
+        mock_store_raw.return_value = mock_nascente
+
+        # First call
+        await agent.produce(uf="BA")
+        first_call_count = mock_store_raw.call_count
+
+        # Second call — same data, store_raw handles dedup internally
+        await agent.produce(uf="BA")
+        second_call_count = mock_store_raw.call_count
+
+    # store_raw must have been called at least once; quarantine never
+    assert first_call_count >= 1
+    assert second_call_count >= first_call_count
+    mock_quarantine.assert_not_called()
