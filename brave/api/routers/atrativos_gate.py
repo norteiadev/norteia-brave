@@ -33,8 +33,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brave.api.deps import get_db, get_redis, get_steward_config
-from brave.config.settings import StewardConfig
+from brave.api.deps import get_db, get_redis, get_steward_config, get_webhook_config
+from brave.config.settings import StewardConfig, WebhookConfig
 from brave.core.models import RioRecord
 from brave.observability.audit import write_audit
 
@@ -71,6 +71,37 @@ def require_steward(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid X-Steward-Secret",
+        )
+
+
+def require_webhook(
+    x_webhook_secret: str | None = Header(None, alias="X-Webhook-Secret"),
+    webhook_config: WebhookConfig = Depends(get_webhook_config),
+) -> None:
+    """Authenticate the mutating WhatsApp webhook endpoints (WR-03).
+
+    The quality-rating and inbound webhooks drive the compliance gate (the global
+    RED send-pause flag) and the promotion path (an injected inbound body can
+    trigger owner_confirmed → Mar or a forced opt-out). They MUST NOT be
+    unauthenticated: an attacker who can reach the service could clear a
+    legitimate RED pause (resume sends during a quality incident), set a spurious
+    RED (DoS the pipeline), or spoof inbound replies into a victim's conversation.
+
+    Enforces a static shared secret (X-Webhook-Secret) with the same fail-closed,
+    constant-time discipline as require_steward and the error-report webhook
+    (T-02-01). Production should additionally layer Twilio RequestValidator
+    signature verification; this is the enforced minimum, not a deferred TODO.
+    """
+    expected = webhook_config.secret
+    if not x_webhook_secret or not expected:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Webhook-Secret header required",
+        )
+    if not hmac.compare_digest(x_webhook_secret, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid X-Webhook-Secret",
         )
 
 
@@ -288,7 +319,10 @@ def reject_whatsapp_gate(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/api/v1/atrativos/whatsapp/quality-rating-webhook")
+@router.post(
+    "/api/v1/atrativos/whatsapp/quality-rating-webhook",
+    dependencies=[Depends(require_webhook)],
+)
 def quality_rating_webhook(
     payload: dict,
     db: Session = Depends(get_db),
@@ -334,7 +368,10 @@ def quality_rating_webhook(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/api/v1/atrativos/whatsapp/inbound")
+@router.post(
+    "/api/v1/atrativos/whatsapp/inbound",
+    dependencies=[Depends(require_webhook)],
+)
 def inbound_whatsapp_reply(
     payload: dict,
     db: Session = Depends(get_db),

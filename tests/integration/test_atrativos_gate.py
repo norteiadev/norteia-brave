@@ -38,6 +38,12 @@ os.environ.setdefault(
 STEWARD_SECRET = "test-atrativos-gate-steward-secret"
 os.environ.setdefault("BRAVE_STEWARD_SECRET", STEWARD_SECRET)
 
+# WR-03: the quality-rating + inbound webhooks are now authenticated with
+# X-Webhook-Secret (shared-secret, mirroring require_steward / error-report).
+WEBHOOK_SECRET = "test-atrativos-gate-webhook-secret"
+os.environ.setdefault("BRAVE_WEBHOOK_SECRET", WEBHOOK_SECRET)
+WEBHOOK_HEADERS = {"X-Webhook-Secret": WEBHOOK_SECRET}
+
 
 @pytest.fixture(scope="module")
 def client():
@@ -235,6 +241,7 @@ def test_quality_rating_webhook_sets_redis_flag(client, db_session: Session) -> 
     r = client.post(
         "/api/v1/atrativos/whatsapp/quality-rating-webhook",
         json={"quality_rating": "RED"},
+        headers=WEBHOOK_HEADERS,
     )
     assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
 
@@ -263,11 +270,24 @@ def test_quality_rating_webhook_clears_redis_flag_on_green(client, db_session: S
     r = client.post(
         "/api/v1/atrativos/whatsapp/quality-rating-webhook",
         json={"quality_rating": "GREEN"},
+        headers=WEBHOOK_HEADERS,
     )
     assert r.status_code == 200
 
     from brave.compliance.quality_rating import is_quality_red
     assert not is_quality_red(redis), "wa:quality_red should be cleared after GREEN webhook"
+
+
+@pytest.mark.integration
+def test_quality_rating_webhook_requires_secret(client, db_session: Session) -> None:
+    """WR-03: POST /quality-rating-webhook without X-Webhook-Secret → 401."""
+    r = client.post(
+        "/api/v1/atrativos/whatsapp/quality-rating-webhook",
+        json={"quality_rating": "RED"},
+    )
+    assert r.status_code == 401, (
+        f"Expected 401 without X-Webhook-Secret, got {r.status_code}: {r.text}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +320,7 @@ def test_inbound_reply_dispatches_task(client, db_session: Session) -> None:
     r = client.post(
         "/api/v1/atrativos/whatsapp/inbound",
         json={"from": phone, "body": "Sim, funcionamos normalmente."},
+        headers=WEBHOOK_HEADERS,
     )
     assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
     body = r.json()
@@ -314,7 +335,20 @@ def test_inbound_reply_ignored_for_unknown_phone(client, db_session: Session) ->
     r = client.post(
         "/api/v1/atrativos/whatsapp/inbound",
         json={"from": unknown_phone, "body": "Olá"},
+        headers=WEBHOOK_HEADERS,
     )
     assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
     body = r.json()
     assert body.get("status") == "ignored", f"Expected ignored, got: {body}"
+
+
+@pytest.mark.integration
+def test_inbound_reply_requires_secret(client, db_session: Session) -> None:
+    """WR-03: POST /inbound without X-Webhook-Secret → 401 (before any lookup)."""
+    r = client.post(
+        "/api/v1/atrativos/whatsapp/inbound",
+        json={"from": "+5511999990101", "body": "Olá"},
+    )
+    assert r.status_code == 401, (
+        f"Expected 401 without X-Webhook-Secret, got {r.status_code}: {r.text}"
+    )
