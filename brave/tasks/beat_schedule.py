@@ -1,13 +1,19 @@
 """Celery beat schedule definitions using celery-redbeat (D-05).
 
-In Phase 1, the sweep_uf structure is defined but tasks are stubs.
-Phase 2 (Destinos lane) will fill in the actual UF sweep producers.
+Phase 1: Basic sweep structure defined (stubs).
+Phase 2: Destinos lane — sweep_uf tasks.
+Phase 3: Atrativos lane — sweep_atrativos_by_uf fan-out added.
 
 UF_LIST: 27 Brazilian states (2-letter codes).
-Each UF gets a RedBeatSchedulerEntry that fires a sweep_uf task.
+Each UF gets a RedBeatSchedulerEntry that fires the appropriate sweep task.
 
 IMPORTANT: Only one celery-redbeat beat instance should run at a time.
 The schedule is stored in Redis, so multiple beat instances would conflict.
+
+sweep_atrativos_by_uf:
+  Fires discover_atrativo_task per UF on a staggered daily schedule (3 AM UTC).
+  Offset by 1 hour from sweep_uf (2 AM) to avoid peak DB contention.
+  All 27 UF tasks fan out independently; each UF is a separate Celery message.
 """
 
 from celery.schedules import crontab
@@ -37,6 +43,20 @@ for _uf in UF_LIST:
     BRAVE_BEAT_SCHEDULE[f"sweep-{_uf.lower()}-daily"] = {
         "task": "brave.sweep_uf",  # Phase 2 task; stub in Phase 1
         "schedule": crontab(hour=2, minute=0),  # 2 AM UTC daily
+        "args": (_uf,),
+        "kwargs": {},
+        "options": {"queue": "brave.sweep"},
+    }
+
+# ---------------------------------------------------------------------------
+# Phase 3: Atrativos discovery sweep — fan-out per UF
+# discover_atrativo_task runs per UF at 3 AM UTC daily (staggered from sweep_uf)
+# ---------------------------------------------------------------------------
+
+for _uf in UF_LIST:
+    BRAVE_BEAT_SCHEDULE[f"sweep-atrativos-{_uf.lower()}-daily"] = {
+        "task": "brave.discover_atrativo",
+        "schedule": crontab(hour=3, minute=0),  # 3 AM UTC daily — 1h after sweep_uf
         "args": (_uf,),
         "kwargs": {},
         "options": {"queue": "brave.sweep"},
