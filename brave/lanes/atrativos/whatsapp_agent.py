@@ -39,6 +39,7 @@ AsyncPostgresSaver.
 from __future__ import annotations
 
 import functools
+import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -58,9 +59,61 @@ logger = structlog.get_logger(__name__)
 # Opt-out keyword set (COMP-02, D-11, recv_reply node)
 # ---------------------------------------------------------------------------
 
+# BSP-standard opt-out keywords (COMP-02). A contact opts out by replying with
+# the bare command word. CR-01: matching is anchored to the *whole message* —
+# the stripped reply must consist solely of the keyword (or a short keyword
+# phrase) — NOT an unanchored substring and NOT a keyword token buried in a
+# longer sentence. This is what BSPs (Twilio/Meta) treat as a valid opt-out and
+# avoids false positives on common PT-BR words ("não", "parar", "cancelar")
+# that appear inside legitimate replies:
+#   "NÃO sei o horário"               → not opt-out
+#   "Não vamos parar de funcionar"    → not opt-out
+#   "Pode cancelar minha dúvida"      → not opt-out
+#   "SAIR" / "parar" / "  NÃO. "      → opt-out (message IS the keyword)
 OPT_OUT_KEYWORDS: frozenset[str] = frozenset(
+    {"SAIR", "PARAR", "CANCELAR", "REMOVER", "STOP", "NÃO", "NAO"}
+)
+
+# Public set documented in COMP-02 (kept stable for callers/tests). "NAO" is an
+# accent-less spelling normalized to "NÃO" on match.
+ALL_OPT_OUT_KEYWORDS: frozenset[str] = frozenset(
     {"SAIR", "PARAR", "CANCELAR", "REMOVER", "STOP", "NÃO"}
 )
+
+# Tokenizer for opt-out detection. Accents are part of the token alphabet so a
+# keyword is never matched as a substring prefix of another word.
+_WORD_RE = re.compile(r"[0-9A-ZÀ-ÖØ-Þ]+", re.UNICODE)
+
+# A reply may carry a tiny amount of politeness around the bare command and
+# still count as an opt-out (e.g. "sair por favor", "quero sair"). We allow the
+# message to be the keyword alone, optionally surrounded by a few filler tokens,
+# but the keyword must be the dominant content. Keep this conservative.
+_OPT_OUT_FILLER: frozenset[str] = frozenset(
+    {"POR", "FAVOR", "QUERO", "ME", "QUER", "PFV", "PLEASE", "OBRIGADO", "OBRIGADA"}
+)
+
+
+def _detect_opt_out_keyword(message_text: str) -> str | None:
+    """Return the matched opt-out keyword, or None.
+
+    CR-01: message-anchored matching, not substring containment.
+
+    A reply opts the contact out only when, after dropping punctuation and a few
+    politeness filler tokens, the *only* meaningful token is an opt-out keyword.
+    This honors the BSP opt-out convention ("reply SAIR to stop") while never
+    triggering on common PT-BR words embedded in a real answer.
+    """
+    tokens = _WORD_RE.findall(message_text.upper())
+    if not tokens:
+        return None
+
+    meaningful = [t for t in tokens if t not in _OPT_OUT_FILLER]
+
+    # Exactly one meaningful token, and it is an opt-out keyword.
+    if len(meaningful) == 1 and meaningful[0] in OPT_OUT_KEYWORDS:
+        return "NÃO" if meaningful[0] in ("NÃO", "NAO") else meaningful[0]
+
+    return None
 
 # ---------------------------------------------------------------------------
 # Conversation state schema (TypedDict for LangGraph StateGraph)
@@ -248,15 +301,12 @@ async def _recv_reply_node(
 
     contact_phone = state["contact_phone"]
     message_text = state.get("message_text", "")
-    upper_text = message_text.upper().strip()
     now_utc = datetime.now(timezone.utc)
 
-    # Opt-out keyword detection — exact match against known PT-BR / Meta opt-out keywords
-    detected_keyword: str | None = None
-    for kw in OPT_OUT_KEYWORDS:
-        if kw in upper_text:
-            detected_keyword = kw
-            break
+    # Opt-out keyword detection — whole-token match against known PT-BR / Meta
+    # opt-out keywords. CR-01: NOT a substring match, so "NÃO sei o horário"
+    # does not opt the contact out.
+    detected_keyword: str | None = _detect_opt_out_keyword(message_text)
 
     if detected_keyword is not None:
         # LGPD opt-out must be honored immediately — write record and route to finalize

@@ -121,16 +121,86 @@ async def test_opt_out_keyword_routes_to_end() -> None:
 
 
 @pytest.mark.asyncio
-async def test_opt_out_keyword_detection_partial_match() -> None:
-    """Opt-out keyword detected even if message has surrounding text."""
+async def test_opt_out_keyword_with_politeness_filler() -> None:
+    """Opt-out detected when the reply is the keyword plus polite filler.
+
+    CR-01: detection is message-anchored. "quero sair, obrigado" reduces to a
+    single meaningful token (SAIR) and counts as an opt-out, while a keyword
+    buried in a real sentence does not.
+    """
     session = _make_session()
     state = _make_initial_state()
-    state["message_text"] = "Obrigado mas PARAR"
+    state["message_text"] = "quero sair, obrigado"
 
     with patch("brave.compliance.consent_log.record_opt_out") as mock_opt_out:
         result = await _recv_reply_node(state, session=session)
 
     assert result.get("opted_out") is True
+    mock_opt_out.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_opt_out_keyword_in_sentence_not_detected() -> None:
+    """CR-01: a keyword token inside a longer, meaningful sentence does NOT opt out."""
+    session = _make_session()
+    state = _make_initial_state()
+    state["message_text"] = "Obrigado mas vamos parar amanhã"
+
+    with patch("brave.compliance.consent_log.record_opt_out") as mock_opt_out:
+        result = await _recv_reply_node(state, session=session)
+
+    assert result.get("opted_out") is False
+    mock_opt_out.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message_text",
+    [
+        # "NÃO" as a common in-context word — must NOT opt out (only bare "não" does)
+        "NÃO sei o horário, mas estamos abertos",
+        "Não vamos parar de funcionar",
+        "Estamos sempre disponíveis, não pare de nos chamar",
+        # keyword as a standalone token but inside a real sentence — not opt-out
+        "Pode cancelar minha dúvida anterior",
+        "Vou remover a foto antiga do perfil",
+        # keyword only as a substring of a larger word — not a standalone token
+        "Vou recancelar a reserva mais tarde",
+        "O parador da cidade fica aberto",
+    ],
+)
+async def test_opt_out_no_false_positive_on_substring(message_text: str) -> None:
+    """CR-01 regression: legitimate replies that merely CONTAIN an opt-out keyword
+    as a substring (or the common word "não" in-context) must NOT opt the contact out.
+
+    Before the fix these triggered a false opt-out via unanchored substring match,
+    silently suppressing high-value owner-validated records (LGPD data loss).
+    """
+    session = _make_session()
+    state = _make_initial_state()
+    state["message_text"] = message_text
+
+    with patch("brave.compliance.consent_log.record_opt_out") as mock_opt_out:
+        result = await _recv_reply_node(state, session=session)
+
+    assert result.get("opted_out") is False, (
+        f"false-positive opt-out on legitimate reply: {message_text!r}"
+    )
+    mock_opt_out.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message_text", ["sair", "Não", "  PARAR ", "stop", "Cancelar."])
+async def test_opt_out_bare_keyword_variants(message_text: str) -> None:
+    """CR-01: a bare opt-out keyword (any case, surrounding punctuation/space) opts out."""
+    session = _make_session()
+    state = _make_initial_state()
+    state["message_text"] = message_text
+
+    with patch("brave.compliance.consent_log.record_opt_out") as mock_opt_out:
+        result = await _recv_reply_node(state, session=session)
+
+    assert result.get("opted_out") is True, f"bare keyword not detected: {message_text!r}"
     mock_opt_out.assert_called_once()
 
 
@@ -321,7 +391,16 @@ async def test_build_graph_returns_compiled_graph() -> None:
 
 
 def test_opt_out_keywords_constant() -> None:
-    """OPT_OUT_KEYWORDS must contain all 6 required PT-BR/Meta opt-out keywords."""
-    expected = {"SAIR", "PARAR", "CANCELAR", "REMOVER", "STOP", "NÃO"}
-    assert OPT_OUT_KEYWORDS == expected
+    """Opt-out keyword sets cover the 6 required PT-BR/Meta opt-out keywords (CR-01).
+
+    The unambiguous command keywords match as standalone tokens; "NÃO" is honored
+    only as a full-message reply, so it lives in a separate set. The union
+    (ALL_OPT_OUT_KEYWORDS) preserves the documented COMP-02 keyword list.
+    """
+    from brave.lanes.atrativos.whatsapp_agent import ALL_OPT_OUT_KEYWORDS
+
+    # Internal match set (includes the accent-less "NAO" spelling)
+    assert OPT_OUT_KEYWORDS == {"SAIR", "PARAR", "CANCELAR", "REMOVER", "STOP", "NÃO", "NAO"}
     assert isinstance(OPT_OUT_KEYWORDS, frozenset)
+    # Documented COMP-02 set (canonical spelling)
+    assert ALL_OPT_OUT_KEYWORDS == {"SAIR", "PARAR", "CANCELAR", "REMOVER", "STOP", "NÃO"}
