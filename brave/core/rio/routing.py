@@ -148,6 +148,13 @@ def process_nascente_record(
         "validacao_humana_value": float(payload.get("validacao_humana_value", 0.0)),
     }
 
+    # Attraction-specific: preserve place_id_cache so ContactFinderAgent and SignalAgent
+    # can look up Place Details without repeating text_search (D-04, COMP-03).
+    # This cache key is written by DiscoveryAgent into the nascente payload; copying it
+    # to normalized ensures subsequent FSM tasks have it available.
+    if nascente.entity_type == "attraction" and "place_id_cache" in payload:
+        normalized["place_id_cache"] = payload["place_id_cache"]
+
     # Add taxonomy labels (Phase 1 stub)
     normalized = label_entity(nascente.entity_type, normalized)
 
