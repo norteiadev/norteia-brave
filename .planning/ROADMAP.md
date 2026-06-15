@@ -121,7 +121,7 @@ Plans:
 
 **Wave 4** *(depends on Wave 2 + Wave 3)*
 
-- [ ] 03-04-PLAN.md — WhatsApp conversation: LangGraph WhatsAppAgent (Sonnet ask + DeepSeek extract + AsyncPostgresSaver), TwilioWhatsAppClient, outreach_task + resume_conversation_task + push_attraction_task
+- [x] 03-04-PLAN.md — WhatsApp conversation: LangGraph WhatsAppAgent (Sonnet ask + DeepSeek extract + AsyncPostgresSaver), TwilioWhatsAppClient, outreach_task + resume_conversation_task + push_attraction_task
 
 **Wave 5** *(depends on Wave 4 — phase acceptance gate)*
 
@@ -153,5 +153,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
 | 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
-| 3. Atrativos Lane (WhatsApp + Compliance) | 3/5 | In Progress|  |
+| 3. Atrativos Lane (WhatsApp + Compliance) | 4/5 | In Progress|  |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
