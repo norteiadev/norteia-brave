@@ -26,7 +26,6 @@ Ramp counter uses CR-04 reserve-before-call hardening (D-07):
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -68,13 +67,6 @@ def _next_utc_midnight() -> datetime:
         hour=0, minute=0, second=0, microsecond=0
     )
     return tomorrow
-
-
-def _seconds_until_midnight() -> int:
-    """Return seconds until next UTC midnight (for TTL fallback if EXPIREAT not available)."""
-    now = time.time()
-    tomorrow = (int(now) // 86400 + 1) * 86400
-    return max(1, int(tomorrow - now))
 
 
 def check_and_increment_ramp(
@@ -267,13 +259,11 @@ def send_path_gate(
     # Uses per-UF key if rio.uf is available; falls back to global key
     # ------------------------------------------------------------------
     ramp_cap: int = getattr(settings, "ramp_cap", 50)
-    uf = getattr(rio, "uf", None)
+    # IN-01: per D-07 and RESEARCH.md Pitfall 4, the GLOBAL cap is checked
+    # (uf=None) because WhatsApp portfolio limits are portfolio-wide (post Oct
+    # 2025). Per-UF capping is an optional future layer; the dead `uf` capture
+    # was removed.
     check_and_increment_ramp(redis_client, cap=ramp_cap, uf=None)
-    # Note: per D-07 and RESEARCH.md Pitfall 4, the GLOBAL cap is checked (uf=None)
-    # because WhatsApp portfolio limits are portfolio-wide (post Oct 2025).
-    # Per-UF cap is an optional additional layer; not enforced here by default.
-    # The uf variable is captured for future per-UF layering.
-    _ = uf  # used for context/logging; global gate runs above
 
     # ------------------------------------------------------------------
     # Condition 8: Quality rating not RED

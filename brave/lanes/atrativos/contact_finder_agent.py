@@ -85,9 +85,11 @@ class ContactFinderAgent:
         # Fetch contact details from Places
         details = await self._places_client.place_details(place_id)
 
-        # Build ContactResult from Places details
-        phone_raw: str | None = details.get("formatted_phone_number") or \
-                                details.get("international_phone_number")
+        # Build ContactResult from Places details.
+        # IN-04: RealPlacesClient.place_details returns only
+        # international_phone_number (field mask requests internationalPhoneNumber);
+        # the formatted_phone_number branch was always None in production.
+        phone_raw: str | None = details.get("international_phone_number")
 
         # Normalize phone to E.164 if it looks like a Brazilian number
         phone_e164 = _normalize_phone_e164(phone_raw)
