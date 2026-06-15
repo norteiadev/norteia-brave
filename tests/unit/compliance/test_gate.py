@@ -67,18 +67,23 @@ class FakeRioRecord:
 
 
 def _make_session_with_consent(phone: str, rio_id: uuid.UUID, opted_out: bool = False) -> MagicMock:
-    """Return a mock Session that returns a FakeConsentLog for the given phone."""
+    """Return a mock Session that simulates consent_log queries for send_path_gate.
+
+    send_path_gate makes 2 session.scalar() calls:
+      Call 1: legal-basis check — SELECT ConsentLog WHERE phone_e164=phone (any row)
+              → should return a FakeConsentLog row (proving legal basis exists)
+      Call 2: is_opted_out check — SELECT ConsentLog WHERE phone_e164=phone AND opted_out=True
+              → returns None if NOT opted_out, returns a row if IS opted_out
+
+    We use side_effect to return different values for each call.
+    """
     session = MagicMock()
     consent_row = FakeConsentLog(phone_e164=phone, rio_id=rio_id, opted_out=opted_out)
+    opted_out_row = FakeConsentLog(phone_e164=phone, rio_id=rio_id, opted_out=True) if opted_out else None
 
-    # scalar() is called by is_opted_out and by the legal-basis check inside send_path_gate
-    # We need to differentiate between the two calls:
-    # - legal basis check: SELECT ConsentLog where phone_e164 == phone (any row)
-    # - opted_out check: SELECT ConsentLog where phone_e164 == phone AND opted_out IS True
-    # Gate does: consent_log.is_opted_out(session, phone) → calls session.scalar(select where opted_out=True)
-    # and separately checks for any consent row
-    # We return the row always; is_opted_out checks opted_out field in the returned row
-    session.scalar.return_value = consent_row
+    # Call 1: legal basis → always returns the row (legal basis exists)
+    # Call 2: is_opted_out → returns row if opted_out=True, None if opted_out=False
+    session.scalar.side_effect = [consent_row, opted_out_row]
     return session
 
 
