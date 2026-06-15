@@ -6,11 +6,15 @@ Includes all Phase 1 routers:
   - dlq      — GET/PATCH /api/v1/dlq
   - audit    — GET /api/v1/audit
   - webhook  — POST /webhook/error-report
+
+Phase 3 additions:
+  - atrativos_gate — WhatsApp gate endpoints (D-06, ATR-05, COMP-01/02)
 """
 
 from fastapi import FastAPI
 
 from brave.api.routers.audit import router as audit_router
+from brave.api.routers.atrativos_gate import router as atrativos_gate_router
 from brave.api.routers.dlq import router as dlq_router
 from brave.api.routers.health import router as health_router
 from brave.api.routers.metrics import router as metrics_router
@@ -28,3 +32,6 @@ app.include_router(metrics_router)
 app.include_router(dlq_router)
 app.include_router(audit_router)
 app.include_router(webhook_router)
+
+# Phase 3: Atrativos WhatsApp gate endpoints (D-06, ATR-05, COMP-01/02)
+app.include_router(atrativos_gate_router)
