@@ -219,11 +219,17 @@ async def _send_opening_node(
     """Node: write consent record and send opening template.
 
     Called at graph START — sends the first outreach message to the owner.
-    Always writes a consent record before any send (gate condition 1).
+    Always writes (upserts) a consent record before any send (gate condition 1).
+
+    WR-09: if the phone already opted out, write_consent_record raises
+    OptedOutError — the outreach is aborted (record → DLQ) instead of creating a
+    contradictory active consent row.
 
     Returns state update with the opening turn appended to messages.
     """
-    from brave.compliance.consent_log import write_consent_record
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from brave.compliance.consent_log import OptedOutError, write_consent_record
 
     contact_phone = state["contact_phone"]
     template_name = state["outreach_template"]
@@ -238,15 +244,25 @@ async def _send_opening_node(
         )
     }
 
-    # Write LGPD consent record before first contact (gate condition 1)
-    write_consent_record(
-        session=session,
-        phone_e164=contact_phone,
-        rio_id=rio.id,
-        legal_basis="legitimate_interest_commercial_verification",
-        norteia_identified=True,
-        purpose="business_validation",
-    )
+    # Write (upsert) LGPD consent record before first contact (gate condition 1).
+    # WR-09: refuses + raises for an already-opted-out phone.
+    try:
+        write_consent_record(
+            session=session,
+            phone_e164=contact_phone,
+            rio_id=rio.id,
+            legal_basis="legitimate_interest_commercial_verification",
+            norteia_identified=True,
+            purpose="business_validation",
+        )
+    except OptedOutError:
+        # Opted-out phone — abort outreach, route to DLQ (no send, no new row).
+        rio.routing = "dlq"
+        rio.dlq_reason = "owner_opted_out"
+        flag_modified(rio, "normalized")
+        session.flush()
+        logger.info("opening_aborted_opted_out", rio_id=state["rio_id"])
+        return {"opted_out": True}
     session.flush()
 
     # Send through compliance gate — will raise ComplianceError if any condition fails

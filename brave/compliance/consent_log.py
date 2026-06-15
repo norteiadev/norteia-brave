@@ -35,6 +35,15 @@ from brave.observability.audit import write_audit
 logger = structlog.get_logger(__name__)
 
 
+class OptedOutError(Exception):
+    """Raised when a consent record is requested for a phone that already opted out.
+
+    WR-09: opt-out is permanent (T-03-03-07, never unset). Creating a new active
+    consent row for an opted-out phone would resurrect a suppressed contact —
+    callers must abort the outreach instead.
+    """
+
+
 def write_consent_record(
     session: Session,
     phone_e164: str,
@@ -43,13 +52,21 @@ def write_consent_record(
     norteia_identified: bool,
     purpose: str = "business_validation",
 ) -> ConsentLog:
-    """Write a new LGPD consent record for a contact (COMP-01).
+    """Write (upsert) the LGPD consent record for a contact (COMP-01).
 
     Called before dispatching the first WhatsApp outreach message to create the
     legal-basis record required by gate condition 1.
 
-    Note: This function always creates a NEW row. Idempotency (upsert behavior)
-    is the caller's responsibility — check for an existing record first if needed.
+    WR-09 upsert semantics (idempotent + opt-out-safe):
+      - If the phone already has an opted-out row → raise OptedOutError and create
+        NOTHING. Never create a fresh active (opted_out=False) row for an
+        opted-out phone — that would leave contradictory rows (active + opted-out)
+        for one phone, and a later "latest row" query could resurrect a
+        suppressed contact into an active conversation.
+      - If a non-opted-out row already exists for the phone → reuse it (refresh
+        last_contact_at) instead of inserting a duplicate. This makes the function
+        safe under task retries (acks_late + reject_on_worker_lost redelivery).
+      - Otherwise → insert a new active row.
 
     PII: phone_e164 is stored in the DB. Log emits only the first 5 chars (T-03-03-06).
 
@@ -62,9 +79,44 @@ def write_consent_record(
         purpose:            Purpose of the outreach (default: "business_validation").
 
     Returns:
-        The created ConsentLog entry.
+        The created or reused ConsentLog entry.
+
+    Raises:
+        OptedOutError: if the phone already has an opted-out consent row.
     """
     now = datetime.now(timezone.utc)
+
+    # WR-09: refuse to create an active row for an already-opted-out phone.
+    if is_opted_out(session, phone_e164):
+        logger.warning(
+            "consent_record_refused_opted_out",
+            phone_prefix=phone_e164[:5],
+            rio_id=str(rio_id),
+        )
+        raise OptedOutError(
+            f"phone (prefix {phone_e164[:5]}) has opted out — cannot create an "
+            "active consent record (opt-out is permanent, T-03-03-07)."
+        )
+
+    # WR-09: reuse an existing active row (idempotent under retry) instead of
+    # inserting a duplicate active row for the same phone.
+    existing = session.scalar(
+        select(ConsentLog)
+        .where(ConsentLog.phone_e164 == phone_e164)
+        .where(ConsentLog.opted_out.is_(False))
+        .order_by(ConsentLog.first_contact_at.desc())
+    )
+    if existing is not None:
+        existing.last_contact_at = now
+        session.flush()
+        logger.info(
+            "consent_record_reused",
+            phone_prefix=phone_e164[:5],
+            rio_id=str(rio_id),
+            legal_basis=existing.legal_basis,
+        )
+        return existing
+
     record = ConsentLog(
         id=uuid.uuid4(),
         phone_e164=phone_e164,
