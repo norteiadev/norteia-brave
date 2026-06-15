@@ -26,6 +26,9 @@ dependencies = [
     "openai==2.41.1",
     "anthropic==0.109.1",
     "instructor==1.15.1",
+    # LangGraph (WhatsApp conversation graph + PostgreSQL checkpointer, D-08)
+    "langgraph==1.2.5",
+    "langgraph-checkpoint-postgres==3.1.0",
     # HTTP & resilience
     "httpx==0.28.1",
     "tenacity==9.1.4",
