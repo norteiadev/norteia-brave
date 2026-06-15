@@ -113,11 +113,11 @@ Plans:
 
 **Wave 2** *(depends on Wave 1)*
 
-- [ ] 03-02-PLAN.md — Discovery producers: DiscoveryAgent (parent-resolution + place_id cache), ContactFinderAgent, SignalAgent (CLOSED_* hard descarte + Apify best-effort), state_machine.advance_sub_state, RealPlacesClient + RealApifyClient, discover_atrativo_task + find_contacts_task + gather_signals_task Celery tasks
+- [x] 03-02-PLAN.md — Discovery producers: DiscoveryAgent (parent-resolution + place_id cache), ContactFinderAgent, SignalAgent (CLOSED_* hard descarte + Apify best-effort), state_machine.advance_sub_state, RealPlacesClient + RealApifyClient, discover_atrativo_task + find_contacts_task + gather_signals_task Celery tasks
 
 **Wave 3** *(depends on Wave 1, parallel with Wave 2)*
 
-- [ ] 03-03-PLAN.md — Compliance gate: send_path_gate (8 D-11 conditions, 9 unit tests), consent_log (write/is_opted_out/record_opt_out/lookup), quality_rating (Redis flag), atrativos_gate FastAPI router (list/approve/reject/inbound/quality-rating endpoints)
+- [x] 03-03-PLAN.md — Compliance gate: send_path_gate (8 D-11 conditions, 9 unit tests), consent_log (write/is_opted_out/record_opt_out/lookup), quality_rating (Redis flag), atrativos_gate FastAPI router (list/approve/reject/inbound/quality-rating endpoints)
 
 **Wave 4** *(depends on Wave 2 + Wave 3)*
 
@@ -153,5 +153,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
 | 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
-| 3. Atrativos Lane (WhatsApp + Compliance) | 1/5 | In Progress|  |
+| 3. Atrativos Lane (WhatsApp + Compliance) | 3/5 | In Progress|  |
 | 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
