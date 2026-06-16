@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 04-08-PLAN.md
-last_updated: "2026-06-16T20:40:07.183Z"
+stopped_at: Closed DASH-03 gap (04-10 ramp-context endpoint)
+last_updated: "2026-06-16T21:00:00.000Z"
 last_activity: 2026-06-16
 progress:
   total_phases: 4
@@ -93,6 +93,7 @@ Recent decisions affecting current work:
 - [Phase ?]: DLQ §7.6 ScoreBreakdownPanel uses custom threshold-capped bars (not shadcn Progress) for per-bar green/amber/red caps
 - [Phase ?]: [Phase 4 P05]: DASH-02 GET /api/v1/monitor read-only Bearer-guarded aggregate (volume + AuditLog-derived rates = audit coverage + throughput + PoisonQuarantine/RED-quality alerts); live-polled via shared useMonitor (refetchInterval 10s, D-04), WebSocket deferred
 - [Phase ?]: [Phase 4 P07]: DASH-04 GET /api/v1/cost?group_by=lane|model&since= read-only Bearer-guarded GROUP BY over llm_generations (func.sum usd_cost + token sums + count); Cost & LLM view = mono USD/tokens summary + per-lane/per-model Recharts bars via shared useCost + window selector; empty period renders 'Sem dados no periodo'
+- [Phase ?]: [Phase 4 P10 gap-closure]: DASH-03 ramp/quality context closed — GET /api/v1/atrativos/whatsapp/ramp-context (atrativos_gate.py), read-only Bearer-guarded, reads shared ramp_key() Redis counter + wa:quality_red flag; returns daily_cap/used/remaining/quality + RampQualityContext aliases so RampContext.tsx renders real data (not the 'indisponível' fallback). Never mutates the ramp counter (read-only; ramp enforced in P3 send path)
 
 ### Pending Todos
 
@@ -121,6 +122,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-16T20:40:02.529Z
-Stopped at: Completed 04-08-PLAN.md
+Last session: 2026-06-16T21:00:00.000Z
+Stopped at: Closed DASH-03 gap — 04-10 ramp-context endpoint (re-verify Phase 4)
 Resume file: None
