@@ -23,6 +23,7 @@ import uuid
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from brave.config.settings import DashboardConfig
 
@@ -265,3 +266,186 @@ def test_dlq_validate_steward_only_passes_auth(client, either_or_secrets):
     )
     assert r.status_code != 401
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/dlq/{rio_id} — DLQ detail endpoint (DASH-01, D-01)
+#
+# The detail endpoint surfaces what the list deliberately omits: score_breakdown,
+# normalized, Nascente payload, signals, and the per-record WhatsApp/steward log.
+# The no-Bearer 401 fires before any DB work (no DB fixture needed); the 200-shape
+# and 404 cases hit the real DB and are @pytest.mark.integration.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def authed_client():
+    """TestClient pre-set with a valid dashboard Bearer header (DB-backed tests)."""
+    os.environ["BRAVE_DASHBOARD_BEARER_TOKEN"] = BEARER_TOKEN
+    os.environ.setdefault(
+        "BRAVE_DB_URL",
+        "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave",
+    )
+    from brave.api.main import app
+
+    return TestClient(
+        app,
+        raise_server_exceptions=False,
+        headers={"Authorization": f"Bearer {BEARER_TOKEN}"},
+    )
+
+
+def _make_dlq_record(db_session: Session):
+    """Seed a Nascente + Rio (routing='dlq') record with a §7.6 score_breakdown.
+
+    Returns the RioRecord. Mirrors the gate test seed helper — we only need a
+    record in the right shape, not a full pipeline run.
+    """
+    from brave.core.models import NascenteRecord, RioRecord
+
+    src_ref = f"places:BA:{uuid.uuid4().hex}"
+    nascente = NascenteRecord(
+        id=uuid.uuid4(),
+        source="places_discovery",
+        source_ref=src_ref,
+        entity_type="destination",
+        uf="BA",
+        payload={"name": f"Destino {src_ref}", "place_id": src_ref, "signals": {"reviews": 12}},
+        content_hash=f"hash:{src_ref}",
+        version=1,
+    )
+    db_session.add(nascente)
+    db_session.flush()
+
+    rio = RioRecord(
+        id=uuid.uuid4(),
+        nascente_id=nascente.id,
+        entity_type="destination",
+        uf="BA",
+        routing="dlq",
+        dlq_reason="score_below_threshold",
+        score=72.5,
+        score_version="v1",
+        score_breakdown={
+            "origem": 80.0,
+            "completude": 70.0,
+            "corroboracao": 60.0,
+            "atualidade": 75.0,
+            "validacao_humana": 0.0,
+        },
+        normalized={"name": f"Destino {src_ref}", "signals": {"reviews": 12}},
+    )
+    db_session.add(rio)
+    db_session.flush()
+    return rio
+
+
+def test_dlq_detail_no_bearer_returns_401(client, bearer_token):
+    """GET /api/v1/dlq/{id} with no Authorization header → 401 before any DB work."""
+    r = client.get(f"/api/v1/dlq/{uuid.uuid4()}")
+    assert r.status_code == 401
+
+
+@pytest.mark.integration
+def test_dlq_detail_unknown_id_returns_404(authed_client):
+    """GET /api/v1/dlq/{random} with valid Bearer → 404 (auth passed, no record)."""
+    r = authed_client.get(f"/api/v1/dlq/{uuid.uuid4()}")
+    assert r.status_code != 401
+    assert r.status_code == 404
+
+
+@pytest.mark.integration
+def test_dlq_detail_returns_full_shape(authed_client, db_session: Session):
+    """GET /api/v1/dlq/{id} returns score_breakdown + normalized + payload + log."""
+    rio = _make_dlq_record(db_session)
+    db_session.commit()
+
+    r = authed_client.get(f"/api/v1/dlq/{rio.id}")
+    assert r.status_code == 200, f"Unexpected status: {r.status_code} — {r.text}"
+    body = r.json()
+
+    for key in (
+        "id",
+        "routing",
+        "sub_state",
+        "dlq_reason",
+        "score",
+        "score_version",
+        "score_breakdown",
+        "normalized",
+        "nascente_payload",
+        "signals",
+        "whatsapp_log",
+    ):
+        assert key in body, f"Missing key {key!r} in detail response: {body.keys()}"
+
+    assert body["id"] == str(rio.id)
+    assert body["routing"] == "dlq"
+    assert body["dlq_reason"] == "score_below_threshold"
+    assert isinstance(body["score_breakdown"], dict)
+    assert isinstance(body["normalized"], dict)
+    assert isinstance(body["nascente_payload"], dict)
+    assert body["nascente_payload"].get("place_id") is not None
+    assert isinstance(body["whatsapp_log"], list)
+
+
+@pytest.mark.integration
+def test_dlq_detail_score_breakdown_has_criteria(authed_client, db_session: Session):
+    """score_breakdown surfaces the §7.6 per-criterion keys when present on the Rio record."""
+    rio = _make_dlq_record(db_session)
+    db_session.commit()
+
+    body = authed_client.get(f"/api/v1/dlq/{rio.id}").json()
+    breakdown = body["score_breakdown"]
+    for criterion in ("origem", "completude", "corroboracao", "atualidade", "validacao_humana"):
+        assert criterion in breakdown, f"Missing §7.6 criterion {criterion!r}: {breakdown}"
+
+
+@pytest.mark.integration
+def test_dlq_detail_whatsapp_log_ordered_by_created_at(authed_client, db_session: Session):
+    """whatsapp_log returns this rio's AuditLog rows ordered by created_at ascending."""
+    from datetime import datetime, timedelta, timezone
+
+    from brave.core.models import AuditLog
+
+    rio = _make_dlq_record(db_session)
+    base = datetime(2026, 6, 16, 12, 0, 0, tzinfo=timezone.utc)
+    db_session.add(
+        AuditLog(
+            id=uuid.uuid4(),
+            action="dlq_reprocessed",
+            entity_type="destination",
+            record_id=rio.id,
+            actor="steward",
+            created_at=base + timedelta(minutes=2),
+        )
+    )
+    db_session.add(
+        AuditLog(
+            id=uuid.uuid4(),
+            action="dlq_validated",
+            entity_type="destination",
+            record_id=rio.id,
+            actor="steward",
+            created_at=base + timedelta(minutes=1),
+        )
+    )
+    # An unrelated audit row must NOT leak into this rio's log.
+    db_session.add(
+        AuditLog(
+            id=uuid.uuid4(),
+            action="dlq_rejected",
+            entity_type="destination",
+            record_id=uuid.uuid4(),
+            actor="steward",
+            created_at=base,
+        )
+    )
+    db_session.commit()
+
+    log = authed_client.get(f"/api/v1/dlq/{rio.id}").json()["whatsapp_log"]
+    assert len(log) == 2, f"Expected only this rio's 2 rows, got {len(log)}: {log}"
+    actions = [row["action"] for row in log]
+    assert actions == ["dlq_validated", "dlq_reprocessed"], (
+        f"Expected created_at-ascending order, got {actions}"
+    )
