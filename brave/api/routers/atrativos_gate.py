@@ -46,7 +46,7 @@ from brave.api.deps import (
 from brave.compliance.gate import ramp_key
 from brave.compliance.quality_rating import is_quality_red
 from brave.config.settings import AppConfig, StewardConfig, WebhookConfig
-from brave.core.models import RioRecord
+from brave.core.models import RioRecord, mask_phone
 from brave.observability.audit import write_audit
 
 logger = structlog.get_logger(__name__)
@@ -117,11 +117,36 @@ def require_webhook(
 
 
 # ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _safe_normalized(normalized: dict | None) -> dict:
+    """Return a copy of the Rio `normalized` dict with the raw phone_e164 masked (CR-01).
+
+    The Rio `normalized` payload stores the owner's raw E.164 number at
+    normalized["contacts"]["phone_e164"]. This endpoint MUST NEVER emit that raw
+    number (LGPD, R3). Replace it with a masked form so the dashboard receives only
+    `phone_masked`, matching gate-api.ts's documented contract.
+    """
+    n = dict(normalized or {})
+    contacts = n.get("contacts")
+    if isinstance(contacts, dict) and "phone_e164" in contacts:
+        contacts = dict(contacts)
+        contacts["phone_masked"] = mask_phone(contacts.pop("phone_e164", None))
+        n["contacts"] = contacts
+    return n
+
+
+# ---------------------------------------------------------------------------
 # GET /api/v1/atrativos/gate — list aguardando_consulta_whatsapp queue
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/v1/atrativos/gate")
+@router.get(
+    "/api/v1/atrativos/gate",
+    dependencies=[Depends(require_bearer)],
+)
 def list_whatsapp_gate_queue(
     uf: str | None = Query(None),
     limit: int = Query(50, ge=1, le=500),
@@ -135,8 +160,13 @@ def list_whatsapp_gate_queue(
 
     Filtered by optional uf query param.
 
-    No steward auth required (read-only queue list).
+    Bearer-guarded (require_bearer, CR-01): the 401 fires before any DB work —
+    same trust boundary as every other dashboard read endpoint (dashboard.py).
     The Phase 4 dashboard drives the human review UX from this endpoint.
+
+    LGPD (R3, CR-01): the raw phone_e164 in `normalized["contacts"]` is NEVER
+    emitted — it is masked to `phone_masked` via `_safe_normalized`, and a
+    top-level `phone_masked` field mirrors gate-api.ts's documented contract.
 
     Args:
         uf:    Optional two-letter UF code to filter by state.
@@ -145,7 +175,7 @@ def list_whatsapp_gate_queue(
 
     Returns:
         List of dicts with rio_id, uf, entity_type, sub_state, dlq_reason,
-        normalized (subset), score, created_at-equivalent fields.
+        normalized (phone-masked), phone_masked, score, score_version fields.
     """
     query = select(RioRecord).where(
         RioRecord.entity_type == "attraction",
@@ -168,7 +198,11 @@ def list_whatsapp_gate_queue(
             "score": float(r.score) if r.score is not None else None,
             "score_version": r.score_version,
             "canonical_key": r.canonical_key,
-            "normalized": r.normalized or {},
+            # CR-01: never emit the raw normalized dict — mask phone_e164.
+            "normalized": _safe_normalized(r.normalized),
+            "phone_masked": mask_phone(
+                ((r.normalized or {}).get("contacts") or {}).get("phone_e164")
+            ),
         }
         for r in rows
     ]
