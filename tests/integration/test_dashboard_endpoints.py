@@ -450,3 +450,164 @@ def test_dlq_detail_whatsapp_log_ordered_by_created_at(authed_client, db_session
     assert actions == ["dlq_validated", "dlq_reprocessed"], (
         f"Expected created_at-ascending order, got {actions}"
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/monitor — Brave monitor endpoint (DASH-02, §15.7, D-01)
+#
+# Returns volume (per-layer counts) + rates (AuditLog-derived approval/rejection/
+# DLQ proportions over a window — THIS is the DASH-02 audit coverage) + throughput
+# (RioRecord.processed_at over the window) + alerts (PoisonQuarantine count, RED
+# WhatsApp quality flag). Read-only, Bearer-guarded; the no-Bearer 401 fires before
+# any DB work. The RED quality flag is read via get_redis, overridden in tests with
+# a fakeredis instance so the alert can be exercised offline.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def monitor_redis(monkeypatch):
+    """Override get_redis with a fresh fakeredis so the RED quality flag is testable.
+
+    Returns the fakeredis instance + a teardown that clears the override. The
+    fixture sets the dashboard Bearer env so the authed_client passes the gate.
+    """
+    import fakeredis
+
+    from brave.api import deps
+    from brave.api.main import app
+
+    os.environ["BRAVE_DASHBOARD_BEARER_TOKEN"] = BEARER_TOKEN
+    fake = fakeredis.FakeRedis()
+    app.dependency_overrides[deps.get_redis] = lambda: fake
+    try:
+        yield fake
+    finally:
+        app.dependency_overrides.pop(deps.get_redis, None)
+
+
+def test_monitor_no_bearer_returns_401(client, bearer_token):
+    """GET /api/v1/monitor with no Authorization header → 401 before any DB work."""
+    r = client.get("/api/v1/monitor")
+    assert r.status_code == 401
+
+
+@pytest.mark.integration
+def test_monitor_returns_full_shape(authed_client, monitor_redis):
+    """GET /api/v1/monitor returns volume + rates + throughput + alerts keys."""
+    r = authed_client.get("/api/v1/monitor")
+    assert r.status_code == 200, f"Unexpected status: {r.status_code} — {r.text}"
+    body = r.json()
+
+    for key in ("volume", "rates", "throughput", "alerts"):
+        assert key in body, f"Missing key {key!r} in monitor response: {body.keys()}"
+
+    # volume mirrors the metrics.py per-layer shape (pre-seeded, never missing keys)
+    assert "nascente_count" in body["volume"]
+    assert "rio_count" in body["volume"]
+    for routing in ("in_progress", "mar", "dlq", "descarte"):
+        assert routing in body["volume"]["rio_count"]
+    assert "mar_count" in body["volume"]
+
+    # rates pre-seed all three audit-derived actions, never missing
+    for rate in ("dlq_validated", "dlq_rejected", "dlq_reprocessed"):
+        assert rate in body["rates"], f"Missing audit-derived rate {rate!r}: {body['rates']}"
+
+    # alerts carry the failure count + the RED quality flag
+    assert "failures" in body["alerts"]
+    assert "quality" in body["alerts"]
+    assert isinstance(body["alerts"]["failures"], int)
+
+
+@pytest.mark.integration
+def test_monitor_empty_db_preseeds_zero(authed_client, monitor_redis):
+    """An empty-window DB still returns 200 with pre-seeded zero counts/rates."""
+    # Use a future window so no rows fall in it → everything pre-seeds to 0.
+    r = authed_client.get("/api/v1/monitor?since_hours=0")
+    assert r.status_code == 200
+    body = r.json()
+    for routing in ("in_progress", "mar", "dlq", "descarte"):
+        assert isinstance(body["volume"]["rio_count"][routing], int)
+    for rate in ("dlq_validated", "dlq_rejected", "dlq_reprocessed"):
+        # rates pre-seeded to 0.0 with no audit rows in the window
+        assert body["rates"][rate] == 0.0
+    assert isinstance(body["throughput"], int)
+
+
+@pytest.mark.integration
+def test_monitor_rates_derive_from_auditlog(authed_client, db_session: Session, monitor_redis):
+    """rates reflect AuditLog action counts (dlq_validated/dlq_rejected/dlq_reprocessed)."""
+    from datetime import datetime, timedelta
+
+    from brave.core.models import AuditLog
+
+    now = datetime.now(UTC)
+    # Seed 3 validated + 1 rejected within the default window.
+    for _ in range(3):
+        db_session.add(
+            AuditLog(
+                id=uuid.uuid4(),
+                action="dlq_validated",
+                entity_type="destination",
+                record_id=uuid.uuid4(),
+                actor="steward",
+                created_at=now - timedelta(minutes=5),
+            )
+        )
+    db_session.add(
+        AuditLog(
+            id=uuid.uuid4(),
+            action="dlq_rejected",
+            entity_type="destination",
+            record_id=uuid.uuid4(),
+            actor="steward",
+            created_at=now - timedelta(minutes=5),
+        )
+    )
+    db_session.commit()
+
+    body = authed_client.get("/api/v1/monitor?since_hours=24").json()
+    rates = body["rates"]
+    # validated should outweigh rejected (3 vs 1) → proportion higher
+    assert rates["dlq_validated"] > rates["dlq_rejected"]
+    # all proportions are in [0, 1]
+    for v in rates.values():
+        assert 0.0 <= v <= 1.0
+
+
+@pytest.mark.integration
+def test_monitor_alerts_failures_reflects_poison_quarantine(
+    authed_client, db_session: Session, monitor_redis
+):
+    """alerts.failures equals the PoisonQuarantine row count."""
+    from brave.core.models import PoisonQuarantine
+
+    before = authed_client.get("/api/v1/monitor").json()["alerts"]["failures"]
+
+    db_session.add(
+        PoisonQuarantine(
+            id=uuid.uuid4(),
+            nascente_id=uuid.uuid4(),
+            task_name="brave.process_nascente",
+            error_message="boom",
+        )
+    )
+    db_session.commit()
+
+    after = authed_client.get("/api/v1/monitor").json()["alerts"]["failures"]
+    assert after == before + 1
+
+
+@pytest.mark.integration
+def test_monitor_alerts_quality_reflects_red_flag(authed_client, monitor_redis):
+    """alerts.quality is True when the wa:quality_red flag is set, False otherwise."""
+    from brave.compliance.quality_rating import QUALITY_RED_KEY
+
+    # Flag absent → quality not RED.
+    monitor_redis.delete(QUALITY_RED_KEY)
+    body = authed_client.get("/api/v1/monitor").json()
+    assert body["alerts"]["quality"] is False
+
+    # Flag set → quality RED (alert).
+    monitor_redis.set(QUALITY_RED_KEY, "1")
+    body = authed_client.get("/api/v1/monitor").json()
+    assert body["alerts"]["quality"] is True
