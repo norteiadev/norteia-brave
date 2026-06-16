@@ -60,7 +60,7 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 ### Dashboard (Territorial CMS)
 
 - [x] **DASH-01**: DLQ review queue shows Nascente payload + Rio data + §7.6 per-criterion score + signals + WhatsApp log, with approve/reject/edit/reprocess and batch-by-state mode; edit triggers re-score
-- [ ] **DASH-02**: Brave monitor (§15.7) shows volume per layer, approval/rejection/DLQ rates, failure alerts, throughput, and audit
+- [x] **DASH-02**: Brave monitor (§15.7) shows volume per layer, approval/rejection/DLQ rates, failure alerts, throughput, and audit
 - [ ] **DASH-03**: WhatsApp gate UI works the `aguardando_consulta_whatsapp` queue (approve/reject) with ramp context
 - [ ] **DASH-04**: Cost & LLM view shows spend per lane/model from `llm_generations`
 - [ ] **DASH-05**: Dashboard shows WhatsApp conversations and funnels (destinos & atrativos by UF/source)
@@ -155,7 +155,7 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | COMP-02 | Phase 3 | Pending |
 | COMP-03 | Phase 3 | Pending |
 | DASH-01 | Phase 4 | Complete |
-| DASH-02 | Phase 4 | Pending |
+| DASH-02 | Phase 4 | Complete |
 | DASH-03 | Phase 4 | Pending |
 | DASH-04 | Phase 4 | Pending |
 | DASH-05 | Phase 4 | Pending |

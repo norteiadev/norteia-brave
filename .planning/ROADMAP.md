@@ -159,7 +159,7 @@ Plans:
 
 **Wave 4** *(parallel — monitor endpoint+UI, gate UI; no file conflict)*
 
-- [ ] 04-05-PLAN.md — GET /api/v1/monitor endpoint (rates/throughput/alerts) + monitor view (tiles + Recharts + polling) (DASH-02)
+- [x] 04-05-PLAN.md — GET /api/v1/monitor endpoint (rates/throughput/alerts) + monitor view (tiles + Recharts + polling) (DASH-02)
 - [ ] 04-06-PLAN.md — WhatsApp gate UI over existing endpoints (reuse ReviewPanel) + ramp/quality context + masked PII (DASH-03)
 
 **Wave 5** *(depends on monitor — shares dashboard.py)*
@@ -186,4 +186,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
 | 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 5/5 | Complete   | 2026-06-15 |
-| 4. Dashboard (Territorial CMS) | 4/9 | In Progress|  |
+| 4. Dashboard (Territorial CMS) | 5/9 | In Progress|  |
