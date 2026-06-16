@@ -54,7 +54,7 @@ describe("ReviewPanel", () => {
   });
 
   it("shows the 401 session-expired state", async () => {
-    server.use(dlqUnauthorized());
+    server.use(...dlqUnauthorized());
     renderWithClient(<ReviewPanel rioId={RIO_ID} />);
 
     expect(

@@ -176,11 +176,12 @@ export function dlqBatchSuccess(validated = 3) {
   });
 }
 
-/** Catch-all 401 for any DLQ route (session-expired path). */
+/** Catch-all 401 for any DLQ route (session-expired path) — covers both the
+ *  bare list endpoint and the per-record/detail/mutation sub-paths. */
 export function dlqUnauthorized() {
-  return http.all(`${BASE}/*`, () =>
-    HttpResponse.json({ detail: "Unauthorized" }, { status: 401 }),
-  );
+  const unauth = () =>
+    HttpResponse.json({ detail: "Unauthorized" }, { status: 401 });
+  return [http.all(BASE, unauth), http.all(`${BASE}/*`, unauth)];
 }
 
 /** Default barrel: list+detail success (suites override per state via server.use). */
