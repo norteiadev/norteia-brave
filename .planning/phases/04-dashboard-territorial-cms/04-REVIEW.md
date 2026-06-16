@@ -48,10 +48,10 @@ resolved:
   - WR-01
   - WR-02
   - WR-03
-remaining:
   - WR-04
   - WR-05
   - WR-06
+remaining:
   - IN-01
   - IN-02
   - IN-03
@@ -59,10 +59,13 @@ remaining:
   - IN-05
 ---
 
-> **Fix status (2026-06-16):** CR-01, CR-02, CR-03, WR-01, WR-02, WR-03 resolved
-> via the `/gsd:code-review --fix` workflow (see 04-REVIEW-FIX.md). Backend suite
-> green: 364 passed. WR-04/05 (dashboard React) and WR-06 (get_redis DI) plus all
-> Info items were out of this fix run's scope and remain open.
+> **Fix status (2026-06-16):** All Critical + Warning findings resolved. CR-01,
+> CR-02, CR-03, WR-01, WR-02, WR-03 resolved in the first `/gsd:code-review --fix`
+> run (see 04-REVIEW-FIX.md). WR-04 (RampContext 401 session-expired UI), WR-05
+> (cross-key optimistic validate removal), and WR-06 (`get_redis` DI in
+> `quality_rating_webhook`) resolved in a follow-up run — dashboard suite green
+> (85 passed, tsc clean) and the WR-06 webhook tests green via injected redis.
+> Only Info-tier items (IN-01..IN-05) remain open.
 
 
 # Phase 4: Code Review Report
