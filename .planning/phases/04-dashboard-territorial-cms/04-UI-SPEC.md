@@ -1,7 +1,8 @@
 ---
 phase: 4
 slug: dashboard-territorial-cms
-status: draft
+status: approved
+reviewed_at: 2026-06-16
 shadcn_initialized: false
 preset: "new-york / neutral base / CSS-variables (to be initialized at scaffold time)"
 created: 2026-06-16
