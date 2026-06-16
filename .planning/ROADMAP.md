@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Brave Core, Score Gate, Boundary & Contract** - Entity-agnostic Nascente/Rio/Mar/DLQ engine with the pure §7.6 score gate, client boundary, observability, 24/7 orchestration, and the frozen Mar→norteia-api Pact contract (completed 2026-06-11)
 - [x] **Phase 2: Destinos Lane** - Mtur/NotebookLM/Desmembramento producers → Rio/score → DLQ → batch-by-state human validation → Mar, proving the full path end-to-end (completed 2026-06-12)
 - [x] **Phase 3: Atrativos Lane (WhatsApp + Compliance)** - Discovery → ContactFinder → Signal → human WhatsApp gate → automated owner-validation outreach → re-score, with LGPD + BSP enforced before the first real message (completed 2026-06-15)
-- [ ] **Phase 4: Dashboard (Territorial CMS)** - Brave monitor, DLQ batch review, WhatsApp gate UI, conversations/funnels, and Cost/LLM views behind Bearer auth
+- [x] **Phase 4: Dashboard (Territorial CMS)** - Brave monitor, DLQ batch review, WhatsApp gate UI, conversations/funnels, and Cost/LLM views behind Bearer auth (completed 2026-06-16)
 
 ## Phase Details
 
@@ -172,7 +172,7 @@ Plans:
 
 **Wave 7** *(depends on 04-08 endpoints — frontend half)*
 
-- [ ] 04-09-PLAN.md — Funnels + conversations views (Recharts stage bars, masked-phone transcript master-detail) over the 04-08 endpoints (DASH-05, frontend half)
+- [x] 04-09-PLAN.md — Funnels + conversations views (Recharts stage bars, masked-phone transcript master-detail) over the 04-08 endpoints (DASH-05, frontend half)
 
 **UI hint**: yes
 
@@ -186,4 +186,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
 | 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 5/5 | Complete   | 2026-06-15 |
-| 4. Dashboard (Territorial CMS) | 8/9 | In Progress|  |
+| 4. Dashboard (Territorial CMS) | 9/9 | Complete   | 2026-06-16 |
