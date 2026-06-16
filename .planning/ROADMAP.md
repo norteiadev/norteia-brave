@@ -168,7 +168,7 @@ Plans:
 
 **Wave 6** *(depends on cost — shares dashboard.py)*
 
-- [ ] 04-08-PLAN.md — conversation_message log + migration 0005 (R2 Option B) + appends at both pipeline write-points + funnels/conversations endpoints (DASH-05, backend half)
+- [x] 04-08-PLAN.md — conversation_message log + migration 0005 (R2 Option B) + appends at both pipeline write-points + funnels/conversations endpoints (DASH-05, backend half)
 
 **Wave 7** *(depends on 04-08 endpoints — frontend half)*
 
@@ -186,4 +186,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
 | 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 5/5 | Complete   | 2026-06-15 |
-| 4. Dashboard (Territorial CMS) | 7/9 | In Progress|  |
+| 4. Dashboard (Territorial CMS) | 8/9 | In Progress|  |
