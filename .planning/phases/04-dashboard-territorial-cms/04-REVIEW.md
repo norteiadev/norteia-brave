@@ -39,8 +39,31 @@ findings:
   warning: 6
   info: 5
   total: 14
-status: issues_found
+status: fixes_applied
+fix_report: 04-REVIEW-FIX.md
+resolved:
+  - CR-01
+  - CR-02
+  - CR-03
+  - WR-01
+  - WR-02
+  - WR-03
+remaining:
+  - WR-04
+  - WR-05
+  - WR-06
+  - IN-01
+  - IN-02
+  - IN-03
+  - IN-04
+  - IN-05
 ---
+
+> **Fix status (2026-06-16):** CR-01, CR-02, CR-03, WR-01, WR-02, WR-03 resolved
+> via the `/gsd:code-review --fix` workflow (see 04-REVIEW-FIX.md). Backend suite
+> green: 364 passed. WR-04/05 (dashboard React) and WR-06 (get_redis DI) plus all
+> Info items were out of this fix run's scope and remain open.
+
 
 # Phase 4: Code Review Report
 
