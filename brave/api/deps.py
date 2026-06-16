@@ -55,13 +55,21 @@ def require_bearer(
 ) -> None:
     """Authenticate the dashboard read surface via an Authorization: Bearer token.
 
-    Mirrors require_steward (dlq.py) exactly, swapping the header: constant-time
+    Shares require_steward's (dlq.py) security discipline — constant-time
     hmac.compare_digest, fail-closed (an unset BRAVE_DASHBOARD_BEARER_TOKEN rejects
-    every caller), 401 before any DB work, token never logged. This is the D-02
-    Bearer-at-the-edge gate the dashboard BFF presents.
+    every caller), 401 before any DB work, token never logged — but enforces the
+    HTTP header SHAPE explicitly (WR-03): the header MUST start with the `Bearer `
+    scheme prefix. A non-`Bearer` scheme (e.g. `Authorization: Basic xyz`) is
+    rejected as malformed with a 401 rather than silently treated as a token guess.
+    This is the D-02 Bearer-at-the-edge gate the dashboard BFF presents.
     """
     expected = dashboard_config.bearer_token
-    token = authorization.removeprefix("Bearer ").strip() if authorization else None
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization: Bearer token required",
+        )
+    token = authorization[len("Bearer "):].strip()
     if not token or not expected:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
