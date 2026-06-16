@@ -141,7 +141,7 @@ Plans:
   4. The Cost & LLM view shows spend per lane/model from `llm_generations`.
   5. The dashboard is access-controlled via Bearer-header auth and its components are tested offline with Vitest + MSW.
 
-**Plans**: 8 plans
+**Plans**: 9 plans
 
 Plans:
 **Wave 1** *(backend auth foundation — run first)*
@@ -168,7 +168,11 @@ Plans:
 
 **Wave 6** *(depends on cost — shares dashboard.py)*
 
-- [ ] 04-08-PLAN.md — conversation_message log + migration 0005 (R2 Option B) + funnels/conversations endpoints + funnels/conversations views (DASH-05)
+- [ ] 04-08-PLAN.md — conversation_message log + migration 0005 (R2 Option B) + appends at both pipeline write-points + funnels/conversations endpoints (DASH-05, backend half)
+
+**Wave 7** *(depends on 04-08 endpoints — frontend half)*
+
+- [ ] 04-09-PLAN.md — Funnels + conversations views (Recharts stage bars, masked-phone transcript master-detail) over the 04-08 endpoints (DASH-05, frontend half)
 
 **UI hint**: yes
 
