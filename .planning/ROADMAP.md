@@ -155,7 +155,7 @@ Plans:
 
 **Wave 3** *(depends on scaffold + DLQ detail)*
 
-- [ ] 04-04-PLAN.md — DLQ review UI: QueueList/ReviewPanel/ScoreBreakdownPanel master-detail, batch-by-state, approve/reject/edit→re-score (DASH-01)
+- [x] 04-04-PLAN.md — DLQ review UI: QueueList/ReviewPanel/ScoreBreakdownPanel master-detail, batch-by-state, approve/reject/edit→re-score (DASH-01)
 
 **Wave 4** *(parallel — monitor endpoint+UI, gate UI; no file conflict)*
 
@@ -186,4 +186,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
 | 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 5/5 | Complete   | 2026-06-15 |
-| 4. Dashboard (Territorial CMS) | 3/9 | In Progress|  |
+| 4. Dashboard (Territorial CMS) | 4/9 | In Progress|  |
