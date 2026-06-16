@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-06-PLAN.md
-last_updated: "2026-06-16T20:02:31.465Z"
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-06-16T20:13:24.734Z"
 last_activity: 2026-06-16
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 26
-  completed_plans: 22
+  completed_plans: 24
   percent: 75
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 04 (Dashboard (Territorial CMS)) — EXECUTING
-Plan: 7 of 9
+Plan: 8 of 9
 Status: Ready to execute
 Last activity: 2026-06-16
 
-Progress: [█████████░] 85%
+Progress: [█████████░] 92%
 
 ## Performance Metrics
 
@@ -68,6 +68,7 @@ Progress: [█████████░] 85%
 | Phase 04 P04 | 25min | 2 tasks | 24 files |
 | Phase 04 P05 | 20m | 2 tasks | 15 files |
 | Phase 04 P06 | 15min | 2 tasks | 9 files |
+| Phase 04 P07 | ~15min | 2 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,7 @@ Recent decisions affecting current work:
 - [Phase ?]: ReviewPanel/QueueList kept action-agnostic (injected actions) for plan-05 gate reuse; shared ['dlq'] query key → single invalidate refetches list+detail
 - [Phase ?]: DLQ §7.6 ScoreBreakdownPanel uses custom threshold-capped bars (not shadcn Progress) for per-bar green/amber/red caps
 - [Phase ?]: [Phase 4 P05]: DASH-02 GET /api/v1/monitor read-only Bearer-guarded aggregate (volume + AuditLog-derived rates = audit coverage + throughput + PoisonQuarantine/RED-quality alerts); live-polled via shared useMonitor (refetchInterval 10s, D-04), WebSocket deferred
+- [Phase ?]: [Phase 4 P07]: DASH-04 GET /api/v1/cost?group_by=lane|model&since= read-only Bearer-guarded GROUP BY over llm_generations (func.sum usd_cost + token sums + count); Cost & LLM view = mono USD/tokens summary + per-lane/per-model Recharts bars via shared useCost + window selector; empty period renders 'Sem dados no periodo'
 
 ### Pending Todos
 
@@ -117,6 +119,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-16T20:02:31.455Z
+Last session: 2026-06-16T20:13:06.438Z
 Stopped at: Completed 04-01-PLAN.md
 Resume file: None
