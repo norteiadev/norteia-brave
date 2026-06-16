@@ -190,7 +190,17 @@ def get_monitor(
     )
 
     # --- alerts: poison-quarantine failures + RED WhatsApp quality flag --
-    failures = db.scalar(select(func.count(PoisonQuarantine.id))) or 0
+    # WR-02: window the failures count on quarantined_at >= window_start so the
+    # alert reflects "is something failing right now" (the selected since_hours
+    # window) instead of a monotonic all-time count behind a windowed block.
+    failures = (
+        db.scalar(
+            select(func.count(PoisonQuarantine.id)).where(
+                PoisonQuarantine.quarantined_at >= window_start
+            )
+        )
+        or 0
+    )
     quality_red = is_quality_red(redis)
 
     return {
