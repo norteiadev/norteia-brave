@@ -249,7 +249,11 @@ def test_quality_rating_webhook_sets_redis_flag(client, db_session: Session) -> 
     assert body.get("status") == "ok"
     assert body.get("rating") == "RED"
 
-    # Verify Redis flag was set (using the same get_redis() singleton from deps)
+    # WR-06: the webhook now injects redis via Depends(get_redis) instead of
+    # calling get_redis() inline. With no dependency_override registered, the
+    # DI-resolved client IS the get_redis() singleton — so observing the RED
+    # flag through get_redis() here proves the flag was written to the SAME
+    # Redis the gate reads (the test-override / fail-closed contract).
     from brave.api.deps import get_redis
     from brave.compliance.quality_rating import is_quality_red
     redis = get_redis()

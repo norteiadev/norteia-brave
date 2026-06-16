@@ -473,6 +473,7 @@ def reject_whatsapp_gate(
 def quality_rating_webhook(
     payload: dict,
     db: Session = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> dict:
     """Receive quality-rating change event from Twilio/Meta (T-03-03-05).
 
@@ -491,6 +492,9 @@ def quality_rating_webhook(
     Args:
         payload: Webhook payload dict; expected key: "quality_rating" (str).
         db:      SQLAlchemy Session (injected by FastAPI for audit write).
+        redis:   Redis client (injected via Depends(get_redis), WR-06) so the
+                 RED auto-pause flag is written to the SAME Redis the gate reads
+                 and test overrides (fakeredis) actually take effect.
 
     Returns:
         {"status": "ok", "rating": str}, HTTP 200.
@@ -498,7 +502,6 @@ def quality_rating_webhook(
     from brave.compliance.quality_rating import set_quality_flag
 
     rating = payload.get("quality_rating", "GREEN").upper()
-    redis = get_redis()
     set_quality_flag(redis, rating)
 
     write_audit(
