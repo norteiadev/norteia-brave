@@ -69,6 +69,30 @@ def _next_utc_midnight() -> datetime:
     return tomorrow
 
 
+def ramp_key(uf: str | None = None) -> str:
+    """Return the canonical Redis ramp-counter key for the current UTC day.
+
+    Single source of truth for the ramp key format, shared by both the writer
+    (check_and_increment_ramp, condition 7) and any read-only observer (the
+    dashboard ramp-context endpoint). Keeping ONE helper prevents the read and
+    write paths from drifting onto divergent key formats.
+
+    Key format:
+      Global:  wa:ramp:{YYYY-MM-DD}
+      Per-UF:  wa:ramp:{UF}:{YYYY-MM-DD}
+
+    The date component is the current UTC day (matches the INCR path below).
+
+    Args:
+        uf: Optional UF code for the per-state key (None = global key).
+
+    Returns:
+        The Redis key string for today's ramp counter.
+    """
+    date_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return f"wa:ramp:{date_key}" if uf is None else f"wa:ramp:{uf}:{date_key}"
+
+
 def check_and_increment_ramp(
     redis_client: Redis,
     cap: int,
@@ -100,8 +124,7 @@ def check_and_increment_ramp(
     Raises:
         ComplianceError: If the incremented counter exceeds cap (DECR undo before raising).
     """
-    date_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    key = f"wa:ramp:{date_key}" if uf is None else f"wa:ramp:{uf}:{date_key}"
+    key = ramp_key(uf)
 
     # Atomic INCR — reserve-before-call (CR-04)
     count = redis_client.incr(key)
@@ -114,7 +137,7 @@ def check_and_increment_ramp(
         # Undo the reserve — DECR to restore the pre-call counter value
         redis_client.decr(key)
         raise ComplianceError(
-            f"Ramp cap {cap} exceeded for {date_key}. "
+            f"Ramp cap {cap} exceeded for {key}. "
             "Counter decremented back. Approve additional sends after daily reset."
         )
 

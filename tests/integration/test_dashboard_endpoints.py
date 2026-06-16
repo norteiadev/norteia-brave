@@ -1244,3 +1244,127 @@ def r_text(obj) -> str:
     import json
 
     return json.dumps(obj, default=str)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/atrativos/whatsapp/ramp-context — read-only ramp + quality (DASH-03)
+#
+# The thin context the gate panel (RampContext.tsx) shows: today's remaining
+# volume-ramp cap + the WhatsApp RED/GREEN quality flag. Reads the SAME Redis key
+# the compliance gate INCRs (shared ramp_key helper) and the wa:quality_red flag.
+# READ-ONLY — never mutates the counter. Bearer-guarded; the no-Bearer 401 fires
+# before any Redis read. Purely Redis + config: no DB, so these run fully offline.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def ramp_context_client(monkeypatch):
+    """Authed TestClient + a fresh fakeredis override for the ramp-context endpoint.
+
+    Sets the dashboard Bearer env, overrides get_redis with an isolated fakeredis
+    (so the ramp counter + quality flag are testable offline), and returns
+    (client, fake). Tears the override down afterwards.
+    """
+    import fakeredis
+
+    from brave.api import deps
+    from brave.api.main import app
+
+    monkeypatch.setenv("BRAVE_DASHBOARD_BEARER_TOKEN", BEARER_TOKEN)
+    monkeypatch.setenv("BRAVE_WA_RAMP_DAILY_CAP", "50")
+    fake = fakeredis.FakeRedis()
+    app.dependency_overrides[deps.get_redis] = lambda: fake
+    client = TestClient(
+        app,
+        raise_server_exceptions=False,
+        headers={"Authorization": f"Bearer {BEARER_TOKEN}"},
+    )
+    try:
+        yield client, fake
+    finally:
+        app.dependency_overrides.pop(deps.get_redis, None)
+
+
+def test_ramp_context_no_bearer_returns_401(client, bearer_token):
+    """GET ramp-context with no Authorization header → 401 before any Redis read."""
+    r = client.get("/api/v1/atrativos/whatsapp/ramp-context")
+    assert r.status_code == 401
+
+
+def test_ramp_context_happy_path_shape(ramp_context_client):
+    """Valid Bearer → 200 with daily_cap/used/remaining/quality (+ frontend aliases)."""
+    from brave.compliance.gate import ramp_key
+
+    rc, fake = ramp_context_client
+    # Simulate 8 sends today via the SHARED key (what the gate INCRs).
+    fake.set(ramp_key(None), 8)
+
+    r = rc.get("/api/v1/atrativos/whatsapp/ramp-context")
+    assert r.status_code == 200, f"Unexpected status {r.status_code}: {r.text}"
+    body = r.json()
+
+    # Requirement contract fields.
+    assert body["daily_cap"] == 50
+    assert body["used"] == 8
+    assert body["remaining"] == 42  # max(0, 50 - 8)
+    assert body["quality"] == "GREEN"
+
+    # Frontend RampQualityContext aliases (gate-api.ts) — same numbers.
+    assert body["quality_rating"] == "GREEN"
+    assert body["ramp_cap"] == 50
+    assert body["ramp_used"] == 8
+    assert body["ramp_remaining"] == 42
+    assert body["paused"] is False
+
+
+def test_ramp_context_absent_key_used_zero(ramp_context_client):
+    """No ramp key set today → used = 0, remaining = full cap (key-absent path)."""
+    rc, _fake = ramp_context_client
+    body = rc.get("/api/v1/atrativos/whatsapp/ramp-context").json()
+    assert body["used"] == 0
+    assert body["remaining"] == 50
+    assert body["ramp_used"] == 0
+    assert body["ramp_remaining"] == 50
+
+
+def test_ramp_context_red_flag(ramp_context_client):
+    """wa:quality_red set → quality RED + paused True (auto-pause display)."""
+    from brave.compliance.quality_rating import QUALITY_RED_KEY
+
+    rc, fake = ramp_context_client
+    fake.set(QUALITY_RED_KEY, "1")
+
+    body = rc.get("/api/v1/atrativos/whatsapp/ramp-context").json()
+    assert body["quality"] == "RED"
+    assert body["quality_rating"] == "RED"
+    assert body["paused"] is True
+
+
+def test_ramp_context_is_read_only_never_mutates_counter(ramp_context_client):
+    """Calling the endpoint must NEVER INCR/DECR the ramp counter (read-only)."""
+    from brave.compliance.gate import ramp_key
+
+    rc, fake = ramp_context_client
+    fake.set(ramp_key(None), 5)
+
+    for _ in range(3):
+        rc.get("/api/v1/atrativos/whatsapp/ramp-context")
+
+    # The counter is untouched — the read path never reserves a send.
+    assert int(fake.get(ramp_key(None))) == 5
+
+
+def test_ramp_context_per_uf_reported_when_uf_supplied(ramp_context_client):
+    """?uf= adds a per_uf block reading the per-state key; omitted otherwise."""
+    from brave.compliance.gate import ramp_key
+
+    rc, fake = ramp_context_client
+    fake.set(ramp_key(None), 10)
+    fake.set(ramp_key("BA"), 4)
+
+    # Without uf → no per_uf block.
+    assert "per_uf" not in rc.get("/api/v1/atrativos/whatsapp/ramp-context").json()
+
+    # With uf → per_uf block from the per-state key.
+    body = rc.get("/api/v1/atrativos/whatsapp/ramp-context?uf=BA").json()
+    assert body["per_uf"] == {"uf": "BA", "used": 4, "remaining": 46}

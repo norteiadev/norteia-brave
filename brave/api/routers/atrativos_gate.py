@@ -30,17 +30,22 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from redis import Redis
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.api.deps import (
+    get_config,
     get_db,
     get_redis,
     get_steward_config,
     get_webhook_config,
+    require_bearer,
     require_steward_or_bearer,
 )
-from brave.config.settings import StewardConfig, WebhookConfig
+from brave.compliance.gate import ramp_key
+from brave.compliance.quality_rating import is_quality_red
+from brave.config.settings import AppConfig, StewardConfig, WebhookConfig
 from brave.core.models import RioRecord
 from brave.observability.audit import write_audit
 
@@ -167,6 +172,95 @@ def list_whatsapp_gate_queue(
         }
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/atrativos/whatsapp/ramp-context — read-only ramp + quality context
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/api/v1/atrativos/whatsapp/ramp-context",
+    dependencies=[Depends(require_bearer)],
+)
+def get_ramp_context(
+    uf: str | None = Query(None),
+    redis: Redis = Depends(get_redis),
+    config: AppConfig = Depends(get_config),
+) -> dict:
+    """Return the WhatsApp send-path ramp + quality-rating context (DASH-03, D-01).
+
+    The thin read-only context the dashboard gate panel (RampContext.tsx) shows
+    beside the gate queue: how much of today's volume-ramp cap remains and whether
+    the WhatsApp quality rating is RED (sends auto-paused server-side).
+
+    READ-ONLY — this endpoint NEVER mutates the ramp counter. It only reads the
+    SAME Redis key the compliance gate's INCR path writes (via the shared
+    `ramp_key` helper, so the read and write paths can never drift onto divergent
+    key formats). No INCR/DECR here; the ramp is enforced exclusively in the Phase 3
+    send path (send_path_gate, condition 7) — this view is advisory display only
+    (T-04-20: no UI bypass possible).
+
+    Reads:
+      - `wa:ramp:{today-UTC}` (global daily counter) → `used` (0 if key absent).
+      - optionally `wa:ramp:{UF}:{today-UTC}` when ?uf= is supplied → `per_uf`.
+      - the `wa:quality_red` flag (is_quality_red) → `quality` RED|GREEN.
+
+    Cap comes from RampConfig.daily_cap (BRAVE_WA_RAMP_DAILY_CAP, default 50).
+
+    Bearer-guarded (require_bearer): the 401 fires before any Redis read. Returns
+    aggregate counters only — no PII, no record-level data, no secrets.
+
+    Args:
+        uf:     Optional UF code to additionally report the per-state counter.
+        redis:  Redis client (injected; overridable with fakeredis in tests).
+        config: AppConfig (injected) — RampConfig.daily_cap source.
+
+    Returns:
+        {
+          daily_cap, used, remaining, quality: "RED"|"GREEN",
+          # frontend RampQualityContext compatibility (gate-api.ts):
+          quality_rating, ramp_cap, ramp_used, ramp_remaining, paused,
+          # optional, only when ?uf= supplied:
+          per_uf: {uf, used, remaining}
+        }
+    """
+    daily_cap = config.ramp.daily_cap
+
+    # Read-only GET of the global daily counter — absent key → used = 0.
+    raw = redis.get(ramp_key(None))
+    used = int(raw) if raw is not None else 0
+    remaining = max(0, daily_cap - used)
+
+    is_red = is_quality_red(redis)
+    quality = "RED" if is_red else "GREEN"
+
+    body: dict = {
+        # Requirement contract field names.
+        "daily_cap": daily_cap,
+        "used": used,
+        "remaining": remaining,
+        "quality": quality,
+        # Frontend RampQualityContext compatibility (gate-api.ts / RampContext.tsx)
+        # — same numbers under the names the panel already consumes, so the panel
+        # renders real data on the happy path instead of its "indisponível" fallback.
+        "quality_rating": quality,
+        "ramp_cap": daily_cap,
+        "ramp_used": used,
+        "ramp_remaining": remaining,
+        "paused": is_red,
+    }
+
+    if uf:
+        uf_raw = redis.get(ramp_key(uf))
+        uf_used = int(uf_raw) if uf_raw is not None else 0
+        body["per_uf"] = {
+            "uf": uf,
+            "used": uf_used,
+            "remaining": max(0, daily_cap - uf_used),
+        }
+
+    return body
 
 
 # ---------------------------------------------------------------------------
