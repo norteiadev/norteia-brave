@@ -32,14 +32,14 @@ from typing import Any
 
 import structlog
 from celery import shared_task
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy import create_engine, func, select
+from sqlalchemy.orm import Session, sessionmaker
 
 from brave.clients.norteia_api import NorteiaApiClient
+from brave.config.settings import AppConfig, ScoreConfig
 from brave.core.models import RioRecord
 from brave.core.nascente.service import get_nascente
 from brave.core.rio.routing import process_nascente_record, reprocess_record
-from brave.config.settings import AppConfig, DBConfig, ScoreConfig
 
 logger = structlog.get_logger(__name__)
 
@@ -55,6 +55,91 @@ def _extract_contact_phone(rio: "RioRecord") -> str:
     """
     contacts = (rio.normalized or {}).get("contacts") or {}
     return contacts.get("phone_e164") or ""
+
+
+def _log_conversation_messages(
+    session: Session,
+    rio_id: str,
+    contact_phone: str,
+    final_state: Any,
+    inbound_text: str | None = None,
+) -> None:
+    """Append-only sync of a LangGraph final state into conversation_message (R2 Option B).
+
+    Writes a ConversationMessage row for every message boundary that is NOT yet logged
+    for this rio_id, so no message is dropped across the outreach (outbound asks) and
+    resume (inbound reply + follow-up) write-points. Idempotent: it counts the rows
+    already persisted and appends only the new tail of the conversation, so a retried
+    task does not duplicate prior turns.
+
+    LGPD (R3, T-04-24): phone is masked at write time via mask_phone — the raw E.164
+    number is NEVER persisted in conversation_message.
+
+    Appends on the CALLER'S session (the same one that commits at the task's single
+    session.commit()) — it never opens or commits a separate session, and tolerates an
+    empty/None final state (the graph produced nothing → no rows).
+    """
+    from brave.core.models import ConversationMessage, mask_phone
+
+    phone_masked = mask_phone(contact_phone)
+
+    # Build the desired ordered message list from the graph's final state. Each LangGraph
+    # turn is {role, content}; assistant turns are outbound, user turns inbound. If the
+    # resume task supplied the raw inbound reply but the graph did not append it as a
+    # user turn, prepend it so the owner's reply is never dropped.
+    messages: list[dict[str, Any]] = []
+    if isinstance(final_state, dict):
+        for turn in final_state.get("messages") or []:
+            if isinstance(turn, dict):
+                messages.append(turn)
+
+    final_extraction = (
+        final_state.get("extraction") if isinstance(final_state, dict) else None
+    )
+
+    # Ensure the inbound reply is represented even if the graph state did not append it.
+    if inbound_text:
+        has_inbound = any(
+            t.get("role") == "user" and t.get("content") == inbound_text
+            for t in messages
+        )
+        if not has_inbound:
+            messages.append({"role": "user", "content": inbound_text})
+
+    # Append-only: skip the prefix already persisted for this rio_id (idempotent retry).
+    already_logged = (
+        session.scalar(
+            select(func.count(ConversationMessage.id)).where(
+                ConversationMessage.rio_id == uuid.UUID(rio_id)
+            )
+        )
+        or 0
+    )
+
+    new_turns = messages[already_logged:]
+    if not new_turns:
+        return
+
+    for idx, turn in enumerate(new_turns):
+        role = turn.get("role") or "assistant"
+        direction = "inbound" if role == "user" else "outbound"
+        content = turn.get("content") or ""
+        # Attach the extraction snapshot to the final outbound turn (resume follow-up),
+        # so the transcript carries the structured result alongside the message boundary.
+        is_last = idx == len(new_turns) - 1
+        extracted = (
+            final_extraction if (is_last and direction == "outbound") else None
+        )
+        session.add(
+            ConversationMessage(
+                rio_id=uuid.UUID(rio_id),
+                phone_masked=phone_masked,
+                direction=direction,
+                role=role,
+                content=content,
+                extracted=extracted,
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +182,6 @@ def _get_session() -> tuple[Session, Any]:
 # without depending on the tasks layer.  This re-export keeps existing callers
 # working without any change.
 from brave.core.quarantine import quarantine_poison  # noqa: F401 (re-export)
-
 
 # ---------------------------------------------------------------------------
 # Celery tasks
@@ -269,8 +353,8 @@ def push_mar(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to push.
     """
-    from brave.core.mar.service import promote_to_mar
     from brave.clients.null_norteia_api import NullNorteiaApiClient
+    from brave.core.mar.service import promote_to_mar
 
     session, engine = _get_session()
     try:
@@ -410,8 +494,8 @@ def push_destination_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to push.
     """
-    from brave.core.mar.service import promote_to_mar
     from brave.clients.null_norteia_api import NullNorteiaApiClient
+    from brave.core.mar.service import promote_to_mar
 
     session, engine = _get_session()
     try:
@@ -504,8 +588,8 @@ def discover_atrativo_task(self, uf: str) -> None:
     Args:
         uf: Two-letter Brazilian state code (e.g. "BA", "RJ").
     """
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
     from brave.core.quarantine import quarantine_poison as _quarantine
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 
     session, engine = _get_session()
     try:
@@ -597,8 +681,8 @@ def find_contacts_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to advance.
     """
-    from brave.lanes.atrativos.contact_finder_agent import ContactFinderAgent
     from brave.core.quarantine import quarantine_poison as _quarantine
+    from brave.lanes.atrativos.contact_finder_agent import ContactFinderAgent
 
     session, engine = _get_session()
     try:
@@ -687,8 +771,8 @@ def gather_signals_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to advance.
     """
-    from brave.lanes.atrativos.signal_agent import SignalAgent
     from brave.core.quarantine import quarantine_poison as _quarantine
+    from brave.lanes.atrativos.signal_agent import SignalAgent
 
     session, engine = _get_session()
     try:
@@ -703,13 +787,13 @@ def gather_signals_task(self, rio_id: str) -> None:
         if app_config.run_real_externals:
             places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
             apify_api_key = os.environ.get("BRAVE_APIFY_API_KEY", "")
-            from brave.clients.places import RealPlacesClient
             from brave.clients.apify import RealApifyClient
+            from brave.clients.places import RealPlacesClient
             places_client = RealPlacesClient(api_key=places_api_key)
             apify_client = RealApifyClient(api_key=apify_api_key)
         else:
-            from tests.fakes.fake_places import FakePlacesClient
             from tests.fakes.fake_apify import FakeApifyClient
+            from tests.fakes.fake_places import FakePlacesClient
             places_client = FakePlacesClient()
             apify_client = FakeApifyClient()
 
@@ -813,8 +897,8 @@ def push_attraction_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to push.
     """
-    from brave.core.mar.service import promote_to_mar
     from brave.clients.null_norteia_api import NullNorteiaApiClient
+    from brave.core.mar.service import promote_to_mar
 
     session, engine = _get_session()
     try:
@@ -914,8 +998,8 @@ def outreach_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to outreach.
     """
-    from brave.lanes.atrativos.whatsapp_agent import build_graph
     from brave.clients.null_whatsapp import NullWhatsAppClient
+    from brave.lanes.atrativos.whatsapp_agent import build_graph
 
     session, engine = _get_session()
     try:
@@ -962,7 +1046,7 @@ def outreach_task(self, rio_id: str) -> None:
 
         settings = app_config.whatsapp
 
-        async def _run() -> None:
+        async def _run() -> Any:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
             db_url = os.environ.get("BRAVE_DB_URL", "")
@@ -1015,12 +1099,26 @@ def outreach_task(self, rio_id: str) -> None:
                 "message_text": "",
             }
 
-            await graph.ainvoke(
+            final_state = await graph.ainvoke(
                 initial_state,
                 config={"configurable": {"thread_id": thread_id}},
             )
+            return final_state, contact_phone
 
-        asyncio.run(_run())
+        run_result = asyncio.run(_run())
+        # R2 Option B (DASH-05): append the produced OUTBOUND ask message(s) read from
+        # the graph's FINAL state to the append-only conversation_message log, on this
+        # task's OWN session, BEFORE the single commit below (alongside the saver — the
+        # AsyncPostgresSaver persistence is untouched). Tolerant of the no-contact-phone
+        # early return (run_result is None → nothing appended).
+        if run_result is not None:
+            final_state, used_phone = run_result
+            _log_conversation_messages(
+                session=session,
+                rio_id=rio_id,
+                contact_phone=used_phone,
+                final_state=final_state,
+            )
         session.commit()
 
     except PermanentError as exc:
@@ -1092,8 +1190,8 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
         rio_id:     UUID string of the RioRecord whose conversation to resume.
         reply_text: Raw inbound message body from the owner (from n8n/Twilio webhook).
     """
-    from brave.lanes.atrativos.whatsapp_agent import build_graph
     from brave.clients.null_whatsapp import NullWhatsAppClient
+    from brave.lanes.atrativos.whatsapp_agent import build_graph
 
     session, engine = _get_session()
     try:
@@ -1141,7 +1239,10 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
 
         settings = app_config.whatsapp
 
-        async def _run() -> None:
+        # Canonical contact phone for masking the conversation_message rows (R3).
+        contact_phone = _extract_contact_phone(rio)
+
+        async def _run() -> Any:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
             db_url = os.environ.get("BRAVE_DB_URL", "")
@@ -1170,12 +1271,24 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
                 "message_text": reply_text,
             }
 
-            await graph.ainvoke(
+            final_state = await graph.ainvoke(
                 resume_state,
                 config={"configurable": {"thread_id": thread_id}},
             )
+            return final_state
 
-        asyncio.run(_run())
+        final_state = asyncio.run(_run())
+        # R2 Option B (DASH-05): append BOTH the INBOUND reply_text AND any follow-up
+        # OUTBOUND message + extraction snapshot read from the graph's FINAL state to the
+        # append-only conversation_message log, on this task's OWN session, BEFORE the
+        # single commit below (alongside the saver — AsyncPostgresSaver is untouched).
+        _log_conversation_messages(
+            session=session,
+            rio_id=rio_id,
+            contact_phone=contact_phone,
+            final_state=final_state,
+            inbound_text=reply_text,
+        )
         session.commit()
 
     except PermanentError as exc:

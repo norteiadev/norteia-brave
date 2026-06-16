@@ -24,12 +24,12 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     ForeignKey,
     Index,
     Integer,
-    JSON,
     Numeric,
     String,
     Text,
@@ -394,4 +394,79 @@ class ConsentLog(Base):
         return (
             f"<ConsentLog id={self.id} phone_prefix={self.phone_e164[:5]!r} "
             f"opted_out={self.opted_out}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ConversationMessage — append-only WhatsApp transcript log (DASH-05, R2 Option B)
+# ---------------------------------------------------------------------------
+
+
+def mask_phone(phone: str | None) -> str:
+    """Return an LGPD-minimized form of a phone number (R3, T-04-24).
+
+    The conversation transcript MUST NOT persist or surface the raw E.164 number.
+    We keep only enough to disambiguate a conversation in the ops UI: the country/
+    area prefix and the last two digits, with the middle masked. Empty/None →
+    a stable "***" sentinel so the column is never null.
+
+    Examples:
+      "+5571999998888" -> "+5571*****88"
+      ""               -> "***"
+    """
+    if not phone:
+        return "***"
+    digits = phone.strip()
+    if len(digits) <= 6:
+        # Too short to safely reveal a prefix + suffix — fully mask.
+        return "***"
+    prefix = digits[:5]
+    suffix = digits[-2:]
+    return f"{prefix}*****{suffix}"
+
+
+class ConversationMessage(Base):
+    """Append-only log of every WhatsApp conversation message boundary (R2 Option B).
+
+    Written by the outreach/resume Celery tasks at every message boundary so the
+    dashboard transcript read endpoint is a trivial `SELECT ... ORDER BY created_at`,
+    decoupled from LangGraph's internal checkpoint serialization (RESEARCH §4).
+
+    Posture mirrors ConsentLog: our-own-table, FK rio_id → rio_records, LGPD-minimized.
+    UNLIKE ConsentLog (which indexes the raw phone_e164 for suppression lookups), this
+    table stores ONLY a masked phone (R3) — the raw E.164 number is NEVER persisted here,
+    so transcripts cannot leak PII (T-04-24).
+
+    Append-only by contract (T-04-26): there is no update or delete path. Rows are
+    written on the task's own committed session, never orphaned/uncommitted.
+    """
+
+    __tablename__ = "conversation_message"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    rio_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("rio_records.id"), nullable=False, index=True
+    )
+    # LGPD-minimized phone only — NEVER the raw phone_e164 (R3, T-04-24).
+    phone_masked: Mapped[str] = mapped_column(String(32), nullable=False)
+    # "outbound" (Norteia → owner) | "inbound" (owner → Norteia)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    # LangGraph turn role: "assistant" | "user" (mirrors messages[].role)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # DeepSeek extraction snapshot at this boundary (nullable; resume follow-ups only)
+    extracted: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    # Relationship to RioRecord (FK: rio_id)
+    rio: Mapped["RioRecord"] = relationship("RioRecord", foreign_keys=[rio_id])
+
+    def __repr__(self) -> str:
+        return (
+            f"<ConversationMessage id={self.id} rio_id={self.rio_id} "
+            f"direction={self.direction!r} role={self.role!r}>"
         )

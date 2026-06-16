@@ -24,6 +24,7 @@ from datetime import UTC
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from brave.config.settings import DashboardConfig
@@ -752,3 +753,348 @@ def test_cost_empty_window_returns_empty_rows(authed_client):
     body = r.json()
     assert body["group_by"] == "lane"
     assert body["rows"] == []
+
+
+# ===========================================================================
+# Plan 04-08 / DASH-05 — conversation_message log (R2 Option B) + funnels +
+# conversations endpoints.
+# ===========================================================================
+
+# The raw E.164 number used across these tests. The conversation_message log and
+# every conversation endpoint MUST mask this — the full number must never appear
+# in a persisted row or an API response (R3, T-04-24).
+RAW_PHONE = "+5571999998888"
+
+
+def _make_atrativo_in_progress(db_session: Session, uf: str = "BA"):
+    """Seed a NascenteRecord + RioRecord(sub_state='whatsapp_in_progress') with a contact phone.
+
+    The contact phone lives at normalized["contacts"]["phone_e164"] — the canonical
+    ContactFinder location read by _extract_contact_phone (CR-03).
+    """
+    from brave.core.models import NascenteRecord, RioRecord
+
+    src_ref = f"places:{uf}:{uuid.uuid4().hex}"
+    nascente = NascenteRecord(
+        id=uuid.uuid4(),
+        source="places_discovery",
+        source_ref=src_ref,
+        entity_type="attraction",
+        uf=uf,
+        payload={"name": f"Atrativo {src_ref}", "place_id": src_ref},
+        content_hash=f"hash:{src_ref}",
+        version=1,
+    )
+    db_session.add(nascente)
+    db_session.flush()
+
+    rio = RioRecord(
+        id=uuid.uuid4(),
+        nascente_id=nascente.id,
+        entity_type="attraction",
+        uf=uf,
+        routing="in_progress",
+        sub_state="whatsapp_in_progress",
+        normalized={
+            "name": f"Atrativo {src_ref}",
+            "window_open": True,
+            "contacts": {"phone_e164": RAW_PHONE},
+        },
+    )
+    db_session.add(rio)
+    db_session.flush()
+    return rio
+
+
+# ---------------------------------------------------------------------------
+# ConversationMessage model + mask_phone (offline unit)
+# ---------------------------------------------------------------------------
+
+
+def test_conversation_message_mask_phone_minimizes_pii():
+    """mask_phone keeps only a prefix + 2-digit suffix — never the full E.164 (R3)."""
+    from brave.core.models import mask_phone
+
+    masked = mask_phone(RAW_PHONE)
+    assert RAW_PHONE not in masked
+    assert masked != RAW_PHONE
+    # The middle digits are masked; nothing past the prefix's 5 chars is revealed raw.
+    assert "99999" not in masked
+    assert mask_phone("") == "***"
+    assert mask_phone(None) == "***"
+
+
+@pytest.mark.integration
+def test_conversation_message_row_inserts(db_session: Session):
+    """A ConversationMessage row inserts with the full append-only column set."""
+    from brave.core.models import ConversationMessage, mask_phone
+
+    rio = _make_atrativo_in_progress(db_session)
+    msg = ConversationMessage(
+        rio_id=rio.id,
+        phone_masked=mask_phone(RAW_PHONE),
+        direction="outbound",
+        role="assistant",
+        content="Olá! Sou da Norteia.",
+        extracted=None,
+    )
+    db_session.add(msg)
+    db_session.flush()
+
+    fetched = db_session.get(ConversationMessage, msg.id)
+    assert fetched is not None
+    assert fetched.rio_id == rio.id
+    assert fetched.direction == "outbound"
+    assert fetched.created_at is not None
+    # Masked phone only — the raw E.164 is never persisted (R3, T-04-24).
+    assert RAW_PHONE not in fetched.phone_masked
+
+
+# ---------------------------------------------------------------------------
+# Migration 0005 — upgrade creates conversation_message, downgrade drops it
+# ---------------------------------------------------------------------------
+
+
+def _load_migration_0005():
+    """Load the 0005 migration module by file path (alembic/versions is not a package)."""
+    import importlib.util
+    from pathlib import Path
+
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "alembic"
+        / "versions"
+        / "0005_conversation_message.py"
+    )
+    spec = importlib.util.spec_from_file_location("migration_0005", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_migration_0005_chains_to_0004():
+    """Migration 0005 declares revision '0005' down_revision '0004' (chained)."""
+    mod = _load_migration_0005()
+    assert mod.revision == "0005"
+    assert mod.down_revision == "0004"
+
+
+@pytest.mark.integration
+def test_migration_0005_upgrade_downgrade_roundtrip(db_engine):
+    """upgrade() creates conversation_message (+ rio_id index); downgrade() drops it."""
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import inspect, text
+
+    mod = _load_migration_0005()
+
+    with db_engine.begin() as conn:
+        # Ensure a clean slate (table may exist from a prior run / Base.metadata).
+        conn.execute(text("DROP TABLE IF EXISTS conversation_message CASCADE"))
+
+    with db_engine.begin() as conn:
+        ctx = MigrationContext.configure(conn)
+        # Operations.context binds alembic.op's module proxy to this Operations for
+        # the duration of the block — so mod.upgrade()/downgrade() (which call op.*)
+        # run against this connection.
+        with Operations.context(ctx):
+            mod.upgrade()
+            insp = inspect(conn)
+            cols = {c["name"] for c in insp.get_columns("conversation_message")}
+            assert {
+                "id",
+                "rio_id",
+                "phone_masked",
+                "direction",
+                "role",
+                "content",
+                "extracted",
+                "created_at",
+            } <= cols
+            idx_names = {i["name"] for i in insp.get_indexes("conversation_message")}
+            assert "ix_conversation_message_rio_id" in idx_names
+            mod.downgrade()
+            assert not inspect(conn).has_table("conversation_message")
+            # Restore the table so the rest of the (shared-DB) suite still sees it —
+            # the test DB carries the migration head; we must not leave it half-dropped.
+            mod.upgrade()
+            assert inspect(conn).has_table("conversation_message")
+
+
+# ---------------------------------------------------------------------------
+# Pipeline write-points: outreach (outbound) + resume (inbound + follow-up)
+# ---------------------------------------------------------------------------
+
+
+class _FakeGraph:
+    """A stand-in compiled graph whose ainvoke returns a fixed final state."""
+
+    def __init__(self, final_state: dict):
+        self._final_state = final_state
+
+    async def ainvoke(self, state, config=None):
+        return self._final_state
+
+
+class _FakeSaver:
+    """No-op AsyncPostgresSaver replacement (no real checkpoint tables)."""
+
+    @classmethod
+    async def from_conn_string(cls, dsn):
+        return cls()
+
+    async def setup(self):
+        return None
+
+
+def _patch_graph(monkeypatch, final_state: dict):
+    """Patch build_graph + AsyncPostgresSaver so the task runs offline deterministically."""
+    import brave.lanes.atrativos.whatsapp_agent as agent_mod
+
+    monkeypatch.setattr(
+        agent_mod, "build_graph", lambda **kw: _FakeGraph(final_state)
+    )
+    import langgraph.checkpoint.postgres.aio as saver_mod
+
+    monkeypatch.setattr(saver_mod, "AsyncPostgresSaver", _FakeSaver)
+
+
+@pytest.mark.integration
+def test_outreach_task_appends_outbound_message(db_session: Session, monkeypatch):
+    """After outreach_task, an OUTBOUND ConversationMessage row exists for the rio_id.
+
+    Content is sourced from the graph's FINAL state (the produced ask), NOT the empty
+    message_text="" literal. Proves the outreach write-point (no boundary dropped).
+    """
+    from brave.core.models import ConversationMessage
+    from brave.tasks import pipeline
+
+    rio = _make_atrativo_in_progress(db_session)
+    db_session.commit()
+
+    ask = "Olá! Sou da Norteia, poderia confirmar se seu negócio está em funcionamento?"
+    _patch_graph(
+        monkeypatch,
+        {"messages": [{"role": "assistant", "content": ask}], "extraction": None},
+    )
+
+    pipeline.outreach_task(str(rio.id))
+
+    rows = list(
+        db_session.scalars(
+            select(ConversationMessage).where(ConversationMessage.rio_id == rio.id)
+        ).all()
+    )
+    assert len(rows) == 1, f"expected one outbound row, got {len(rows)}"
+    assert rows[0].direction == "outbound"
+    assert rows[0].content == ask
+    assert rows[0].content != ""
+    # Masked phone only.
+    assert RAW_PHONE not in rows[0].phone_masked
+
+
+@pytest.mark.integration
+def test_resume_task_appends_inbound_and_followup(db_session: Session, monkeypatch):
+    """After resume_conversation_task, BOTH an INBOUND row (reply_text) AND a follow-up
+    OUTBOUND row + extraction snapshot exist — both boundaries captured.
+    """
+    from brave.core.models import ConversationMessage
+    from brave.tasks import pipeline
+
+    rio = _make_atrativo_in_progress(db_session)
+    db_session.commit()
+
+    reply = "Sim, estamos abertos de terça a domingo das 9h às 18h."
+    followup = "Obrigado! Pode confirmar o telefone de contato?"
+    extraction = {"existe": True, "funcionando": True, "horarios": "ter-dom 9-18h"}
+    # The graph's final state carries the full turn history: prior opening (outbound),
+    # the owner's reply (inbound), and a new follow-up (outbound) + extraction.
+    _patch_graph(
+        monkeypatch,
+        {
+            "messages": [
+                {"role": "user", "content": reply},
+                {"role": "assistant", "content": followup},
+            ],
+            "extraction": extraction,
+        },
+    )
+
+    pipeline.resume_conversation_task(str(rio.id), reply)
+
+    rows = list(
+        db_session.scalars(
+            select(ConversationMessage)
+            .where(ConversationMessage.rio_id == rio.id)
+            .order_by(ConversationMessage.created_at.asc())
+        ).all()
+    )
+    directions = [r.direction for r in rows]
+    assert "inbound" in directions, f"no inbound row captured: {directions}"
+    assert "outbound" in directions, f"no follow-up outbound row captured: {directions}"
+
+    inbound_rows = [r for r in rows if r.direction == "inbound"]
+    assert any(r.content == reply for r in inbound_rows), "reply_text not logged inbound"
+
+    outbound_rows = [r for r in rows if r.direction == "outbound"]
+    assert any(r.extracted == extraction for r in outbound_rows), (
+        "extraction snapshot not attached to the follow-up outbound row"
+    )
+    # Masked phone only on every row.
+    for r in rows:
+        assert RAW_PHONE not in r.phone_masked
+
+
+@pytest.mark.integration
+def test_conversation_message_no_raw_phone_persisted(db_session: Session, monkeypatch):
+    """No raw phone_e164 string is persisted anywhere in conversation_message (R3)."""
+    from sqlalchemy import text
+
+    from brave.tasks import pipeline
+
+    rio = _make_atrativo_in_progress(db_session)
+    db_session.commit()
+
+    _patch_graph(
+        monkeypatch,
+        {"messages": [{"role": "assistant", "content": "Olá da Norteia"}], "extraction": None},
+    )
+    pipeline.outreach_task(str(rio.id))
+
+    # Scan the raw stored rows — the full E.164 must not appear in phone_masked.
+    hits = db_session.execute(
+        text(
+            "SELECT count(*) FROM conversation_message "
+            "WHERE rio_id = :rid AND phone_masked = :raw"
+        ),
+        {"rid": str(rio.id), "raw": RAW_PHONE},
+    ).scalar()
+    assert hits == 0
+
+
+@pytest.mark.integration
+def test_outreach_append_committed_on_task_own_session(db_session: Session, monkeypatch):
+    """The append is committed by the task's OWN single session — visible from a fresh read.
+
+    db_session here is a DIFFERENT session than the one the task opens via _get_session();
+    seeing the row proves the task committed it (not left uncommitted in a separate session).
+    """
+    from brave.core.models import ConversationMessage
+    from brave.tasks import pipeline
+
+    rio = _make_atrativo_in_progress(db_session)
+    db_session.commit()
+
+    _patch_graph(
+        monkeypatch,
+        {"messages": [{"role": "assistant", "content": "Mensagem da Norteia"}], "extraction": None},
+    )
+    pipeline.outreach_task(str(rio.id))
+
+    db_session.expire_all()
+    count = db_session.scalar(
+        select(func.count(ConversationMessage.id)).where(
+            ConversationMessage.rio_id == rio.id
+        )
+    )
+    assert count == 1
