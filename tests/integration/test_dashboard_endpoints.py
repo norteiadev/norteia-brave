@@ -611,3 +611,140 @@ def test_monitor_alerts_quality_reflects_red_flag(authed_client, monitor_redis):
     monitor_redis.set(QUALITY_RED_KEY, "1")
     body = authed_client.get("/api/v1/monitor").json()
     assert body["alerts"]["quality"] is True
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/cost — cost-by-lane/model aggregation over llm_generations
+# (DASH-04, D-01). A straight GROUP BY: sum(usd_cost), sum(prompt+completion
+# tokens), count(id), grouped by lane or model_slug, optionally windowed by a
+# `since` timestamp on created_at. Read-only, Bearer-guarded; the no-Bearer 401
+# fires before any DB work. Returns aggregate USD/token sums only — no PII, no
+# per-record content (threat T-04-22 accept).
+# ---------------------------------------------------------------------------
+
+
+def _make_llm_generation(
+    db_session: Session,
+    *,
+    lane: str,
+    model_slug: str,
+    usd_cost: float,
+    prompt_tokens: int = 100,
+    completion_tokens: int = 50,
+    created_at=None,
+):
+    """Seed a single llm_generations row for cost-aggregation tests."""
+    from brave.core.models import LLMGeneration
+
+    row = LLMGeneration(
+        id=uuid.uuid4(),
+        lane=lane,
+        model_slug=model_slug,
+        resolved_provider="openrouter",
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        usd_cost=usd_cost,
+    )
+    if created_at is not None:
+        row.created_at = created_at
+    db_session.add(row)
+    db_session.flush()
+    return row
+
+
+def test_cost_no_bearer_returns_401(client, bearer_token):
+    """GET /api/v1/cost with no Authorization header → 401 before any DB work."""
+    r = client.get("/api/v1/cost?group_by=lane")
+    assert r.status_code == 401
+
+
+@pytest.mark.integration
+def test_cost_group_by_lane_row_shape(authed_client, db_session: Session):
+    """group_by=lane returns rows [{key, usd_cost, tokens, count}] from llm_generations."""
+    lane = f"destinos-{uuid.uuid4().hex[:8]}"
+    _make_llm_generation(
+        db_session, lane=lane, model_slug="deepseek/deepseek-chat", usd_cost=0.10
+    )
+    _make_llm_generation(
+        db_session, lane=lane, model_slug="deepseek/deepseek-chat", usd_cost=0.20
+    )
+    db_session.commit()
+
+    r = authed_client.get("/api/v1/cost?group_by=lane")
+    assert r.status_code == 200, f"Unexpected status: {r.status_code} — {r.text}"
+    body = r.json()
+    assert body["group_by"] == "lane"
+    assert isinstance(body["rows"], list)
+
+    row = next((r for r in body["rows"] if r["key"] == lane), None)
+    assert row is not None, f"lane {lane!r} not in rows: {body['rows']}"
+    for key in ("key", "usd_cost", "tokens", "count"):
+        assert key in row, f"Missing key {key!r} in cost row: {row}"
+    # two rows of 0.10 + 0.20 → 0.30 spend, 2 calls, (100+50)*2 = 300 tokens
+    assert abs(row["usd_cost"] - 0.30) < 1e-6
+    assert row["count"] == 2
+    assert row["tokens"] == 300
+    assert isinstance(row["usd_cost"], float)
+
+
+@pytest.mark.integration
+def test_cost_group_by_model_groups_by_model_slug(authed_client, db_session: Session):
+    """group_by=model groups by model_slug (not lane)."""
+    lane = f"atrativos-{uuid.uuid4().hex[:8]}"
+    model = f"deepseek/v4-{uuid.uuid4().hex[:8]}"
+    _make_llm_generation(db_session, lane=lane, model_slug=model, usd_cost=0.05)
+    _make_llm_generation(db_session, lane=lane, model_slug=model, usd_cost=0.07)
+    db_session.commit()
+
+    body = authed_client.get("/api/v1/cost?group_by=model").json()
+    assert body["group_by"] == "model"
+    row = next((r for r in body["rows"] if r["key"] == model), None)
+    assert row is not None, f"model {model!r} not in rows: {body['rows']}"
+    assert abs(row["usd_cost"] - 0.12) < 1e-6
+    assert row["count"] == 2
+
+
+@pytest.mark.integration
+def test_cost_since_filters_the_window(authed_client, db_session: Session):
+    """A `since` filter restricts aggregation to rows whose created_at >= since."""
+    from datetime import datetime, timedelta
+
+    now = datetime.now(UTC)
+    lane = f"destinos-win-{uuid.uuid4().hex[:8]}"
+    # One old row (outside window), one recent row (inside window).
+    _make_llm_generation(
+        db_session,
+        lane=lane,
+        model_slug="deepseek/deepseek-chat",
+        usd_cost=9.99,
+        created_at=now - timedelta(days=10),
+    )
+    _make_llm_generation(
+        db_session,
+        lane=lane,
+        model_slug="deepseek/deepseek-chat",
+        usd_cost=0.01,
+        created_at=now - timedelta(minutes=5),
+    )
+    db_session.commit()
+
+    since = (now - timedelta(days=1)).isoformat()
+    body = authed_client.get(f"/api/v1/cost?group_by=lane&since={since}").json()
+    row = next((r for r in body["rows"] if r["key"] == lane), None)
+    assert row is not None, f"lane {lane!r} not in rows: {body['rows']}"
+    # Only the recent 0.01 row falls in the window; the old 9.99 is excluded.
+    assert abs(row["usd_cost"] - 0.01) < 1e-6
+    assert row["count"] == 1
+
+
+@pytest.mark.integration
+def test_cost_empty_window_returns_empty_rows(authed_client):
+    """A future `since` window with no matching rows → rows == [], 200 (no crash)."""
+    from datetime import datetime, timedelta
+
+    future = (datetime.now(UTC) + timedelta(days=365)).isoformat()
+    r = authed_client.get(f"/api/v1/cost?group_by=lane&since={future}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["group_by"] == "lane"
+    assert body["rows"] == []
