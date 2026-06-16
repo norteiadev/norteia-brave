@@ -27,6 +27,7 @@ from brave.api.deps import get_db, get_redis, require_bearer
 from brave.compliance.quality_rating import is_quality_red
 from brave.core.models import (
     AuditLog,
+    ConversationMessage,
     LLMGeneration,
     MarRecord,
     NascenteRecord,
@@ -263,5 +264,191 @@ def get_cost(
                 "count": int(n),
             }
             for key, cost, tok, n in rows
+        ],
+    }
+
+
+@router.get("/api/v1/funnels", dependencies=[Depends(require_bearer)])
+def get_funnels(
+    entity_type: str | None = Query(None),
+    uf: str | None = Query(None),
+    source: str | None = Query(None),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return destinos/atrativos funnel counts by UF/source across pipeline stages (DASH-05, D-01).
+
+    A pure GROUP BY aggregation over the medallion layers — no pipeline logic, no
+    writes (D-01). It composes three stage blocks, each honoring the optional
+    entity_type/uf/source filters via the `if uf: query = query.where(...)` idiom
+    from dlq.py:
+
+      ingested    — NascenteRecord counts grouped by (source, uf, entity_type):
+                    the top of the funnel (every raw record that entered).
+      routing     — RioRecord counts grouped by (routing, uf): the working-area
+                    distribution across in_progress / mar / dlq / descarte — the
+                    in_progress → mar/dlq/descarte split the funnel view renders.
+      published   — MarRecord count (entity_type-filterable): the bottom of the
+                    funnel (canonical records that reached Mar).
+
+    Bearer-guarded (require_bearer): the 401 fires before any DB work. Returns
+    aggregate counts by UF/source/entity_type only — no PII, no record content
+    (threat T-04-27 accept).
+    """
+    # --- ingested: NascenteRecord grouped by (source, uf, entity_type) --------
+    ing_stmt = select(
+        NascenteRecord.source,
+        NascenteRecord.uf,
+        NascenteRecord.entity_type,
+        func.count(NascenteRecord.id),
+    ).group_by(
+        NascenteRecord.source, NascenteRecord.uf, NascenteRecord.entity_type
+    )
+    if source:
+        ing_stmt = ing_stmt.where(NascenteRecord.source == source)
+    if uf:
+        ing_stmt = ing_stmt.where(NascenteRecord.uf == uf)
+    if entity_type:
+        ing_stmt = ing_stmt.where(NascenteRecord.entity_type == entity_type)
+    ingested = [
+        {
+            "source": s,
+            "uf": u,
+            "entity_type": et,
+            "count": int(n),
+        }
+        for s, u, et, n in db.execute(ing_stmt).fetchall()
+    ]
+
+    # --- routing: RioRecord grouped by (routing, uf) --------------------------
+    # routing pre-seeded per uf so a stage key is never missing for a present uf.
+    rio_stmt = select(
+        RioRecord.routing,
+        RioRecord.uf,
+        func.count(RioRecord.id),
+    ).group_by(RioRecord.routing, RioRecord.uf)
+    if uf:
+        rio_stmt = rio_stmt.where(RioRecord.uf == uf)
+    if entity_type:
+        rio_stmt = rio_stmt.where(RioRecord.entity_type == entity_type)
+    routing = [
+        {"routing": r, "uf": u, "count": int(n)}
+        for r, u, n in db.execute(rio_stmt).fetchall()
+    ]
+
+    # --- published: MarRecord terminal count ----------------------------------
+    mar_stmt = select(func.count(MarRecord.id))
+    if entity_type:
+        mar_stmt = mar_stmt.where(MarRecord.entity_type == entity_type)
+    published = db.scalar(mar_stmt) or 0
+
+    return {
+        "filters": {"entity_type": entity_type, "uf": uf, "source": source},
+        "ingested": ingested,
+        "routing": routing,
+        "published": int(published),
+    }
+
+
+@router.get("/api/v1/conversations", dependencies=[Depends(require_bearer)])
+def get_conversations(db: Session = Depends(get_db)) -> dict:
+    """List WhatsApp conversations from the append-only conversation_message log (DASH-05, D-01).
+
+    One entry per rio_id: the masked phone, message count, and the last message
+    (direction + content + timestamp). Read-only trivial aggregation over
+    conversation_message (R2 Option B) — decoupled from LangGraph checkpoints.
+
+    LGPD (R3, T-04-24): returns only the already-masked `phone_masked` column —
+    the raw E.164 number is NEVER queried or emitted here. Bearer-guarded: the 401
+    fires before any DB work.
+    """
+    # Per-rio aggregate: count + latest created_at.
+    agg = (
+        select(
+            ConversationMessage.rio_id,
+            func.count(ConversationMessage.id).label("n"),
+            func.max(ConversationMessage.created_at).label("last_at"),
+        )
+        .group_by(ConversationMessage.rio_id)
+        .subquery()
+    )
+
+    rows = db.execute(
+        select(agg.c.rio_id, agg.c.n, agg.c.last_at).order_by(agg.c.last_at.desc())
+    ).fetchall()
+
+    conversations = []
+    for rio_id, n, _last_at in rows:
+        last_msg = db.scalars(
+            select(ConversationMessage)
+            .where(ConversationMessage.rio_id == rio_id)
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(1)
+        ).first()
+        conversations.append(
+            {
+                "rio_id": str(rio_id),
+                # Masked phone only — never the raw E.164 (R3, T-04-24).
+                "phone_masked": last_msg.phone_masked if last_msg else "***",
+                "message_count": int(n),
+                "last_message": (
+                    {
+                        "direction": last_msg.direction,
+                        "content": last_msg.content,
+                        "created_at": last_msg.created_at.isoformat()
+                        if last_msg.created_at
+                        else None,
+                    }
+                    if last_msg
+                    else None
+                ),
+            }
+        )
+
+    return {"conversations": conversations}
+
+
+@router.get(
+    "/api/v1/conversations/{rio_id}", dependencies=[Depends(require_bearer)]
+)
+def get_conversation_detail(
+    rio_id: uuid.UUID, db: Session = Depends(get_db)
+) -> dict:
+    """Return the full transcript for one conversation, oldest-first (DASH-05, D-01).
+
+    The R2 Option B trivial SELECT: read conversation_message rows for the rio_id,
+    ordered by created_at, and emit them with the masked phone. Unknown rio_id (no
+    rows) → 404 (dlq.py idiom).
+
+    LGPD (R3, T-04-24): every emitted row carries only the masked phone — the raw
+    E.164 number is NEVER queried or returned. Bearer-guarded: the 401 fires before
+    any DB work.
+    """
+    rows = list(
+        db.scalars(
+            select(ConversationMessage)
+            .where(ConversationMessage.rio_id == rio_id)
+            .order_by(ConversationMessage.created_at.asc())
+        ).all()
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No conversation found for rio_id",
+        )
+
+    return {
+        "rio_id": str(rio_id),
+        # The conversation's masked phone (from the log — never raw PII, R3).
+        "phone_masked": rows[0].phone_masked,
+        "messages": [
+            {
+                "id": str(r.id),
+                "direction": r.direction,
+                "role": r.role,
+                "content": r.content,
+                "extracted": r.extracted,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
         ],
     }

@@ -1098,3 +1098,149 @@ def test_outreach_append_committed_on_task_own_session(db_session: Session, monk
         )
     )
     assert count == 1
+
+
+# ===========================================================================
+# Plan 04-08 / Task 2 — GET /api/v1/funnels + GET /api/v1/conversations[/{rio_id}]
+# ===========================================================================
+
+
+def _seed_conversation(db_session: Session, rio, *, n_messages: int = 2):
+    """Seed n ConversationMessage rows (alternating outbound/inbound) for a rio."""
+    from brave.core.models import ConversationMessage, mask_phone
+
+    masked = mask_phone(RAW_PHONE)
+    for i in range(n_messages):
+        outbound = i % 2 == 0
+        db_session.add(
+            ConversationMessage(
+                rio_id=rio.id,
+                phone_masked=masked,
+                direction="outbound" if outbound else "inbound",
+                role="assistant" if outbound else "user",
+                content=f"msg-{i}",
+                extracted={"existe": True} if not outbound else None,
+            )
+        )
+    db_session.flush()
+
+
+# ---------------------------------------------------------------------------
+# Bearer gate — 401 before any DB work (no DB fixture)
+# ---------------------------------------------------------------------------
+
+
+def test_funnels_no_bearer_returns_401(client, bearer_token):
+    """GET /api/v1/funnels with no Authorization header → 401 before any DB work."""
+    assert client.get("/api/v1/funnels").status_code == 401
+
+
+def test_conversations_no_bearer_returns_401(client, bearer_token):
+    """GET /api/v1/conversations with no Authorization header → 401 before any DB work."""
+    assert client.get("/api/v1/conversations").status_code == 401
+
+
+def test_conversation_detail_no_bearer_returns_401(client, bearer_token):
+    """GET /api/v1/conversations/{id} with no Authorization header → 401."""
+    assert client.get(f"/api/v1/conversations/{uuid.uuid4()}").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Funnels — stage counts by UF / source
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_funnels_returns_stage_counts_by_uf_source(authed_client, db_session: Session):
+    """GET /api/v1/funnels returns ingested (by source/uf), routing (by routing/uf), published."""
+    rio = _make_atrativo_in_progress(db_session, uf="BA")
+    db_session.commit()
+
+    r = authed_client.get("/api/v1/funnels", params={"uf": "BA"})
+    assert r.status_code == 200, f"Unexpected: {r.status_code} — {r.text}"
+    body = r.json()
+    for key in ("filters", "ingested", "routing", "published"):
+        assert key in body, f"missing {key!r}: {body.keys()}"
+
+    # ingested grouped by source/uf/entity_type — our seeded BA attraction shows up.
+    assert any(
+        row["uf"] == "BA" and row["source"] == "places_discovery"
+        for row in body["ingested"]
+    ), body["ingested"]
+    # routing grouped by routing/uf — the in_progress rio is counted for BA.
+    assert any(
+        row["uf"] == "BA" and row["routing"] == "in_progress" and row["count"] >= 1
+        for row in body["routing"]
+    ), body["routing"]
+    assert isinstance(body["published"], int)
+
+
+@pytest.mark.integration
+def test_funnels_uf_filter_excludes_other_states(authed_client, db_session: Session):
+    """The uf filter restricts ingested/routing rows to the requested state only."""
+    _make_atrativo_in_progress(db_session, uf="SP")
+    db_session.commit()
+
+    body = authed_client.get("/api/v1/funnels", params={"uf": "SP"}).json()
+    # Every returned ingested/routing row must be for SP (filter honored, dlq.py idiom).
+    assert all(row["uf"] == "SP" for row in body["ingested"])
+    assert all(row["uf"] == "SP" for row in body["routing"])
+
+
+# ---------------------------------------------------------------------------
+# Conversations — list + transcript, masked PII, 404
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_conversations_list_returns_masked_entries(authed_client, db_session: Session):
+    """GET /api/v1/conversations lists per-rio entries with masked phone + counts."""
+    rio = _make_atrativo_in_progress(db_session)
+    _seed_conversation(db_session, rio, n_messages=3)
+    db_session.commit()
+
+    body = authed_client.get("/api/v1/conversations").json()
+    entry = next(
+        (c for c in body["conversations"] if c["rio_id"] == str(rio.id)), None
+    )
+    assert entry is not None, "seeded conversation not listed"
+    assert entry["message_count"] == 3
+    assert entry["last_message"] is not None
+    # Masked phone only — the raw E.164 never appears.
+    assert RAW_PHONE not in entry["phone_masked"]
+    assert RAW_PHONE not in r_text(body)
+
+
+@pytest.mark.integration
+def test_conversation_transcript_ordered_and_masked(authed_client, db_session: Session):
+    """GET /api/v1/conversations/{rio_id} returns messages oldest-first, phone masked."""
+    rio = _make_atrativo_in_progress(db_session)
+    _seed_conversation(db_session, rio, n_messages=4)
+    db_session.commit()
+
+    r = authed_client.get(f"/api/v1/conversations/{rio.id}")
+    assert r.status_code == 200, f"Unexpected: {r.status_code} — {r.text}"
+    body = r.json()
+    assert body["rio_id"] == str(rio.id)
+    assert RAW_PHONE not in body["phone_masked"]
+    assert len(body["messages"]) == 4
+    # Oldest-first ordering by created_at.
+    times = [m["created_at"] for m in body["messages"]]
+    assert times == sorted(times)
+    # No raw PII anywhere in the transcript payload.
+    assert RAW_PHONE not in r_text(body)
+
+
+@pytest.mark.integration
+def test_conversation_transcript_unknown_rio_returns_404(authed_client):
+    """GET /api/v1/conversations/{random} with valid Bearer → 404 (auth passed, no rows)."""
+    r = authed_client.get(f"/api/v1/conversations/{uuid.uuid4()}")
+    assert r.status_code != 401
+    assert r.status_code == 404
+
+
+def r_text(obj) -> str:
+    """Serialize a response body to a string for a raw-PII scan."""
+    import json
+
+    return json.dumps(obj, default=str)
