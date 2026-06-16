@@ -4,14 +4,14 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-06-16T19:20:51.134Z"
+last_updated: "2026-06-16T19:32:24.025Z"
 last_activity: 2026-06-16
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 26
-  completed_plans: 19
-  percent: 73
+  completed_plans: 20
+  percent: 75
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 04 (Dashboard (Territorial CMS)) — EXECUTING
-Plan: 3 of 9
+Plan: 4 of 9
 Status: Ready to execute
 Last activity: 2026-06-16
 
-Progress: [███████░░░] 73%
+Progress: [████████░░] 77%
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Progress: [███████░░░] 73%
 | Phase 02-destinos-lane P08 | 13m | 2 tasks | 4 files |
 | Phase 04 P01 | 6min | 2 tasks | 5 files |
 | Phase 04 P03 | 12min | 2 tasks | 3 files |
+| Phase 04 P02 | 8min | 2 tasks | 23 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,7 @@ Recent decisions affecting current work:
 - [Phase ?]: D-18: brave/core, brave/lanes, brave/clients package boundaries created and importable
 - [Phase ?]: [Phase 4 P01]: D-02 Bearer-at-edge auth: require_bearer mirrors require_steward (constant-time, fail-closed, never-logged); either-or steward/Bearer guard (R4) on DLQ+gate mutations
 - [Phase ?]: [Phase 4 P03]: D-01 DLQ detail GET /api/v1/dlq/{rio_id} on new read-only dashboard.py router, Bearer-guarded; surfaces score_breakdown+normalized+nascente_payload+signals+whatsapp_log, 404 on unknown id
+- [Phase ?]: [Phase 4 P02]: D-02/D-03 dashboard scaffold + BFF auth — Next 16 App Router (Bun/Tailwind v4/shadcn new-york/TanStack Query); catch-all Route Handler validates browser Bearer (401 before forward) then injects server-held service secret to FastAPI, never leaking it; offline Vitest+MSW harness (DASH-06)
 
 ### Pending Todos
 
@@ -109,6 +111,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-16T19:20:28.099Z
+Last session: 2026-06-16T19:32:16.039Z
 Stopped at: Completed 04-01-PLAN.md
 Resume file: None
