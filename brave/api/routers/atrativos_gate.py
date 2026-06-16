@@ -121,6 +121,19 @@ def require_webhook(
 # ---------------------------------------------------------------------------
 
 
+def _safe_int(raw) -> int:
+    """Parse a Redis counter value to int, returning 0 on any non-int payload (WR-01).
+
+    A corrupted or manually-set ramp/quality counter (non-numeric, wrong type)
+    must NOT 500 the read-only advisory endpoints — the operator needs the gate
+    panel readable during exactly the incident window the bad value might appear in.
+    """
+    try:
+        return int(raw) if raw is not None else 0
+    except (ValueError, TypeError):
+        return 0
+
+
 def _safe_normalized(normalized: dict | None) -> dict:
     """Return a copy of the Rio `normalized` dict with the raw phone_e164 masked (CR-01).
 
@@ -261,9 +274,9 @@ def get_ramp_context(
     """
     daily_cap = config.ramp.daily_cap
 
-    # Read-only GET of the global daily counter — absent key → used = 0.
+    # Read-only GET of the global daily counter — absent/corrupt key → used = 0 (WR-01).
     raw = redis.get(ramp_key(None))
-    used = int(raw) if raw is not None else 0
+    used = _safe_int(raw)
     remaining = max(0, daily_cap - used)
 
     is_red = is_quality_red(redis)
@@ -287,7 +300,7 @@ def get_ramp_context(
 
     if uf:
         uf_raw = redis.get(ramp_key(uf))
-        uf_used = int(uf_raw) if uf_raw is not None else 0
+        uf_used = _safe_int(uf_raw)  # WR-01: corrupt counter → 0, never 500
         body["per_uf"] = {
             "uf": uf,
             "used": uf_used,
