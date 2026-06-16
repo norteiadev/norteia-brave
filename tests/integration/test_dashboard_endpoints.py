@@ -19,6 +19,7 @@ mutation route are @pytest.mark.integration.
 
 import os
 import uuid
+from datetime import UTC
 
 import pytest
 from fastapi import HTTPException
@@ -404,12 +405,12 @@ def test_dlq_detail_score_breakdown_has_criteria(authed_client, db_session: Sess
 @pytest.mark.integration
 def test_dlq_detail_whatsapp_log_ordered_by_created_at(authed_client, db_session: Session):
     """whatsapp_log returns this rio's AuditLog rows ordered by created_at ascending."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from brave.core.models import AuditLog
 
     rio = _make_dlq_record(db_session)
-    base = datetime(2026, 6, 16, 12, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 6, 16, 12, 0, 0, tzinfo=UTC)
     db_session.add(
         AuditLog(
             id=uuid.uuid4(),
