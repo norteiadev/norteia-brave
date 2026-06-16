@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { Skeleton } from "@/components/ui/skeleton";
+import { ApiError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import {
   fetchRampContext,
@@ -39,7 +40,27 @@ export function RampContext() {
   }
 
   if (query.isError || !query.data) {
-    // Context is advisory — failing to load it must not block the queue.
+    // WR-04: a 401 is NOT a benign advisory gap — it means the operator's
+    // session expired. Surface the same session-expired UI the sibling views
+    // (GateQueue / QueueList / ConversationList) show, so the operator is driven
+    // to re-login instead of silently approving outreach against a blank panel
+    // (the panel's whole purpose is showing the RED auto-pause state).
+    const status =
+      query.error instanceof ApiError ? query.error.status : undefined;
+    if (status === 401) {
+      return (
+        <div className="flex flex-col items-center gap-1 rounded-md border p-4 text-center">
+          <h3 className="text-[13px] font-semibold">
+            Sessão expirada ou token inválido
+          </h3>
+          <p className="text-[12px] text-muted-foreground">
+            Faça login novamente para continuar.
+          </p>
+        </div>
+      );
+    }
+    // Non-auth advisory failure — keep the dashed fallback so it does not block
+    // the queue.
     return (
       <div className="rounded-md border border-dashed p-4 text-[12px] text-muted-foreground">
         Contexto de ramp/qualidade indisponível.

@@ -73,4 +73,23 @@ describe("RampContext", () => {
     ).toBeInTheDocument();
     expect(screen.queryByTestId("quality-rating")).not.toBeInTheDocument();
   });
+
+  it("WR-04: surfaces the session-expired UI on 401 (not the generic fallback)", async () => {
+    server.use(rampContextError(401));
+    renderWithClient(<RampContext />);
+
+    // 401 drives the re-login flow, consistent with the sibling views.
+    expect(
+      await screen.findByText(/Sessão expirada ou token inválido/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Faça login novamente para continuar/i),
+    ).toBeInTheDocument();
+
+    // It must NOT collapse a 401 into the benign advisory fallback.
+    expect(
+      screen.queryByText(/Contexto de ramp\/qualidade indispon[ií]vel/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("quality-rating")).not.toBeInTheDocument();
+  });
 });
