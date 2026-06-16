@@ -729,7 +729,9 @@ def test_cost_since_filters_the_window(authed_client, db_session: Session):
     db_session.commit()
 
     since = (now - timedelta(days=1)).isoformat()
-    body = authed_client.get(f"/api/v1/cost?group_by=lane&since={since}").json()
+    body = authed_client.get(
+        "/api/v1/cost", params={"group_by": "lane", "since": since}
+    ).json()
     row = next((r for r in body["rows"] if r["key"] == lane), None)
     assert row is not None, f"lane {lane!r} not in rows: {body['rows']}"
     # Only the recent 0.01 row falls in the window; the old 9.99 is excluded.
@@ -743,7 +745,9 @@ def test_cost_empty_window_returns_empty_rows(authed_client):
     from datetime import datetime, timedelta
 
     future = (datetime.now(UTC) + timedelta(days=365)).isoformat()
-    r = authed_client.get(f"/api/v1/cost?group_by=lane&since={future}")
+    r = authed_client.get(
+        "/api/v1/cost", params={"group_by": "lane", "since": future}
+    )
     assert r.status_code == 200
     body = r.json()
     assert body["group_by"] == "lane"

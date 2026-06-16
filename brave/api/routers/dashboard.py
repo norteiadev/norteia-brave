@@ -27,6 +27,7 @@ from brave.api.deps import get_db, get_redis, require_bearer
 from brave.compliance.quality_rating import is_quality_red
 from brave.core.models import (
     AuditLog,
+    LLMGeneration,
     MarRecord,
     NascenteRecord,
     PoisonQuarantine,
@@ -206,4 +207,61 @@ def get_monitor(
             "failures": failures,
             "quality": quality_red,
         },
+    }
+
+
+# Valid group_by columns for the cost aggregation — lane or model_slug. Anything
+# else falls back to model_slug (defensive; the UI only sends "lane"/"model").
+_COST_GROUP_COLUMNS = {
+    "lane": LLMGeneration.lane,
+    "model": LLMGeneration.model_slug,
+}
+
+
+@router.get("/api/v1/cost", dependencies=[Depends(require_bearer)])
+def get_cost(
+    group_by: str = Query("lane"),
+    since: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return LLM spend aggregated by lane or model over llm_generations (DASH-04, D-01).
+
+    A straight GROUP BY — no pipeline logic, no writes (D-01). For each group it
+    returns the summed USD cost, the summed token usage (prompt + completion), and
+    the call count, optionally restricted to rows whose `created_at >= since`:
+
+      group_by  — "lane" groups by LLMGeneration.lane; anything else (e.g. "model")
+                  groups by LLMGeneration.model_slug. The cost view drives the
+                  spend-per-lane and spend-per-model charts off these two modes.
+      since     — optional ISO timestamp; when present, only rows created at/after
+                  it are aggregated (the windowed cost view). Absent → all rows.
+
+    Bearer-guarded (require_bearer): the 401 fires before any DB work. Returns
+    aggregate USD/token sums grouped by lane/model only — no per-record content, no
+    PII, no secrets (threat T-04-22 accept). An empty window yields rows == [].
+    """
+    col = _COST_GROUP_COLUMNS.get(group_by, LLMGeneration.model_slug)
+
+    stmt = select(
+        col,
+        func.sum(LLMGeneration.usd_cost),
+        func.sum(LLMGeneration.prompt_tokens + LLMGeneration.completion_tokens),
+        func.count(LLMGeneration.id),
+    ).group_by(col)
+    if since is not None:
+        stmt = stmt.where(LLMGeneration.created_at >= since)
+
+    rows = db.execute(stmt).fetchall()
+
+    return {
+        "group_by": group_by,
+        "rows": [
+            {
+                "key": key,
+                "usd_cost": float(cost or 0),
+                "tokens": int(tok or 0),
+                "count": int(n),
+            }
+            for key, cost, tok, n in rows
+        ],
     }
