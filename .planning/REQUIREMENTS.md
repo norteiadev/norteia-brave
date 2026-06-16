@@ -64,7 +64,7 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 - [ ] **DASH-03**: WhatsApp gate UI works the `aguardando_consulta_whatsapp` queue (approve/reject) with ramp context
 - [ ] **DASH-04**: Cost & LLM view shows spend per lane/model from `llm_generations`
 - [ ] **DASH-05**: Dashboard shows WhatsApp conversations and funnels (destinos & atrativos by UF/source)
-- [ ] **DASH-06**: Dashboard is access-controlled via Bearer-header auth
+- [x] **DASH-06**: Dashboard is access-controlled via Bearer-header auth
 
 ### Compliance
 
@@ -159,7 +159,7 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | DASH-03 | Phase 4 | Pending |
 | DASH-04 | Phase 4 | Pending |
 | DASH-05 | Phase 4 | Pending |
-| DASH-06 | Phase 4 | Pending |
+| DASH-06 | Phase 4 | Complete |
 
 **Coverage:**
 - v1 requirements: 44 total (CORE 12 · SCORE 3 · OBS 4 · CNTR 2 · DEST 5 · ATR 6 · DASH 6 · COMP 3 · TEST 3)

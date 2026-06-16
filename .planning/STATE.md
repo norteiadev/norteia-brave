@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 UI-SPEC approved
-last_updated: "2026-06-16T18:57:50.115Z"
-last_activity: 2026-06-16 -- Phase 4 planning complete
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-06-16T19:15:00.389Z"
+last_activity: 2026-06-16
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 26
-  completed_plans: 17
-  percent: 65
+  completed_plans: 18
+  percent: 69
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Only validated, reliability-scored canonical records ("Mar", ≥85%) reach the platform — the Nascente→Rio→Mar pipeline with §7.6 scoring and a DLQ gate is the single thing that must work.
-**Current focus:** Phase 4 — dashboard (territorial cms)
+**Current focus:** Phase 04 — Dashboard (Territorial CMS)
 
 ## Current Position
 
-Phase: 4
-Plan: Not started
+Phase: 04 (Dashboard (Territorial CMS)) — EXECUTING
+Plan: 2 of 9
 Status: Ready to execute
-Last activity: 2026-06-16 -- Phase 4 planning complete
+Last activity: 2026-06-16
 
-Progress: [█████████░] 92%
+Progress: [███████░░░] 69%
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [█████████░] 92%
 | Phase 02-destinos-lane P06 | 13m | 1 tasks | 2 files |
 | Phase 02-destinos-lane P07 | 10m | 1 tasks | 2 files |
 | Phase 02-destinos-lane P08 | 13m | 2 tasks | 4 files |
+| Phase 04 P01 | 6min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -77,6 +78,7 @@ Recent decisions affecting current work:
 - [Phase ?]: D-01: table-per-layer medallion models implemented
 - [Phase ?]: D-08: HNSW index on rio_records.embedding; no CONCURRENTLY in migration (Alembic transaction constraint)
 - [Phase ?]: D-18: brave/core, brave/lanes, brave/clients package boundaries created and importable
+- [Phase ?]: [Phase 4 P01]: D-02 Bearer-at-edge auth: require_bearer mirrors require_steward (constant-time, fail-closed, never-logged); either-or steward/Bearer guard (R4) on DLQ+gate mutations
 
 ### Pending Todos
 
@@ -105,6 +107,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-16T18:20:58.929Z
-Stopped at: Phase 4 UI-SPEC approved
-Resume file: .planning/phases/04-dashboard-territorial-cms/04-UI-SPEC.md
+Last session: 2026-06-16T19:15:00.379Z
+Stopped at: Completed 04-01-PLAN.md
+Resume file: None

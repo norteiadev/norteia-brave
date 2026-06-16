@@ -146,7 +146,7 @@ Plans:
 Plans:
 **Wave 1** *(backend auth foundation — run first)*
 
-- [ ] 04-01-PLAN.md — Bearer FastAPI dependency + DashboardConfig + either-or steward/Bearer mutation guard (R4) + offline pytest (DASH-06)
+- [x] 04-01-PLAN.md — Bearer FastAPI dependency + DashboardConfig + either-or steward/Bearer mutation guard (R4) + offline pytest (DASH-06)
 
 **Wave 2** *(parallel — frontend scaffold + DLQ detail endpoint; no file conflict)*
 
@@ -186,4 +186,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
 | 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 5/5 | Complete   | 2026-06-15 |
-| 4. Dashboard (Territorial CMS) | 0/8 | Not started | - |
+| 4. Dashboard (Territorial CMS) | 1/9 | In Progress|  |
