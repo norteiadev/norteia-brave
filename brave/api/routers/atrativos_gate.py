@@ -33,7 +33,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brave.api.deps import get_db, get_redis, get_steward_config, get_webhook_config
+from brave.api.deps import (
+    get_db,
+    get_redis,
+    get_steward_config,
+    get_webhook_config,
+    require_steward_or_bearer,
+)
 from brave.config.settings import StewardConfig, WebhookConfig
 from brave.core.models import RioRecord
 from brave.observability.audit import write_audit
@@ -171,7 +177,7 @@ def list_whatsapp_gate_queue(
 @router.patch(
     "/api/v1/atrativos/gate/{rio_id}/approve",
     status_code=202,
-    dependencies=[Depends(require_steward)],
+    dependencies=[Depends(require_steward_or_bearer)],
 )
 def approve_whatsapp_gate(
     rio_id: uuid.UUID,
@@ -268,7 +274,7 @@ def approve_whatsapp_gate(
 @router.patch(
     "/api/v1/atrativos/gate/{rio_id}/reject",
     status_code=200,
-    dependencies=[Depends(require_steward)],
+    dependencies=[Depends(require_steward_or_bearer)],
 )
 def reject_whatsapp_gate(
     rio_id: uuid.UUID,

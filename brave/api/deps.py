@@ -74,6 +74,45 @@ def require_bearer(
         )
 
 
+def require_steward_or_bearer(
+    x_steward_secret: str | None = Header(None, alias="X-Steward-Secret"),
+    authorization: str | None = Header(None, alias="Authorization"),
+    steward_config: StewardConfig = Depends(get_steward_config),
+    dashboard_config: DashboardConfig = Depends(get_dashboard_config),
+) -> None:
+    """Authenticate a mutation endpoint via EITHER X-Steward-Secret OR Bearer (R4, D-02).
+
+    Lets the dashboard's single operator Bearer token drive the existing DLQ + gate
+    approve/reject/validate routes WITHOUT breaking the Phase 2/3 steward callers.
+    Passes if either a valid X-Steward-Secret OR a valid Authorization: Bearer is
+    present; raises 401 only when neither validates.
+
+    Both paths keep the full security discipline: constant-time hmac.compare_digest,
+    fail-closed (an unset secret/token can never validate — so an unset
+    BRAVE_DASHBOARD_BEARER_TOKEN does NOT let a Bearer-presented request pass, and an
+    unset BRAVE_STEWARD_SECRET does NOT let a steward-presented request pass), 401
+    before any DB work, secrets never logged. The either-or still requires ONE valid
+    secret — it does not weaken the write-to-production trust boundary (T-04-02).
+    """
+    steward_expected = steward_config.secret
+    if (
+        x_steward_secret
+        and steward_expected
+        and hmac.compare_digest(x_steward_secret, steward_expected)
+    ):
+        return
+
+    bearer_expected = dashboard_config.bearer_token
+    token = authorization.removeprefix("Bearer ").strip() if authorization else None
+    if token and bearer_expected and hmac.compare_digest(token, bearer_expected):
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="X-Steward-Secret or Authorization: Bearer token required",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------

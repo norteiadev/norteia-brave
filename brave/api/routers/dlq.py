@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brave.api.deps import get_db, get_steward_config
+from brave.api.deps import get_db, get_steward_config, require_steward_or_bearer
 from brave.config.settings import StewardConfig
 from brave.core.models import RioRecord
 from brave.observability.audit import write_audit
@@ -86,7 +86,7 @@ def list_dlq(
 @router.patch(
     "/api/v1/dlq/{rio_id}/reprocess",
     status_code=202,
-    dependencies=[Depends(require_steward)],
+    dependencies=[Depends(require_steward_or_bearer)],
 )
 def reprocess_dlq_record(
     rio_id: uuid.UUID,
@@ -127,7 +127,7 @@ def reprocess_dlq_record(
 @router.patch(
     "/api/v1/dlq/{rio_id}/validate",
     status_code=202,
-    dependencies=[Depends(require_steward)],
+    dependencies=[Depends(require_steward_or_bearer)],
 )
 def validate_dlq_record(
     rio_id: uuid.UUID,
@@ -196,7 +196,7 @@ def validate_dlq_record(
 @router.post(
     "/api/v1/dlq/validate-batch",
     status_code=202,
-    dependencies=[Depends(require_steward)],
+    dependencies=[Depends(require_steward_or_bearer)],
 )
 def validate_batch(
     uf: str = Query(..., description="Two-letter UF code (e.g. 'BA')"),
@@ -270,7 +270,7 @@ def validate_batch(
 @router.patch(
     "/api/v1/dlq/{rio_id}/descarte",
     status_code=200,
-    dependencies=[Depends(require_steward)],
+    dependencies=[Depends(require_steward_or_bearer)],
 )
 def descarte_dlq_record(
     rio_id: uuid.UUID,
