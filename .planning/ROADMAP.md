@@ -141,7 +141,35 @@ Plans:
   4. The Cost & LLM view shows spend per lane/model from `llm_generations`.
   5. The dashboard is access-controlled via Bearer-header auth and its components are tested offline with Vitest + MSW.
 
-**Plans**: TBD
+**Plans**: 8 plans
+
+Plans:
+**Wave 1** *(backend auth foundation — run first)*
+
+- [ ] 04-01-PLAN.md — Bearer FastAPI dependency + DashboardConfig + either-or steward/Bearer mutation guard (R4) + offline pytest (DASH-06)
+
+**Wave 2** *(parallel — frontend scaffold + DLQ detail endpoint; no file conflict)*
+
+- [ ] 04-02-PLAN.md — Dashboard scaffold (Next 16/Bun/Tailwind v4/shadcn/TanStack Query/Vitest+MSW) + BFF auth Route Handler + login gate (DASH-06)
+- [ ] 04-03-PLAN.md — GET /api/v1/dlq/{rio_id} detail endpoint (§7.6 breakdown + payload + signals + whatsapp log) + register dashboard router (DASH-01)
+
+**Wave 3** *(depends on scaffold + DLQ detail)*
+
+- [ ] 04-04-PLAN.md — DLQ review UI: QueueList/ReviewPanel/ScoreBreakdownPanel master-detail, batch-by-state, approve/reject/edit→re-score (DASH-01)
+
+**Wave 4** *(parallel — monitor endpoint+UI, gate UI; no file conflict)*
+
+- [ ] 04-05-PLAN.md — GET /api/v1/monitor endpoint (rates/throughput/alerts) + monitor view (tiles + Recharts + polling) (DASH-02)
+- [ ] 04-06-PLAN.md — WhatsApp gate UI over existing endpoints (reuse ReviewPanel) + ramp/quality context + masked PII (DASH-03)
+
+**Wave 5** *(depends on monitor — shares dashboard.py)*
+
+- [ ] 04-07-PLAN.md — GET /api/v1/cost group-by endpoint + Cost & LLM view (Recharts by lane/model) (DASH-04)
+
+**Wave 6** *(depends on cost — shares dashboard.py)*
+
+- [ ] 04-08-PLAN.md — conversation_message log + migration 0005 (R2 Option B) + funnels/conversations endpoints + funnels/conversations views (DASH-05)
+
 **UI hint**: yes
 
 ## Progress
@@ -154,4 +182,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
 | 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 5/5 | Complete   | 2026-06-15 |
-| 4. Dashboard (Territorial CMS) | 0/TBD | Not started | - |
+| 4. Dashboard (Territorial CMS) | 0/8 | Not started | - |
