@@ -127,6 +127,24 @@ class StewardConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="BRAVE_STEWARD_")
 
 
+class DashboardConfig(BaseSettings):
+    """Dashboard Bearer-header auth (DASH-06, D-02).
+
+    BRAVE_DASHBOARD_BEARER_TOKEN gates the read-only dashboard endpoints (and,
+    either-or with X-Steward-Secret, the mutation endpoints the BFF drives).
+    Compared with hmac.compare_digest (constant-time) — never logged. Fail-closed:
+    an unset token rejects all callers. Single operator token this milestone
+    (multi-user/RBAC deferred).
+
+    No env-var alias (CR-02 secret-shadowing rule): the token resolves from the
+    exact BRAVE_DASHBOARD_BEARER_TOKEN name only.
+    """
+
+    bearer_token: str = Field(default="", description="Shared operator Bearer token")
+
+    model_config = SettingsConfigDict(env_prefix="BRAVE_DASHBOARD_")
+
+
 class WhatsAppConfig(BaseSettings):
     """WhatsApp BSP configuration (Twilio launch path, D-09).
 

@@ -8,14 +8,16 @@ Provides:
   get_webhook_config() — returns WebhookConfig
 """
 
+import hmac
 import os
 from collections.abc import Generator
 
+from fastapi import Depends, Header, HTTPException, status
 from redis import Redis
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from brave.config.settings import AppConfig, StewardConfig, WebhookConfig
+from brave.config.settings import AppConfig, DashboardConfig, StewardConfig, WebhookConfig
 
 # ---------------------------------------------------------------------------
 # Config singletons (lazily initialized)
@@ -35,6 +37,41 @@ def get_webhook_config() -> WebhookConfig:
 def get_steward_config() -> StewardConfig:
     """Return StewardConfig (BRAVE_STEWARD_SECRET) for mutating DLQ endpoints."""
     return StewardConfig()
+
+
+def get_dashboard_config() -> DashboardConfig:
+    """Return DashboardConfig (BRAVE_DASHBOARD_BEARER_TOKEN) for the dashboard read surface."""
+    return DashboardConfig()
+
+
+# ---------------------------------------------------------------------------
+# Auth dependencies (DASH-06, D-02)
+# ---------------------------------------------------------------------------
+
+
+def require_bearer(
+    authorization: str | None = Header(None, alias="Authorization"),
+    dashboard_config: DashboardConfig = Depends(get_dashboard_config),
+) -> None:
+    """Authenticate the dashboard read surface via an Authorization: Bearer token.
+
+    Mirrors require_steward (dlq.py) exactly, swapping the header: constant-time
+    hmac.compare_digest, fail-closed (an unset BRAVE_DASHBOARD_BEARER_TOKEN rejects
+    every caller), 401 before any DB work, token never logged. This is the D-02
+    Bearer-at-the-edge gate the dashboard BFF presents.
+    """
+    expected = dashboard_config.bearer_token
+    token = authorization.removeprefix("Bearer ").strip() if authorization else None
+    if not token or not expected:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization: Bearer token required",
+        )
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid bearer token",
+        )
 
 
 # ---------------------------------------------------------------------------
