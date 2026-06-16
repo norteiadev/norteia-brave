@@ -38,6 +38,11 @@ os.environ.setdefault(
 STEWARD_SECRET = "test-atrativos-gate-steward-secret"
 os.environ.setdefault("BRAVE_STEWARD_SECRET", STEWARD_SECRET)
 
+# CR-01: GET /api/v1/atrativos/gate is now Bearer-guarded (was unauthenticated).
+DASHBOARD_BEARER = "test-atrativos-gate-dashboard-bearer"
+os.environ.setdefault("BRAVE_DASHBOARD_BEARER_TOKEN", DASHBOARD_BEARER)
+BEARER_HEADERS = {"Authorization": f"Bearer {DASHBOARD_BEARER}"}
+
 # WR-03: the quality-rating + inbound webhooks are now authenticated with
 # X-Webhook-Secret (shared-secret, mirroring require_steward / error-report).
 WEBHOOK_SECRET = "test-atrativos-gate-webhook-secret"
@@ -121,7 +126,7 @@ def test_list_gate_queue_returns_only_awaiting_records(client, db_session: Sessi
     discovered = _make_rio_record(db_session, sub_state="discovered")
     db_session.commit()
 
-    r = client.get("/api/v1/atrativos/gate")
+    r = client.get("/api/v1/atrativos/gate", headers=BEARER_HEADERS)
     assert r.status_code == 200, f"Unexpected status: {r.status_code} — {r.text}"
 
     body = r.json()
