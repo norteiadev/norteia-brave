@@ -33,6 +33,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -439,9 +440,20 @@ class ConversationMessage(Base):
 
     Append-only by contract (T-04-26): there is no update or delete path. Rows are
     written on the task's own committed session, never orphaned/uncommitted.
+
+    Idempotency by identity (CR-03): each row carries a deterministic `turn_seq`
+    (0-based chronological position in the thread). A UNIQUE (rio_id, turn_seq)
+    constraint backstops the append-only "no duplicate" contract — a retried/
+    replayed task inserts the same (rio_id, turn_seq) and the writer's existence
+    check (or ON CONFLICT DO NOTHING) makes the re-run a true no-op, regardless of
+    any drift between the persisted-row count and the graph's `messages` length.
     """
 
     __tablename__ = "conversation_message"
+    __table_args__ = (
+        # CR-03: idempotency by identity — a replayed turn cannot duplicate.
+        UniqueConstraint("rio_id", "turn_seq", name="uq_conversation_message_rio_turn"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -449,6 +461,9 @@ class ConversationMessage(Base):
     rio_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("rio_records.id"), nullable=False, index=True
     )
+    # CR-03: 0-based chronological position of this message in the rio's thread.
+    # Unique per (rio_id, turn_seq) — the append-only idempotency key.
+    turn_seq: Mapped[int] = mapped_column(Integer, nullable=False)
     # LGPD-minimized phone only — NEVER the raw phone_e164 (R3, T-04-24).
     phone_masked: Mapped[str] = mapped_column(String(32), nullable=False)
     # "outbound" (Norteia → owner) | "inbound" (owner → Norteia)

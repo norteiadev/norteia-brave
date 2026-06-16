@@ -832,6 +832,7 @@ def test_conversation_message_row_inserts(db_session: Session):
     rio = _make_atrativo_in_progress(db_session)
     msg = ConversationMessage(
         rio_id=rio.id,
+        turn_seq=0,
         phone_masked=mask_phone(RAW_PHONE),
         direction="outbound",
         role="assistant",
@@ -904,6 +905,7 @@ def test_migration_0005_upgrade_downgrade_roundtrip(db_engine):
             assert {
                 "id",
                 "rio_id",
+                "turn_seq",
                 "phone_masked",
                 "direction",
                 "role",
@@ -913,6 +915,11 @@ def test_migration_0005_upgrade_downgrade_roundtrip(db_engine):
             } <= cols
             idx_names = {i["name"] for i in insp.get_indexes("conversation_message")}
             assert "ix_conversation_message_rio_id" in idx_names
+            # CR-03: append-only idempotency unique constraint (rio_id, turn_seq).
+            uq_names = {
+                c["name"] for c in insp.get_unique_constraints("conversation_message")
+            }
+            assert "uq_conversation_message_rio_turn" in uq_names
             mod.downgrade()
             assert not inspect(conn).has_table("conversation_message")
             # Restore the table so the rest of the (shared-DB) suite still sees it —
@@ -1046,6 +1053,117 @@ def test_resume_task_appends_inbound_and_followup(db_session: Session, monkeypat
 
 
 @pytest.mark.integration
+def test_resume_twice_same_reply_is_idempotent(db_session: Session, monkeypatch):
+    """CR-02/CR-03: resuming twice with the same reply_text yields exactly ONE inbound
+    row (no duplicate), in correct chronological order (inbound before follow-up).
+
+    The second resume re-emits the same graph turns (checkpoint replay / retry). The
+    identity-keyed append must make it a true no-op — no duplicated rows, no drops.
+    """
+    from brave.core.models import ConversationMessage
+    from brave.tasks import pipeline
+
+    rio = _make_atrativo_in_progress(db_session)
+    db_session.commit()
+
+    reply = "Sim, estamos abertos todos os dias."
+    followup = "Ótimo! Qual o melhor telefone de contato?"
+    # The graph's accumulated final state: opening ask + inbound reply + follow-up.
+    final_state = {
+        "messages": [
+            {"role": "assistant", "content": "Olá da Norteia!"},
+            {"role": "user", "content": reply},
+            {"role": "assistant", "content": followup},
+        ],
+        "extraction": {"existe": True},
+    }
+    _patch_graph(monkeypatch, final_state)
+
+    pipeline.resume_conversation_task(str(rio.id), reply)
+    # Second run with the SAME reply (replay / Celery retry).
+    pipeline.resume_conversation_task(str(rio.id), reply)
+
+    db_session.expire_all()
+    rows = list(
+        db_session.scalars(
+            select(ConversationMessage)
+            .where(ConversationMessage.rio_id == rio.id)
+            .order_by(ConversationMessage.turn_seq.asc())
+        ).all()
+    )
+
+    # Exactly one inbound row carrying the reply — no duplicate from the replay.
+    inbound = [r for r in rows if r.direction == "inbound"]
+    assert len(inbound) == 1, f"expected exactly one inbound row, got {len(inbound)}"
+    assert inbound[0].content == reply
+
+    # Correct chronological order: the inbound reply precedes the follow-up outbound.
+    contents = [r.content for r in rows]
+    assert contents == ["Olá da Norteia!", reply, followup], (
+        f"out-of-order or duplicated transcript: {contents}"
+    )
+    # turn_seq is a stable 0-based chronological index with no gaps/dupes.
+    assert [r.turn_seq for r in rows] == [0, 1, 2]
+
+
+@pytest.mark.integration
+def test_outreach_then_resume_orders_ask_reply_followup(db_session: Session, monkeypatch):
+    """CR-02: an outreach→resume sequence persists ordered (outbound ask, inbound reply,
+    outbound follow-up) even when the graph did NOT itself append the inbound turn.
+
+    The resume graph state here carries ONLY the follow-up outbound (the documented
+    fallback where the inbound was not appended). The logger must splice the inbound
+    reply BEFORE the follow-up — never after it.
+    """
+    from brave.core.models import ConversationMessage
+    from brave.tasks import pipeline
+
+    rio = _make_atrativo_in_progress(db_session)
+    db_session.commit()
+
+    ask = "Olá! Sou da Norteia, seu negócio está em funcionamento?"
+    reply = "Sim, funcionando normalmente."
+    followup = "Perfeito, obrigado pela confirmação!"
+
+    # 1) Outreach persists the opening outbound ask at turn_seq 0.
+    _patch_graph(
+        monkeypatch,
+        {"messages": [{"role": "assistant", "content": ask}], "extraction": None},
+    )
+    pipeline.outreach_task(str(rio.id))
+
+    # 2) Resume: graph's final state has the accumulated ask + a follow-up outbound,
+    #    but NOT the inbound user turn (fallback case). The logger must insert the
+    #    inbound reply between them.
+    _patch_graph(
+        monkeypatch,
+        {
+            "messages": [
+                {"role": "assistant", "content": ask},
+                {"role": "assistant", "content": followup},
+            ],
+            "extraction": {"funcionando": True},
+        },
+    )
+    pipeline.resume_conversation_task(str(rio.id), reply)
+
+    db_session.expire_all()
+    rows = list(
+        db_session.scalars(
+            select(ConversationMessage)
+            .where(ConversationMessage.rio_id == rio.id)
+            .order_by(ConversationMessage.turn_seq.asc())
+        ).all()
+    )
+    sequence = [(r.direction, r.content) for r in rows]
+    assert sequence == [
+        ("outbound", ask),
+        ("inbound", reply),
+        ("outbound", followup),
+    ], f"expected ask→reply→followup ordering, got {sequence}"
+
+
+@pytest.mark.integration
 def test_conversation_message_no_raw_phone_persisted(db_session: Session, monkeypatch):
     """No raw phone_e164 string is persisted anywhere in conversation_message (R3)."""
     from sqlalchemy import text
@@ -1115,6 +1233,7 @@ def _seed_conversation(db_session: Session, rio, *, n_messages: int = 2):
         db_session.add(
             ConversationMessage(
                 rio_id=rio.id,
+                turn_seq=i,
                 phone_masked=masked,
                 direction="outbound" if outbound else "inbound",
                 role="assistant" if outbound else "user",

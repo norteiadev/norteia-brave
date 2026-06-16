@@ -68,75 +68,132 @@ def _log_conversation_messages(
 
     Writes a ConversationMessage row for every message boundary that is NOT yet logged
     for this rio_id, so no message is dropped across the outreach (outbound asks) and
-    resume (inbound reply + follow-up) write-points. Idempotent: it counts the rows
-    already persisted and appends only the new tail of the conversation, so a retried
-    task does not duplicate prior turns.
+    resume (inbound reply + follow-up) write-points.
+
+    Correctness (CR-02): the desired ordered transcript is reconstructed so the owner's
+    inbound reply is persisted in its correct chronological position — BEFORE any
+    follow-up outbound the graph produced in response to it — never appended after the
+    follow-up. If the graph already carries the inbound as a user turn we keep its
+    position; otherwise we splice it in right before the trailing outbound follow-up(s).
+
+    Idempotency (CR-03): append is keyed on IDENTITY, not on a row count. Each turn is
+    assigned a deterministic 0-based `turn_seq` (its chronological index in the thread)
+    and inserted only when no row already exists for (rio_id, turn_seq) — also guarded
+    by an existence check on (rio_id, direction, role, content). The UNIQUE
+    (rio_id, turn_seq) constraint backstops a concurrent racer. A retry/replay is a true
+    no-op regardless of any drift between persisted-row count and the graph's `messages`
+    length (a shorter replay no longer silently drops, a re-emitted turn no longer
+    duplicates).
 
     LGPD (R3, T-04-24): phone is masked at write time via mask_phone — the raw E.164
     number is NEVER persisted in conversation_message.
 
     Appends on the CALLER'S session (the same one that commits at the task's single
     session.commit()) — it never opens or commits a separate session, and tolerates an
-    empty/None final state (the graph produced nothing → no rows).
+    empty/None final state (the graph produced nothing → no rows). The LangGraph
+    AsyncPostgresSaver checkpoint persistence is untouched (additive — no change to
+    scoring/routing/push).
     """
     from brave.core.models import ConversationMessage, mask_phone
 
     phone_masked = mask_phone(contact_phone)
-
-    # Build the desired ordered message list from the graph's final state. Each LangGraph
-    # turn is {role, content}; assistant turns are outbound, user turns inbound. If the
-    # resume task supplied the raw inbound reply but the graph did not append it as a
-    # user turn, prepend it so the owner's reply is never dropped.
-    messages: list[dict[str, Any]] = []
-    if isinstance(final_state, dict):
-        for turn in final_state.get("messages") or []:
-            if isinstance(turn, dict):
-                messages.append(turn)
+    rio_uuid = uuid.UUID(rio_id)
 
     final_extraction = (
         final_state.get("extraction") if isinstance(final_state, dict) else None
     )
 
-    # Ensure the inbound reply is represented even if the graph state did not append it.
+    # 1) Pull the graph's ordered turns as (direction, role, content) tuples.
+    graph_turns: list[dict[str, Any]] = []
+    if isinstance(final_state, dict):
+        for turn in final_state.get("messages") or []:
+            if isinstance(turn, dict):
+                role = turn.get("role") or "assistant"
+                graph_turns.append(
+                    {
+                        "role": role,
+                        "direction": "inbound" if role == "user" else "outbound",
+                        "content": turn.get("content") or "",
+                    }
+                )
+
+    # 2) Ensure the inbound reply is represented in its CORRECT chronological position
+    #    (CR-02). If the graph already appended it as a user turn, keep it. Otherwise
+    #    splice it in right before the LAST outbound turn (the follow-up Norteia
+    #    produced in response to the reply), so the owner's reply precedes that
+    #    response — never after it. If there is no trailing outbound (the graph ended
+    #    on the reply), append the inbound at the end.
     if inbound_text:
         has_inbound = any(
-            t.get("role") == "user" and t.get("content") == inbound_text
-            for t in messages
+            t["direction"] == "inbound" and t["content"] == inbound_text
+            for t in graph_turns
         )
         if not has_inbound:
-            messages.append({"role": "user", "content": inbound_text})
-
-    # Append-only: skip the prefix already persisted for this rio_id (idempotent retry).
-    already_logged = (
-        session.scalar(
-            select(func.count(ConversationMessage.id)).where(
-                ConversationMessage.rio_id == uuid.UUID(rio_id)
+            last_outbound = next(
+                (
+                    i
+                    for i in range(len(graph_turns) - 1, -1, -1)
+                    if graph_turns[i]["direction"] == "outbound"
+                ),
+                None,
             )
-        )
-        or 0
-    )
+            insert_at = last_outbound if last_outbound is not None else len(graph_turns)
+            graph_turns.insert(
+                insert_at,
+                {"role": "user", "direction": "inbound", "content": inbound_text},
+            )
 
-    new_turns = messages[already_logged:]
-    if not new_turns:
+    if not graph_turns:
         return
 
-    for idx, turn in enumerate(new_turns):
-        role = turn.get("role") or "assistant"
-        direction = "inbound" if role == "user" else "outbound"
-        content = turn.get("content") or ""
-        # Attach the extraction snapshot to the final outbound turn (resume follow-up),
-        # so the transcript carries the structured result alongside the message boundary.
-        is_last = idx == len(new_turns) - 1
+    # 3) Assign a deterministic turn_seq (chronological index) and insert by IDENTITY
+    #    (CR-03). turn_seq is the 0-based position in the reconstructed thread, so a
+    #    replay maps each turn to the same seq. We skip a turn that already exists by
+    #    (rio_id, turn_seq) OR by (rio_id, direction, role, content) — making both a
+    #    count-drift replay and a duplicate-content re-emit a no-op.
+    existing_seqs = set(
+        session.scalars(
+            select(ConversationMessage.turn_seq).where(
+                ConversationMessage.rio_id == rio_uuid
+            )
+        ).all()
+    )
+
+    last_outbound_idx = max(
+        (i for i, t in enumerate(graph_turns) if t["direction"] == "outbound"),
+        default=-1,
+    )
+
+    for seq, turn in enumerate(graph_turns):
+        if seq in existing_seqs:
+            continue
+        # Identity guard: a row with this exact (direction, role, content) already
+        # persisted for this rio is treated as the same turn (idempotent replay).
+        already = session.scalar(
+            select(func.count(ConversationMessage.id)).where(
+                ConversationMessage.rio_id == rio_uuid,
+                ConversationMessage.direction == turn["direction"],
+                ConversationMessage.role == turn["role"],
+                ConversationMessage.content == turn["content"],
+            )
+        )
+        if already:
+            continue
+        # Attach the extraction snapshot to the most recent OUTBOUND turn so the
+        # transcript carries the structured result alongside that message boundary.
         extracted = (
-            final_extraction if (is_last and direction == "outbound") else None
+            final_extraction
+            if (seq == last_outbound_idx and turn["direction"] == "outbound")
+            else None
         )
         session.add(
             ConversationMessage(
-                rio_id=uuid.UUID(rio_id),
+                rio_id=rio_uuid,
+                turn_seq=seq,
                 phone_masked=phone_masked,
-                direction=direction,
-                role=role,
-                content=content,
+                direction=turn["direction"],
+                role=turn["role"],
+                content=turn["content"],
                 extracted=extracted,
             )
         )

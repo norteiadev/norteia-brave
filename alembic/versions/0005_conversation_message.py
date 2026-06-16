@@ -35,6 +35,8 @@ def upgrade() -> None:
         "conversation_message",
         sa.Column("id", UUID(as_uuid=True), primary_key=True),
         sa.Column("rio_id", UUID(as_uuid=True), nullable=False),
+        # CR-03: 0-based chronological turn position; idempotency key per rio.
+        sa.Column("turn_seq", sa.Integer, nullable=False),
         # LGPD-minimized phone only — never the raw phone_e164 (R3, T-04-24).
         sa.Column("phone_masked", sa.String(32), nullable=False),
         sa.Column("direction", sa.String(16), nullable=False),
@@ -51,6 +53,10 @@ def upgrade() -> None:
             ["rio_id"],
             ["rio_records.id"],
             name="fk_conversation_message_rio_id",
+        ),
+        # CR-03: append-only idempotency — a replayed turn cannot duplicate.
+        sa.UniqueConstraint(
+            "rio_id", "turn_seq", name="uq_conversation_message_rio_turn"
         ),
     )
     # Standard B-tree index — not CONCURRENTLY (inside Alembic transaction, new table).
