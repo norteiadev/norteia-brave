@@ -13,8 +13,9 @@ Phase 3 additions:
 
 from fastapi import FastAPI
 
-from brave.api.routers.audit import router as audit_router
 from brave.api.routers.atrativos_gate import router as atrativos_gate_router
+from brave.api.routers.audit import router as audit_router
+from brave.api.routers.dashboard import router as dashboard_router
 from brave.api.routers.dlq import router as dlq_router
 from brave.api.routers.health import router as health_router
 from brave.api.routers.metrics import router as metrics_router
@@ -35,3 +36,6 @@ app.include_router(webhook_router)
 
 # Phase 3: Atrativos WhatsApp gate endpoints (D-06, ATR-05, COMP-01/02)
 app.include_router(atrativos_gate_router)
+
+# Phase 4: Dashboard read-aggregation surface (D-01, DASH-01..05)
+app.include_router(dashboard_router)
