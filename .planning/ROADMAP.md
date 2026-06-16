@@ -151,7 +151,7 @@ Plans:
 **Wave 2** *(parallel — frontend scaffold + DLQ detail endpoint; no file conflict)*
 
 - [ ] 04-02-PLAN.md — Dashboard scaffold (Next 16/Bun/Tailwind v4/shadcn/TanStack Query/Vitest+MSW) + BFF auth Route Handler + login gate (DASH-06)
-- [ ] 04-03-PLAN.md — GET /api/v1/dlq/{rio_id} detail endpoint (§7.6 breakdown + payload + signals + whatsapp log) + register dashboard router (DASH-01)
+- [x] 04-03-PLAN.md — GET /api/v1/dlq/{rio_id} detail endpoint (§7.6 breakdown + payload + signals + whatsapp log) + register dashboard router (DASH-01)
 
 **Wave 3** *(depends on scaffold + DLQ detail)*
 
@@ -186,4 +186,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Brave Core, Score Gate, Boundary & Contract | 3/3 | Complete    | 2026-06-11 |
 | 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 5/5 | Complete   | 2026-06-15 |
-| 4. Dashboard (Territorial CMS) | 1/9 | In Progress|  |
+| 4. Dashboard (Territorial CMS) | 2/9 | In Progress|  |
