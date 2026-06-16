@@ -43,33 +43,64 @@ function explainError(err: unknown): string {
 
 const DLQ_KEY = dlqKeys.all;
 
+/** Snapshot of every cached ['dlq','list',...] entry, keyed for exact restore. */
+type DlqListSnapshot = Array<{
+  queryKey: readonly unknown[];
+  data: DlqListItem[] | undefined;
+}>;
+
 /**
  * Validate ("Validar e publicar"): sets validação-humana=100 → re-score → push
  * if Mar. OPTIMISTIC: the row is removed from the visible queue immediately
  * (it is leaving the DLQ), rolled back on error.
+ *
+ * WR-05: the optimistic removal + rollback span ALL cached ['dlq','list',...]
+ * entries (every UF / entityType the operator has visited), not just the current
+ * (uf, entityType) key. The validated row leaves the DLQ entirely, so it must
+ * disappear from every mounted list observer immediately — and a failed validate
+ * must restore every snapshotted list (including the case where a list was not
+ * yet cached). The broad onSettled invalidate still reconciles with the server.
  */
 export function useValidateDlqRecord(
-  uf?: string,
-  entityType?: string,
-): UseMutationResult<MutationResult, unknown, string, { previous?: DlqListItem[] }> {
+  _uf?: string,
+  _entityType?: string,
+): UseMutationResult<MutationResult, unknown, string, { snapshot: DlqListSnapshot }> {
   const qc = useQueryClient();
-  const listKey = dlqKeys.list(uf, entityType);
 
   return useMutation({
     mutationFn: (rioId: string) => validateDlqRecord(rioId),
     onMutate: async (rioId: string) => {
-      await qc.cancelQueries({ queryKey: listKey });
-      const previous = qc.getQueryData<DlqListItem[]>(listKey);
-      if (previous) {
-        qc.setQueryData<DlqListItem[]>(
-          listKey,
-          previous.filter((r) => r.id !== rioId),
-        );
+      // Cancel every in-flight list fetch so they don't clobber the optimism.
+      await qc.cancelQueries({ queryKey: dlqKeys.all });
+
+      // Snapshot every cached list query for an exact per-key restore on error.
+      const entries = qc.getQueriesData<DlqListItem[]>({
+        queryKey: ["dlq", "list"],
+      });
+      const snapshot: DlqListSnapshot = entries.map(([queryKey, data]) => ({
+        queryKey,
+        data,
+      }));
+
+      // Optimistically remove the validated row from every cached list.
+      for (const { queryKey, data } of snapshot) {
+        if (data) {
+          qc.setQueryData<DlqListItem[]>(
+            queryKey,
+            data.filter((r) => r.id !== rioId),
+          );
+        }
       }
-      return { previous };
+
+      return { snapshot };
     },
     onError: (err, _rioId, ctx) => {
-      if (ctx?.previous) qc.setQueryData(listKey, ctx.previous);
+      // Restore every snapshotted list. `undefined` data is restored faithfully
+      // (a list that was never cached stays uncached) so a failed validate rolls
+      // back cleanly with no phantom empty entries.
+      for (const { queryKey, data } of ctx?.snapshot ?? []) {
+        qc.setQueryData(queryKey, data);
+      }
       toast.error(explainError(err));
     },
     onSuccess: () => {

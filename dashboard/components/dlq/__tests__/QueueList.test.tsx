@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueueList } from "@/components/dlq/QueueList";
 import { useValidateDlqRecord } from "@/components/dlq/dlq-actions";
 import { setOperatorToken } from "@/lib/api-client";
+import { dlqKeys, type DlqListItem } from "@/lib/dlq-api";
 import { server } from "@/mocks/server";
 import {
   dlqBatchSuccess,
@@ -13,6 +14,7 @@ import {
   dlqListError,
   dlqListSuccess,
   dlqUnauthorized,
+  dlqValidateError,
   dlqValidateSuccess,
   sampleListItems,
 } from "@/mocks/handlers/dlq";
@@ -157,5 +159,82 @@ describe("useValidateDlqRecord (approve → invalidate → refetch)", () => {
     );
 
     server.events.removeListener("request:start", countListCalls);
+  });
+
+  it("WR-05: optimistically removes the row from ALL cached list keys", async () => {
+    const user = userEvent.setup();
+    setOperatorToken("test-operator-token");
+    server.use(dlqValidateSuccess());
+
+    const client = new QueryClient({
+      defaultOptions: {
+        // Keep inactive list caches alive so the optimistic patch is observable.
+        queries: { retry: false, gcTime: Infinity },
+        mutations: { retry: false },
+      },
+    });
+
+    // Two DISTINCT list caches both holding the row being validated — e.g. the
+    // operator visited BA then RJ. Pre-WR-05 only the hook's own (uf,entityType)
+    // key was patched; the other stayed stale until the broad refetch settled.
+    const baKey = dlqKeys.list("BA", "destination");
+    const rjKey = dlqKeys.list("RJ", "destination");
+    const seed: DlqListItem[] = [...sampleListItems];
+    client.setQueryData<DlqListItem[]>(baKey, seed);
+    client.setQueryData<DlqListItem[]>(rjKey, seed);
+
+    render(
+      <QueryClientProvider client={client}>
+        <ValidateButton />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByText("validar"));
+
+    // The validated row vanishes from BOTH cached lists immediately (optimism),
+    // not just the hook's own key.
+    await waitFor(() => {
+      const ba = client.getQueryData<DlqListItem[]>(baKey) ?? [];
+      const rj = client.getQueryData<DlqListItem[]>(rjKey) ?? [];
+      expect(ba.some((r) => r.id === sampleListItems[0].id)).toBe(false);
+      expect(rj.some((r) => r.id === sampleListItems[0].id)).toBe(false);
+    });
+  });
+
+  it("WR-05: rolls back ALL cached list keys cleanly on a failed validate", async () => {
+    const user = userEvent.setup();
+    setOperatorToken("test-operator-token");
+    server.use(dlqValidateError(500));
+
+    const client = new QueryClient({
+      defaultOptions: {
+        // Keep inactive list caches alive (no mounted observers here) so the
+        // post-error rollback restore is observable instead of being GC'd.
+        queries: { retry: false, gcTime: Infinity },
+        mutations: { retry: false },
+      },
+    });
+
+    const baKey = dlqKeys.list("BA", "destination");
+    const rjKey = dlqKeys.list("RJ", "destination");
+    const seed: DlqListItem[] = [...sampleListItems];
+    client.setQueryData<DlqListItem[]>(baKey, seed);
+    client.setQueryData<DlqListItem[]>(rjKey, seed);
+
+    render(
+      <QueryClientProvider client={client}>
+        <ValidateButton />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByText("validar"));
+
+    // On error every snapshotted list is restored — the row reappears in BOTH.
+    await waitFor(() => {
+      const ba = client.getQueryData<DlqListItem[]>(baKey) ?? [];
+      const rj = client.getQueryData<DlqListItem[]>(rjKey) ?? [];
+      expect(ba.some((r) => r.id === sampleListItems[0].id)).toBe(true);
+      expect(rj.some((r) => r.id === sampleListItems[0].id)).toBe(true);
+    });
   });
 });

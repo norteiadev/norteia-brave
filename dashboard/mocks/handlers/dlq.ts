@@ -153,6 +153,12 @@ export function dlqValidateSuccess() {
   );
 }
 
+export function dlqValidateError(status = 500) {
+  return http.patch(`${BASE}/:rioId/validate`, () =>
+    HttpResponse.json({ detail: "boom" }, { status }),
+  );
+}
+
 export function dlqDescarteSuccess() {
   return http.patch(`${BASE}/:rioId/descarte`, () =>
     HttpResponse.json({ status: "ok", routing: "descarte", rio_id: "x" }),
