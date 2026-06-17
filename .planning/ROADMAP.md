@@ -209,3 +209,13 @@ Plans:
 **Wave 3** *(depends on 05-01 + 05-02 — both tasks must exist)*
 
 - [x] 05-03-PLAN.md — Ops trigger: `brave.cli sweep <UF> [--lane ...]` + optional Bearer-guarded POST /api/v1/sweep; offline CLI + endpoint tests (ORCH-03, ORCH-04)
+
+### Phase 6: Real-Externals Enablement (RealLLMClient + live 24/7 collection)
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 5
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 6 to break down)

@@ -79,6 +79,10 @@ Progress: [██████████] 100%
 
 ## Accumulated Context
 
+### Roadmap Evolution
+
+- Phase 6 added: Real-Externals Enablement (RealLLMClient + live 24/7 collection) — closes the real-data blocker found in Phase 4/5 dogfooding: `brave/clients/llm.py`/`RealLLMClient` is missing (4 phantom import sites in pipeline.py), so `run_real_externals=True` ImportErrors on every LLM lane; plus the `BRAVE_RUN_REAL_EXTERNALS` docstring footgun (real toggle is `RUN_REAL_EXTERNALS`, no prefix).
+
 ### Decisions
 
 Decisions are logged in PROJECT.md Key Decisions table.
