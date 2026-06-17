@@ -165,7 +165,12 @@ async def test_discovery_stores_raw_with_place_id_only() -> None:
         config=config,
     )
 
+    # FSM-init collaborators (Plan 05-02 Task 1) are patched out: this test isolates the
+    # store_raw payload/parent-guard contract, not the Rio creation + sub_state seeding
+    # (those are covered against a real DB in test_atrativos_lane_e2e.py).
     with patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
+         patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
+         patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
          patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
         # Patch store_raw to return a mock NascenteRecord
         from unittest.mock import MagicMock as MM
@@ -235,7 +240,11 @@ async def test_discovery_dedup_idempotent() -> None:
         config=config,
     )
 
+    # FSM-init collaborators (Plan 05-02 Task 1) patched out — see note above; this test
+    # asserts store_raw dedup behavior, not Rio creation / sub_state seeding.
     with patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
+         patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
+         patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
          patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
         mock_nascente = MagicMock()
         mock_nascente.id = uuid.uuid4()
