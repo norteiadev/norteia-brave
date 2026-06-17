@@ -680,6 +680,26 @@ def discover_atrativo_task(self, uf: str) -> None:
         asyncio.run(agent.produce(uf))
         session.commit()
 
+        # ORCH-02 / D-03: fan out the FSM chain. DiscoveryAgent.produce returns None,
+        # so chaining is keyed on sub_state queries (self-healing across restarts) —
+        # never on a producer return value. Query every attraction this sweep landed at
+        # sub_state='discovered' and dispatch find_contacts_task per row. Dispatch-then-
+        # inline-fallback (swallow-all, from dlq.py): an operator/test with no broker still
+        # advances the chain synchronously. Replay-safe: a duplicate dispatch hits the
+        # contact_finder inline precondition guard and no-ops (D-04, finding #2).
+        discovered = session.scalars(
+            select(RioRecord).where(
+                RioRecord.entity_type == "attraction",
+                RioRecord.uf == uf,
+                RioRecord.sub_state == "discovered",
+            )
+        ).all()
+        for rio in discovered:
+            try:
+                find_contacts_task.delay(str(rio.id))
+            except Exception:
+                find_contacts_task.run(str(rio.id))
+
     except PermanentError as exc:
         session.rollback()
         q_session, q_engine = _get_session()
@@ -873,6 +893,18 @@ def find_contacts_task(self, rio_id: str) -> None:
 
         asyncio.run(agent.run(rio))
         session.commit()
+
+        # ORCH-02 / D-03: continue the chain only if this record actually advanced to
+        # contacts_found (the ContactFinder inline guard short-circuits a duplicate/stale
+        # dispatch — in which case we must NOT enqueue). Re-read sub_state after commit and
+        # dispatch gather_signals_task with the same dispatch-then-inline-fallback. Keyed on
+        # sub_state, not a return value (D-03); replay-safe via the signal_agent guard (D-04).
+        session.refresh(rio)
+        if rio.sub_state == "contacts_found":
+            try:
+                gather_signals_task.delay(str(rio_id))
+            except Exception:
+                gather_signals_task.run(str(rio_id))
 
     except PermanentError as exc:
         session.rollback()
