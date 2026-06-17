@@ -551,17 +551,15 @@ async def test_deny_block_present_in_openrouter_request(monkeypatch):
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **OpenRouter model-unavailable exception type**
+1. **OpenRouter model-unavailable exception type** — RESOLVED
    - What we know: 404 for not-found resources is standard HTTP, and `openai.NotFoundError` has `status_code = 404`.
-   - What's unclear: OpenRouter may return a 503 with a body saying "model offline" rather than a 404 for temporarily-unavailable models.
-   - Recommendation: Implement fallback on both `NotFoundError` (404) and `APIStatusError` with status 503, matching OpenRouter's documented behavior. Add a TODO comment for the operator to verify in the opt-in smoke test.
+   - Resolution: 503 responses from OpenRouter translate to `openai.InternalServerError` (status_code >= 500), which is caught by the tenacity retry predicate (`_is_openai_retryable` returns True for `InternalServerError`). A temporarily-offline model triggers a retry of the same slug; a permanently-unavailable model (404) triggers the slug fallback. This behavior is acceptable. Low risk; verifiable with the opt-in smoke test.
 
-2. **Whether to wire `redis_client`/`session` in the four call sites**
+2. **Whether to wire `redis_client`/`session` in the four call sites** — RESOLVED
    - What we know: `outreach_task` and `resume_conversation_task` already construct a `redis_client` from env. `discover_atrativo_task` and `sweep_uf_task` do not.
-   - What's unclear: D-05 says "pure transport when absent" — acceptable to ship without full tracking wiring? Or must two of the four sites be updated?
-   - Recommendation: Ship with all four sites unchanged (`RealLLMClient(config=app_config.llm)`). Full tracking available via the optional deps in a follow-on. The `llm_generations` rows require a DB session — adding session wiring to all four sites is low-risk but out of the minimal scope definition.
+   - Resolution: ADOPTED — wire `redis_client` + `session` (+ `lane`) into ALL FOUR call sites this phase (Option A). This aligns with the phase acceptance bar ("cost guard enforced, real llm_generations rows written") and the `LLMClientProtocol` mandate ("every call must log to llm_generations and check the USD cost guard"). Pure-transport-only is rejected: it means `pre_dispatch_check` is never called and no `llm_generations` rows are written on a real `RUN_REAL_EXTERNALS=true` sweep, contradicting the acceptance bar. For Sites 3 and 4 (outreach/resume), the existing `redis_client` construction is resequenced to appear before the `RealLLMClient` block. For Sites 1 and 2 (discover/sweep), a `redis_client` is added from env using the same `redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))` pattern already present in the file.
 
 ---
 
