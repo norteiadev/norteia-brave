@@ -16,9 +16,65 @@ Marked @pytest.mark.integration — skipped when DB unavailable.
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.orm import sessionmaker
 
-from brave.core.models import PoisonQuarantine, RioRecord
+from brave.core.models import NascenteRecord, PoisonQuarantine, RioRecord
+
+
+@pytest.fixture
+def isolated_session(db_engine):
+    """A session bound to an outer transaction + SAVEPOINT, fully rolled back after the test.
+
+    sweep_uf calls session.commit() internally, which would persist rows to the shared
+    docker-compose DB and leak across tests if we relied on the plain db_session fixture
+    (rollback-after-commit is a no-op). Here we open an explicit connection + outer
+    transaction and run the session in "create_savepoint" join mode, so the inner
+    commit() only releases a SAVEPOINT; the outer transaction.rollback() at teardown
+    discards everything. This keeps the offline suite side-effect-free.
+    """
+    connection = db_engine.connect()
+    trans = connection.begin()
+    session_factory = sessionmaker(
+        bind=connection, join_transaction_mode="create_savepoint"
+    )
+    session = session_factory()
+    try:
+        yield session
+    finally:
+        session.close()
+        trans.rollback()
+        connection.close()
+
+
+def _patch_fake_llm(monkeypatch) -> None:
+    """Make the FakeLLMClient that sweep_uf builds return a valid DesmembramentoResult.
+
+    sweep_uf constructs its own FakeLLMClient() with no fixture when
+    run_real_externals=False, so we patch the class used at the import site to a
+    factory that injects a schema-valid extract() result. Keeps the test offline +
+    keyless while exercising the real DesmembramentoAgent.produce path.
+    """
+    from brave.lanes.destinos.schemas import DesmembramentoResult, DestinoItem
+    from tests.fakes.fake_llm import FakeLLMClient
+
+    # Porto Seguro is "A"/Oferta Principal in the bundled BA CSV (ibge 2927408).
+    result = DesmembramentoResult(
+        municipio_ibge="2927408",
+        municipio_nome="Porto Seguro",
+        destinos=[
+            DestinoItem(
+                nome="Trancoso",
+                tipo="vila",
+                posicionamento="Vila histórica com Quadrado e praias",
+            ),
+        ],
+    )
+
+    def _factory(*args, **kwargs):
+        return FakeLLMClient(fixture_result=result)
+
+    monkeypatch.setattr("tests.fakes.fake_llm.FakeLLMClient", _factory)
 
 
 def test_sweep_uf_name_resolves():
@@ -32,7 +88,7 @@ def test_sweep_uf_name_resolves():
 
 
 @pytest.mark.integration
-def test_sweep_uf_ingests_destinos(db_session, monkeypatch):
+def test_sweep_uf_ingests_destinos(isolated_session, monkeypatch):
     """sweep_uf("BA") creates destination RioRecords routed by §7.6 (producer-only) [D-01/D-02].
 
     Drives the real offline path: MturClient reads the bundled CSV, FakeLLMClient is
@@ -42,12 +98,13 @@ def test_sweep_uf_ingests_destinos(db_session, monkeypatch):
     from brave.tasks import pipeline
 
     # Make sweep_uf use this test's transactional session (so rollback cleans up).
-    monkeypatch.setattr(pipeline, "_get_session", lambda: (db_session, _NoDispose()))
+    monkeypatch.setattr(pipeline, "_get_session", lambda: (isolated_session, _NoDispose()))
+    _patch_fake_llm(monkeypatch)
 
     pipeline.sweep_uf.run("BA")
 
     rios = list(
-        db_session.scalars(
+        isolated_session.scalars(
             select(RioRecord).where(
                 RioRecord.entity_type == "destination",
                 RioRecord.uf == "BA",
@@ -63,28 +120,24 @@ def test_sweep_uf_ingests_destinos(db_session, monkeypatch):
 
 
 @pytest.mark.integration
-def test_sweep_uf_idempotent(db_session, monkeypatch):
+def test_sweep_uf_idempotent(isolated_session, monkeypatch):
     """Running sweep_uf twice for the same UF adds no duplicate Nascente rows [D-01, ORCH-01].
 
     store_raw dedups by (source, source_ref, content_hash) so a replayed sweep is a no-op.
     """
-    from brave.core.models import NascenteRecord
     from brave.tasks import pipeline
 
-    monkeypatch.setattr(pipeline, "_get_session", lambda: (db_session, _NoDispose()))
+    monkeypatch.setattr(pipeline, "_get_session", lambda: (isolated_session, _NoDispose()))
+    _patch_fake_llm(monkeypatch)
 
     pipeline.sweep_uf.run("BA")
-    count_after_first = db_session.scalar(
-        select(__import__("sqlalchemy").func.count())
-        .select_from(NascenteRecord)
-        .where(NascenteRecord.uf == "BA")
+    count_after_first = isolated_session.scalar(
+        select(func.count()).select_from(NascenteRecord).where(NascenteRecord.uf == "BA")
     )
 
     pipeline.sweep_uf.run("BA")
-    count_after_second = db_session.scalar(
-        select(__import__("sqlalchemy").func.count())
-        .select_from(NascenteRecord)
-        .where(NascenteRecord.uf == "BA")
+    count_after_second = isolated_session.scalar(
+        select(func.count()).select_from(NascenteRecord).where(NascenteRecord.uf == "BA")
     )
 
     assert count_after_first > 0, "first sweep must ingest at least one Nascente row"
@@ -94,7 +147,7 @@ def test_sweep_uf_idempotent(db_session, monkeypatch):
 
 
 @pytest.mark.integration
-def test_sweep_uf_quarantines_poison(db_session, monkeypatch):
+def test_sweep_uf_quarantines_poison(isolated_session, monkeypatch):
     """A producer that raises lands a PoisonQuarantine row, not a lost record [D-01, T-05-03].
 
     A missing Mtur CSV raises FileNotFoundError inside MturSeedIngest.produce; the
@@ -102,7 +155,7 @@ def test_sweep_uf_quarantines_poison(db_session, monkeypatch):
     """
     from brave.tasks import pipeline
 
-    monkeypatch.setattr(pipeline, "_get_session", lambda: (db_session, _NoDispose()))
+    monkeypatch.setattr(pipeline, "_get_session", lambda: (isolated_session, _NoDispose()))
 
     # Force the Mtur CSV reader to raise so the producer fails permanently.
     def _boom() -> None:
@@ -114,7 +167,7 @@ def test_sweep_uf_quarantines_poison(db_session, monkeypatch):
     pipeline.sweep_uf.run(poison_uf)
 
     rows = list(
-        db_session.scalars(
+        isolated_session.scalars(
             select(PoisonQuarantine).where(
                 PoisonQuarantine.task_name == "brave.sweep_uf",
             )
@@ -124,21 +177,21 @@ def test_sweep_uf_quarantines_poison(db_session, monkeypatch):
 
 
 @pytest.mark.integration
-def test_sweep_uf_no_notebooklm(db_session, monkeypatch):
+def test_sweep_uf_no_notebooklm(isolated_session, monkeypatch):
     """sweep_uf never produces a source='notebooklm' Nascente row [Deferred].
 
     NotebookLM is a manual report ingest only — the recurring sweep runs Mtur seed +
     Desmembramento, nothing else.
     """
-    from brave.core.models import NascenteRecord
     from brave.tasks import pipeline
 
-    monkeypatch.setattr(pipeline, "_get_session", lambda: (db_session, _NoDispose()))
+    monkeypatch.setattr(pipeline, "_get_session", lambda: (isolated_session, _NoDispose()))
+    _patch_fake_llm(monkeypatch)
 
     pipeline.sweep_uf.run("BA")
 
     notebooklm_rows = list(
-        db_session.scalars(
+        isolated_session.scalars(
             select(NascenteRecord).where(NascenteRecord.source == "notebooklm")
         ).all()
     )

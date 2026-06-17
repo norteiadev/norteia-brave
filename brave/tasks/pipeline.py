@@ -720,6 +720,113 @@ def discover_atrativo_task(self, uf: str) -> None:
         engine.dispose()
 
 
+# ---------------------------------------------------------------------------
+# Phase 5 — Destinos recurring sweep (ORCH-01, D-01/D-02)
+# ---------------------------------------------------------------------------
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name="brave.sweep_uf",  # MUST be exactly this — beat_schedule.py expects it (D-01)
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=600,  # producers fan out per-município; allow headroom
+)
+def sweep_uf(self, uf: str) -> None:
+    """Recurring Destinos sweep for one UF (ORCH-01, D-01/D-02).
+
+    Composes the two destino producers:
+      1. MturSeedIngest.produce(uf)      — idempotent seed re-ingest (origem=100).
+      2. DesmembramentoAgent.produce(uf) — recurring LLM sub-destino discovery (origem=40).
+
+    Producer-only (D-02): both producers call store_raw + process_nascente_record
+    internally, so records land in DLQ/Mar/descarte by §7.6 automatically. This task
+    adds NO scoring/validation branch — promotion to Mar stays behind §7.6 + the human
+    DLQ steward gate. NotebookLM is NOT run here (manual report ingest only, Deferred).
+
+    Idempotency: store_raw dedups by (source, source_ref, content_hash) (D-01), so a
+    replayed sweep for the same UF is a no-op.
+    Error handling: a missing Mtur CSV (FileNotFoundError) or other PermanentError is
+    quarantined (PoisonQuarantine), not lost; transient errors retry then quarantine.
+    Client selection: real LLM only when run_real_externals=True (D-06/D-18).
+
+    Args:
+        uf: Two-letter Brazilian state code (e.g. "BA", "RJ").
+    """
+    from brave.clients.mtur import MturClient
+    from brave.core.quarantine import quarantine_poison as _quarantine
+    from brave.lanes.destinos.desmembramento import DesmembramentoAgent
+    from brave.lanes.destinos.mtur import MturSeedIngest
+
+    session, engine = _get_session()
+    try:
+        config = ScoreConfig()
+        app_config = AppConfig()
+
+        try:
+            # Mtur seed re-ingest (idempotent — store_raw dedups by content_hash).
+            seed = MturSeedIngest(MturClient(), session, config)
+            asyncio.run(seed.produce(uf))
+
+            # Desmembramento — the real recurring LLM discovery (origem=40 firewall).
+            # LLM client selection mirrors discover_atrativo_task (real vs fake).
+            if app_config.run_real_externals:
+                from brave.clients.llm import RealLLMClient  # type: ignore[import]
+                llm_client = RealLLMClient(config=app_config.llm)
+            else:
+                from tests.fakes.fake_llm import FakeLLMClient
+                llm_client = FakeLLMClient()
+            # Ctor arg order: llm FIRST, then mtur (desmembramento.py:128).
+            desm = DesmembramentoAgent(llm_client, MturClient(), session, config)
+            asyncio.run(desm.produce(uf))
+        except FileNotFoundError as exc:
+            # A missing Mtur seed CSV is permanent — quarantine, never retry (T-05-03).
+            raise PermanentError(f"Mtur seed CSV missing for sweep {uf}: {exc}") from exc
+
+        session.commit()
+
+    except PermanentError as exc:
+        session.rollback()
+        q_session, q_engine = _get_session()
+        try:
+            _quarantine(
+                session=q_session,
+                nascente_id=None,
+                task_name="brave.sweep_uf",
+                error=str(exc),
+                payload={"uf": uf},
+            )
+            q_session.commit()
+        finally:
+            q_session.close()
+            q_engine.dispose()
+
+    except Exception as exc:
+        session.rollback()
+        try:
+            raise self.retry(exc=exc, max_retries=3)
+        except self.MaxRetriesExceededError:
+            q_session, q_engine = _get_session()
+            try:
+                _quarantine(
+                    session=q_session,
+                    nascente_id=None,
+                    task_name="brave.sweep_uf",
+                    error=str(exc),
+                    payload={"uf": uf},
+                )
+                q_session.commit()
+            finally:
+                q_session.close()
+                q_engine.dispose()
+
+    finally:
+        session.close()
+        engine.dispose()
+
+
 @shared_task(
     bind=True,
     max_retries=3,
