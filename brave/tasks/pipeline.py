@@ -687,18 +687,22 @@ def discover_atrativo_task(self, uf: str) -> None:
         # inline-fallback (swallow-all, from dlq.py): an operator/test with no broker still
         # advances the chain synchronously. Replay-safe: a duplicate dispatch hits the
         # contact_finder inline precondition guard and no-ops (D-04, finding #2).
-        discovered = session.scalars(
-            select(RioRecord).where(
+        # Materialize the IDs up front (as strings) BEFORE dispatching. The inline
+        # fallback (.run) opens/commits a session that can expire/detach live ORM rows;
+        # holding ORM objects across a dispatch would raise DetachedInstanceError on the
+        # next loop iteration. Selecting the scalar id column avoids that entirely.
+        discovered_ids = session.scalars(
+            select(RioRecord.id).where(
                 RioRecord.entity_type == "attraction",
                 RioRecord.uf == uf,
                 RioRecord.sub_state == "discovered",
             )
         ).all()
-        for rio in discovered:
+        for rio_id in discovered_ids:
             try:
-                find_contacts_task.delay(str(rio.id))
+                find_contacts_task.delay(str(rio_id))
             except Exception:
-                find_contacts_task.run(str(rio.id))
+                find_contacts_task.run(str(rio_id))
 
     except PermanentError as exc:
         session.rollback()

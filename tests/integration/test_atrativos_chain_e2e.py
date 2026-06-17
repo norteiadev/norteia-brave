@@ -53,8 +53,13 @@ from brave.core.nascente.service import store_raw
 from brave.core.rio.routing import process_nascente_record
 from brave.lanes.atrativos.schemas import AtrativoResult
 
-UF = "BA"
-IBGE = "2900702"
+# Synthetic UF + IBGE: the fan-out query keys on (uf, sub_state='discovered'), so a
+# distinctive UF makes this test independent of any leaked BA 'discovered' rows in the
+# shared docker-compose DB (mirrors the test_sc2 'XX' isolation tactic). The IBGE is
+# likewise synthetic so _resolve_parent_destino's source_ref.contains() match cannot
+# cross-resolve to a real parent — only the parent this test seeds for ZZ/2999999 matches.
+UF = "ZZ"
+IBGE = "2999999"
 PLACE_ID = "ChIJtest_chain_e2e"
 SOURCE_REF = f"places:{UF}:{PLACE_ID}"
 
@@ -87,26 +92,68 @@ class _NoDispose:
         pass
 
 
-@pytest.fixture
-def isolated_session(db_engine):
-    """Connection-bound session in SAVEPOINT join mode — internal commits are discarded.
+def _purge_uf(engine) -> None:
+    """Delete every test row for the synthetic UF (idempotent cleanup).
 
-    The chain tasks commit internally; the plain rollback-based db_session fixture would
-    leak rows into the shared DB. Here the inner commit() only releases a SAVEPOINT and the
-    outer trans.rollback() at teardown discards everything (pattern from test_sweep_uf.py).
+    The nested chain (discover → find_contacts → gather_signals) opens its own sessions and
+    commits FOR REAL — replicating production exactly (each task = a distinct engine/session).
+    A SAVEPOINT-on-one-connection scheme is too fragile here (multiple sessions, cross-session
+    MVCC visibility), so instead we commit for real and scrub deterministically afterward.
+    The UF/IBGE are synthetic (ZZ / 2999999) and used by no other test, so deletion is
+    targeted and leaves the shared docker-compose DB exactly as it was found.
     """
-    connection = db_engine.connect()
-    trans = connection.begin()
-    session_factory = sessionmaker(
-        bind=connection, join_transaction_mode="create_savepoint"
-    )
-    session = session_factory()
+    from sqlalchemy import text
+
+    like = f"%:{UF}:%"  # matches mtur:ZZ:... (parent) and places:ZZ:... (attraction) source_refs
+    with engine.begin() as conn:
+        # audit_log references rio/nascente ids; delete those rows first.
+        conn.execute(
+            text("DELETE FROM audit_log WHERE record_id IN "
+                 "(SELECT id FROM rio_records WHERE uf = :uf)"),
+            {"uf": UF},
+        )
+        # mar_records has no uf column — scrub by source_ref prefix (covers parent + attraction).
+        conn.execute(
+            text("DELETE FROM mar_records WHERE source_ref LIKE :like"), {"like": like}
+        )
+        conn.execute(text("DELETE FROM rio_records WHERE uf = :uf"), {"uf": UF})
+        conn.execute(text("DELETE FROM nascente_records WHERE uf = :uf"), {"uf": UF})
+
+
+class _RealDB:
+    """A real-engine session factory matching pipeline._get_session()'s contract."""
+
+    def __init__(self, engine) -> None:
+        self._engine = engine
+        self._factory = sessionmaker(bind=engine)
+        # A session for the test body's own seeding.
+        self.session = self._factory()
+
+    def get_session(self):
+        """Mimic pipeline._get_session(): a fresh real session + no-op engine."""
+        return self._factory(), _NoDispose()
+
+    def fresh(self):
+        """A brand-new session for post-chain assertions (sees all committed chain writes)."""
+        return self._factory()
+
+
+@pytest.fixture
+def isolated_db(db_engine):
+    """Real sessions for the nested chain + deterministic UF-scoped cleanup.
+
+    The chain tasks commit for real (production fidelity); a finally block scrubs every row for
+    the synthetic UF so nothing leaks into the shared docker-compose DB. _purge_uf also runs
+    BEFORE the test, defending against rows left by an earlier interrupted run.
+    """
+    _purge_uf(db_engine)
+    db = _RealDB(db_engine)
     try:
-        yield session
+        yield db
     finally:
-        session.close()
-        trans.rollback()
-        connection.close()
+        db.session.rollback()
+        db.session.close()
+        _purge_uf(db_engine)
 
 
 def _seed_parent_destino(session) -> MarRecord:
@@ -212,35 +259,39 @@ def _force_inline_fallback(monkeypatch, pipeline) -> None:
     monkeypatch.setattr(pipeline.gather_signals_task, "delay", _raise)
 
 
-def _run_chain(isolated_session, monkeypatch):
-    """Seed the parent destino + run the full auto chain inline. Returns the gate RioRecord."""
+def _run_chain(db, monkeypatch):
+    """Seed the parent destino + run the full auto chain inline.
+
+    Returns (gate_rio, read_session): read_session is a fresh post-chain session that sees
+    every committed write the chain made. Caller uses read_session for all assertions (the
+    seeding db.session holds an older MVCC snapshot).
+    """
     from brave.tasks import pipeline
 
-    _seed_parent_destino(isolated_session)
-    isolated_session.flush()
+    _seed_parent_destino(db.session)
+    db.session.commit()  # commit the parent for real so chain-task sessions resolve it (D-03)
 
-    # All chain tasks share this one isolated session (their _get_session returns it).
-    monkeypatch.setattr(
-        pipeline, "_get_session", lambda: (isolated_session, _NoDispose())
-    )
+    # Each nested chain task opens its OWN real session via _get_session (production fidelity).
+    monkeypatch.setattr(pipeline, "_get_session", db.get_session)
     _patch_fakes(monkeypatch)
     _force_inline_fallback(monkeypatch, pipeline)
 
     pipeline.discover_atrativo_task.run(UF)
 
-    isolated_session.expire_all()
-    return isolated_session.scalar(
+    read = db.fresh()
+    rio = read.scalar(
         select(RioRecord).where(RioRecord.canonical_key == SOURCE_REF)
     )
+    return rio, read
 
 
 @pytest.mark.integration
-def test_chain_advances_to_gate(isolated_session, monkeypatch):
+def test_chain_advances_to_gate(isolated_db, monkeypatch):
     """The full auto chain drives a borderline attraction to the human WhatsApp gate.
 
     discovered → contacts_found → signals_gathered → aguardando_consulta_whatsapp.
     """
-    rio = _run_chain(isolated_session, monkeypatch)
+    rio, read = _run_chain(isolated_db, monkeypatch)
 
     assert rio is not None, "the chain must create the attraction RioRecord"
     assert rio.sub_state == "aguardando_consulta_whatsapp", (
@@ -253,7 +304,7 @@ def test_chain_advances_to_gate(isolated_session, monkeypatch):
 
     # Every transition was audited (D-02): discovered, contacts_found, signals_gathered,
     # aguardando_consulta_whatsapp → ≥ 3 sub_state_advanced rows for this record.
-    advanced = isolated_session.scalars(
+    advanced = read.scalars(
         select(AuditLog).where(
             AuditLog.record_id == rio.id,
             AuditLog.action == "sub_state_advanced",
@@ -266,16 +317,16 @@ def test_chain_advances_to_gate(isolated_session, monkeypatch):
 
 
 @pytest.mark.integration
-def test_chain_stops_at_gate(isolated_session, monkeypatch):
+def test_chain_stops_at_gate(isolated_db, monkeypatch):
     """The auto chain settles at the gate — it promotes nothing to Mar and goes no further."""
-    rio = _run_chain(isolated_session, monkeypatch)
+    rio, read = _run_chain(isolated_db, monkeypatch)
 
     assert rio.sub_state == "aguardando_consulta_whatsapp", (
         "the auto chain must STOP at the gate, never advance to whatsapp_in_progress/validated"
     )
 
     # No Mar promotion by the auto chain — the attraction stays borderline awaiting the human.
-    mar = isolated_session.scalar(
+    mar = read.scalar(
         select(MarRecord).where(
             MarRecord.entity_type == "attraction",
             MarRecord.source_ref == SOURCE_REF,
@@ -285,7 +336,7 @@ def test_chain_stops_at_gate(isolated_session, monkeypatch):
 
 
 @pytest.mark.integration
-def test_no_auto_outreach(isolated_session, monkeypatch):
+def test_no_auto_outreach(isolated_db, monkeypatch):
     """D-07 INVARIANT: the auto chain triggers NO outreach/WhatsApp send.
 
     outreach_task is dispatched ONLY by the human gate approve (atrativos_gate.py:378).
@@ -302,7 +353,7 @@ def test_no_auto_outreach(isolated_session, monkeypatch):
         pipeline.outreach_task, "run", lambda *a, **k: run_calls.append((a, k))
     )
 
-    rio = _run_chain(isolated_session, monkeypatch)
+    rio, _read = _run_chain(isolated_db, monkeypatch)
 
     assert rio.sub_state == "aguardando_consulta_whatsapp"
     assert len(delay_calls) == 0, (
@@ -314,7 +365,7 @@ def test_no_auto_outreach(isolated_session, monkeypatch):
 
 
 @pytest.mark.integration
-def test_replay_is_noop(isolated_session, monkeypatch):
+def test_replay_is_noop(isolated_db, monkeypatch):
     """D-04: re-dispatching chain tasks on an already-advanced record changes nothing.
 
     The agents' inline sub_state precondition guards (finding #2) absorb a duplicate dispatch:
@@ -323,11 +374,11 @@ def test_replay_is_noop(isolated_session, monkeypatch):
     """
     from brave.tasks import pipeline
 
-    rio = _run_chain(isolated_session, monkeypatch)
+    rio, read = _run_chain(isolated_db, monkeypatch)
     assert rio.sub_state == "aguardando_consulta_whatsapp"
     rio_id = rio.id
 
-    advanced_before = isolated_session.scalar(
+    advanced_before = read.scalar(
         select(func.count())
         .select_from(AuditLog)
         .where(
@@ -336,17 +387,17 @@ def test_replay_is_noop(isolated_session, monkeypatch):
         )
     )
 
-    # Replay both advancing tasks directly on the already-advanced record.
+    # Replay both advancing tasks directly on the already-advanced record (own sessions).
     pipeline.find_contacts_task.run(str(rio_id))
     pipeline.gather_signals_task.run(str(rio_id))
 
-    isolated_session.expire_all()
-    rio = isolated_session.get(RioRecord, rio_id)
+    read2 = isolated_db.fresh()
+    rio = read2.get(RioRecord, rio_id)
     assert rio.sub_state == "aguardando_consulta_whatsapp", (
         f"replay must be a no-op, sub_state changed to {rio.sub_state!r}"
     )
 
-    advanced_after = isolated_session.scalar(
+    advanced_after = read2.scalar(
         select(func.count())
         .select_from(AuditLog)
         .where(
