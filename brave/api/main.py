@@ -19,6 +19,7 @@ from brave.api.routers.dashboard import router as dashboard_router
 from brave.api.routers.dlq import router as dlq_router
 from brave.api.routers.health import router as health_router
 from brave.api.routers.metrics import router as metrics_router
+from brave.api.routers.sweep import router as sweep_router
 from brave.api.routers.webhook import router as webhook_router
 
 app = FastAPI(
@@ -39,3 +40,6 @@ app.include_router(atrativos_gate_router)
 
 # Phase 4: Dashboard read-aggregation surface (D-01, DASH-01..05)
 app.include_router(dashboard_router)
+
+# Phase 5: On-demand ops trigger — POST /api/v1/sweep (ORCH-03, D-05; Bearer-guarded)
+app.include_router(sweep_router)
