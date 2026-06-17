@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 
 import fakeredis
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from brave.compliance.consent_log import record_opt_out, write_consent_record
@@ -336,6 +336,132 @@ def test_sc1_discovery_happy_path(db_session: Session) -> None:
         f"Expected sub_state='discovered' after pipeline, got '{rio.sub_state}'"
     )
     assert rio.entity_type == "attraction"
+
+
+# ---------------------------------------------------------------------------
+# test (Phase 5, finding #1): DiscoveryAgent.produce alone initializes the FSM
+#   — creates the Rio AND sets sub_state="discovered" (no manual seeding).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_discovery_inits_sub_state_discovered(db_session: Session) -> None:
+    """Phase 5 finding #1: DiscoveryAgent.produce creates Rio at sub_state='discovered'.
+
+    Verifies: ORCH-02, D-03 — the FSM substrate now exists at discovery time, with NO
+    manual process_nascente_record / advance_sub_state call (that seeding has moved into
+    production). Without this the contact_finder precondition (sub_state=='discovered') is
+    never met and the auto-chain is dead.
+
+    Assertions (against produce() alone):
+      - A RioRecord exists for the discovered attraction (entity_type='attraction').
+      - rio.sub_state == 'discovered'.
+      - place_id_cache carried into normalized (so ContactFinder/Signal can reuse it).
+      - produce() still returns None (chain queries by sub_state, never by return value).
+      - Re-running produce for the same UF does not duplicate Rio rows nor reset state.
+    """
+    uf = "BA"
+    ibge = "2900702"
+    place_id = "ChIJtest_fsm_init"
+
+    _seed_parent_destino(db_session, uf=uf, ibge=ibge)
+    db_session.flush()
+
+    fake_places = FakePlacesClient(
+        fixture_results={
+            f"atrativos em {uf}": [
+                {
+                    "place_id": place_id,
+                    "name": "Praia do Forte",
+                    "formatted_address": "Praia do Forte, Mata de São João, BA",
+                    "municipio_ibge": ibge,
+                    "municipio_nome": "Mata de São João",
+                }
+            ],
+            f"pontos turísticos em {uf}": [],
+        }
+    )
+    fake_llm = FakeLLMClient(
+        fixture_result=AtrativoResult(
+            nome="Praia do Forte",
+            tipo="praia",
+            posicionamento="Vila litorânea com projeto Tamar e piscinas naturais",
+            municipio_nome="Mata de São João",
+            municipio_ibge=ibge,
+            uf=uf,
+            place_id=place_id,
+        )
+    )
+
+    config = ScoreConfig()
+    agent = DiscoveryAgent(
+        places_client=fake_places,
+        llm_client=fake_llm,
+        session=db_session,
+        config=config,
+    )
+
+    # produce() alone — NO manual process_nascente_record / advance_sub_state
+    ret = asyncio.run(agent.produce(uf))
+    db_session.flush()
+
+    assert ret is None, "produce() must still return None (chain queries by sub_state)"
+
+    source_ref = f"places:{uf}:{place_id}"
+    rio = db_session.scalar(
+        select(RioRecord).where(RioRecord.canonical_key == source_ref)
+    )
+    assert rio is not None, (
+        "DiscoveryAgent.produce must create a RioRecord for the discovered attraction "
+        "(finding #1 — production discovery must seed the FSM substrate)"
+    )
+    assert rio.entity_type == "attraction"
+    assert rio.sub_state == "discovered", (
+        f"Expected sub_state='discovered' after produce() alone, got '{rio.sub_state}'"
+    )
+    assert (rio.normalized or {}).get("place_id_cache") == place_id, (
+        "place_id_cache must be carried into normalized for ContactFinder/Signal reuse"
+    )
+
+    # Idempotency: re-running produce does not duplicate the Rio nor reset state.
+    fake_places_2 = FakePlacesClient(
+        fixture_results={
+            f"atrativos em {uf}": [
+                {
+                    "place_id": place_id,
+                    "name": "Praia do Forte",
+                    "formatted_address": "Praia do Forte, Mata de São João, BA",
+                    "municipio_ibge": ibge,
+                    "municipio_nome": "Mata de São João",
+                }
+            ],
+            f"pontos turísticos em {uf}": [],
+        }
+    )
+    agent2 = DiscoveryAgent(
+        places_client=fake_places_2,
+        llm_client=fake_llm,
+        session=db_session,
+        config=config,
+    )
+    asyncio.run(agent2.produce(uf))
+    db_session.flush()
+
+    rio_count = db_session.scalar(
+        select(func.count())
+        .select_from(RioRecord)
+        .where(RioRecord.canonical_key == source_ref)
+    )
+    assert rio_count == 1, (
+        f"Re-running produce must not duplicate the Rio row, found {rio_count}"
+    )
+    db_session.expire_all()
+    rio = db_session.scalar(
+        select(RioRecord).where(RioRecord.canonical_key == source_ref)
+    )
+    assert rio.sub_state == "discovered", (
+        "A record already at 'discovered' must not be reset by a replayed produce()"
+    )
 
 
 # ---------------------------------------------------------------------------
