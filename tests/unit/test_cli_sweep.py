@@ -85,7 +85,12 @@ def test_cli_sweep_lane_atrativos_only(monkeypatch, spies):
 
 
 def test_cli_sweep_inline_fallback(monkeypatch, spies):
-    """When .delay raises (no broker), the command falls back to .run(uf) inline."""
+    """When .delay raises (no broker), the command falls back to .run(uf) inline.
+
+    BRAVE_DB_URL is set so the inline path is reached (the real inline run needs a
+    DB URL; .run is spied here so no DB is actually touched — pure offline).
+    """
+    monkeypatch.setenv("BRAVE_DB_URL", "postgresql+psycopg://x:x@localhost:5432/x")
 
     def _raise(uf):
         raise RuntimeError("no broker")
@@ -98,6 +103,25 @@ def test_cli_sweep_inline_fallback(monkeypatch, spies):
     # delay failed → inline .run fired for both lanes
     assert spies["sweep_run"] == ["BA"]
     assert spies["atrativo_run"] == ["BA"]
+
+
+def test_cli_sweep_inline_fallback_no_db_url_degrades_gracefully(monkeypatch, spies, capsys):
+    """With BRAVE_DB_URL unset, the inline fallback degrades gracefully (no .run, no crash)."""
+    monkeypatch.delenv("BRAVE_DB_URL", raising=False)
+
+    def _raise(uf):
+        raise RuntimeError("no broker")
+
+    monkeypatch.setattr(pipeline.sweep_uf, "delay", _raise)
+    monkeypatch.setattr(pipeline.discover_atrativo_task, "delay", _raise)
+
+    _run_cli(monkeypatch, ["sweep", "BA"])
+
+    # Did NOT crash and did NOT run inline (no DB URL); printed a clear message instead.
+    assert spies["sweep_run"] == []
+    assert spies["atrativo_run"] == []
+    out = capsys.readouterr().out
+    assert "BRAVE_DB_URL not set" in out
 
 
 def test_cli_sweep_unknown_lane_exits_nonzero(monkeypatch, spies):
