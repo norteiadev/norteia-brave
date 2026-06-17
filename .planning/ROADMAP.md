@@ -187,6 +187,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 2. Destinos Lane | 9/9 | Complete   | 2026-06-12 |
 | 3. Atrativos Lane (WhatsApp + Compliance) | 5/5 | Complete   | 2026-06-15 |
 | 4. Dashboard (Territorial CMS) | 9/9 | Complete   | 2026-06-16 |
+| 5. Auto-Discovery Orchestration | 0/3 | Planned    | - |
 
 ### Phase 5: Auto-Discovery Orchestration
 
@@ -194,7 +195,17 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 **Mode:** mvp
 **Requirements**: ORCH-01, ORCH-02, ORCH-03, ORCH-04
 **Depends on:** Phase 4 (dashboard surfaces produced records), Phase 2 (Destinos producers), Phase 3 (Atrativos agents + FSM tasks + gate)
-**Plans:** 0 plans
+**Plans:** 3 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 5 to break down)
+**Wave 1** *(Destinos sweep — run first; owns pipeline.py)*
+
+- [ ] 05-01-PLAN.md — Implement `brave.sweep_uf` task (Mtur seed + Desmembramento producer composition); offline idempotency/quarantine test (ORCH-01, ORCH-04)
+
+**Wave 2** *(depends on 05-01 — shares pipeline.py)*
+
+- [ ] 05-02-PLAN.md — Atrativos FSM auto-advance: init `sub_state='discovered'` at discovery + enqueue chain discover→find_contacts→gather_signals, stop at the human gate; offline e2e chain test (ORCH-02, ORCH-04)
+
+**Wave 3** *(depends on 05-01 + 05-02 — both tasks must exist)*
+
+- [ ] 05-03-PLAN.md — Ops trigger: `brave.cli sweep <UF> [--lane ...]` + optional Bearer-guarded POST /api/v1/sweep; offline CLI + endpoint tests (ORCH-03, ORCH-04)
