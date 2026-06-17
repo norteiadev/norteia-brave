@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 5 context gathered
-last_updated: "2026-06-17T17:49:53.277Z"
-last_activity: 2026-06-17 -- Phase 5 planning complete
+stopped_at: Completed 05-01-PLAN.md (brave.sweep_uf)
+last_updated: "2026-06-17T18:03:04.596Z"
+last_activity: 2026-06-17
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 29
-  completed_plans: 27
+  completed_plans: 28
   percent: 80
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Only validated, reliability-scored canonical records ("Mar", ≥85%) reach the platform — the Nascente→Rio→Mar pipeline with §7.6 scoring and a DLQ gate is the single thing that must work.
-**Current focus:** Milestone complete
+**Current focus:** Phase 05 — Auto-Discovery Orchestration
 
 ## Current Position
 
-Phase: 04
-Plan: Not started
+Phase: 05 (Auto-Discovery Orchestration) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-06-17 -- Phase 5 planning complete
+Last activity: 2026-06-17
 
-Progress: [██████████] 100%
+Progress: [██████████] 97%
 
 ## Performance Metrics
 
@@ -72,6 +72,7 @@ Progress: [██████████] 100%
 | Phase 04 P07 | ~15min | 2 tasks | 12 files |
 | Phase 04 P08 | 45 | 2 tasks | 5 files |
 | Phase 04 P09 | ~12min | 1 tasks | 11 files |
+| Phase 05 P01 | 9min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -95,6 +96,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 4 P05]: DASH-02 GET /api/v1/monitor read-only Bearer-guarded aggregate (volume + AuditLog-derived rates = audit coverage + throughput + PoisonQuarantine/RED-quality alerts); live-polled via shared useMonitor (refetchInterval 10s, D-04), WebSocket deferred
 - [Phase ?]: [Phase 4 P07]: DASH-04 GET /api/v1/cost?group_by=lane|model&since= read-only Bearer-guarded GROUP BY over llm_generations (func.sum usd_cost + token sums + count); Cost & LLM view = mono USD/tokens summary + per-lane/per-model Recharts bars via shared useCost + window selector; empty period renders 'Sem dados no periodo'
 - [Phase ?]: [Phase 4 P10 gap-closure]: DASH-03 ramp/quality context closed — GET /api/v1/atrativos/whatsapp/ramp-context (atrativos_gate.py), read-only Bearer-guarded, reads shared ramp_key() Redis counter + wa:quality_red flag; returns daily_cap/used/remaining/quality + RampQualityContext aliases so RampContext.tsx renders real data (not the 'indisponível' fallback). Never mutates the ramp counter (read-only; ramp enforced in P3 send path)
+- [Phase ?]: brave.sweep_uf is producer-only (D-02) — composes Mtur seed + Desmembramento, no scoring branch; promotion stays behind §7.6 + human DLQ gate
+- [Phase ?]: Integration tests for internally-committing Celery tasks use a SAVEPOINT-isolated session (join_transaction_mode=create_savepoint) so the outer rollback discards everything — prevents shared-DB leakage
 
 ### Pending Todos
 
@@ -123,6 +126,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-17T17:32:26.910Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-auto-discovery-orchestration/05-CONTEXT.md
+Last session: 2026-06-17T18:03:04.581Z
+Stopped at: Completed 05-01-PLAN.md (brave.sweep_uf)
+Resume file: None
