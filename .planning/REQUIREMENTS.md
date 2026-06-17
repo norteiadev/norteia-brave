@@ -81,7 +81,7 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 ### Orchestration (Phase 5 — gap closure)
 
 - [x] **ORCH-01**: Implement the registered `brave.sweep_uf` Destinos sweep task the beat fan-out fires per UF (currently a dangling phantom — no such task exists). The daily sweep runs a real recurring producer: DesmembramentoAgent per Oferta-Principal município + idempotent Mtur seed re-ingest (NotebookLM stays manual ingest — deferred). Replay-safe (idempotent by source_ref/content_hash).
-- [ ] **ORCH-02**: Auto-advance the Atrativos sub-state FSM — `discover_atrativo_task` enqueues `find_contacts_task` per discovered record, which enqueues `gather_signals_task` → §7.6 score → borderline lands in `aguardando_consulta_whatsapp`. Idempotent, replay-safe, keyed on `sub_state` (no double-advance on retry). Today these tasks exist but are never enqueued, so the FSM stalls at `discovered`.
+- [x] **ORCH-02**: Auto-advance the Atrativos sub-state FSM — `discover_atrativo_task` enqueues `find_contacts_task` per discovered record, which enqueues `gather_signals_task` → §7.6 score → borderline lands in `aguardando_consulta_whatsapp`. Idempotent, replay-safe, keyed on `sub_state` (no double-advance on retry). Today these tasks exist but are never enqueued, so the FSM stalls at `discovered`.
 - [ ] **ORCH-03**: On-demand ops trigger (CLI command and/or internal endpoint) to kick a UF sweep for destinos and/or atrativos without waiting for the beat schedule.
 - [x] **ORCH-04**: All new orchestration is 100%-offline-testable (fakes + opt-in real flag), and the human WhatsApp gate + outreach are unchanged — discovery/contacts/signals automate up to the gate; no automatic send.
 
@@ -168,7 +168,7 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | DASH-05 | Phase 4 | Complete |
 | DASH-06 | Phase 4 | Complete |
 | ORCH-01 | Phase 5 | Complete |
-| ORCH-02 | Phase 5 | Pending |
+| ORCH-02 | Phase 5 | Complete |
 | ORCH-03 | Phase 5 | Pending |
 | ORCH-04 | Phase 5 | Complete |
 
