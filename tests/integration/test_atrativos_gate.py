@@ -39,14 +39,19 @@ STEWARD_SECRET = "test-atrativos-gate-steward-secret"
 os.environ.setdefault("BRAVE_STEWARD_SECRET", STEWARD_SECRET)
 
 # CR-01: GET /api/v1/atrativos/gate is now Bearer-guarded (was unauthenticated).
+# Force (not setdefault): the test's secret MUST win over any ambient/.env value,
+# otherwise a real BRAVE_DASHBOARD_BEARER_TOKEN in the environment makes these
+# tests send the wrong token and 401. Mirrors the steward fixture's force-set.
 DASHBOARD_BEARER = "test-atrativos-gate-dashboard-bearer"
-os.environ.setdefault("BRAVE_DASHBOARD_BEARER_TOKEN", DASHBOARD_BEARER)
+os.environ["BRAVE_DASHBOARD_BEARER_TOKEN"] = DASHBOARD_BEARER
 BEARER_HEADERS = {"Authorization": f"Bearer {DASHBOARD_BEARER}"}
 
 # WR-03: the quality-rating + inbound webhooks are now authenticated with
 # X-Webhook-Secret (shared-secret, mirroring require_steward / error-report).
+# Force, not setdefault — same reason: a real BRAVE_WEBHOOK_SECRET in .env must
+# not shadow the test's expected secret.
 WEBHOOK_SECRET = "test-atrativos-gate-webhook-secret"
-os.environ.setdefault("BRAVE_WEBHOOK_SECRET", WEBHOOK_SECRET)
+os.environ["BRAVE_WEBHOOK_SECRET"] = WEBHOOK_SECRET
 WEBHOOK_HEADERS = {"X-Webhook-Secret": WEBHOOK_SECRET}
 
 
