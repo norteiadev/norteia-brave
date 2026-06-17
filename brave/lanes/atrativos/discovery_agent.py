@@ -29,7 +29,9 @@ from brave.config.settings import ScoreConfig
 from brave.core.models import MarRecord
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
+from brave.core.rio.routing import process_nascente_record
 from brave.lanes.atrativos.schemas import AtrativoResult
+from brave.lanes.atrativos.state_machine import advance_sub_state
 from brave.observability.audit import write_audit
 
 if TYPE_CHECKING:
@@ -331,9 +333,32 @@ class DiscoveryAgent:
                     actor="discovery_agent",
                 )
 
+                # Step 5: Initialize the FSM substrate (finding #1, ORCH-02/D-03).
+                # Create the Rio record from this Nascente and seed sub_state="discovered"
+                # so the auto-chain's `sub_state='discovered'` query has an anchor and the
+                # contact_finder precondition can ever be met. Mirrors how the destinos
+                # producers (mtur.py) call process_nascente_record inline (D-18: a lane
+                # imports core + the lane's own state_machine, never brave.tasks).
+                #
+                # Idempotency (D-04): process_nascente_record is idempotent by
+                # canonical_key (returns the existing Rio on a replayed produce), and
+                # advance_sub_state(expected_state=None) returns False — a no-op — for a
+                # record already advanced past the NULL anchor. So a replayed sweep neither
+                # duplicates the Rio nor resets a record already in flight.
+                rio = process_nascente_record(self._session, nascente, self._config)
+                advance_sub_state(
+                    session=self._session,
+                    rio=rio,
+                    expected_state=None,
+                    next_state="discovered",
+                    actor="discovery_agent",
+                )
+
                 logger.info(
                     "atrativo_ingested",
                     source_ref=source_ref,
                     nome=result.nome,
                     uf=uf,
+                    rio_id=str(rio.id),
+                    sub_state=rio.sub_state,
                 )
