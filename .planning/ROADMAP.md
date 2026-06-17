@@ -17,6 +17,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Destinos Lane** - Mtur/NotebookLM/Desmembramento producers → Rio/score → DLQ → batch-by-state human validation → Mar, proving the full path end-to-end (completed 2026-06-12)
 - [x] **Phase 3: Atrativos Lane (WhatsApp + Compliance)** - Discovery → ContactFinder → Signal → human WhatsApp gate → automated owner-validation outreach → re-score, with LGPD + BSP enforced before the first real message (completed 2026-06-15)
 - [x] **Phase 4: Dashboard (Territorial CMS)** - Brave monitor, DLQ batch review, WhatsApp gate UI, conversations/funnels, and Cost/LLM views behind Bearer auth (completed 2026-06-16)
+- [x] **Phase 5: Auto-Discovery Orchestration** - celery-redbeat 27-UF fan-out, sweep_uf Destinos task, Atrativos FSM auto-advance, ops CLI/endpoint trigger (completed 2026-06-17)
+- [ ] **Phase 6: Real-Externals Enablement (RealLLMClient + live 24/7 collection)** - RealLLMClient implementing LLMClientProtocol (extract/generate), cost-guard + llm_generations wiring, docstring footgun fix (D-06), offline tests + opt-in smoke
 
 ## Phase Details
 
@@ -188,6 +190,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 3. Atrativos Lane (WhatsApp + Compliance) | 5/5 | Complete   | 2026-06-15 |
 | 4. Dashboard (Territorial CMS) | 9/9 | Complete   | 2026-06-16 |
 | 5. Auto-Discovery Orchestration | 3/3 | Complete   | 2026-06-17 |
+| 6. Real-Externals Enablement | 0/3 | In Progress | — |
 
 ### Phase 5: Auto-Discovery Orchestration
 
@@ -212,10 +215,17 @@ Plans:
 
 ### Phase 6: Real-Externals Enablement (RealLLMClient + live 24/7 collection)
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Create the single missing client  /  so the existing 24/7 Destinos+Atrativos sweep actually runs on real LLM providers when ; fix the  docstring footgun (7 occurrences); add offline unit tests + opt-in smoke.
+**Requirements**: OBS-01, OBS-02, CORE-11, TEST-01
 **Depends on:** Phase 5
-**Plans:** 0 plans
+**Plans:** 3 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 6 to break down)
+**Wave 1** *(parallel — no file conflicts)*
+
+- [ ] 06-01-PLAN.md — Footgun fix (D-06): replace BRAVE_RUN_REAL_EXTERNALS → RUN_REAL_EXTERNALS in 7 doc/error strings across places.py, apify.py, whatsapp.py, test_atrativos_lane_e2e.py
+- [ ] 06-02-PLAN.md — RealLLMClient: brave/clients/llm.py implementing LLMClientProtocol (extract via instructor+OpenRouter+DeepSeek; generate via native AsyncAnthropic; deny-block D-04; slug fallback D-03; cost-guard + llm_generations tracking D-05)
+
+**Wave 2** *(depends on 06-02 — llm.py must exist)*
+
+- [ ] 06-03-PLAN.md — Tests + pipeline cleanup: 4 offline unit tests (guard/deny/fallback/cost-guard wiring), opt-in smoke (skipif no key), remove # type: ignore[import] from 4 pipeline.py RealLLMClient sites
