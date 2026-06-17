@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
+status: verifying
 stopped_at: Completed 05-01-PLAN.md (brave.sweep_uf)
-last_updated: "2026-06-17T18:25:48.442Z"
+last_updated: "2026-06-17T18:33:59.977Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 29
-  completed_plans: 29
-  percent: 80
+  completed_plans: 30
+  percent: 100
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 Phase: 05 (Auto-Discovery Orchestration) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-17
 
 Progress: [██████████] 100%
@@ -74,6 +74,7 @@ Progress: [██████████] 100%
 | Phase 04 P09 | ~12min | 1 tasks | 11 files |
 | Phase 05 P01 | 9min | 2 tasks | 2 files |
 | Phase 05 P02 | 18min | 3 tasks | 5 files |
+| Phase 05 P03 | ~25 min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -100,6 +101,7 @@ Recent decisions affecting current work:
 - [Phase ?]: brave.sweep_uf is producer-only (D-02) — composes Mtur seed + Desmembramento, no scoring branch; promotion stays behind §7.6 + human DLQ gate
 - [Phase ?]: Integration tests for internally-committing Celery tasks use a SAVEPOINT-isolated session (join_transaction_mode=create_savepoint) so the outer rollback discards everything — prevents shared-DB leakage
 - [Phase ?]: [Phase 5 P02]: ORCH-02 Atrativos FSM auto-advance — DiscoveryAgent.produce seeds Rio + sub_state='discovered' (finding #1); discover_atrativo_task self-enqueues find_contacts->gather_signals keyed on sub_state (D-03); chain terminal at aguardando_consulta_whatsapp with NO auto-outreach (D-07); inline agent guards kept for replay-safety (finding #2/D-04)
+- [Phase ?]: Ops trigger (CLI sweep + Bearer-guarded POST /api/v1/sweep) dispatches only producer/chain tasks with Celery-or-inline fallback; no §7.6 or WhatsApp-send bypass (ORCH-03/04, T-05-07/09)
 
 ### Pending Todos
 
@@ -128,6 +130,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-17T18:25:42.034Z
+Last session: 2026-06-17T18:33:50.854Z
 Stopped at: Completed 05-01-PLAN.md (brave.sweep_uf)
 Resume file: None
