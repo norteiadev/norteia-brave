@@ -78,6 +78,13 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 - [x] **TEST-02**: Score engine and DesmembramentoAgent have unit tests covering Mar/DLQ/descarte cases
 - [x] **TEST-03**: HTTP boundaries faked with respx/VCR, LLM faked, webhooks fixture-driven; norteia-api contract covered by Pact
 
+### Orchestration (Phase 5 — gap closure)
+
+- [ ] **ORCH-01**: Implement the registered `brave.sweep_uf` Destinos sweep task the beat fan-out fires per UF (currently a dangling phantom — no such task exists). The daily sweep runs a real recurring producer: DesmembramentoAgent per Oferta-Principal município + idempotent Mtur/NotebookLM seed re-ingest. Replay-safe (idempotent by source_ref/content_hash).
+- [ ] **ORCH-02**: Auto-advance the Atrativos sub-state FSM — `discover_atrativo_task` enqueues `find_contacts_task` per discovered record, which enqueues `gather_signals_task` → §7.6 score → borderline lands in `aguardando_consulta_whatsapp`. Idempotent, replay-safe, keyed on `sub_state` (no double-advance on retry). Today these tasks exist but are never enqueued, so the FSM stalls at `discovered`.
+- [ ] **ORCH-03**: On-demand ops trigger (CLI command and/or internal endpoint) to kick a UF sweep for destinos and/or atrativos without waiting for the beat schedule.
+- [ ] **ORCH-04**: All new orchestration is 100%-offline-testable (fakes + opt-in real flag), and the human WhatsApp gate + outreach are unchanged — discovery/contacts/signals automate up to the gate; no automatic send.
+
 ## v2 Requirements
 
 Deferred to a future milestone. Tracked but not in the current roadmap.
@@ -160,9 +167,13 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | DASH-04 | Phase 4 | Complete |
 | DASH-05 | Phase 4 | Complete |
 | DASH-06 | Phase 4 | Complete |
+| ORCH-01 | Phase 5 | Pending |
+| ORCH-02 | Phase 5 | Pending |
+| ORCH-03 | Phase 5 | Pending |
+| ORCH-04 | Phase 5 | Pending |
 
 **Coverage:**
-- v1 requirements: 44 total (CORE 12 · SCORE 3 · OBS 4 · CNTR 2 · DEST 5 · ATR 6 · DASH 6 · COMP 3 · TEST 3)
+- v1 requirements: 48 total (CORE 12 · SCORE 3 · OBS 4 · CNTR 2 · DEST 5 · ATR 6 · DASH 6 · COMP 3 · TEST 3 · ORCH 4)
 - Mapped to phases: 44 ✓
 - Unmapped: 0 ✓
 
