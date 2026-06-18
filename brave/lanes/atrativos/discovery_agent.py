@@ -124,6 +124,10 @@ def _resolve_parent_destino(
     Returns:
         Active MarRecord for the parent destino, or None if not in Mar.
     """
+    # D-02 guard: empty ibge → source_ref.contains("") matches any record — never query
+    if not municipio_ibge or not municipio_ibge.strip():
+        return None
+
     from sqlalchemy import and_
 
     # Primary lookup: source_ref contains ibge code (mtur:{UF}:{ibge} or desm:{uf}:{ibge}:*)
@@ -362,3 +366,166 @@ class DiscoveryAgent:
                     rio_id=str(rio.id),
                     sub_state=rio.sub_state,
                 )
+
+    async def produce_for_destino(
+        self,
+        parent_mar: MarRecord,
+        target_count: int = 10,
+    ) -> int:
+        """Run targeted Google Places discovery for a single Mar destino municipality.
+
+        Bypasses _resolve_parent_destino — parent is already known.
+        Uses municipality-specific queries to guarantee per-destino volume.
+
+        Args:
+            parent_mar:   Active MarRecord with entity_type='destination'.
+            target_count: Desired minimum attraction count (default 10).
+
+        Returns:
+            Count of Rio records created in this call (int).
+        """
+        canonical: dict[str, Any] = parent_mar.canonical or {}
+        municipio_nome: str = canonical.get("municipio") or canonical.get("name", "")
+        uf: str = canonical.get("uf", "")
+        municipio_ibge: str = canonical.get("ibge_code", "")
+
+        if not municipio_nome or not uf:
+            logger.warning(
+                "produce_for_destino_missing_fields",
+                parent_mar_id=str(parent_mar.id),
+                municipio_nome=municipio_nome,
+                uf=uf,
+            )
+            return 0
+
+        search_queries = [
+            f"pontos turísticos em {municipio_nome} {uf}",
+            f"o que fazer em {municipio_nome} {uf}",
+        ]
+
+        created: int = 0
+        seen_place_ids: set[str] = set()
+
+        for query in search_queries:
+            if created >= target_count:
+                break
+
+            try:
+                places_results = await self._places_client.text_search(query=query, uf=uf)
+            except Exception as exc:
+                quarantine_poison(
+                    session=self._session,
+                    nascente_id=None,
+                    task_name="brave.discover_atrativo",
+                    error=f"places_search_failed: {exc}",
+                    payload={"uf": uf, "query": query},
+                )
+                continue
+
+            for place in places_results:
+                if created >= target_count:
+                    break
+
+                place_id: str = place.get("place_id", "")
+                if not place_id or place_id in seen_place_ids:
+                    continue
+                seen_place_ids.add(place_id)
+
+                place_name: str = place.get("name", "")
+                formatted_address: str = place.get("formatted_address", "")
+                # Prefer ibge/nome from the Places result; fall back to canonical values
+                place_municipio_ibge: str = place.get("municipio_ibge", "") or municipio_ibge
+                place_municipio_nome: str = place.get("municipio_nome", "") or municipio_nome
+
+                prompt = DISCOVERY_PROMPT.format(
+                    place_name=place_name,
+                    formatted_address=formatted_address,
+                    place_id=place_id,
+                    municipio_nome=place_municipio_nome,
+                    municipio_ibge=place_municipio_ibge,
+                    uf=uf,
+                )
+
+                try:
+                    result: AtrativoResult = await self._llm_client.extract(
+                        prompt=prompt,
+                        schema=AtrativoResult,
+                        mode="tools",
+                    )
+                except Exception as exc:
+                    quarantine_poison(
+                        session=self._session,
+                        nascente_id=None,
+                        task_name="brave.discover_atrativo",
+                        error=f"llm_extraction_failed: {exc}",
+                        payload={"place_id": place_id, "uf": uf},
+                    )
+                    continue
+
+                source_ref = f"places:{uf}:{place_id}"
+                completude = _compute_completude(result)
+
+                payload: dict[str, Any] = {
+                    "origem_value": 60.0,
+                    "completude_value": completude,
+                    "corroboracao_value": 0.0,
+                    "atualidade_value": 0.0,
+                    "validacao_humana_value": 0.0,
+                    "place_id_cache": place_id,
+                    "canonical": {
+                        "place_id": place_id,
+                        "nome": result.nome,
+                        "tipo": result.tipo,
+                        "posicionamento": result.posicionamento,
+                        "municipio_nome": result.municipio_nome,
+                        "municipio_ibge": result.municipio_ibge,
+                        "uf": result.uf,
+                    },
+                    # D-03 targeted: inject parent_mar_id directly — no _resolve_parent_destino
+                    "parent_mar_id": str(parent_mar.id),
+                    "municipio_id": place_municipio_ibge,
+                    "name": result.nome,
+                    "entity_type": "attraction",
+                    "source_note": "LLM-extracted (targeted), pending contact/signal/validation",
+                }
+
+                nascente = store_raw(
+                    session=self._session,
+                    source="places_discovery",
+                    source_ref=source_ref,
+                    entity_type="attraction",
+                    uf=uf,
+                    payload=payload,
+                )
+
+                write_audit(
+                    session=self._session,
+                    action="atrativo_discovered",
+                    entity_type="attraction",
+                    record_id=nascente.id,
+                    before_state=None,
+                    after_state={"source_ref": source_ref, "place_id": place_id},
+                    actor="discovery_agent.produce_for_destino",
+                )
+
+                rio = process_nascente_record(self._session, nascente, self._config)
+                advance_sub_state(
+                    session=self._session,
+                    rio=rio,
+                    expected_state=None,
+                    next_state="discovered",
+                    actor="discovery_agent.produce_for_destino",
+                )
+
+                logger.info(
+                    "atrativo_ingested_targeted",
+                    source_ref=source_ref,
+                    nome=result.nome,
+                    uf=uf,
+                    parent_mar_id=str(parent_mar.id),
+                    rio_id=str(rio.id),
+                    sub_state=rio.sub_state,
+                )
+                created += 1
+
+        return created
