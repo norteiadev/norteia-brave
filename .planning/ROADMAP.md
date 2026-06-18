@@ -235,7 +235,7 @@ Plans:
 **Goal:** Fix the real Google Places path (field-mask 400, wrong get_place prefix, missing municipio_ibge), add targeted per-município atrativos discovery, refresh the Mtur dataset tooling, and extract the DLQ validate-and-promote service — so an operator can run a load test registering 10 destinos × ≥10 atrativos from live data.
 **Requirements**: PLACE-01, PLACE-02, PLACE-03, PLACE-04, PLACE-05, PLACE-06, PLACE-07, PLACE-08
 **Depends on:** Phase 6
-**Plans:** 7 plans (5 complete + 2 gap-closure)
+**Plans:** 6/7 plans executed
 
 Plans:
 **Wave 1** *(parallel — no file conflicts)*
@@ -254,5 +254,5 @@ Plans:
 
 **Wave 4 (gap-closure)** *(depends on 07-05 — close live-run blockers G1 + G2; parallel plans)*
 
-- [ ] 07-06-PLAN.md — G1: Harness corroboration boost (reassign + flag_modified + reprocess_record before validate_and_promote_rio) so Mtur destinos score 85.5 → Mar; 3 offline tests (PLACE-05)
+- [x] 07-06-PLAN.md — G1: Harness corroboration boost (reassign + flag_modified + reprocess_record before validate_and_promote_rio) so Mtur destinos score 85.5 → Mar; 3 offline tests (PLACE-05)
 - [ ] 07-07-PLAN.md — G2: Copy parent_mar_id from nascente payload to rio.normalized in process_nascente_record; fix harness Step-4 to group by normalized.get("parent_mar_id") in Python; offline test (PLACE-03)
