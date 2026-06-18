@@ -235,12 +235,12 @@ Plans:
 **Goal:** Fix the real Google Places path (field-mask 400, wrong get_place prefix, missing municipio_ibge), add targeted per-município atrativos discovery, refresh the Mtur dataset tooling, and extract the DLQ validate-and-promote service — so an operator can run a load test registering 10 destinos × ≥10 atrativos from live data.
 **Requirements**: PLACE-01, PLACE-02, PLACE-03, PLACE-04, PLACE-05, PLACE-06, PLACE-07, PLACE-08
 **Depends on:** Phase 6
-**Plans:** 5 plans
+**Plans:** 1/5 plans executed
 
 Plans:
 **Wave 1** *(parallel — no file conflicts)*
 
-- [ ] 07-01-PLAN.md — RealPlacesClient: _TEXT_SEARCH_FIELD_MASK + _GET_PLACE_FIELD_MASK constants + addressComponents→municipio extraction + ibge_lookup wiring + 5 offline tests (D-01, D-02, D-08)
+- [x] 07-01-PLAN.md — RealPlacesClient: _TEXT_SEARCH_FIELD_MASK + _GET_PLACE_FIELD_MASK constants + addressComponents→municipio extraction + ibge_lookup wiring + 5 offline tests (D-01, D-02, D-08)
 - [ ] 07-02-PLAN.md — Extract validate_and_promote_rio into brave/core/dlq/service.py; dlq.py router delegates to it (D-06)
 
 **Wave 2** *(07-01 required for 07-03; 07-04 independent)*
