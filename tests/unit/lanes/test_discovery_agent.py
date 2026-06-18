@@ -263,3 +263,176 @@ async def test_discovery_dedup_idempotent() -> None:
     assert first_call_count >= 1
     assert second_call_count >= first_call_count
     mock_quarantine.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# D-02 guard tests (Plan 07-03)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_empty_ibge_guard_quarantines_without_db_query() -> None:
+    """D-02 guard: places result with empty municipio_ibge must quarantine without
+    querying the DB.
+
+    When municipio_ibge is empty, _resolve_parent_destino must return None immediately
+    (before calling session.scalar). The caller (produce()) then quarantines with
+    error="parent_destino_absent". session.scalar MUST NOT be called at all.
+    """
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.config.settings import ScoreConfig
+
+    # Place result with empty municipio_ibge — triggers D-02 guard
+    places_result = _make_places_result(municipio_ibge="", municipio_nome="")
+
+    fake_places = FakePlacesClient(
+        fixture_results={"atrativos em BA": [places_result]},
+    )
+
+    llm_client = MagicMock()
+    llm_client.extract = AsyncMock(return_value=_make_atrativo_result())
+
+    session = _make_mock_session()
+    # The guard must prevent this call entirely
+    session.scalar.return_value = None
+
+    config = ScoreConfig()
+
+    agent = DiscoveryAgent(
+        places_client=fake_places,
+        llm_client=llm_client,
+        session=session,
+        config=config,
+    )
+
+    with patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
+         patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
+        await agent.produce(uf="BA")
+
+    # D-02 guard: DB must NOT be queried when ibge is empty
+    session.scalar.assert_not_called()
+
+    # store_raw must NOT be called (parent_destino_absent quarantine fires first)
+    mock_store_raw.assert_not_called()
+
+    # quarantine_poison must be called with error="parent_destino_absent"
+    assert mock_quarantine.call_count >= 1
+    quarantine_kwargs = mock_quarantine.call_args[1]
+    assert quarantine_kwargs.get("error") == "parent_destino_absent"
+
+
+# ---------------------------------------------------------------------------
+# D-03 targeted discovery tests (Plan 07-03)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_produce_for_destino_links_to_known_parent() -> None:
+    """D-03: produce_for_destino injects parent_mar.id as parent_mar_id — no DB lookup.
+
+    Verifies:
+    - store_raw is called with payload["parent_mar_id"] == str(parent_mar.id)
+    - session.scalar is NOT called (_resolve_parent_destino never invoked)
+    - The targeted query "pontos turísticos em Porto Seguro BA" drives the search
+    """
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.config.settings import ScoreConfig
+
+    parent_mar_id = uuid.uuid4()
+    mock_parent_mar = MagicMock()
+    mock_parent_mar.id = parent_mar_id
+    mock_parent_mar.canonical = {
+        "municipio": "Porto Seguro",
+        "uf": "BA",
+        "ibge_code": "2927408",
+    }
+
+    fake_places = FakePlacesClient(
+        fixture_results={
+            "pontos turísticos em Porto Seguro BA": [
+                _make_places_result(
+                    place_id="ChIJtest001",
+                    municipio_ibge="2927408",
+                    municipio_nome="Porto Seguro",
+                )
+            ],
+        }
+    )
+
+    llm_client = MagicMock()
+    llm_client.extract = AsyncMock(
+        return_value=_make_atrativo_result(place_id="ChIJtest001", municipio_ibge="2927408")
+    )
+
+    session = _make_mock_session()
+    config = ScoreConfig()
+
+    agent = DiscoveryAgent(
+        places_client=fake_places,
+        llm_client=llm_client,
+        session=session,
+        config=config,
+    )
+
+    mock_nascente = MagicMock()
+    mock_nascente.id = uuid.uuid4()
+    mock_nascente.source_ref = "places:BA:ChIJtest001"
+
+    with patch("brave.lanes.atrativos.discovery_agent.store_raw", return_value=mock_nascente) as mock_store_raw, \
+         patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
+         patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
+         patch("brave.lanes.atrativos.discovery_agent.write_audit"), \
+         patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
+        result = await agent.produce_for_destino(mock_parent_mar, target_count=1)
+
+    # Must return 1 created record
+    assert result == 1
+
+    # store_raw must be called exactly once
+    assert mock_store_raw.call_count == 1
+
+    # Payload must contain parent_mar_id == str(parent_mar.id) — NOT from DB
+    call_kwargs = mock_store_raw.call_args[1]
+    payload = call_kwargs["payload"]
+    assert payload["parent_mar_id"] == str(parent_mar_id)
+
+    # session.scalar must NOT be called — _resolve_parent_destino was bypassed
+    session.scalar.assert_not_called()
+
+    # No quarantine should be triggered
+    mock_quarantine.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_produce_for_destino_returns_zero_on_missing_municipio() -> None:
+    """D-03: produce_for_destino returns 0 when canonical has no municipio/name.
+
+    When the parent_mar canonical dict lacks both "municipio" and "name" keys,
+    the method cannot build a valid search query. It must return 0 and must NOT
+    call store_raw.
+    """
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.config.settings import ScoreConfig
+
+    mock_parent_mar = MagicMock()
+    mock_parent_mar.id = uuid.uuid4()
+    mock_parent_mar.canonical = {"uf": "BA"}  # no "municipio" or "name"
+
+    fake_places = FakePlacesClient(fixture_results={})
+    llm_client = MagicMock()
+
+    session = _make_mock_session()
+    config = ScoreConfig()
+
+    agent = DiscoveryAgent(
+        places_client=fake_places,
+        llm_client=llm_client,
+        session=session,
+        config=config,
+    )
+
+    with patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw:
+        result = await agent.produce_for_destino(mock_parent_mar)
+
+    assert result == 0
+    mock_store_raw.assert_not_called()
