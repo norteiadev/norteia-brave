@@ -784,22 +784,13 @@ COMP-03 (`place_id` only persisted from Google) is already implemented and uncha
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **`publish_time` proto conversion**
-   - What we know: `review.publish_time` is `google.protobuf.timestamp_pb2.Timestamp`. Proto-plus may wrap it as Python datetime automatically.
-   - What's unclear: Whether `.isoformat()` works or requires `.ToDatetime(tzinfo=utc).isoformat()`.
-   - Recommendation: Add a unit test with a mock `Timestamp(seconds=..., nanos=0)` and assert `.isoformat()` produces the expected string. If it fails, switch to `ToDatetime`.
+1. **`publish_time` proto conversion** — **RESOLVED (plan 07-01).** Standardize on `review.publish_time.ToDatetime(tzinfo=timezone.utc).isoformat()` (works whether or not proto-plus auto-wraps the Timestamp); Task 1 implements it and Task 2 offline test T5 asserts the exact string against a mock `Timestamp(seconds=..., nanos=0)`.
 
-2. **Mtur XLSX column names**
-   - What we know: The 2025 portal provides an Excel export; older years used `co_municipio`, `no_municipio`, `sg_uf`, `categoria`, `no_regiao_turistica`.
-   - What's unclear: Whether 2025 XLSX uses the same column names.
-   - Recommendation: After downloading, inspect headers before conversion. The `_load_csv` function already handles both `co_municipio`/`codigo_ibge` and `sg_uf`/`uf` variants.
+2. **Mtur XLSX column names** — **RESOLVED (plan 07-04).** The converter uses a `COLUMN_CANDIDATES` map with fallbacks for known naming variants and inspects headers before conversion; `_load_csv` already tolerates `co_municipio`/`codigo_ibge` and `sg_uf`/`uf`. No hard dependency on a single 2025 spelling.
 
-3. **`produce_for_destino` placement**
-   - What we know: Can be a method on `DiscoveryAgent` or a thin wrapper elsewhere.
-   - What's unclear: Whether the harness should iterate Mar destinos itself or call a higher-level `sweep_destinos_targeted(session, uf, target_count)` wrapper.
-   - Recommendation: Method on `DiscoveryAgent` (consistent with `produce(uf)`); harness queries `MarRecord` directly and iterates.
+3. **`produce_for_destino` placement** — **RESOLVED (plan 07-03).** Method on `DiscoveryAgent` (consistent with `produce(uf)`); the harness queries `MarRecord` directly and iterates the 10 destinos, calling `produce_for_destino(parent_mar, target_count)` per destino.
 
 ---
 
