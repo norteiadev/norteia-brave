@@ -68,7 +68,7 @@ completed: 2026-06-18
 1. **Task 1: Create brave/core/dlq/service.py** - `10f96a2` (feat)
 2. **Task 2: Refactor dlq.py to delegate to service** - `eb34432` (refactor)
 
-**Plan metadata:** (pending final commit)
+**Plan metadata:** `3b550a8` (docs: complete plan)
 
 ## Files Created/Modified
 - `brave/core/dlq/__init__.py` - Empty package init for brave.core.dlq
