@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Atrativos Lane (WhatsApp + Compliance)** - Discovery → ContactFinder → Signal → human WhatsApp gate → automated owner-validation outreach → re-score, with LGPD + BSP enforced before the first real message (completed 2026-06-15)
 - [x] **Phase 4: Dashboard (Territorial CMS)** - Brave monitor, DLQ batch review, WhatsApp gate UI, conversations/funnels, and Cost/LLM views behind Bearer auth (completed 2026-06-16)
 - [x] **Phase 5: Auto-Discovery Orchestration** - celery-redbeat 27-UF fan-out, sweep_uf Destinos task, Atrativos FSM auto-advance, ops CLI/endpoint trigger (completed 2026-06-17)
-- [ ] **Phase 6: Real-Externals Enablement (RealLLMClient + live 24/7 collection)** - RealLLMClient implementing LLMClientProtocol (extract/generate), cost-guard + llm_generations wiring, docstring footgun fix (D-06), offline tests + opt-in smoke
+- [x] **Phase 6: Real-Externals Enablement (RealLLMClient + live 24/7 collection)** - RealLLMClient implementing LLMClientProtocol (extract/generate), cost-guard + llm_generations wiring, docstring footgun fix (D-06), offline tests + opt-in smoke (completed 2026-06-18)
 
 ## Phase Details
 
@@ -190,7 +190,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 3. Atrativos Lane (WhatsApp + Compliance) | 5/5 | Complete   | 2026-06-15 |
 | 4. Dashboard (Territorial CMS) | 9/9 | Complete   | 2026-06-16 |
 | 5. Auto-Discovery Orchestration | 3/3 | Complete   | 2026-06-17 |
-| 6. Real-Externals Enablement | 2/3 | In Progress|  |
+| 6. Real-Externals Enablement | 3/3 | Complete   | 2026-06-18 |
 
 ### Phase 5: Auto-Discovery Orchestration
 
@@ -218,7 +218,7 @@ Plans:
 **Goal:** Create the single missing client  /  so the existing 24/7 Destinos+Atrativos sweep actually runs on real LLM providers when ; fix the  docstring footgun (7 occurrences); add offline unit tests + opt-in smoke.
 **Requirements**: OBS-01, OBS-02, CORE-11, TEST-01
 **Depends on:** Phase 5
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 **Wave 1** *(parallel — no file conflicts)*
@@ -228,4 +228,4 @@ Plans:
 
 **Wave 2** *(depends on 06-02 — llm.py must exist)*
 
-- [ ] 06-03-PLAN.md — Tests + pipeline cleanup: 4 offline unit tests (guard/deny/fallback/cost-guard wiring), opt-in smoke (skipif no key), remove # type: ignore[import] from 4 pipeline.py RealLLMClient sites
+- [x] 06-03-PLAN.md — Tests + pipeline cleanup: 4 offline unit tests (guard/deny/fallback/cost-guard wiring), opt-in smoke (skipif no key), remove # type: ignore[import] from 4 pipeline.py RealLLMClient sites
