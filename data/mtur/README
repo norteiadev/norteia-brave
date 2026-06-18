@@ -1,0 +1,90 @@
+Mapa do Turismo Brasileiro -- Dataset
+======================================
+
+SOURCE
+------
+
+Portaria MTUR no 9, de 24 de abril de 2025
+URL: https://www.mapa.turismo.gov.br/mapa/init.html
+Issued by: Ministerio do Turismo (MTur), Brazil
+License: Federal government open data (CC-BY / public domain for federal publications)
+
+
+CURRENT FILES
+-------------
+
+municipios_mtur_2024.csv
+    16-row sample (BA/RJ/SP) for offline testing and CI fallback.
+    Do NOT delete -- used by the full test suite when no 2025 file is present.
+
+municipios_mtur_2025.csv
+    NOT INCLUDED -- must be downloaded by the operator (see steps below).
+    Once present, MturClient._load_csv() automatically uses it (newest filename wins).
+
+
+HOW TO DOWNLOAD THE 2025 DATASET
+---------------------------------
+
+1. Go to: https://www.mapa.turismo.gov.br/mapa/init.html
+
+2. Click "Municipio Categorizado Detalhado Excel"
+
+3. Select:
+     Ano (year):        2025
+     Macrorregiao:      Todas (All)
+     UF:                Todas (All)
+
+4. Click Download -- the portal saves an XLSX file to your Downloads folder.
+
+5. Convert to CSV:
+     python scripts/mtur_xlsx_to_csv.py <path/to/downloaded.xlsx>
+
+   This writes:  data/mtur/municipios_mtur_2025.csv
+
+   Optional dry-run (print first 5 rows without writing):
+     python scripts/mtur_xlsx_to_csv.py <path/to/downloaded.xlsx> --dry-run
+
+   Requires openpyxl (operator-only install, not a production dependency):
+     pip install openpyxl
+
+
+CSV SCHEMA
+----------
+
+  co_municipio,no_municipio,sg_uf,categoria,no_regiao_turistica
+
+  co_municipio        7-digit IBGE municipality code (e.g. 2927408)
+  no_municipio        Municipality name (e.g. Porto Seguro)
+  sg_uf               2-letter state code (e.g. BA)
+  categoria           MTur category string (raw; _map_categoria in mtur.py normalizes it)
+  no_regiao_turistica Tourism region name (e.g. Costa do Descobrimento)
+
+The converter script (scripts/mtur_xlsx_to_csv.py) uses a COLUMN_CANDIDATES map with
+fallbacks for known header-name variants across portal releases, so minor column renames
+in the XLSX do not break the conversion.
+
+
+LOADER BEHAVIOR
+---------------
+
+MturClient._load_csv() (brave/clients/mtur.py) globs data/mtur/municipios_mtur_*.csv
+sorted descending by filename. The newest filename wins automatically:
+
+  municipios_mtur_2025.csv  <-- used when present (highest sort order)
+  municipios_mtur_2024.csv  <-- fallback for CI / offline tests
+
+No code change is needed after placing the 2025 CSV -- the loader picks it up on the
+next MturClient.fetch_municipalities() call.
+
+
+2025 CATEGORY NOMENCLATURE
+---------------------------
+
+Portaria 9/2025 introduced new category names. _map_categoria in brave/clients/mtur.py
+handles both old and new nomenclature:
+
+  Old: A, B  ->  New: "Municipios turisticos"       ->  Norteia: "Oferta Principal"
+  Old: C, D  ->  New: "com oferta turistica complementar"  ->  Norteia: "Complementar"
+  Old: E     ->  New: "de apoio ao turismo"          ->  Norteia: "Apoio"
+
+Raw category strings from the XLSX are stored as-is; the mapping happens at read time.
