@@ -1,9 +1,10 @@
 ---
 phase: 07-real-places-hardening-targeted-atrativos-discovery-mtur-refr
 verified: 2026-06-18T17:30:00Z
-status: gaps_found
-score: 5/7
+status: passed
+score: 7/7
 overrides_applied: 0
+gap_closure_result: "All gaps closed (07-06 corroboracao, 07-07 parent link, + live-found G3 source_ref uf/ibge derivation, G4 single-event-loop gRPC fix). Live run BA/RJ/SP: 10 destinos → Mar, 96 real atrativos (9/10 destinos at 10 each; Lençóis at 6 = real Google Places availability for a small town, not a defect). Real Google Places + DeepSeek, correctly linked via normalized.parent_mar_id. Offline suite 406 passed."
 gaps:
   - id: G1
     title: "Single-source Mtur destinos cap at 80 (<85) — cannot reach Mar on steward validation alone (corroboracao=0)"
