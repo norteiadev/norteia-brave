@@ -216,12 +216,18 @@ def main() -> None:
         )
         print(f"Mar destination records (active): {mar_count}")
 
-        atr_rows = session.execute(
-            select(RioRecord.parent_mar_id, func.count(RioRecord.id))
-            .where(RioRecord.entity_type == "attraction")
-            .group_by(RioRecord.parent_mar_id)
-            .order_by(RioRecord.parent_mar_id)
-        ).all()
+        # G2 fix: RioRecord has no parent_mar_id column — the link lives in rio.normalized.
+        # Load all atrativos and group by normalized.get("parent_mar_id") in Python.
+        # process_nascente_record now copies parent_mar_id from payload to normalized
+        # (brave/core/rio/routing.py), so all new atrativo rios carry it.
+        atr_records = list(session.scalars(
+            select(RioRecord).where(RioRecord.entity_type == "attraction")
+        ).all())
+        atr_counts: dict[str, int] = {}
+        for r in atr_records:
+            parent_id = (r.normalized or {}).get("parent_mar_id") or "unknown"
+            atr_counts[parent_id] = atr_counts.get(parent_id, 0) + 1
+        atr_rows = sorted(atr_counts.items())
 
         print("Attraction Rio records by parent_mar_id:")
         for parent_id, cnt in atr_rows:
