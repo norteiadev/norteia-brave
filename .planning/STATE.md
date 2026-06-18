@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 6 context gathered
-last_updated: "2026-06-18T16:29:33.528Z"
+stopped_at: Completed 07-03-PLAN.md
+last_updated: "2026-06-18T16:35:50.568Z"
 last_activity: 2026-06-18
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 37
-  completed_plans: 36
+  completed_plans: 37
   percent: 86
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 7 (Real Places Hardening + Targeted Atrativos Discovery + Mtur Refresh) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-06-18
 
-Progress: [██████████] 97%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -80,6 +80,7 @@ Progress: [██████████] 97%
 | Phase 06 P01 | 2min | 1 tasks | 4 files |
 | Phase 06 P02 | 119 | 1 tasks | 1 files |
 | Phase 07 P01 | 4min | 2 tasks | 2 files |
+| Phase 07 P03 | 8min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -112,6 +113,8 @@ Recent decisions affecting current work:
 - [Phase ?]: Integration tests for internally-committing Celery tasks use a SAVEPOINT-isolated session (join_transaction_mode=create_savepoint) so the outer rollback discards everything — prevents shared-DB leakage
 - [Phase ?]: [Phase 5 P02]: ORCH-02 Atrativos FSM auto-advance — DiscoveryAgent.produce seeds Rio + sub_state='discovered' (finding #1); discover_atrativo_task self-enqueues find_contacts->gather_signals keyed on sub_state (D-03); chain terminal at aguardando_consulta_whatsapp with NO auto-outreach (D-07); inline agent guards kept for replay-safety (finding #2/D-04)
 - [Phase ?]: Ops trigger (CLI sweep + Bearer-guarded POST /api/v1/sweep) dispatches only producer/chain tasks with Celery-or-inline fallback; no §7.6 or WhatsApp-send bypass (ORCH-03/04, T-05-07/09)
+- [Phase ?]: D-02: _resolve_parent_destino guard returns None immediately on empty municipio_ibge — prevents source_ref.contains('') DB mislink
+- [Phase ?]: D-03: produce_for_destino injects parent_mar.id directly, bypassing _resolve_parent_destino — parent is known from caller context
 
 ### Pending Todos
 
@@ -140,6 +143,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-18T16:29:33.504Z
-Stopped at: Phase 6 context gathered
+Last session: 2026-06-18T16:35:50.557Z
+Stopped at: Completed 07-03-PLAN.md
 Resume file: None
