@@ -184,22 +184,27 @@ def main() -> None:
         # Step 3 — Targeted atrativos discovery for each promoted Mar destino
         # ----------------------------------------------------------------
         print(f"=== STEP 3: Targeted atrativos discovery ({target_atrativos} per destino) ===")
-        places_client = RealPlacesClient(api_key=places_key, ibge_lookup=ibge_lookup)
-        llm_client = RealLLMClient(config=llm_config)
 
-        for mar in promoted:
-            agent = DiscoveryAgent(places_client, llm_client, session, score_config)
-            count = asyncio.run(
-                agent.produce_for_destino(mar, target_count=target_atrativos)
-            )
-            session.commit()
-            canonical = mar.canonical or {}
-            nome = (
-                canonical.get("municipio")
-                or canonical.get("name")
-                or str(mar.id)
-            )
-            print(f"  [{nome}] atrativos created in Rio: {count}")
+        async def _run_all_discovery() -> None:
+            # Construct the gRPC-backed Places client INSIDE the event loop so its
+            # async channel binds to THIS loop. Using one asyncio.run() per destino
+            # closes the loop after the first destino and kills the shared channel
+            # ('InterceptedUnaryUnaryCall has no attribute _interceptors_task').
+            places_client = RealPlacesClient(api_key=places_key, ibge_lookup=ibge_lookup)
+            llm_client = RealLLMClient(config=llm_config)
+            for mar in promoted:
+                agent = DiscoveryAgent(places_client, llm_client, session, score_config)
+                count = await agent.produce_for_destino(mar, target_count=target_atrativos)
+                session.commit()
+                canonical = mar.canonical or {}
+                nome = (
+                    canonical.get("municipio")
+                    or canonical.get("name")
+                    or str(mar.id)
+                )
+                print(f"  [{nome}] atrativos created in Rio: {count}")
+
+        asyncio.run(_run_all_discovery())
 
         print()
 
