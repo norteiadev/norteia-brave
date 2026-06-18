@@ -28,6 +28,7 @@ import sys
 
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.attributes import flag_modified
 
 from brave.clients.llm import RealLLMClient
 from brave.clients.mtur import MturClient
@@ -35,6 +36,7 @@ from brave.clients.places import RealPlacesClient, build_mtur_ibge_lookup
 from brave.config.settings import LLMConfig, ScoreConfig
 from brave.core.dlq.service import validate_and_promote_rio
 from brave.core.models import MarRecord, RioRecord
+from brave.core.rio.routing import reprocess_record
 from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 from brave.lanes.destinos.mtur import MturSeedIngest
 
@@ -157,6 +159,20 @@ def main() -> None:
             for rio in dlq_rows:
                 if len(promoted) >= target_destinos:
                     break
+                # Harness corroboration boost: stands in for NotebookLM/2nd-source
+                # corroboration. Mtur single-source records have corroboracao=0; this +50 boost
+                # (capped at 100) is the same pattern as notebooklm.py:214-221. After this boost
+                # and D-06 validacao=100, score reaches >=85 → Mar. Per gap G1 decision: do NOT
+                # change global §7.6 weights or thresholds.
+                normalized = dict(rio.normalized or {})
+                normalized["corroboracao_value"] = min(
+                    100.0, float(normalized.get("corroboracao_value", 0.0)) + 50.0
+                )
+                rio.normalized = normalized
+                flag_modified(rio, "normalized")
+                session.flush()
+                reprocess_record(session, rio.id, score_config)
+                session.refresh(rio)
                 mar = validate_and_promote_rio(session, rio, score_config)
                 if mar:
                     promoted.append(mar)
