@@ -229,3 +229,13 @@ Plans:
 **Wave 2** *(depends on 06-02 — llm.py must exist)*
 
 - [x] 06-03-PLAN.md — Tests + pipeline cleanup: 4 offline unit tests (guard/deny/fallback/cost-guard wiring), opt-in smoke (skipif no key), remove # type: ignore[import] from 4 pipeline.py RealLLMClient sites
+
+### Phase 7: Real Places Hardening + Targeted Atrativos Discovery + Mtur Refresh
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 6
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 7 to break down)
