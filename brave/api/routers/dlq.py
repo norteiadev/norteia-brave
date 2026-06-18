@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from brave.api.deps import get_db, get_steward_config, require_steward_or_bearer
 from brave.config.settings import StewardConfig
+from brave.core.dlq.service import validate_and_promote_rio
 from brave.core.models import RioRecord
 from brave.observability.audit import write_audit
 
@@ -137,10 +138,9 @@ def validate_dlq_record(
 
     Steps:
     1. Load RioRecord; 404 if missing.
-    2. Reassign normalized dict with validacao_humana_value=100.0 + flag_modified (Pitfall 3).
-    3. Re-score via reprocess_record (NOT process_nascente_record — Pitfall 4).
-    4. If routing becomes 'mar': dispatch push_destination_task (sync fallback if no broker).
-    5. Write audit row with action='dlq_validated', actor='steward'.
+    2. Delegate to validate_and_promote_rio (sets human validation score, re-scores, promotes if mar).
+    3. If routing becomes 'mar': dispatch push_destination_task (sync fallback if no broker).
+    4. Write audit row with action='dlq_validated', actor='steward'.
 
     Returns 202 with {status, rio_id, routing}.
     """
@@ -150,36 +150,20 @@ def validate_dlq_record(
 
     before_state = {"routing": rio.routing, "score": float(rio.score or 0)}
 
-    # CRITICAL: reassign + flag_modified — SQLAlchemy does not auto-track in-place
-    # JSON column mutations (Pitfall 3, T-02-06-04).
-    from sqlalchemy.orm.attributes import flag_modified
-
-    normalized = dict(rio.normalized or {})
-    normalized["validacao_humana_value"] = 100.0
-    rio.normalized = normalized
-    flag_modified(rio, "normalized")
-    db.flush()
-
-    # Re-score: reprocess_record resets routing → in_progress → re-routes via §7.6
-    # Never call process_nascente_record here — it returns early if canonical_key exists (Pitfall 4)
-    from brave.config.settings import ScoreConfig
-    from brave.core.rio.routing import reprocess_record
-
-    reprocess_record(db, rio_id, ScoreConfig())
-
+    # Delegate to service: flag_modified+flush → reprocess_record → refresh → promote_to_mar if routing=='mar'
+    # Service handles Pitfall 3 (reassign+flag_modified) and Pitfall 4 (reprocess_record not process_nascente_record).
+    # Does NOT dispatch Celery tasks — that remains the router's responsibility.
+    validate_and_promote_rio(db, rio)
     db.refresh(rio)
 
-    # Only dispatch push when routing == 'mar' (never call promote_to_mar without this check)
+    # Only dispatch push when routing == 'mar' (service already promoted; push publishes to norteia-api)
     if rio.routing == "mar":
         try:
             from brave.tasks.pipeline import push_destination_task
 
             push_destination_task.delay(str(rio_id))
         except Exception:
-            # Sync fallback: no Celery broker in tests/dev
-            from brave.core.mar.service import promote_to_mar
-
-            promote_to_mar(db, rio)
+            pass  # Sync fallback: no broker in tests/dev; promote_to_mar already done by service
 
     write_audit(
         session=db,
@@ -228,19 +212,8 @@ def validate_batch(
 
     validated = 0
     for rio in rows:
-        # Inline single-record validate logic (same flag_modified + reprocess pattern)
-        from sqlalchemy.orm.attributes import flag_modified as _flag_modified
-
-        normalized = dict(rio.normalized or {})
-        normalized["validacao_humana_value"] = 100.0
-        rio.normalized = normalized
-        _flag_modified(rio, "normalized")
-        db.flush()
-
-        from brave.config.settings import ScoreConfig as _ScoreConfig
-        from brave.core.rio.routing import reprocess_record as _reprocess_record
-
-        _reprocess_record(db, rio.id, _ScoreConfig())
+        # Delegate to service: flag_modified+flush → reprocess_record → refresh → promote_to_mar if routing=='mar'
+        validate_and_promote_rio(db, rio)
         db.refresh(rio)
 
         if rio.routing == "mar":
@@ -249,9 +222,7 @@ def validate_batch(
 
                 push_destination_task.delay(str(rio.id))
             except Exception:
-                from brave.core.mar.service import promote_to_mar
-
-                promote_to_mar(db, rio)
+                pass  # No broker in tests/dev; promote_to_mar already done by service
 
         write_audit(
             session=db,
