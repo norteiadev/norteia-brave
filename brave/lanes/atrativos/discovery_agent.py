@@ -389,6 +389,16 @@ class DiscoveryAgent:
         uf: str = canonical.get("uf", "")
         municipio_ibge: str = canonical.get("ibge_code", "")
 
+        # The destino canonical only carries {name, address, lat, lon, labels} —
+        # uf/ibge are NOT in canonical and MarRecord has no uf column. The source
+        # of truth is source_ref ("mtur:{UF}:{ibge}" or "desm:{uf}:{ibge}:{slug}").
+        if (not uf or not municipio_ibge) and parent_mar.source_ref:
+            parts = parent_mar.source_ref.split(":")
+            if len(parts) >= 3:
+                uf = uf or parts[1]
+                municipio_ibge = municipio_ibge or parts[2]
+        uf = uf.upper()
+
         if not municipio_nome or not uf:
             logger.warning(
                 "produce_for_destino_missing_fields",

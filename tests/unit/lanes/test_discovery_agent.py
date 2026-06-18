@@ -404,6 +404,58 @@ async def test_produce_for_destino_links_to_known_parent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_produce_for_destino_derives_uf_ibge_from_source_ref() -> None:
+    """G3: destino canonical only has {name,...} (no uf/ibge) and MarRecord has no
+    uf column — produce_for_destino must parse uf+ibge from source_ref
+    'mtur:{UF}:{ibge}' so the targeted query is built and discovery is not a silent no-op.
+    """
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.config.settings import ScoreConfig
+
+    parent_mar_id = uuid.uuid4()
+    mock_parent_mar = MagicMock()
+    mock_parent_mar.id = parent_mar_id
+    # Real-shaped destino canonical: name only, NO uf / ibge_code
+    mock_parent_mar.canonical = {"name": "Porto Seguro", "address": None, "labels": {}}
+    mock_parent_mar.source_ref = "mtur:BA:2927408"
+
+    fake_places = FakePlacesClient(
+        fixture_results={
+            "pontos turísticos em Porto Seguro BA": [
+                _make_places_result(
+                    place_id="ChIJtest001",
+                    municipio_ibge="2927408",
+                    municipio_nome="Porto Seguro",
+                )
+            ],
+        }
+    )
+
+    llm_client = MagicMock()
+    llm_client.extract = AsyncMock(
+        return_value=_make_atrativo_result(place_id="ChIJtest001", municipio_ibge="2927408")
+    )
+
+    session = _make_mock_session()
+    agent = DiscoveryAgent(fake_places, llm_client, session, ScoreConfig())
+
+    mock_nascente = MagicMock()
+    mock_nascente.id = uuid.uuid4()
+    mock_nascente.source_ref = "places:BA:ChIJtest001"
+
+    with patch("brave.lanes.atrativos.discovery_agent.store_raw", return_value=mock_nascente) as mock_store_raw, \
+         patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
+         patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
+         patch("brave.lanes.atrativos.discovery_agent.write_audit"), \
+         patch("brave.lanes.atrativos.discovery_agent.quarantine_poison"):
+        result = await agent.produce_for_destino(mock_parent_mar, target_count=1)
+
+    # Derived uf=BA from source_ref → targeted query ran → 1 atrativo created (not a 0 no-op)
+    assert result == 1
+    assert mock_store_raw.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_produce_for_destino_returns_zero_on_missing_municipio() -> None:
     """D-03: produce_for_destino returns 0 when canonical has no municipio/name.
 
