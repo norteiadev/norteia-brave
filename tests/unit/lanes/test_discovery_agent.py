@@ -436,3 +436,54 @@ async def test_produce_for_destino_returns_zero_on_missing_municipio() -> None:
 
     assert result == 0
     mock_store_raw.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# G2 gap-closure tests (Plan 07-07)
+# ---------------------------------------------------------------------------
+
+
+def test_produce_for_destino_parent_link_in_normalized() -> None:
+    """G2: process_nascente_record must copy parent_mar_id from nascente payload
+    to rio.normalized so downstream queries can group atrativos by parent destino
+    without a nascente JOIN.
+
+    Mirrors the place_id_cache copy pattern at lines 155-156 of routing.py.
+    """
+    from brave.core.rio.routing import process_nascente_record
+    from brave.config.settings import ScoreConfig
+
+    parent_mar_id_str = "uuid-test-parent"
+    place_id_str = "ChIJtest"
+
+    nascente_mock = MagicMock()
+    nascente_mock.source_ref = "places:BA:ChIJtest"
+    nascente_mock.entity_type = "attraction"
+    nascente_mock.uf = "BA"
+    nascente_mock.content_hash = "abc123"
+    nascente_mock.payload = {
+        "name": "Test Atrativo",
+        "parent_mar_id": parent_mar_id_str,
+        "place_id_cache": place_id_str,
+        "origem_value": 60.0,
+        "completude_value": 75.0,
+        "corroboracao_value": 0.0,
+        "atualidade_value": 0.0,
+        "validacao_humana_value": 0.0,
+    }
+
+    session_mock = MagicMock()
+    session_mock.scalar.return_value = None  # no existing RioRecord (idempotency check)
+    session_mock.add = MagicMock()
+    session_mock.flush = MagicMock()
+
+    with patch("brave.core.rio.routing.find_duplicate", return_value=None), \
+         patch("brave.core.rio.routing.compute_embedding", return_value=[0.0] * 1536), \
+         patch("brave.core.rio.routing.label_entity", side_effect=lambda etype, norm: norm):
+        result = process_nascente_record(session_mock, nascente_mock, ScoreConfig())
+
+    # The RioRecord passed to session.add must have parent_mar_id in normalized
+    assert session_mock.add.call_count == 1
+    rio_record = session_mock.add.call_args[0][0]
+    assert rio_record.normalized is not None
+    assert rio_record.normalized.get("parent_mar_id") == parent_mar_id_str
