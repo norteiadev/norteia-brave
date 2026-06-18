@@ -1,9 +1,18 @@
 ---
 phase: 07-real-places-hardening-targeted-atrativos-discovery-mtur-refr
 verified: 2026-06-18T17:30:00Z
-status: human_needed
-score: 7/7
+status: gaps_found
+score: 5/7
 overrides_applied: 0
+gaps:
+  - id: G1
+    title: "Single-source Mtur destinos cap at 80 (<85) — cannot reach Mar on steward validation alone (corroboracao=0)"
+    detail: "Live run: 16 destinos ingested (BA/RJ/SP), all routed DLQ, score 75.5 with validacao_humana=100. §7.6 corroboracao weight=20 at 0 caps score at 80 < threshold_mar 85. notebooklm.py confirms IBGE corroboration (+50) is the intended mechanism. DECISION (user): corroborate in the harness — apply the IBGE corroboration boost (mirror NotebookLMIngest +50 on IBGE match) to each destino before steward validacao=100 → re-score → Mar. Do NOT change the global §7.6 gate."
+    fix: "Harness step between ingest and promote: for each ingested Mtur destino rio, apply the IBGE corroboration boost (corroboracao_value += 50 capped 100, via the same normalized reassign + flag_modified pattern as notebooklm.py:216) so validate_and_promote_rio reaches >=85 → Mar. Reuse the NotebookLMIngest corroboration path if practical; else replicate the boost. Document it as standing in for the NotebookLM/2nd-source corroboration."
+  - id: G2
+    title: "RioRecord.parent_mar_id is not a column — harness summary query crashes (AttributeError)"
+    detail: "Live run: scripts/loadtest_destinos_atrativos.py:204 does select(RioRecord.parent_mar_id) but parent_mar_id is stored in the store_raw payload (nascente.payload), not as a RioRecord column. Atrativo→parent link is not first-class queryable."
+    fix: "Make the atrativo→parent link queryable: persist parent_mar_id into rio.normalized during discovery store_raw (or join rio→nascente.payload), then fix the harness Step-4 summary to group atrativos by the actual stored link. Add an offline test asserting the link is queryable."
 human_verification:
   - test: "Run scripts/loadtest_destinos_atrativos.py with real keys against a clean DB (BRAVE_DB_URL, BRAVE_PLACES_API_KEY, BRAVE_LLM_OPENROUTER_API_KEY set) and confirm the harness prints ACCEPTANCE: PASS"
     expected: "Mar destination records (active): >=10; all 10 parents show >=10 atrativos each; final line is ACCEPTANCE: PASS"
