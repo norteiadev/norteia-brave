@@ -155,6 +155,12 @@ def process_nascente_record(
     if nascente.entity_type == "attraction" and "place_id_cache" in payload:
         normalized["place_id_cache"] = payload["place_id_cache"]
 
+    # Attraction-specific: preserve parent_mar_id from payload so harness and downstream
+    # queries can group atrativos by parent destino without a nascente JOIN.
+    # Mirrors the place_id_cache copy above (D-03 / G2 gap fix).
+    if nascente.entity_type == "attraction" and "parent_mar_id" in payload:
+        normalized["parent_mar_id"] = payload["parent_mar_id"]
+
     # Add taxonomy labels (Phase 1 stub)
     normalized = label_entity(nascente.entity_type, normalized)
 
