@@ -190,7 +190,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 3. Atrativos Lane (WhatsApp + Compliance) | 5/5 | Complete   | 2026-06-15 |
 | 4. Dashboard (Territorial CMS) | 9/9 | Complete   | 2026-06-16 |
 | 5. Auto-Discovery Orchestration | 3/3 | Complete   | 2026-06-17 |
-| 6. Real-Externals Enablement | 0/3 | In Progress | — |
+| 6. Real-Externals Enablement | 1/3 | In Progress|  |
 
 ### Phase 5: Auto-Discovery Orchestration
 
@@ -218,12 +218,12 @@ Plans:
 **Goal:** Create the single missing client  /  so the existing 24/7 Destinos+Atrativos sweep actually runs on real LLM providers when ; fix the  docstring footgun (7 occurrences); add offline unit tests + opt-in smoke.
 **Requirements**: OBS-01, OBS-02, CORE-11, TEST-01
 **Depends on:** Phase 5
-**Plans:** 3 plans
+**Plans:** 1/3 plans executed
 
 Plans:
 **Wave 1** *(parallel — no file conflicts)*
 
-- [ ] 06-01-PLAN.md — Footgun fix (D-06): replace BRAVE_RUN_REAL_EXTERNALS → RUN_REAL_EXTERNALS in 7 doc/error strings across places.py, apify.py, whatsapp.py, test_atrativos_lane_e2e.py
+- [x] 06-01-PLAN.md — Footgun fix (D-06): replace BRAVE_RUN_REAL_EXTERNALS → RUN_REAL_EXTERNALS in 7 doc/error strings across places.py, apify.py, whatsapp.py, test_atrativos_lane_e2e.py
 - [ ] 06-02-PLAN.md — RealLLMClient: brave/clients/llm.py implementing LLMClientProtocol (extract via instructor+OpenRouter+DeepSeek; generate via native AsyncAnthropic; deny-block D-04; slug fallback D-03; cost-guard + llm_generations tracking D-05)
 
 **Wave 2** *(depends on 06-02 — llm.py must exist)*
