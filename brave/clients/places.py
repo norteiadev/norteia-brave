@@ -21,12 +21,105 @@ Usage (production — only when run_real_externals=True):
 
 from __future__ import annotations
 
+import unicodedata
+from datetime import timezone
 from typing import Any
 
 import structlog
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 logger = structlog.get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Field mask constants (D-01)
+# Different prefix rules for search_text vs get_place — Places API (New):
+#   search_text response = SearchTextResponse.places[] → "places." prefix required
+#   get_place   response = bare Place object         → NO "places." prefix
+# Source: RESEARCH.md RQ-1 (verified from installed async_client.py + official docs)
+# ---------------------------------------------------------------------------
+
+_TEXT_SEARCH_FIELD_MASK = (
+    "places.id,"
+    "places.displayName,"
+    "places.formattedAddress,"
+    "places.types,"
+    "places.location,"
+    "places.addressComponents"
+)
+
+_GET_PLACE_FIELD_MASK = (
+    "id,"
+    "displayName,"
+    "formattedAddress,"
+    "types,"
+    "location,"
+    "addressComponents,"
+    "businessStatus,"
+    "regularOpeningHours,"
+    "reviews,"
+    "internationalPhoneNumber,"
+    "websiteUri"
+)
+
+
+# ---------------------------------------------------------------------------
+# Municipality extraction helpers (D-02)
+# ---------------------------------------------------------------------------
+
+
+def _normalize_name(name: str) -> str:
+    """Normalize a municipality name for lookup: strip accents, lowercase, strip whitespace.
+
+    Uses unicodedata NFD decomposition + ASCII encode to strip diacritical marks.
+    Example: "São Paulo" → "sao paulo", "Ilhéus" → "ilheus".
+    """
+    nfd = unicodedata.normalize("NFD", name.lower().strip())
+    return nfd.encode("ascii", "ignore").decode()
+
+
+def _extract_municipio_from_components(address_components: Any) -> tuple[str, str]:
+    """Return (municipio_nome, uf_short) from Places API addressComponents.
+
+    Types:
+      "administrative_area_level_2" → município name (long_text)
+      "administrative_area_level_1" → state abbreviation (short_text = "BA", "RJ", ...)
+
+    Returns ("", "") if components are missing or do not contain the expected types.
+    Source: RESEARCH.md RQ-2 (verified from installed place.py AddressComponent class)
+    """
+    municipio_nome = ""
+    uf_short = ""
+    for comp in address_components:
+        types = list(comp.types)
+        if "administrative_area_level_2" in types:
+            municipio_nome = comp.long_text
+        elif "administrative_area_level_1" in types:
+            uf_short = comp.short_text  # "BA", "RJ", etc.
+    return municipio_nome, uf_short
+
+
+def build_mtur_ibge_lookup(mtur_rows: list[dict]) -> dict[tuple[str, str], str]:
+    """Build {(normalized_name, UF): ibge_code} lookup dict from all Mtur rows.
+
+    Used to resolve municipality name → IBGE code in-process against the loaded
+    Mtur table. The Places API has no IBGE field; this is the only resolution path.
+
+    Args:
+        mtur_rows: List of municipality dicts from MturClient.fetch_municipalities().
+                   Each row must have "name", "uf", and "ibge_code" keys.
+
+    Returns:
+        Dict mapping (normalized_municipality_name, "BA") → "2927408" (IBGE code).
+    """
+    lookup: dict[tuple[str, str], str] = {}
+    for row in mtur_rows:
+        name = row.get("name", "")
+        uf = row.get("uf", "").upper()
+        ibge = row.get("ibge_code", "")
+        if name and uf and ibge:
+            lookup[(_normalize_name(name), uf)] = ibge
+    return lookup
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +178,11 @@ class RealPlacesClient:
         api_key: Google Places API key (required).
     """
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        ibge_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> None:
         from brave.config.settings import AppConfig
 
         if not AppConfig().run_real_externals:
@@ -103,6 +200,8 @@ class RealPlacesClient:
 
         self._api_key = api_key
         self._client = None  # Lazy init — avoid import-time SDK setup
+        # D-02: in-process name→IBGE lookup built from loaded Mtur table
+        self._ibge_lookup: dict[tuple[str, str], str] = ibge_lookup or {}
 
     def _get_client(self) -> Any:
         """Lazy-initialize the google-maps-places SDK client."""
@@ -152,13 +251,23 @@ class RealPlacesClient:
         )
 
         try:
-            response = await client.search_text(request)
+            response = await client.search_text(
+                request,
+                metadata=[("x-goog-fieldmask", _TEXT_SEARCH_FIELD_MASK)],
+            )
         except Exception as exc:
             logger.error("places_text_search_error", query=query, uf=uf, error=str(exc))
             raise
 
         results: list[dict[str, Any]] = []
         for place in response.places:
+            # D-02: extract municipio from addressComponents and resolve IBGE
+            municipio_nome, _uf_short = _extract_municipio_from_components(
+                place.address_components or []
+            )
+            ibge_key = (_normalize_name(municipio_nome), uf.upper())
+            municipio_ibge = self._ibge_lookup.get(ibge_key, "")
+
             result = {
                 "place_id": place.id,
                 "name": place.display_name.text if place.display_name else "",
@@ -168,6 +277,8 @@ class RealPlacesClient:
                     "lat": place.location.latitude if place.location else None,
                     "lng": place.location.longitude if place.location else None,
                 },
+                "municipio_nome": municipio_nome,
+                "municipio_ibge": municipio_ibge,
             }
             results.append(result)
 
@@ -197,40 +308,48 @@ class RealPlacesClient:
 
         from google.maps.places_v1.types import GetPlaceRequest  # type: ignore[import]
 
-        # Field mask: only request fields we need (Places API billing is per-field)
-        field_mask = (
-            "places.id,"
-            "places.displayName,"
-            "places.formattedAddress,"
-            "places.internationalPhoneNumber,"
-            "places.websiteUri,"
-            "places.businessStatus,"
-            "places.currentOpeningHours.weekdayDescriptions,"
-            "places.reviews"
-        )
-
+        # D-01 fix: use _GET_PLACE_FIELD_MASK (no "places." prefix for get_place)
+        # The old inline field_mask had "places.id, places.displayName, ..." which is
+        # WRONG for get_place — it returns a bare Place, not SearchTextResponse.places[].
         request = GetPlaceRequest(
             name=f"places/{place_id}",
         )
 
         try:
-            place = await client.get_place(request, metadata=[("x-goog-fieldmask", field_mask)])
+            place = await client.get_place(
+                request,
+                metadata=[("x-goog-fieldmask", _GET_PLACE_FIELD_MASK)],
+            )
         except Exception as exc:
             logger.error("places_place_details_error", place_id=place_id, error=str(exc))
             raise
 
         # Normalize reviews to the shape SignalAgent expects
+        # D-01 fix: review.publish_time is a proto Timestamp — use ToDatetime() for safe
+        # conversion; bare .isoformat() raises AttributeError in some proto-plus versions.
         reviews: list[dict[str, Any]] = []
         for review in place.reviews or []:
+            if review.publish_time:
+                try:
+                    publish_time_str = review.publish_time.ToDatetime(
+                        tzinfo=timezone.utc
+                    ).isoformat()
+                except AttributeError:
+                    # Fallback: proto-plus may have auto-converted to datetime already
+                    publish_time_str = review.publish_time.isoformat()
+            else:
+                publish_time_str = None
             reviews.append({
-                "publishTime": review.publish_time.isoformat() if review.publish_time else None,
+                "publishTime": publish_time_str,
                 "rating": getattr(review, "rating", None),
                 "text": review.text.text if review.text else "",
             })
 
+        # D-01 fix: use regular_opening_hours (stable schedule, field 21)
+        # instead of current_opening_hours (field 46, reflects current-week exceptions)
         weekday_text: list[str] = []
-        if place.current_opening_hours:
-            weekday_text = list(place.current_opening_hours.weekday_descriptions)
+        if place.regular_opening_hours:
+            weekday_text = list(place.regular_opening_hours.weekday_descriptions)
 
         result = {
             "place_id": place.id,
