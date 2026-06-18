@@ -663,9 +663,12 @@ def discover_atrativo_task(self, uf: str) -> None:
             places_client = FakePlacesClient()
 
         # Select LLM client based on run_real_externals flag
+        redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        import redis as redis_lib
+        redis_client = redis_lib.from_url(redis_url)
         if app_config.run_real_externals:
-            from brave.clients.llm import RealLLMClient  # type: ignore[import]
-            llm_client = RealLLMClient(config=app_config.llm)
+            from brave.clients.llm import RealLLMClient
+            llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="atrativos")
         else:
             from tests.fakes.fake_llm import FakeLLMClient
             llm_client = FakeLLMClient()
@@ -796,9 +799,12 @@ def sweep_uf(self, uf: str) -> None:
 
             # Desmembramento — the real recurring LLM discovery (origem=40 firewall).
             # LLM client selection mirrors discover_atrativo_task (real vs fake).
+            redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+            import redis as redis_lib
+            redis_client = redis_lib.from_url(redis_url)
             if app_config.run_real_externals:
-                from brave.clients.llm import RealLLMClient  # type: ignore[import]
-                llm_client = RealLLMClient(config=app_config.llm)
+                from brave.clients.llm import RealLLMClient
+                llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="destinos")
             else:
                 from tests.fakes.fake_llm import FakeLLMClient
                 llm_client = FakeLLMClient()
@@ -1233,16 +1239,15 @@ def outreach_task(self, rio_id: str) -> None:
             wa_client = NullWhatsAppClient()
 
         # Select LLM client
-        if app_config.run_real_externals:
-            from brave.clients.llm import RealLLMClient  # type: ignore[import]
-            llm_client = RealLLMClient(config=app_config.llm)
-        else:
-            from tests.fakes.fake_llm import FakeLLMClient
-            llm_client = FakeLLMClient()
-
         redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         import redis as redis_lib
         redis_client = redis_lib.from_url(redis_url)
+        if app_config.run_real_externals:
+            from brave.clients.llm import RealLLMClient
+            llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="atrativos")
+        else:
+            from tests.fakes.fake_llm import FakeLLMClient
+            llm_client = FakeLLMClient()
 
         settings = app_config.whatsapp
 
@@ -1426,16 +1431,15 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
             wa_client = NullWhatsAppClient()
 
         # Select LLM client
-        if app_config.run_real_externals:
-            from brave.clients.llm import RealLLMClient  # type: ignore[import]
-            llm_client = RealLLMClient(config=app_config.llm)
-        else:
-            from tests.fakes.fake_llm import FakeLLMClient
-            llm_client = FakeLLMClient()
-
         redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         import redis as redis_lib
         redis_client = redis_lib.from_url(redis_url)
+        if app_config.run_real_externals:
+            from brave.clients.llm import RealLLMClient
+            llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="atrativos")
+        else:
+            from tests.fakes.fake_llm import FakeLLMClient
+            llm_client = FakeLLMClient()
 
         settings = app_config.whatsapp
 
