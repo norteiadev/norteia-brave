@@ -10,7 +10,7 @@ Architecture invariant (D-11, T-03-04-01):
   all compliance logic lives in brave/compliance/gate.py.
 
 Production/offline boundary:
-  - TwilioWhatsAppClient: requires BRAVE_RUN_REAL_EXTERNALS=true. Used in production.
+  - TwilioWhatsAppClient: requires RUN_REAL_EXTERNALS=true. Used in production.
   - NullWhatsAppClient (brave/clients/null_whatsapp.py): offline stub, no network.
   - FakeWhatsAppClient (tests/fakes/fake_whatsapp.py): test-only, records calls.
 
@@ -63,7 +63,7 @@ class TwilioWhatsAppClient:
     """Real WhatsApp BSP client using Twilio 9.10.x SDK.
 
     Implements WhatsAppClientProtocol (structural typing, D-09).
-    Requires BRAVE_RUN_REAL_EXTERNALS=true — raises RuntimeError otherwise
+    Requires RUN_REAL_EXTERNALS=true — raises RuntimeError otherwise
     to enforce the production/offline boundary.
 
     Usage (production — called from _compliant_send, never directly):
@@ -118,7 +118,7 @@ class TwilioWhatsAppClient:
             {"message_sid": str, "status": str} from Twilio.
 
         Raises:
-            RuntimeError: If BRAVE_RUN_REAL_EXTERNALS is not True.
+            RuntimeError: If RUN_REAL_EXTERNALS is not True.
             TwilioRestException: On Twilio API errors (non-5xx, non-retried).
             ComplianceError: Indirectly — raised by send_path_gate before this is called.
         """
@@ -126,7 +126,7 @@ class TwilioWhatsAppClient:
         app_config = AppConfig()
         if not app_config.run_real_externals:
             raise RuntimeError(
-                "TwilioWhatsAppClient.send_template requires BRAVE_RUN_REAL_EXTERNALS=true. "
+                "TwilioWhatsAppClient.send_template requires RUN_REAL_EXTERNALS=true. "
                 "Use NullWhatsAppClient for offline/dev environments "
                 "(brave/clients/null_whatsapp.py)."
             )

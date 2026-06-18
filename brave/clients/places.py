@@ -92,7 +92,7 @@ class RealPlacesClient:
             raise RuntimeError(
                 "RealPlacesClient: run_real_externals=False — "
                 "use FakePlacesClient in default test suite. "
-                "Set BRAVE_RUN_REAL_EXTERNALS=true to enable real API calls."
+                "Set RUN_REAL_EXTERNALS=true to enable real API calls."
             )
 
         if not api_key:

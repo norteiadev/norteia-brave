@@ -4,7 +4,7 @@ Seven offline integration tests that collectively prove all 5 Phase 3 success cr
 and all 9 requirements (ATR-01..06, COMP-01..03) against a real Postgres+Redis test
 database (docker-compose) using fake external clients only.
 
-No real externals used — BRAVE_RUN_REAL_EXTERNALS must be absent / False.
+No real externals used — RUN_REAL_EXTERNALS must be absent / False.
 
 Test → Requirement / Success Criterion mapping:
 
