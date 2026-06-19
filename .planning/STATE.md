@@ -90,6 +90,8 @@ Progress: [██████████] 100%
 
 ### Roadmap Evolution
 
+- Phase 8 added: Ops CMS — Destinos/Atrativos CRUD + Process Observability (MÉDIO: cores Norteia + StageBadge + CRUD destinos/atrativos + /processo workers/falhas/pendências/jornada-até-Mar). No new shell/fonts/i18n (GRANDE deferred).
+
 - Phase 7 added: Real Places Hardening + Targeted Atrativos Discovery + Mtur Refresh — live load-test attempt (10 destinos × 10 atrativos) surfaced real Places gaps: `google-maps-places` missing (installed), `RealPlacesClient` omits `X-Goog-FieldMask` (live 400), `text_search` returns no município → `_resolve_parent_destino` mislinks atrativos to an arbitrary Mar parent, `DiscoveryAgent.produce(uf)` is a UF-wide sweep (no per-destino volume), Mtur seed is a 16-row sample. Fix the real Places path + targeted per-município discovery + refresh Mtur + load-test harness.
 - Phase 6 added: Real-Externals Enablement (RealLLMClient + live 24/7 collection) — closes the real-data blocker found in Phase 4/5 dogfooding: `brave/clients/llm.py`/`RealLLMClient` is missing (4 phantom import sites in pipeline.py), so `run_real_externals=True` ImportErrors on every LLM lane; plus the `BRAVE_RUN_REAL_EXTERNALS` docstring footgun (real toggle is `RUN_REAL_EXTERNALS`, no prefix).
 

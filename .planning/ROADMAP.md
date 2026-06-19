@@ -256,3 +256,13 @@ Plans:
 
 - [x] 07-06-PLAN.md — G1: Harness corroboration boost (reassign + flag_modified + reprocess_record before validate_and_promote_rio) so Mtur destinos score 85.5 → Mar; 3 offline tests (PLACE-05)
 - [x] 07-07-PLAN.md — G2: Copy parent_mar_id from nascente payload to rio.normalized in process_nascente_record; fix harness Step-4 to group by normalized.get("parent_mar_id") in Python; offline test (PLACE-03)
+
+### Phase 8: Ops CMS: Destinos/Atrativos CRUD + Process Observability (cores, badges, jornada ate Mar)
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 7
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 8 to break down)
