@@ -19,6 +19,9 @@ const SURFACES = [
   { href: "/cost", title: "Custo & LLM", desc: "Gasto por lane/modelo (llm_generations)" },
   { href: "/funnels", title: "Funis", desc: "Destinos & atrativos por UF/fonte" },
   { href: "/conversations", title: "Conversas", desc: "Transcrições WhatsApp (telefone minimizado)" },
+  { href: "/destinos", title: "Destinos", desc: "CMS territorial · lista/detalhe/ações por etapa" },
+  { href: "/atrativos", title: "Atrativos", desc: "CMS atrativo · FSM sub_state · detalhe/ações" },
+  { href: "/processo", title: "Processo", desc: "Workers · falhas · fila humana · funil" },
 ];
 
 export default function Home() {
