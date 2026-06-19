@@ -192,7 +192,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 5. Auto-Discovery Orchestration | 3/3 | Complete   | 2026-06-17 |
 | 6. Real-Externals Enablement | 3/3 | Complete    | 2026-06-18 |
 | 7. Real Places Hardening + Targeted Atrativos Discovery + Mtur Refresh | 7/7 | Complete | 2026-06-18 |
-| 8. Ops CMS: Destinos/Atrativos CRUD + Process Observability | 5/7 | In Progress|  |
+| 8. Ops CMS: Destinos/Atrativos CRUD + Process Observability | 7/7 | Complete   | 2026-06-19 |
 
 ### Phase 5: Auto-Discovery Orchestration
 
@@ -264,7 +264,7 @@ Plans:
 **Goal:** Give operators a visual, browsable CMS over all pipeline records (destinos + atrativos across every stage) and 24/7 process observability (workers, failures, human-pending queue, journey to Mar) — backed by new FastAPI endpoints that compose existing service functions, reskinned with Norteia brand tokens, and exposed through a Next.js dashboard with StageBadge + JourneyStepper primitives.
 **Requirements**: D-01 (token swap), D-02 (StageBadge), D-03 (destinos CRUD), D-04 (atrativos CRUD), D-05 (process observability), D-06 (JourneyStepper), D-07 (offline tests)
 **Depends on:** Phase 7
-**Plans:** 5/7 plans executed
+**Plans:** 7/7 plans complete
 
 Plans:
 **Wave 1** *(parallel — no file conflicts)*
@@ -276,9 +276,9 @@ Plans:
 **Wave 2** *(depends on Wave 1 — pages need endpoints + badge primitives)*
 
 - [x] 08-04-PLAN.md — Register cms_router + workers_router in main.py + destinos frontend: destinos-api.ts, DestinoList.tsx (TanStack Table), DetailPanel.tsx (generic, action-injected), /destinos + /destinos/[id] pages, MSW destinos.ts handlers, Vitest tests
-- [ ] 08-05-PLAN.md — Atrativos frontend: atrativos-api.ts (phone_masked types), AtrativoList.tsx, /atrativos + /atrativos/[id] pages (advance FSM + descartar), MSW atrativos.ts handlers, Vitest tests (PII never in DOM)
+- [x] 08-05-PLAN.md — Atrativos frontend: atrativos-api.ts (phone_masked types), AtrativoList.tsx, /atrativos + /atrativos/[id] pages (advance FSM + descartar), MSW atrativos.ts handlers, Vitest tests (PII never in DOM)
 - [x] 08-06-PLAN.md — /processo frontend: workers-api.ts, WorkerBoard.tsx (live-polled, broker-down state), FailuresPanel.tsx, /processo page (worker tiles + human-pending + recharts funnel), MSW workers.ts handlers, Vitest tests
 
 **Wave 3** *(depends on Wave 1 + Wave 2 — tests validate endpoint contracts)*
 
-- [ ] 08-07-PLAN.md — Backend pytest offline: test_cms_endpoints.py (Bearer 401, list/detail shapes, phone_e164 absent, advance 409, promote→mar) + test_workers_endpoints.py (broker-down 200, queues null, payload absent); 100% offline (monkeypatch inspect + fakeredis)
+- [x] 08-07-PLAN.md — Backend pytest offline: test_cms_endpoints.py (Bearer 401, list/detail shapes, phone_e164 absent, advance 409, promote→mar) + test_workers_endpoints.py (broker-down 200, queues null, payload absent); 100% offline (monkeypatch inspect + fakeredis)
