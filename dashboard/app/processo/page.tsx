@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { JourneyStepper } from "@/components/cms/JourneyStepper";
 import { FailuresPanel } from "@/components/processo/FailuresPanel";
 import { WorkerBoard } from "@/components/processo/WorkerBoard";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -76,6 +77,11 @@ export default function ProcessoPage() {
   // Stage funnel — group gate items by sub_state to show pipeline distribution
   const funnelData = buildFunnelData(gateItems ?? []);
 
+  // D-06: representative atrativo journey at a glance (compact JourneyStepper).
+  // Use the first gate-queue item as the sample — the gate is the most
+  // actionable mid-pipeline sub_state operators monitor on this page.
+  const sampleAtrativo = gateItems?.[0] ?? null;
+
   return (
     <main className="flex min-h-dvh flex-col gap-6 p-6">
       <header className="flex items-baseline justify-between">
@@ -109,6 +115,30 @@ export default function ProcessoPage() {
           testId="tile-gate-pending"
         />
       </div>
+
+      {/* Sample atrativo journey — D-06 compact JourneyStepper at a glance */}
+      <section
+        className="rounded-md border p-4"
+        data-testid="processo-journey"
+        aria-label="Jornada do atrativo (amostra)"
+      >
+        <h2 className="mb-3 text-[14px] font-semibold">
+          Jornada Atrativo (amostra)
+        </h2>
+        {sampleAtrativo ? (
+          <JourneyStepper
+            compact
+            entityType="attraction"
+            routing={sampleAtrativo.routing}
+            subState={sampleAtrativo.sub_state}
+            auditLog={[]}
+          />
+        ) : (
+          <p className="text-[14px] text-muted-foreground">
+            Nenhum atrativo na fila
+          </p>
+        )}
+      </section>
 
       {/* Funnel + Failures layout */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr_1fr]">

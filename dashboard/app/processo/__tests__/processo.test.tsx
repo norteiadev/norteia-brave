@@ -141,6 +141,42 @@ describe("/processo page", () => {
     });
   });
 
+  it("D-06: renders a compact JourneyStepper for a sample gate atrativo", async () => {
+    server.use(
+      workersSuccess(),
+      failuresSuccess(),
+      dlqListSuccess(),
+      gateListSuccess(sampleGateItems),
+    );
+
+    renderWithClient(<ProcessoPage />);
+
+    // Journey section present, and the compact stepper (aria-label "Pipeline
+    // journey") renders inside it once the gate queue resolves.
+    const section = await screen.findByTestId("processo-journey");
+    await waitFor(() => {
+      expect(
+        section.querySelector('[aria-label="Pipeline journey"]'),
+      ).not.toBeNull();
+    });
+  });
+
+  it("D-06: journey section shows empty state when gate queue is empty", async () => {
+    server.use(
+      workersSuccess(),
+      failuresSuccess(),
+      dlqListSuccess(),
+      gateListSuccess([]),
+    );
+
+    renderWithClient(<ProcessoPage />);
+
+    const section = await screen.findByTestId("processo-journey");
+    await waitFor(() => {
+      expect(section.textContent).toContain("Nenhum atrativo na fila");
+    });
+  });
+
   it("renders the stage funnel section header", async () => {
     server.use(
       workersSuccess(),
