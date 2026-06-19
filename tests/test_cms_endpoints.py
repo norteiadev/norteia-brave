@@ -1,0 +1,467 @@
+"""Offline pytest suite for CMS CRUD endpoints (08-07, D-07).
+
+Endpoints under test:
+  GET  /api/v1/destinos                     — list destinos (Bearer-guarded)
+  GET  /api/v1/destinos/{rio_id}            — detail (Bearer-guarded)
+  PATCH /api/v1/destinos/{rio_id}/promote   — steward promote → routing==mar
+  PATCH /api/v1/destinos/{rio_id}/descarte  — steward descarte
+  GET  /api/v1/atrativos                    — list atrativos (Bearer-guarded)
+  GET  /api/v1/atrativos/{rio_id}           — detail (Bearer-guarded, phone_e164 masked)
+  PATCH /api/v1/atrativos/{rio_id}/advance  — FSM advance (409 on conflict)
+  PATCH /api/v1/atrativos/{rio_id}/descarte — descarte atrativo
+
+Security tests (T-08-01, T-08-04):
+  - All GET + PATCH without Authorization: Bearer → 401
+  - phone_e164 never in atrativo response — only phone_masked
+
+All tests are integration-marked (require docker-compose Postgres).
+Bearer + steward secrets set before client construction via os.environ.
+
+100% offline — no real Celery/Places/LLM (T-08-SC).
+"""
+
+import os
+import uuid
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+# Test tokens — unique to this module to avoid collisions with other test modules.
+BEARER_TOKEN = "test-cms-bearer-token-08-07"
+STEWARD_SECRET = "test-cms-steward-secret-08-07"
+
+os.environ.setdefault(
+    "BRAVE_DB_URL",
+    "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave",
+)
+
+BEARER_HEADERS = {"Authorization": f"Bearer {BEARER_TOKEN}"}
+STEWARD_HEADERS = {"X-Steward-Secret": STEWARD_SECRET}
+
+
+@pytest.fixture(scope="module")
+def app():
+    """FastAPI app instance (module-scoped to avoid reimporting)."""
+    from brave.api.main import app as _app  # noqa: PLC0415
+    return _app
+
+
+@pytest.fixture(autouse=True)
+def _pin_test_secrets():
+    """Force our module-specific test secrets before each test.
+
+    pydantic-settings DashboardConfig + StewardConfig re-read os.environ on
+    every instantiation (called via Depends on each request). When pytest runs
+    multiple test modules in sequence, a prior module may have overwritten
+    BRAVE_DASHBOARD_BEARER_TOKEN with its own test token. This autouse fixture
+    re-pins our token before every test so auth never fails due to ordering.
+    """
+    os.environ["BRAVE_DASHBOARD_BEARER_TOKEN"] = BEARER_TOKEN
+    os.environ["BRAVE_STEWARD_SECRET"] = STEWARD_SECRET
+    yield
+
+
+@pytest.fixture(scope="module")
+def client(app):
+    """FastAPI TestClient — bare, no default auth headers (auth tests use explicit headers)."""
+    return TestClient(app, raise_server_exceptions=False)
+
+
+# ---------------------------------------------------------------------------
+# Test-data factory helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_nascente(db_session: Session, uf: str = "BA", entity_type: str = "destination") -> object:
+    """Create a minimal NascenteRecord for test data."""
+    from brave.core.models import NascenteRecord  # noqa: PLC0415
+
+    src_ref = f"mtur:{uf}:{uuid.uuid4().hex}"
+    nascente = NascenteRecord(
+        id=uuid.uuid4(),
+        source="mtur",
+        source_ref=src_ref,
+        entity_type=entity_type,
+        uf=uf,
+        payload={"name": f"Destino Teste {src_ref}"},
+        content_hash=f"hash:{src_ref}",
+        version=1,
+    )
+    db_session.add(nascente)
+    db_session.flush()
+    return nascente
+
+
+def _make_destino(
+    db_session: Session,
+    uf: str = "BA",
+    routing: str = "dlq",
+    score: float = 72.0,
+    normalized: dict | None = None,
+) -> object:
+    """Create a minimal RioRecord (entity_type=destination) for test data."""
+    from brave.core.models import NascenteRecord, RioRecord  # noqa: PLC0415
+
+    nascente = _make_nascente(db_session, uf=uf, entity_type="destination")
+    n = normalized or {"name": f"Destino {uf} {uuid.uuid4().hex[:6]}"}
+    rio = RioRecord(
+        id=uuid.uuid4(),
+        nascente_id=nascente.id,
+        entity_type="destination",
+        uf=uf,
+        routing=routing,
+        score=score,
+        canonical_key=f"destino:{uf}:{uuid.uuid4().hex[:8]}",
+        normalized=n,
+        score_breakdown={"origem": 30.0, "completude": 15.0, "corroboracao": 12.0},
+    )
+    db_session.add(rio)
+    db_session.flush()
+    return rio
+
+
+def _make_atrativo(
+    db_session: Session,
+    uf: str = "BA",
+    sub_state: str = "discovered",
+    routing: str = "in_progress",
+    score: float = 65.0,
+    normalized: dict | None = None,
+) -> object:
+    """Create a minimal RioRecord (entity_type=attraction) for test data."""
+    from brave.core.models import NascenteRecord, RioRecord  # noqa: PLC0415
+
+    nascente = _make_nascente(db_session, uf=uf, entity_type="attraction")
+    n = normalized or {"name": f"Atrativo {uf} {uuid.uuid4().hex[:6]}"}
+    rio = RioRecord(
+        id=uuid.uuid4(),
+        nascente_id=nascente.id,
+        entity_type="attraction",
+        uf=uf,
+        routing=routing,
+        sub_state=sub_state,
+        score=score,
+        canonical_key=f"atrativo:{uf}:{uuid.uuid4().hex[:8]}",
+        normalized=n,
+        score_breakdown={"origem": 20.0, "completude": 10.0},
+    )
+    db_session.add(rio)
+    db_session.flush()
+    return rio
+
+
+# ===========================================================================
+# DESTINOS — auth tests (no DB required; 401 fires before any DB work)
+# ===========================================================================
+
+
+def test_list_destinos_bearer_required(client):
+    """GET /api/v1/destinos without Authorization: Bearer → 401 (T-08-01)."""
+    r = client.get("/api/v1/destinos")
+    assert r.status_code == 401
+
+
+def test_get_destino_detail_bearer_required(client):
+    """GET /api/v1/destinos/{id} without Authorization: Bearer → 401 (T-08-01)."""
+    r = client.get(f"/api/v1/destinos/{uuid.uuid4()}")
+    assert r.status_code == 401
+
+
+def test_promote_destino_bearer_required(client):
+    """PATCH /api/v1/destinos/{id}/promote without auth → 401 (T-08-01)."""
+    r = client.patch(f"/api/v1/destinos/{uuid.uuid4()}/promote")
+    assert r.status_code == 401
+
+
+def test_descarte_destino_bearer_required(client):
+    """PATCH /api/v1/destinos/{id}/descarte without auth → 401 (T-08-01)."""
+    r = client.patch(f"/api/v1/destinos/{uuid.uuid4()}/descarte")
+    assert r.status_code == 401
+
+
+# ===========================================================================
+# DESTINOS — business logic (integration, require Postgres)
+# ===========================================================================
+
+
+@pytest.mark.integration
+def test_list_destinos_with_bearer(client, db_session: Session):
+    """GET /api/v1/destinos with Bearer → 200; {items, total, offset, limit}; item has expected keys."""
+    # Use rare UF code "AM" to reduce noise from other integration tests
+    rio = _make_destino(db_session, uf="AM", routing="dlq")
+    db_session.commit()
+
+    # Filter by the test UF to avoid pagination gaps when DB has many records
+    r = client.get("/api/v1/destinos?uf=AM&limit=500", headers=BEARER_HEADERS)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+
+    body = r.json()
+    assert "items" in body
+    assert "total" in body
+    assert "offset" in body
+    assert "limit" in body
+    assert body["total"] >= 1
+
+    # Verify our record is present with the expected shape
+    ids = [item["id"] for item in body["items"]]
+    assert str(rio.id) in ids, (
+        f"Newly created rio {rio.id} should appear in destinos list"
+    )
+
+    item = next(i for i in body["items"] if i["id"] == str(rio.id))
+    assert "routing" in item
+    assert "score" in item
+    assert "name" in item
+    assert "validation_pending" in item
+
+
+@pytest.mark.integration
+def test_list_destinos_filter_uf(client, db_session: Session):
+    """GET /api/v1/destinos?uf=AC returns only AC records (UF filter), not TO records."""
+    ac_rio = _make_destino(db_session, uf="AC")
+    to_rio = _make_destino(db_session, uf="TO")
+    db_session.commit()
+
+    r = client.get("/api/v1/destinos?uf=AC&limit=500", headers=BEARER_HEADERS)
+    assert r.status_code == 200
+
+    body = r.json()
+    ids = [item["id"] for item in body["items"]]
+    assert str(ac_rio.id) in ids, "AC record should appear in uf=AC filter"
+    assert str(to_rio.id) not in ids, "TO record should NOT appear in uf=AC filter"
+
+
+@pytest.mark.integration
+def test_get_destino_detail_404(client):
+    """GET /api/v1/destinos/{unknown_uuid} with Bearer → 404."""
+    r = client.get(f"/api/v1/destinos/{uuid.uuid4()}", headers=BEARER_HEADERS)
+    assert r.status_code == 404
+
+
+@pytest.mark.integration
+def test_get_destino_detail(client, db_session: Session):
+    """GET /api/v1/destinos/{rio_id} → 200; body has score_breakdown, audit_log, normalized."""
+    rio = _make_destino(db_session, uf="CE")
+    db_session.commit()
+
+    r = client.get(f"/api/v1/destinos/{rio.id}", headers=BEARER_HEADERS)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+
+    body = r.json()
+    assert "score_breakdown" in body, "detail must have score_breakdown"
+    assert isinstance(body["score_breakdown"], dict)
+    assert "audit_log" in body, "detail must have audit_log"
+    assert isinstance(body["audit_log"], list)
+    assert "normalized" in body
+
+
+@pytest.mark.integration
+def test_promote_destino_steward(client, db_session: Session):
+    """PATCH /api/v1/destinos/{id}/promote with steward secret → 202 {status, routing}.
+
+    Uses score values that push total to >=85 after validacao_humana=100 boost.
+    """
+    # Create destino with high scores to ensure promote reaches 'mar' after validation
+    normalized = {
+        "name": "Destino Para Promoção",
+        "origem_value": 100.0,
+        "completude_value": 100.0,
+        "corroboracao_value": 100.0,
+        "atualidade_value": 100.0,
+        # validacao_humana_value intentionally missing — validate_and_promote_rio adds it
+    }
+    rio = _make_destino(db_session, uf="PE", routing="dlq", normalized=normalized)
+    db_session.commit()
+
+    r = client.patch(f"/api/v1/destinos/{rio.id}/promote", headers=STEWARD_HEADERS)
+    assert r.status_code == 202, f"Expected 202, got {r.status_code}: {r.text}"
+
+    body = r.json()
+    assert body.get("status") == "accepted"
+    assert "routing" in body
+    assert body.get("rio_id") == str(rio.id)
+
+
+@pytest.mark.integration
+def test_descarte_destino(client, db_session: Session):
+    """PATCH /api/v1/destinos/{id}/descarte with Bearer → 200; routing==descarte."""
+    rio = _make_destino(db_session, uf="SP", routing="dlq")
+    db_session.commit()
+
+    r = client.patch(f"/api/v1/destinos/{rio.id}/descarte", headers=BEARER_HEADERS)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+
+    body = r.json()
+    assert body.get("routing") == "descarte"
+
+    # Verify DB state
+    db_session.refresh(rio)
+    assert rio.routing == "descarte"
+
+
+# ===========================================================================
+# ATRATIVOS — auth tests (no DB required)
+# ===========================================================================
+
+
+def test_list_atrativos_bearer_required(client):
+    """GET /api/v1/atrativos without Authorization: Bearer → 401 (T-08-01)."""
+    r = client.get("/api/v1/atrativos")
+    assert r.status_code == 401
+
+
+def test_get_atrativo_detail_bearer_required(client):
+    """GET /api/v1/atrativos/{id} without Authorization: Bearer → 401 (T-08-01)."""
+    r = client.get(f"/api/v1/atrativos/{uuid.uuid4()}")
+    assert r.status_code == 401
+
+
+def test_advance_atrativo_bearer_required(client):
+    """PATCH /api/v1/atrativos/{id}/advance without auth → 401 (T-08-01)."""
+    r = client.patch(
+        f"/api/v1/atrativos/{uuid.uuid4()}/advance",
+        json={"expected_state": "discovered", "next_state": "contacts_found"},
+    )
+    assert r.status_code == 401
+
+
+def test_descarte_atrativo_bearer_required(client):
+    """PATCH /api/v1/atrativos/{id}/descarte without auth → 401 (T-08-01)."""
+    r = client.patch(f"/api/v1/atrativos/{uuid.uuid4()}/descarte")
+    assert r.status_code == 401
+
+
+# ===========================================================================
+# ATRATIVOS — business logic (integration, require Postgres)
+# ===========================================================================
+
+
+@pytest.mark.integration
+def test_list_atrativos_with_bearer(client, db_session: Session):
+    """GET /api/v1/atrativos with Bearer → 200; items include sub_state key."""
+    # Use rare UF "AP" to reduce pagination noise
+    rio = _make_atrativo(db_session, uf="AP", sub_state="discovered")
+    db_session.commit()
+
+    r = client.get("/api/v1/atrativos?uf=AP&limit=500", headers=BEARER_HEADERS)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+
+    body = r.json()
+    assert "items" in body
+    assert body["total"] >= 1
+
+    ids = [item["id"] for item in body["items"]]
+    assert str(rio.id) in ids, (
+        f"Newly created atrativo {rio.id} should appear in list"
+    )
+
+    item = next(i for i in body["items"] if i["id"] == str(rio.id))
+    assert "sub_state" in item, "atrativo list item must have sub_state key"
+
+
+@pytest.mark.integration
+def test_list_atrativos_pii_masked(client, db_session: Session):
+    """GET /api/v1/atrativos/{id} → phone_e164 NOT in response; phone_masked present (T-08-04)."""
+    normalized = {
+        "name": "Mercado Modelo",
+        "contacts": {
+            "phone_e164": "+5571999990000",
+            "website": "https://mercadomodelo.com.br",
+        },
+    }
+    rio = _make_atrativo(db_session, uf="BA", normalized=normalized)
+    db_session.commit()
+
+    r = client.get(f"/api/v1/atrativos/{rio.id}", headers=BEARER_HEADERS)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+
+    # T-08-04: phone_e164 must never appear in the response
+    response_str = str(r.json())
+    assert "phone_e164" not in response_str, (
+        "phone_e164 MUST NOT appear anywhere in atrativo response (T-08-04 / LGPD)"
+    )
+    assert "phone_masked" in response_str, (
+        "phone_masked MUST appear in atrativo response (T-08-04)"
+    )
+
+
+@pytest.mark.integration
+def test_get_atrativo_detail_contacts_masked(client, db_session: Session):
+    """GET /api/v1/atrativos/{id} normalized.contacts has phone_masked not phone_e164 (T-08-04)."""
+    phone_raw = "+5571888880000"
+    normalized = {
+        "name": "Parque Estadual",
+        "contacts": {"phone_e164": phone_raw, "email": "parque@ba.gov.br"},
+    }
+    rio = _make_atrativo(db_session, uf="BA", normalized=normalized)
+    db_session.commit()
+
+    r = client.get(f"/api/v1/atrativos/{rio.id}", headers=BEARER_HEADERS)
+    assert r.status_code == 200
+
+    body = r.json()
+    contacts = body["normalized"].get("contacts", {})
+    assert "phone_e164" not in contacts, (
+        "normalized.contacts MUST NOT have phone_e164 key (T-08-04)"
+    )
+    assert "phone_masked" in contacts, (
+        "normalized.contacts MUST have phone_masked key (T-08-04)"
+    )
+    # Raw value must not be present anywhere
+    assert phone_raw not in str(body), (
+        "Raw E.164 phone number MUST NOT appear in response (T-08-04 / LGPD)"
+    )
+
+
+@pytest.mark.integration
+def test_advance_atrativo_conflict(client, db_session: Session):
+    """PATCH /api/v1/atrativos/{id}/advance → 409 when expected_state != actual sub_state."""
+    # actual sub_state is "contacts_found"; we send expected_state="discovered" → mismatch → 409
+    rio = _make_atrativo(db_session, sub_state="contacts_found")
+    db_session.commit()
+
+    r = client.patch(
+        f"/api/v1/atrativos/{rio.id}/advance",
+        headers=BEARER_HEADERS,
+        json={"expected_state": "discovered", "next_state": "contacts_found"},
+    )
+    assert r.status_code == 409, (
+        f"Expected 409 on sub_state mismatch, got {r.status_code}: {r.text}"
+    )
+
+
+@pytest.mark.integration
+def test_advance_atrativo_success(client, db_session: Session):
+    """PATCH /api/v1/atrativos/{id}/advance → 200; sub_state advanced when match."""
+    rio = _make_atrativo(db_session, sub_state="discovered")
+    db_session.commit()
+
+    r = client.patch(
+        f"/api/v1/atrativos/{rio.id}/advance",
+        headers=BEARER_HEADERS,
+        json={"expected_state": "discovered", "next_state": "contacts_found"},
+    )
+    assert r.status_code == 200, (
+        f"Expected 200 on valid advance, got {r.status_code}: {r.text}"
+    )
+
+    body = r.json()
+    assert body.get("sub_state") == "contacts_found", (
+        f"Expected sub_state='contacts_found', got {body.get('sub_state')!r}"
+    )
+
+
+@pytest.mark.integration
+def test_descarte_atrativo(client, db_session: Session):
+    """PATCH /api/v1/atrativos/{id}/descarte with Bearer → 200; routing==dlq."""
+    rio = _make_atrativo(db_session, sub_state="discovered")
+    db_session.commit()
+
+    r = client.patch(f"/api/v1/atrativos/{rio.id}/descarte", headers=BEARER_HEADERS)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+
+    body = r.json()
+    assert body.get("routing") == "dlq", (
+        f"Expected routing='dlq', got {body.get('routing')!r}"
+    )
