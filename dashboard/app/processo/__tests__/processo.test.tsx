@@ -112,6 +112,35 @@ describe("/processo page", () => {
     });
   });
 
+  it("WR-06: DLQ tile renders '500+' when the list is capped at the fetch limit", async () => {
+    // 500 items === the page cap → true count is unknown and at-least 500.
+    const cappedDlq = Array.from({ length: 500 }, (_, i) => ({
+      ...sampleListItems[0],
+      id: `cap-${i}`,
+    }));
+
+    server.use(
+      workersSuccess(),
+      failuresSuccess(),
+      dlqListSuccess(cappedDlq),
+      gateListSuccess(sampleGateItems),
+    );
+
+    renderWithClient(<ProcessoPage />);
+
+    await waitFor(() => {
+      const dlqTile = screen.getByTestId("tile-dlq-pending");
+      expect(dlqTile.textContent).toContain("500+");
+    });
+
+    // Gate tile (2 items, well under cap) still shows an exact count.
+    await waitFor(() => {
+      const gateTile = screen.getByTestId("tile-gate-pending");
+      expect(gateTile.textContent).toContain("2");
+      expect(gateTile.textContent).not.toContain("+");
+    });
+  });
+
   it("renders the stage funnel section header", async () => {
     server.use(
       workersSuccess(),

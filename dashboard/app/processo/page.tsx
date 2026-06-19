@@ -38,6 +38,11 @@ import { WORKERS_REFETCH_INTERVAL_MS } from "@/lib/workers-api";
  * atrativos-api.ts — those are built by plans 08-04/08-05 in the same wave.
  * Existing endpoints (dlq.py + atrativos_gate.py) provide the required counts.
  */
+// WR-06: the DLQ and gate counts derive from a list fetched with this cap.
+// Until the endpoints expose a real total, surface "500+" when the returned
+// length hits the cap so operators are not misled by a silent undercount.
+const HUMAN_PENDING_LIMIT = 500;
+
 export default function ProcessoPage() {
   // DLQ pending count — uses existing DLQ list endpoint
   const {
@@ -45,7 +50,7 @@ export default function ProcessoPage() {
     isPending: dlqPending,
   } = useQuery({
     queryKey: dlqKeys.list(),
-    queryFn: () => fetchDlqList(undefined, undefined, 500),
+    queryFn: () => fetchDlqList(undefined, undefined, HUMAN_PENDING_LIMIT),
     refetchInterval: WORKERS_REFETCH_INTERVAL_MS,
     refetchOnWindowFocus: false,
   });
@@ -56,13 +61,17 @@ export default function ProcessoPage() {
     isPending: gatePending,
   } = useQuery({
     queryKey: gateKeys.list(),
-    queryFn: () => fetchGateQueue(undefined, 500),
+    queryFn: () => fetchGateQueue(undefined, HUMAN_PENDING_LIMIT),
     refetchInterval: WORKERS_REFETCH_INTERVAL_MS,
     refetchOnWindowFocus: false,
   });
 
   const dlqTotal = dlqItems?.length ?? null;
   const gateTotal = gateItems?.length ?? null;
+  // WR-06: when the list is capped, the true count is unknown and at-least the
+  // limit — flag it so the tile renders "500+" instead of a misleading "500".
+  const dlqCapped = (dlqItems?.length ?? 0) >= HUMAN_PENDING_LIMIT;
+  const gateCapped = (gateItems?.length ?? 0) >= HUMAN_PENDING_LIMIT;
 
   // Stage funnel — group gate items by sub_state to show pipeline distribution
   const funnelData = buildFunnelData(gateItems ?? []);
@@ -86,6 +95,7 @@ export default function ProcessoPage() {
         <HumanPendingTile
           label="DLQ pendente"
           count={dlqTotal}
+          capped={dlqCapped}
           isPending={dlqPending}
           href="/dlq"
           testId="tile-dlq-pending"
@@ -93,6 +103,7 @@ export default function ProcessoPage() {
         <HumanPendingTile
           label="Gate WhatsApp"
           count={gateTotal}
+          capped={gateCapped}
           isPending={gatePending}
           href="/gate"
           testId="tile-gate-pending"
@@ -142,6 +153,8 @@ export default function ProcessoPage() {
 interface HumanPendingTileProps {
   label: string;
   count: number | null;
+  /** WR-06: list was fetched at its cap — true count is unknown and >= count. */
+  capped?: boolean;
   isPending: boolean;
   href: string;
   testId: string;
@@ -150,15 +163,20 @@ interface HumanPendingTileProps {
 function HumanPendingTile({
   label,
   count,
+  capped = false,
   isPending,
   href,
   testId,
 }: HumanPendingTileProps) {
+  // WR-06: render "N+" when the underlying list hit its fetch cap, so a capped
+  // queue (e.g. 500 of more) is never displayed as an exact, misleading count.
+  const display =
+    count === null ? "—" : capped ? `${count}+` : String(count);
   return (
     <a
       href={href}
       data-testid={testId}
-      aria-label={`${label}: ${count ?? "carregando"}`}
+      aria-label={`${label}: ${count === null ? "carregando" : display}`}
       className="flex flex-col gap-1 rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
     >
       <span className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -168,7 +186,7 @@ function HumanPendingTile({
         <Skeleton className="h-8 w-12 rounded" />
       ) : (
         <span className="text-[28px] font-semibold leading-none tabular-nums">
-          {count ?? "—"}
+          {display}
         </span>
       )}
     </a>
