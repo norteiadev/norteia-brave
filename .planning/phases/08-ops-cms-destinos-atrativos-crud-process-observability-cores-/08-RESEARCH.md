@@ -908,22 +908,25 @@ export function workersBrokerDown() {
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **oklch vs hsl in Tailwind v4 CSS vars (D-01)**
    - What we know: current globals.css uses `oklch()` for all token values; norteia-frontend uses `hsl()`.
    - What's unclear: whether mixing `hsl()` CSS var values with Tailwind v4's `oklch`-based opacity modifier system causes breakage in `bg-primary/50` style utilities.
    - Recommendation: Test after the token swap with a simple `bg-primary/50` and `text-primary/80` in a component. If opacity modifiers break, convert the HSL values to oklch equivalents.
+   - RESOLVED: 08-03 uses oklch token values (Tailwind v4 opacity-modifier safety).
 
 2. **Destinos "source" field in list**
    - What we know: `source` lives in `NascenteRecord.source`, not in `RioRecord` directly. A join to nascente for filtering adds query complexity.
    - What's unclear: how critical is source filtering for the initial list? For the MVP, source can be read from `rio.nascente.source` via the ORM relationship (already defined on `RioRecord`) and included in the response without a filter-time join.
    - Recommendation: Include source in the response by accessing `rio.nascente.source` (lazy load — acceptable for modest list sizes), but defer source-filter query optimization.
+   - RESOLVED: 08-01 lazy-loads source from NascenteRecord for the list, no eager join.
 
 3. **AuditLog coverage for nascente/Rio processing steps**
    - What we know: pipeline processing (ingest, normalize, score, route) does NOT write AuditLog rows. Only steward actions and pipeline agents (atrativo discovery, sub_state advances) do.
    - What's unclear: should JourneyStepper show steps 1-2 (Nascente → Rio score) as "inferred completed" from the record existing, or is there a separate event source?
    - Recommendation: Derive steps 1-2 from record existence (`nascente_id` is populated = Step 1 done; `score` is populated = Step 2 done). No AuditLog row expected for these steps. Document this in the JourneyStepper implementation notes.
+   - RESOLVED: 08-03/08-06 JourneyStepper derives steps 1–2 (Nascente→Rio) from record existence, not audit rows.
 
 ---
 
