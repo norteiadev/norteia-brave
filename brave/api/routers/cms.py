@@ -55,22 +55,52 @@ class EditBody(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _safe_contacts(contacts: dict | None) -> dict | None:
+    """Return an allow-listed, PII-minimized contacts summary (T-08-04, LGPD R3).
+
+    The Rio normalized payload stores the owner's raw contact data under
+    normalized["contacts"] via the ContactResult schema: phone_e164, website,
+    ig_handle, email. Of these, phone_e164, ig_handle, and email are personal
+    contact data (PII) of the owner/responsável and MUST NOT be returned to the
+    dashboard verbatim under the data-minimization contract (R3).
+
+    This builds an explicit allow-list rather than returning the raw dict:
+      - website        → passed through (public, non-PII)
+      - phone_e164     → replaced with phone_masked (mask_phone)
+      - email/ig_handle → DROPPED entirely (no masked surrogate is needed by the UI)
+
+    Any other unexpected contact fields are dropped (deny-by-default). Returns
+    None when there are no contacts so callers can omit the field cleanly.
+    """
+    if not isinstance(contacts, dict):
+        return None
+    out: dict = {}
+    if contacts.get("website") is not None:
+        out["website"] = contacts.get("website")
+    if "phone_e164" in contacts:
+        out["phone_masked"] = mask_phone(contacts.get("phone_e164"))
+    return out or None
+
+
 def _safe_normalized(normalized: dict | None) -> dict:
-    """Return a copy of the Rio normalized dict with phone_e164 masked (T-08-04, LGPD R3).
+    """Return a copy of the Rio normalized dict with the contacts sub-dict minimized.
 
-    The Rio normalized payload stores the owner's raw E.164 number at
-    normalized["contacts"]["phone_e164"]. This function MUST be called on every
-    atrativo response path — phone_e164 must never be returned to the caller.
-    Replace it with phone_masked so the dashboard receives only the masked form.
+    The Rio normalized payload stores the owner's raw contact data at
+    normalized["contacts"]. This function MUST be called on every atrativo response
+    path — owner PII (phone_e164, email, ig_handle) must never be returned to the
+    caller. Delegates to _safe_contacts for the allow-listed contacts summary.
 
-    Mirrors atrativos_gate.py _safe_normalized exactly (same contract, no divergence).
+    Mirrors atrativos_gate.py masking contract (phone masked) and additionally
+    drops non-website contact PII (email, ig_handle) per CR-01.
     """
     n = dict(normalized or {})
     contacts = n.get("contacts")
-    if isinstance(contacts, dict) and "phone_e164" in contacts:
-        contacts = dict(contacts)
-        contacts["phone_masked"] = mask_phone(contacts.pop("phone_e164", None))
-        n["contacts"] = contacts
+    if isinstance(contacts, dict):
+        safe = _safe_contacts(contacts)
+        if safe is None:
+            n.pop("contacts", None)
+        else:
+            n["contacts"] = safe
     return n
 
 
@@ -437,8 +467,9 @@ def list_atrativos(
             "validation_pending": rio.sub_state == "aguardando_consulta_whatsapp",
             "mar_id": None,  # atrativos don't have direct mar_id in normalized
             "parent_mar_id": (rio.normalized or {}).get("parent_mar_id"),
-            # T-08-04: never expose raw contacts — apply _safe_normalized
-            "contacts_summary": _safe_normalized(rio.normalized).get("contacts"),
+            # T-08-04 / CR-01: never expose raw contacts — allow-listed summary
+            # (website + phone_masked only; email/ig_handle dropped as owner PII)
+            "contacts_summary": _safe_contacts((rio.normalized or {}).get("contacts")),
         }
         for rio in rows
     ]

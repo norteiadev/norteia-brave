@@ -415,6 +415,53 @@ def test_get_atrativo_detail_contacts_masked(client, db_session: Session):
 
 
 @pytest.mark.integration
+def test_atrativo_owner_email_never_leaked(client, db_session: Session):
+    """CR-01: owner email (and ig_handle) must NOT appear in list or detail responses (LGPD R3)."""
+    owner_email = "dono.secreto@example.com"
+    owner_ig = "@dono_secreto"
+    normalized = {
+        "name": "Cachoeira Secreta",
+        "contacts": {
+            "phone_e164": "+5571777770000",
+            "website": "https://cachoeirasecreta.com.br",
+            "email": owner_email,
+            "ig_handle": owner_ig,
+        },
+    }
+    rio = _make_atrativo(db_session, uf="AP", normalized=normalized)
+    db_session.commit()
+
+    # Detail path
+    r_detail = client.get(f"/api/v1/atrativos/{rio.id}", headers=BEARER_HEADERS)
+    assert r_detail.status_code == 200
+    detail_str = str(r_detail.json())
+    assert owner_email not in detail_str, (
+        "CR-01: owner email MUST NOT appear in atrativo detail response (LGPD R3)"
+    )
+    assert owner_ig not in detail_str, (
+        "CR-01: owner ig_handle MUST NOT appear in atrativo detail response (LGPD R3)"
+    )
+    assert "email" not in r_detail.json()["normalized"].get("contacts", {})
+    # Website (non-PII) is still surfaced
+    assert "https://cachoeirasecreta.com.br" in detail_str
+
+    # List path
+    r_list = client.get("/api/v1/atrativos?uf=AP&limit=500", headers=BEARER_HEADERS)
+    assert r_list.status_code == 200
+    list_str = str(r_list.json())
+    assert owner_email not in list_str, (
+        "CR-01: owner email MUST NOT appear in atrativo list response (LGPD R3)"
+    )
+    assert owner_ig not in list_str, (
+        "CR-01: owner ig_handle MUST NOT appear in atrativo list response (LGPD R3)"
+    )
+    item = next(i for i in r_list.json()["items"] if i["id"] == str(rio.id))
+    summary = item["contacts_summary"] or {}
+    assert "email" not in summary and "ig_handle" not in summary
+    assert summary.get("website") == "https://cachoeirasecreta.com.br"
+
+
+@pytest.mark.integration
 def test_advance_atrativo_conflict(client, db_session: Session):
     """PATCH /api/v1/atrativos/{id}/advance → 409 when expected_state != actual sub_state."""
     # actual sub_state is "contacts_found"; we send expected_state="discovered" → mismatch → 409
