@@ -68,8 +68,11 @@ def _map_categoria(raw: str) -> str:
     """
     raw_clean = raw.strip().upper()
     # Old nomenclature: A and B → Oferta Principal
-    # New nomenclature: "turísticos"/"turisticos" → Oferta Principal
-    if raw_clean in ("A", "B") or "TURÍSTICOS" in raw_clean or "TURISTICOS" in raw_clean:
+    # New nomenclature: "Município turístico" (singular — the live 2025 portal
+    # string) / "Municípios turísticos" (plural) → Oferta Principal. Match the
+    # singular stem "TURÍSTICO" so both forms hit; "TURÍSTICA" (feminine, in the
+    # Complementar label "oferta turística complementar") does NOT contain it.
+    if raw_clean in ("A", "B") or "TURÍSTICO" in raw_clean or "TURISTICO" in raw_clean:
         return "Oferta Principal"
     # Old nomenclature: C and D → Complementar
     # New nomenclature: "complementar" → Complementar
