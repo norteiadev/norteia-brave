@@ -11,6 +11,7 @@ import {
 } from "recharts";
 
 import { JourneyStepper } from "@/components/cms/JourneyStepper";
+import { EngineControl } from "@/components/engine/EngineControl";
 import { FailuresPanel } from "@/components/processo/FailuresPanel";
 import { WorkerBoard } from "@/components/processo/WorkerBoard";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -90,6 +91,9 @@ export default function ProcessoPage() {
           Workers · falhas · fila humana · funil · 10s
         </span>
       </header>
+
+      {/* Engine control — operator start/stop of the sweep */}
+      <EngineControl />
 
       {/* WorkerBoard */}
       <section>

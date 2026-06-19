@@ -16,6 +16,7 @@ import {
   workersBrokerDown,
   workersSuccess,
 } from "@/mocks/handlers/workers";
+import { engineStatus } from "@/mocks/handlers/engine";
 
 import { renderWithClient } from "../../../components/dlq/__tests__/test-utils";
 
@@ -38,6 +39,7 @@ describe("/processo page", () => {
     server.use(
       workersSuccess(),
       failuresSuccess(),
+      engineStatus(),
       dlqListSuccess(),
       gateListSuccess(),
     );
@@ -54,6 +56,7 @@ describe("/processo page", () => {
     server.use(
       workersBrokerDown(),
       failuresSuccess(),
+      engineStatus(),
       dlqListSuccess(),
       gateListSuccess(),
     );
@@ -71,6 +74,7 @@ describe("/processo page", () => {
     server.use(
       workersSuccess(),
       failuresSuccess(),
+      engineStatus(),
       dlqListSuccess(),
       gateListSuccess(),
     );
@@ -89,6 +93,7 @@ describe("/processo page", () => {
     server.use(
       workersSuccess(),
       failuresSuccess(),
+      engineStatus(),
       dlqListSuccess(sampleListItems),
       gateListSuccess(sampleGateItems),
     );
@@ -122,6 +127,7 @@ describe("/processo page", () => {
     server.use(
       workersSuccess(),
       failuresSuccess(),
+      engineStatus(),
       dlqListSuccess(cappedDlq),
       gateListSuccess(sampleGateItems),
     );
@@ -145,6 +151,7 @@ describe("/processo page", () => {
     server.use(
       workersSuccess(),
       failuresSuccess(),
+      engineStatus(),
       dlqListSuccess(),
       gateListSuccess(sampleGateItems),
     );
@@ -165,6 +172,7 @@ describe("/processo page", () => {
     server.use(
       workersSuccess(),
       failuresSuccess(),
+      engineStatus(),
       dlqListSuccess(),
       gateListSuccess([]),
     );
@@ -181,6 +189,7 @@ describe("/processo page", () => {
     server.use(
       workersSuccess(),
       failuresSuccess(),
+      engineStatus(),
       dlqListSuccess(),
       gateListSuccess(),
     );
@@ -196,6 +205,7 @@ describe("/processo page", () => {
     server.use(
       workersSuccess(),
       failuresSuccess(),
+      engineStatus(),
       dlqListSuccess(),
       gateListSuccess(),
     );
