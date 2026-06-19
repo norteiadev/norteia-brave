@@ -300,6 +300,39 @@ def test_descarte_destino(client, db_session: Session):
     assert rio.routing == "descarte"
 
 
+@pytest.mark.integration
+def test_descarte_destino_blocked_when_mar_exists(client, db_session: Session):
+    """WR-05: descarte on an already-promoted destino (MarRecord exists) → 409.
+
+    Plain descarte does not depublish the canonical MarRecord nor notify
+    norteia-api, so it must be refused for promoted records to preserve the
+    Mar trust invariant.
+    """
+    from brave.core.models import MarRecord  # noqa: PLC0415
+
+    rio = _make_destino(db_session, uf="RR", routing="mar", score=90.0)
+    db_session.flush()
+    mar = MarRecord(
+        id=uuid.uuid4(),
+        rio_id=rio.id,
+        entity_type="destination",
+        source_ref=f"mar:test:{uuid.uuid4().hex[:10]}",
+        canonical={"name": "Destino Promovido"},
+        provenance={"source": "test"},
+        reliability_score=90.0,
+        score_version="test-v1",
+    )
+    db_session.add(mar)
+    db_session.commit()
+
+    r = client.patch(f"/api/v1/destinos/{rio.id}/descarte", headers=BEARER_HEADERS)
+    assert r.status_code == 409, f"Expected 409, got {r.status_code}: {r.text}"
+
+    # Routing must be unchanged — descarte was refused
+    db_session.refresh(rio)
+    assert rio.routing == "mar", "routing must remain 'mar' when descarte is blocked"
+
+
 # ===========================================================================
 # ATRATIVOS — auth tests (no DB required)
 # ===========================================================================

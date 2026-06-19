@@ -275,14 +275,6 @@ def promote_destino(
     validate_and_promote_rio(db, rio)
     db.refresh(rio)
 
-    if rio.routing == "mar":
-        try:
-            from brave.tasks.pipeline import push_destination_task
-
-            push_destination_task.delay(str(rio_id))
-        except Exception:
-            pass  # No broker in tests/dev; promote_to_mar already done by service
-
     write_audit(
         session=db,
         action="dlq_validated",
@@ -292,6 +284,23 @@ def promote_destino(
         after_state={"routing": rio.routing, "score": float(rio.score or 0)},
         actor="steward",
     )
+
+    # WR-01: commit + refresh BEFORE dispatching the Celery push. The worker
+    # opens its own session and early-returns when routing != "mar"; dispatching
+    # while the request transaction is still open is a read-before-commit race
+    # that silently drops the push to norteia-api in production. Guard on the
+    # committed routing == "mar".
+    db.commit()
+    db.refresh(rio)
+
+    if rio.routing == "mar":
+        try:
+            from brave.tasks.pipeline import push_destination_task
+
+            push_destination_task.delay(str(rio_id))
+        except Exception:
+            pass  # No broker in tests/dev; promote_to_mar already done by service
+
     return {"status": "accepted", "rio_id": str(rio_id), "routing": rio.routing}
 
 
@@ -311,6 +320,23 @@ def descarte_destino(
     rio = db.get(RioRecord, rio_id)
     if rio is None:
         raise HTTPException(status_code=404, detail="RioRecord not found")
+
+    # WR-05: refuse to descartar a destino that already reached Mar. Plain
+    # descarte only flips routing on the Rio — it does NOT remove/depublish the
+    # canonical MarRecord nor notify norteia-api, so the record would stay live
+    # downstream while the CMS shows routing="descarte" (violates the Mar
+    # trust invariant). Block with 409; a dedicated retract/depublish flow is
+    # required for already-promoted records (out of scope here).
+    existing_mar = db.scalar(select(MarRecord).where(MarRecord.rio_id == rio.id))
+    if existing_mar is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Destino já promovido ao Mar (MarRecord existe) não pode ser "
+                "descartado diretamente — use um fluxo de retract/depublicação "
+                "que remova o registro canônico e notifique a norteia-api."
+            ),
+        )
 
     before_state = {"routing": rio.routing, "dlq_reason": rio.dlq_reason}
     rio.routing = "descarte"
@@ -349,25 +375,39 @@ def reprocess_destino(
     if rio is None:
         raise HTTPException(status_code=404, detail="RioRecord not found")
 
+    before_state = {"routing": rio.routing, "dlq_reason": rio.dlq_reason}
+
+    # WR-07: narrow the fallback to broker-connection errors only. A bare
+    # `except Exception` swallowed import/runtime errors as if the broker were
+    # absent, and the audit row was written unconditionally — asserting a
+    # reprocess that may never have happened. Only fall back to the synchronous
+    # path on broker-connection failures, and only write the audit row AFTER a
+    # path is confirmed dispatched/executed (annotated with the dispatch mode).
+    from kombu.exceptions import OperationalError as KombuOperationalError
+
     try:
         from brave.tasks.pipeline import reprocess_record_task
 
         reprocess_record_task.delay(str(rio_id))
-    except Exception:
+        dispatch_mode = "celery"
+    except (KombuOperationalError, ConnectionError, OSError):
+        # Broker unreachable (offline tests/dev) → run synchronously.
         from brave.config.settings import ScoreConfig
         from brave.core.rio.routing import reprocess_record
 
         reprocess_record(db, rio_id, ScoreConfig())
+        dispatch_mode = "synchronous"
 
     write_audit(
         session=db,
         action="dlq_reprocessed",
         entity_type=rio.entity_type,
         record_id=rio.id,
-        before_state={"routing": rio.routing, "dlq_reason": rio.dlq_reason},
+        before_state=before_state,
+        after_state={"dispatch_mode": dispatch_mode},
         actor="steward",
     )
-    return {"status": "accepted", "rio_id": str(rio_id)}
+    return {"status": "accepted", "rio_id": str(rio_id), "dispatch_mode": dispatch_mode}
 
 
 @router.patch(
