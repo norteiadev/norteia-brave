@@ -10,6 +10,7 @@ POST  /api/v1/dlq/validate-batch          — batch validate all DLQ records for
 import hmac
 import uuid
 
+import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,6 +22,7 @@ from brave.core.models import RioRecord
 from brave.observability.audit import write_audit
 
 router = APIRouter()
+logger = structlog.get_logger(__name__)
 
 
 def require_steward(
@@ -162,8 +164,27 @@ def validate_dlq_record(
             from brave.tasks.pipeline import push_destination_task
 
             push_destination_task.delay(str(rio_id))
-        except Exception:
-            pass  # Sync fallback: no broker in tests/dev; promote_to_mar already done by service
+        except Exception as exc:
+            # Broker-down must not silently leave a Mar record unpublished. Under
+            # run_real_externals, surface it (log + 503) so get_db rolls the whole
+            # validate back — the steward retries once the broker is reachable.
+            # Offline (tests/dev), no broker is expected; promote_to_mar already
+            # done by the service, so the missing push is an expected no-op.
+            from brave.config.settings import AppConfig
+
+            if AppConfig().run_real_externals:
+                logger.error(
+                    "dlq_push_dispatch_failed",
+                    rio_id=str(rio_id),
+                    error=str(exc),
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Validation not committed — Mar push dispatch failed "
+                        "(broker unavailable). Retry once the broker is reachable."
+                    ),
+                ) from exc
 
     write_audit(
         session=db,
@@ -221,8 +242,27 @@ def validate_batch(
                 from brave.tasks.pipeline import push_destination_task
 
                 push_destination_task.delay(str(rio.id))
-            except Exception:
-                pass  # No broker in tests/dev; promote_to_mar already done by service
+            except Exception as exc:
+                # Same contract as single validate: under run_real_externals a
+                # broker-down push surfaces (log + 503), rolling the whole batch
+                # back so it is retryable rather than leaving records promoted-
+                # but-unpublished with no log. Offline it is an expected no-op.
+                from brave.config.settings import AppConfig
+
+                if AppConfig().run_real_externals:
+                    logger.error(
+                        "dlq_push_dispatch_failed",
+                        rio_id=str(rio.id),
+                        error=str(exc),
+                    )
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "Batch validation not committed — Mar push dispatch "
+                            "failed (broker unavailable). Retry once the broker "
+                            "is reachable."
+                        ),
+                    ) from exc
 
         write_audit(
             session=db,

@@ -267,6 +267,118 @@ def test_validate_batch_limit_bounds(client):
 
 
 # ---------------------------------------------------------------------------
+# Broker-down on Mar push — surface (503 + rollback), never silently drop.
+# Mirrors the atrativos_gate outreach-dispatch contract: under
+# run_real_externals a failed push must NOT leave a record promoted-to-Mar-but-
+# unpublished with no log. Offline (default) the failure is an expected no-op.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_validate_returns_503_when_push_fails_under_real_externals(
+    client, db_session, monkeypatch
+):
+    """A broker-down push during validate surfaces 503 and rolls the promotion back.
+
+    Under run_real_externals=True, a failed push_destination_task.delay must not
+    silently drop: the steward gets a 503 and the validate is NOT committed
+    (record stays 'dlq', no dlq_validated audit), so it is safely retryable.
+    """
+    from sqlalchemy import select
+
+    from brave.tasks.pipeline import push_destination_task
+
+    rio = _make_dlq_record(db_session, corroboracao=50.0)
+    rio_id = rio.id
+
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+
+    def _broker_down(*args, **kwargs):
+        raise RuntimeError("broker unreachable (simulated)")
+
+    monkeypatch.setattr(push_destination_task, "delay", _broker_down)
+
+    r = client.patch(f"/api/v1/dlq/{rio_id}/validate")
+    assert r.status_code == 503
+
+    # Rollback proof: promotion + audit must NOT persist (retryable).
+    db_session.expire_all()
+    reloaded = db_session.get(RioRecord, rio_id)
+    assert reloaded is not None
+    assert reloaded.routing == "dlq", (
+        f"expected rollback to 'dlq' but got '{reloaded.routing}' — a failed push "
+        "must not leave the record promoted-but-unpublished"
+    )
+    audit = db_session.scalar(
+        select(AuditLog).where(
+            AuditLog.action == "dlq_validated", AuditLog.record_id == rio_id
+        )
+    )
+    assert audit is None, "no dlq_validated audit row should persist on a rolled-back validate"
+
+
+@pytest.mark.integration
+def test_validate_swallows_push_failure_offline(client, db_session, monkeypatch):
+    """Offline (run_real_externals=False), a broker-down push is an expected no-op → 202.
+
+    The local promote_to_mar already happened; no broker is expected in tests/dev,
+    so the missing push is swallowed and the steward still gets 202.
+    """
+    from brave.tasks.pipeline import push_destination_task
+
+    rio = _make_dlq_record(db_session, corroboracao=50.0)
+    rio_id = rio.id
+
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "false")
+
+    def _broker_down(*args, **kwargs):
+        raise RuntimeError("broker unreachable (simulated)")
+
+    monkeypatch.setattr(push_destination_task, "delay", _broker_down)
+
+    r = client.patch(f"/api/v1/dlq/{rio_id}/validate")
+    assert r.status_code == 202
+
+    db_session.expire_all()
+    reloaded = db_session.get(RioRecord, rio_id)
+    assert reloaded.routing == "mar", "offline promotion still commits despite no broker"
+
+
+@pytest.mark.integration
+def test_validate_batch_returns_503_when_push_fails_under_real_externals(
+    client, db_session, monkeypatch
+):
+    """A broker-down push during batch validate surfaces 503 and rolls the batch back."""
+    from brave.tasks.pipeline import push_destination_task
+
+    # Scope the proof to THIS test's records — the shared docker DB accumulates
+    # 'mar' rows from other runs, so a global PE count would be flaky.
+    rio_a = _make_dlq_record(db_session, uf="PE", corroboracao=50.0)
+    rio_b = _make_dlq_record(db_session, uf="PE", corroboracao=50.0)
+    ids = [rio_a.id, rio_b.id]
+
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+
+    def _broker_down(*args, **kwargs):
+        raise RuntimeError("broker unreachable (simulated)")
+
+    monkeypatch.setattr(push_destination_task, "delay", _broker_down)
+
+    r = client.post("/api/v1/dlq/validate-batch?uf=PE&entity_type=destination")
+    assert r.status_code == 503
+
+    # Whole batch rolled back: this test's records stay 'dlq' (retryable).
+    db_session.expire_all()
+    for rio_id in ids:
+        reloaded = db_session.get(RioRecord, rio_id)
+        assert reloaded is not None
+        assert reloaded.routing == "dlq", (
+            f"record {rio_id} should roll back to 'dlq' on batch push failure, "
+            f"got '{reloaded.routing}'"
+        )
+
+
+# ---------------------------------------------------------------------------
 # NotebookLMIngest corroboration boost (D-02, DEST-02, RISK-02)
 # ---------------------------------------------------------------------------
 
