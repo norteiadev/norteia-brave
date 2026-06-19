@@ -43,3 +43,10 @@ app.include_router(dashboard_router)
 
 # Phase 5: On-demand ops trigger — POST /api/v1/sweep (ORCH-03, D-05; Bearer-guarded)
 app.include_router(sweep_router)
+
+# Phase 8: CMS CRUD + Workers observability
+from brave.api.routers.cms import router as cms_router
+from brave.api.routers.workers import router as workers_router
+
+app.include_router(cms_router)
+app.include_router(workers_router)
