@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: milestone_complete
-stopped_at: Milestone complete (Phase 08 was final phase)
-last_updated: 2026-06-19T13:11:49.428Z
-last_activity: 2026-06-19 -- Phase 08 execution started
+status: executing
+stopped_at: Completed 07-06-PLAN.md
+last_updated: "2026-06-19T15:11:29.493Z"
+last_activity: 2026-06-19 -- Phase 09 execution started
 progress:
-  total_phases: 8
-  completed_phases: 7
-  total_plans: 46
+  total_phases: 9
+  completed_phases: 8
+  total_plans: 47
   completed_plans: 47
-  percent: 88
+  percent: 89
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Only validated, reliability-scored canonical records ("Mar", ≥85%) reach the platform — the Nascente→Rio→Mar pipeline with §7.6 scoring and a DLQ gate is the single thing that must work.
-**Current focus:** Milestone complete
+**Current focus:** Phase 09 — close-gap-int-blocker-01-null-places-llm-apify-clients-for-o
 
 ## Current Position
 
-Phase: 08
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-06-19
+Phase: 09 (close-gap-int-blocker-01-null-places-llm-apify-clients-for-o) — EXECUTING
+Plan: 1 of 1
+Status: Executing Phase 09
+Last activity: 2026-06-19 -- Phase 09 execution started
 
 Progress: [██████████] 100%
 
@@ -95,6 +95,7 @@ Progress: [██████████] 100%
 
 - Phase 7 added: Real Places Hardening + Targeted Atrativos Discovery + Mtur Refresh — live load-test attempt (10 destinos × 10 atrativos) surfaced real Places gaps: `google-maps-places` missing (installed), `RealPlacesClient` omits `X-Goog-FieldMask` (live 400), `text_search` returns no município → `_resolve_parent_destino` mislinks atrativos to an arbitrary Mar parent, `DiscoveryAgent.produce(uf)` is a UF-wide sweep (no per-destino volume), Mtur seed is a 16-row sample. Fix the real Places path + targeted per-município discovery + refresh Mtur + load-test harness.
 - Phase 6 added: Real-Externals Enablement (RealLLMClient + live 24/7 collection) — closes the real-data blocker found in Phase 4/5 dogfooding: `brave/clients/llm.py`/`RealLLMClient` is missing (4 phantom import sites in pipeline.py), so `run_real_externals=True` ImportErrors on every LLM lane; plus the `BRAVE_RUN_REAL_EXTERNALS` docstring footgun (real toggle is `RUN_REAL_EXTERNALS`, no prefix).
+- Phase 9 added: Close gap: INT-BLOCKER-01 — Null Places/LLM/Apify clients for offline task branch
 
 ### Decisions
 

@@ -288,7 +288,7 @@ Plans:
 **Goal**: Every Celery sweep/discovery/FSM task runs under the documented default config (`run_real_externals=False`) from the production wheel (`packages=["brave"]`) without `ModuleNotFoundError` — the offline branch instantiates in-package `NullPlacesClient`/`NullLLMClient`/`NullApifyClient` (mirroring `NullWhatsAppClient`/`NullMturClient`) instead of importing `tests.fakes.*`, and a regression guard proves the `brave` package never imports the `tests` tree.
 **Requirements**: ORCH-01, ORCH-02, ORCH-03, ORCH-04, ATR-01, ATR-02, ATR-03, ATR-04, DEST-01, DEST-02, DEST-03, DEST-04, DEST-05, CORE-10, CORE-11, TEST-03
 **Depends on:** Phase 8
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 09-01-PLAN.md — Create in-package NullPlacesClient/NullLLMClient/NullApifyClient, rewire the 8 offline-branch import sites in pipeline.py, add regression guard proving brave/ never imports the tests tree
+- [x] 09-01-PLAN.md — Create in-package NullPlacesClient/NullLLMClient/NullApifyClient, rewire the 8 offline-branch import sites in pipeline.py, add regression guard proving brave/ never imports the tests tree
