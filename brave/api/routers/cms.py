@@ -19,6 +19,7 @@ Security (T-08-01..05):
 import uuid
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -28,6 +29,8 @@ from sqlalchemy.orm.attributes import flag_modified
 from brave.api.deps import get_db, require_bearer, require_steward_or_bearer
 from brave.core.models import AuditLog, MarRecord, NascenteRecord, RioRecord, mask_phone
 from brave.observability.audit import write_audit
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -298,8 +301,28 @@ def promote_destino(
             from brave.tasks.pipeline import push_destination_task
 
             push_destination_task.delay(str(rio_id))
-        except Exception:
-            pass  # No broker in tests/dev; promote_to_mar already done by service
+        except Exception as exc:
+            # The promotion is already committed (WR-01 above), so a broker-down
+            # push cannot roll back — the record IS in Mar but unpublished. Under
+            # run_real_externals, surface it (log + 503) so the steward knows the
+            # downstream publish failed and can retry the promotion to re-dispatch.
+            # Offline (tests/dev), no broker is expected and the push is a no-op.
+            from brave.config.settings import AppConfig
+
+            if AppConfig().run_real_externals:
+                logger.error(
+                    "cms_push_dispatch_failed",
+                    rio_id=str(rio_id),
+                    error=str(exc),
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Destino promoted to Mar but downstream publish failed "
+                        "(broker unavailable). Retry the promotion once the broker "
+                        "is reachable to re-dispatch the push."
+                    ),
+                ) from exc
 
     return {"status": "accepted", "rio_id": str(rio_id), "routing": rio.routing}
 

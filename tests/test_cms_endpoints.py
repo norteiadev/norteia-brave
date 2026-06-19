@@ -545,3 +545,79 @@ def test_descarte_atrativo(client, db_session: Session):
     assert body.get("routing") == "dlq", (
         f"Expected routing='dlq', got {body.get('routing')!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# promote_destino broker-down: surface (503), never silently drop.
+# Unlike the DLQ path, promote_destino commits the promotion (WR-01) BEFORE the
+# push, so a failed push cannot roll back — the record IS in Mar. The contract is
+# therefore "promoted but downstream publish failed; retry publish", not rollback.
+# ---------------------------------------------------------------------------
+
+_PROMOTABLE_NORMALIZED = {
+    "name": "Destino Broker Down",
+    "origem_value": 100.0,
+    "completude_value": 100.0,
+    "corroboracao_value": 100.0,
+    "atualidade_value": 100.0,
+}
+
+
+@pytest.mark.integration
+def test_promote_returns_503_when_push_fails_under_real_externals(
+    client, db_session: Session, monkeypatch
+):
+    """A broker-down push during promote surfaces 503 instead of silently dropping.
+
+    The promotion is already committed (WR-01), so the record stays in Mar — the
+    503 tells the steward the downstream publish failed and to retry the publish.
+    """
+    from brave.core.models import RioRecord
+    from brave.tasks.pipeline import push_destination_task
+
+    rio = _make_destino(
+        db_session, uf="PE", routing="dlq", normalized=dict(_PROMOTABLE_NORMALIZED)
+    )
+    rio_id = rio.id
+    db_session.commit()
+
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+
+    def _broker_down(*args, **kwargs):
+        raise RuntimeError("broker unreachable (simulated)")
+
+    monkeypatch.setattr(push_destination_task, "delay", _broker_down)
+
+    r = client.patch(f"/api/v1/destinos/{rio_id}/promote", headers=STEWARD_HEADERS)
+    assert r.status_code == 503, f"Expected 503, got {r.status_code}: {r.text}"
+
+    # Promotion is committed (WR-01) — the record stays in Mar, publish is retryable.
+    db_session.expire_all()
+    reloaded = db_session.get(RioRecord, rio_id)
+    assert reloaded is not None
+    assert reloaded.routing == "mar", (
+        f"promote commits before push (WR-01) — record must stay 'mar', got "
+        f"'{reloaded.routing}'"
+    )
+
+
+@pytest.mark.integration
+def test_promote_swallows_push_failure_offline(client, db_session: Session, monkeypatch):
+    """Offline (run_real_externals=False), a broker-down push is an expected no-op → 202."""
+    from brave.tasks.pipeline import push_destination_task
+
+    rio = _make_destino(
+        db_session, uf="MA", routing="dlq", normalized=dict(_PROMOTABLE_NORMALIZED)
+    )
+    rio_id = rio.id
+    db_session.commit()
+
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "false")
+
+    def _broker_down(*args, **kwargs):
+        raise RuntimeError("broker unreachable (simulated)")
+
+    monkeypatch.setattr(push_destination_task, "delay", _broker_down)
+
+    r = client.patch(f"/api/v1/destinos/{rio_id}/promote", headers=STEWARD_HEADERS)
+    assert r.status_code == 202, f"Expected 202, got {r.status_code}: {r.text}"
