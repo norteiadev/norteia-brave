@@ -192,7 +192,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 5. Auto-Discovery Orchestration | 3/3 | Complete   | 2026-06-17 |
 | 6. Real-Externals Enablement | 3/3 | Complete    | 2026-06-18 |
 | 7. Real Places Hardening + Targeted Atrativos Discovery + Mtur Refresh | 7/7 | Complete | 2026-06-18 |
-| 8. Ops CMS: Destinos/Atrativos CRUD + Process Observability | 0/7 | In Progress | — |
+| 8. Ops CMS: Destinos/Atrativos CRUD + Process Observability | 3/7 | In Progress|  |
 
 ### Phase 5: Auto-Discovery Orchestration
 
@@ -264,14 +264,14 @@ Plans:
 **Goal:** Give operators a visual, browsable CMS over all pipeline records (destinos + atrativos across every stage) and 24/7 process observability (workers, failures, human-pending queue, journey to Mar) — backed by new FastAPI endpoints that compose existing service functions, reskinned with Norteia brand tokens, and exposed through a Next.js dashboard with StageBadge + JourneyStepper primitives.
 **Requirements**: D-01 (token swap), D-02 (StageBadge), D-03 (destinos CRUD), D-04 (atrativos CRUD), D-05 (process observability), D-06 (JourneyStepper), D-07 (offline tests)
 **Depends on:** Phase 7
-**Plans:** 7 plans
+**Plans:** 3/7 plans executed
 
 Plans:
 **Wave 1** *(parallel — no file conflicts)*
 
-- [ ] 08-01-PLAN.md — Backend: brave/api/routers/cms.py — destinos CRUD (GET list/detail, PATCH promote/descarte/reprocess/edit) + atrativos CRUD (GET list/detail, PATCH advance/descarte/edit); Bearer/steward guards; PII masking via _safe_normalized
-- [ ] 08-02-PLAN.md — Backend: brave/api/routers/workers.py — GET /api/v1/workers (Celery inspect timeout=1.0 + Redis LLEN, graceful broker-absent) + GET /api/v1/failures (PoisonQuarantine list); payload not exposed
-- [ ] 08-03-PLAN.md — Frontend foundation: globals.css token swap (Norteia navy/terracota/off-white in oklch) + StageBadge.tsx (routing/sub_state/score/source/validation_pending) + JourneyStepper.tsx (4-step destino / 7-step atrativo from AuditLog) + page.tsx nav links
+- [x] 08-01-PLAN.md — Backend: brave/api/routers/cms.py — destinos CRUD (GET list/detail, PATCH promote/descarte/reprocess/edit) + atrativos CRUD (GET list/detail, PATCH advance/descarte/edit); Bearer/steward guards; PII masking via _safe_normalized
+- [x] 08-02-PLAN.md — Backend: brave/api/routers/workers.py — GET /api/v1/workers (Celery inspect timeout=1.0 + Redis LLEN, graceful broker-absent) + GET /api/v1/failures (PoisonQuarantine list); payload not exposed
+- [x] 08-03-PLAN.md — Frontend foundation: globals.css token swap (Norteia navy/terracota/off-white in oklch) + StageBadge.tsx (routing/sub_state/score/source/validation_pending) + JourneyStepper.tsx (4-step destino / 7-step atrativo from AuditLog) + page.tsx nav links
 
 **Wave 2** *(depends on Wave 1 — pages need endpoints + badge primitives)*
 
