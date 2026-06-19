@@ -659,8 +659,8 @@ def discover_atrativo_task(self, uf: str) -> None:
             from brave.clients.places import RealPlacesClient
             places_client = RealPlacesClient(api_key=places_api_key)
         else:
-            from tests.fakes.fake_places import FakePlacesClient
-            places_client = FakePlacesClient()
+            from brave.clients.null_places import NullPlacesClient
+            places_client = NullPlacesClient()
 
         # Select LLM client based on run_real_externals flag
         redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
@@ -670,8 +670,8 @@ def discover_atrativo_task(self, uf: str) -> None:
             from brave.clients.llm import RealLLMClient
             llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="atrativos")
         else:
-            from tests.fakes.fake_llm import FakeLLMClient
-            llm_client = FakeLLMClient()
+            from brave.clients.null_llm import NullLLMClient
+            llm_client = NullLLMClient()
 
         agent = DiscoveryAgent(
             places_client=places_client,
@@ -806,8 +806,8 @@ def sweep_uf(self, uf: str) -> None:
                 from brave.clients.llm import RealLLMClient
                 llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="destinos")
             else:
-                from tests.fakes.fake_llm import FakeLLMClient
-                llm_client = FakeLLMClient()
+                from brave.clients.null_llm import NullLLMClient
+                llm_client = NullLLMClient()
             # Ctor arg order: llm FIRST, then mtur (desmembramento.py:128).
             desm = DesmembramentoAgent(llm_client, MturClient(), session, config)
             asyncio.run(desm.produce(uf))
@@ -893,8 +893,8 @@ def find_contacts_task(self, rio_id: str) -> None:
             from brave.clients.places import RealPlacesClient
             places_client = RealPlacesClient(api_key=places_api_key)
         else:
-            from tests.fakes.fake_places import FakePlacesClient
-            places_client = FakePlacesClient()
+            from brave.clients.null_places import NullPlacesClient
+            places_client = NullPlacesClient()
 
         agent = ContactFinderAgent(
             places_client=places_client,
@@ -998,10 +998,10 @@ def gather_signals_task(self, rio_id: str) -> None:
             places_client = RealPlacesClient(api_key=places_api_key)
             apify_client = RealApifyClient(api_key=apify_api_key)
         else:
-            from tests.fakes.fake_apify import FakeApifyClient
-            from tests.fakes.fake_places import FakePlacesClient
-            places_client = FakePlacesClient()
-            apify_client = FakeApifyClient()
+            from brave.clients.null_apify import NullApifyClient
+            from brave.clients.null_places import NullPlacesClient
+            places_client = NullPlacesClient()
+            apify_client = NullApifyClient()
 
         agent = SignalAgent(
             places_client=places_client,
@@ -1246,8 +1246,8 @@ def outreach_task(self, rio_id: str) -> None:
             from brave.clients.llm import RealLLMClient
             llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="atrativos")
         else:
-            from tests.fakes.fake_llm import FakeLLMClient
-            llm_client = FakeLLMClient()
+            from brave.clients.null_llm import NullLLMClient
+            llm_client = NullLLMClient()
 
         settings = app_config.whatsapp
 
@@ -1438,8 +1438,8 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
             from brave.clients.llm import RealLLMClient
             llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="atrativos")
         else:
-            from tests.fakes.fake_llm import FakeLLMClient
-            llm_client = FakeLLMClient()
+            from brave.clients.null_llm import NullLLMClient
+            llm_client = NullLLMClient()
 
         settings = app_config.whatsapp
 
