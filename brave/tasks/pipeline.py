@@ -1533,3 +1533,61 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
     finally:
         session.close()
         engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Collection engine — operator-controlled start/stop sweep orchestrator
+# ---------------------------------------------------------------------------
+
+
+@shared_task(
+    bind=True,
+    name="brave.engine_sweep_run",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=3600,  # paces across up to 27 UFs; only dispatches (does not await)
+)
+def engine_sweep_run(self, ufs: list[str] | None = None, lane: str = "both") -> dict:
+    """Operator-started full sweep orchestrator (engine ON).
+
+    Fans out the existing producer tasks per UF — sweep_uf (destinos) and
+    discover_atrativo_task (atrativos, which auto-chains and STOPS at the WhatsApp
+    gate). Between UFs it re-reads the Redis engine state and breaks the loop the
+    moment Stop is requested: already-dispatched UF tasks finish on the workers
+    (graceful drain), no further UFs are fanned out, and the engine returns to idle.
+
+    Never auto-validates, never reaches the WhatsApp send path — it only kicks the
+    same producer/chain tasks the beat and /sweep endpoint already use.
+    """
+    import time as _time
+
+    import redis as redis_lib
+
+    from brave.core import engine as collection_engine
+    from brave.tasks.beat_schedule import UF_LIST
+
+    redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+    rc = redis_lib.from_url(redis_url)
+    targets = ufs or list(UF_LIST)
+    per_uf_delay = float(os.environ.get("BRAVE_ENGINE_UF_DELAY_SECONDS", "3"))
+
+    dispatched = 0
+    try:
+        for uf in targets:
+            if collection_engine.get_state(rc) != collection_engine.RUNNING:
+                logger.info("engine_stop_drain", at_uf=uf, dispatched=dispatched)
+                break
+            if lane in ("destinos", "both"):
+                sweep_uf.delay(uf)
+            if lane in ("atrativos", "both"):
+                discover_atrativo_task.delay(uf)
+            collection_engine.mark_uf_dispatched(rc, uf)
+            dispatched += 1
+            logger.info("engine_uf_dispatched", uf=uf, dispatched=dispatched, lane=lane)
+            if per_uf_delay > 0:
+                _time.sleep(per_uf_delay)
+    finally:
+        collection_engine.mark_idle(rc)
+        logger.info("engine_run_complete", dispatched=dispatched)
+
+    return {"dispatched": dispatched, "lane": lane}

@@ -50,3 +50,8 @@ from brave.api.routers.workers import router as workers_router
 
 app.include_router(cms_router)
 app.include_router(workers_router)
+
+# Collection engine — operator start/stop of the full sweep
+from brave.api.routers.engine import router as engine_router
+
+app.include_router(engine_router)
