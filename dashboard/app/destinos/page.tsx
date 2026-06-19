@@ -9,6 +9,7 @@ import { toast } from "sonner";
 
 import { DestinoList } from "@/components/cms/DestinoList";
 import { DetailPanel } from "@/components/cms/DetailPanel";
+import { EditFieldsDialog } from "@/components/cms/EditFieldsDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,6 +29,7 @@ import {
   promoteDestino,
   descarteDestino,
   reprocessDestino,
+  editDestino,
   type DestinoDetail,
 } from "@/lib/destinos-api";
 
@@ -145,6 +147,13 @@ function DestinoActions({
       >
         Reprocessar
       </Button>
+
+      <EditFieldsDialog
+        normalized={detail.normalized}
+        editFn={(fields) => editDestino(detail.id, fields)}
+        invalidateKey={DESTINO_KEY}
+        disabled={pending}
+      />
 
       {/* Destructive Descartar behind AlertDialog confirm */}
       <AlertDialog>

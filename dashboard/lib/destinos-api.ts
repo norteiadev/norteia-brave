@@ -11,6 +11,7 @@
  *   PATCH /api/v1/destinos/{id}/promote            — promote → Mar (202)
  *   PATCH /api/v1/destinos/{id}/descarte           — reject → descarte
  *   PATCH /api/v1/destinos/{id}/reprocess          — trigger reprocess (202)
+ *   PATCH /api/v1/destinos/{id}/edit               — edit canonical fields (200)
  */
 
 import { apiFetch } from "@/lib/api-client";
@@ -104,5 +105,19 @@ export function descarteDestino(id: string): Promise<MutationResult> {
 export function reprocessDestino(id: string): Promise<MutationResult> {
   return apiFetch<MutationResult>(`api/v1/destinos/${id}/reprocess`, {
     method: "PATCH",
+  });
+}
+
+/** Edit canonical fields on a destino's normalized payload (D-03, T-08-05).
+ *  Merges `fields` into rio.normalized server-side; returns { status: "ok" }.
+ *  The backend strips phone_e164 — callers should not send PII fields. */
+export function editDestino(
+  id: string,
+  fields: Record<string, unknown>,
+): Promise<MutationResult> {
+  return apiFetch<MutationResult>(`api/v1/destinos/${id}/edit`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields }),
   });
 }

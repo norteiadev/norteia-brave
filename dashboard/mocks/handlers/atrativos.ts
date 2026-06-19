@@ -173,6 +173,13 @@ export function atrativoDescarteSuccess() {
   );
 }
 
+/** PATCH edit — success (200, { status: "ok" }). */
+export function atrativoEditSuccess() {
+  return http.patch(`${BASE}/:id/edit`, () =>
+    HttpResponse.json({ status: "ok" }),
+  );
+}
+
 /** Catch-all 401 for any atrativos route (session-expired path). */
 export function atrativosUnauthorized() {
   const unauth = () =>
@@ -186,4 +193,5 @@ export const atrativoHandlers = [
   atrativoDetailSuccess(),
   atrativoAdvanceSuccess(),
   atrativoDescarteSuccess(),
+  atrativoEditSuccess(),
 ];

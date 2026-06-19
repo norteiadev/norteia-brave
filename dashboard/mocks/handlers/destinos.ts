@@ -171,6 +171,13 @@ export function destinoReprocessSuccess() {
   );
 }
 
+/** PATCH edit — success (200, { status: "ok" }). */
+export function destinoEditSuccess() {
+  return http.patch(`${BASE}/:id/edit`, () =>
+    HttpResponse.json({ status: "ok" }),
+  );
+}
+
 /** Catch-all 401 for any destinos route (session-expired path). */
 export function destinosUnauthorized() {
   const unauth = () =>
@@ -185,4 +192,5 @@ export const destinoHandlers = [
   destinoPromoteSuccess(),
   destinoDescarteSuccess(),
   destinoReprocessSuccess(),
+  destinoEditSuccess(),
 ];

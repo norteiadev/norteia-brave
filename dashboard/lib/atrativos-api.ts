@@ -10,6 +10,7 @@
  *   GET   /api/v1/atrativos/{id}                    — full detail
  *   PATCH /api/v1/atrativos/{id}/advance            — advance sub_state FSM
  *   PATCH /api/v1/atrativos/{id}/descarte           — reject → descarte
+ *   PATCH /api/v1/atrativos/{id}/edit               — edit canonical fields (200)
  *
  * PII contract: contacts_summary exposes phone_masked ONLY (never phone_e164).
  * The backend applies _safe_normalized before responding; this client never
@@ -116,5 +117,19 @@ export function advanceAtrativo(
 export function descartarAtrativo(id: string): Promise<MutationResult> {
   return apiFetch<MutationResult>(`api/v1/atrativos/${id}/descarte`, {
     method: "PATCH",
+  });
+}
+
+/** Edit canonical fields on an atrativo's normalized payload (D-04, T-08-05).
+ *  Merges `fields` into rio.normalized server-side; returns { status: "ok" }.
+ *  The backend strips phone_e164 — callers should not send PII fields. */
+export function editAtrativo(
+  id: string,
+  fields: Record<string, unknown>,
+): Promise<MutationResult> {
+  return apiFetch<MutationResult>(`api/v1/atrativos/${id}/edit`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields }),
   });
 }

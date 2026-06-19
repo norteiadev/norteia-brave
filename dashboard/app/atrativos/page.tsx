@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { AtrativoList } from "@/components/cms/AtrativoList";
 import { DetailPanel } from "@/components/cms/DetailPanel";
+import { EditFieldsDialog } from "@/components/cms/EditFieldsDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,6 +25,7 @@ import {
   fetchAtrativoDetail,
   advanceAtrativo,
   descartarAtrativo,
+  editAtrativo,
   type AtrativoDetail,
 } from "@/lib/atrativos-api";
 
@@ -153,6 +155,13 @@ function AtrativoActions({
           Avançar → {next.replace(/_/g, " ")}
         </Button>
       )}
+
+      <EditFieldsDialog
+        normalized={detail.normalized}
+        editFn={(fields) => editAtrativo(detail.id, fields)}
+        invalidateKey={ATRATIVO_KEY}
+        disabled={pending}
+      />
 
       {/* Destructive Descartar behind AlertDialog confirm */}
       <AlertDialog>
