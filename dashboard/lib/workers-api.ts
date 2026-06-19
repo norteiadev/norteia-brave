@@ -51,7 +51,10 @@ export interface FailureItem {
 
 /** Full response from GET /api/v1/failures. */
 export interface FailuresData {
+  /** True quarantine count across all rows (independent of the page limit). */
   total: number;
+  /** Page size — number of items actually returned (<= limit). */
+  returned?: number;
   by_task: Record<string, number>;
   items: FailureItem[];
 }

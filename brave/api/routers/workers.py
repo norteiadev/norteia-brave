@@ -21,7 +21,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query
 from redis import Redis
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from brave.api.deps import get_db, get_redis, require_bearer
@@ -70,11 +70,18 @@ def get_workers(redis: Redis = Depends(get_redis)) -> dict:
     except Exception:
         queue_depths = {"brave.sweep": None, "celery": None}
 
+    # WR-04: derive the real entry count from the live schedule rather than a
+    # hardcoded literal that drifts the moment UF_LIST changes.
+    from brave.tasks.beat_schedule import BRAVE_BEAT_SCHEDULE  # noqa: PLC0415
+
     return {
         "broker_reachable": broker_reachable,
         "workers": workers,
         "queues": queue_depths,
-        "beat_schedule": {"entries": 54, "queues": ["brave.sweep"]},
+        "beat_schedule": {
+            "entries": len(BRAVE_BEAT_SCHEDULE),
+            "queues": ["brave.sweep"],
+        },
     }
 
 
@@ -100,12 +107,26 @@ def get_failures(
         ).all()
     )
 
-    by_task: dict[str, int] = {}
-    for r in rows:
-        by_task[r.task_name] = by_task.get(r.task_name, 0) + 1
+    # WR-02: the true quarantine count, independent of the page limit. `total`
+    # previously reported len(rows) (== limit when capped), undercounting during
+    # incident spikes. `returned` carries the page size.
+    total = db.scalar(select(func.count()).select_from(PoisonQuarantine)) or 0
+
+    # WR-03: aggregate by_task across ALL quarantine rows via a grouped DB query,
+    # not just the returned page — otherwise the breakdown chips reflect only the
+    # most recent `limit` rows.
+    by_task: dict[str, int] = {
+        task_name: count
+        for task_name, count in db.execute(
+            select(PoisonQuarantine.task_name, func.count()).group_by(
+                PoisonQuarantine.task_name
+            )
+        ).all()
+    }
 
     return {
-        "total": len(rows),
+        "total": total,
+        "returned": len(rows),
         "by_task": by_task,
         "items": [
             {

@@ -246,8 +246,12 @@ def test_workers_response_shape(app, client, monkeypatch):
     assert "entries" in body["beat_schedule"], (
         "beat_schedule must have 'entries' key"
     )
-    assert body["beat_schedule"]["entries"] == 54, (
-        f"beat_schedule.entries must be 54, got {body['beat_schedule']['entries']!r}"
+    # WR-04: entries must reflect the live schedule, not a hardcoded literal.
+    from brave.tasks.beat_schedule import BRAVE_BEAT_SCHEDULE  # noqa: PLC0415
+
+    assert body["beat_schedule"]["entries"] == len(BRAVE_BEAT_SCHEDULE), (
+        "beat_schedule.entries must equal len(BRAVE_BEAT_SCHEDULE), got "
+        f"{body['beat_schedule']['entries']!r}"
     )
 
 
@@ -266,11 +270,16 @@ def test_failures_empty(client, db_session: Session):
 
     body = r.json()
     assert "total" in body, "failures response must have 'total' key"
+    assert "returned" in body, "failures response must have 'returned' key (WR-02)"
     assert "by_task" in body, "failures response must have 'by_task' key"
     assert "items" in body, "failures response must have 'items' key"
     assert isinstance(body["total"], int)
+    assert isinstance(body["returned"], int)
     assert isinstance(body["by_task"], dict)
     assert isinstance(body["items"], list)
+    # returned == page size (len items); total >= returned (WR-02)
+    assert body["returned"] == len(body["items"])
+    assert body["total"] >= body["returned"]
 
 
 @pytest.mark.integration
@@ -324,3 +333,37 @@ def test_failures_payload_not_exposed(client, db_session: Session):
         assert "payload" not in item, (
             f"T-08-08: 'payload' MUST NOT appear in /failures items — found in {item!r}"
         )
+
+
+@pytest.mark.integration
+def test_failures_total_and_by_task_independent_of_limit(client, db_session: Session):
+    """WR-02/WR-03: total + by_task reflect ALL rows, not the limit-capped page."""
+    from brave.core.models import PoisonQuarantine  # noqa: PLC0415
+
+    marker = f"wr0203-{uuid.uuid4().hex[:8]}"
+    # Insert several rows for a unique task_name so by_task is deterministic.
+    n_rows = 5
+    for _ in range(n_rows):
+        db_session.add(
+            PoisonQuarantine(
+                id=uuid.uuid4(),
+                task_name=marker,
+                error_message="wr-02/03 aggregation test",
+                payload={"x": 1},
+            )
+        )
+    db_session.commit()
+
+    # Page size smaller than the number of rows for this marker.
+    r = client.get("/api/v1/failures?limit=2", headers=BEARER_HEADERS)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+
+    body = r.json()
+    # WR-02: total counts all rows in the table; must exceed the page limit here.
+    assert body["total"] >= n_rows
+    assert body["returned"] == len(body["items"]) <= 2
+    # WR-03: by_task aggregates across all rows, not just the returned page.
+    assert body["by_task"].get(marker) == n_rows, (
+        f"by_task[{marker}] must equal {n_rows} (full aggregation), "
+        f"got {body['by_task'].get(marker)!r}"
+    )
