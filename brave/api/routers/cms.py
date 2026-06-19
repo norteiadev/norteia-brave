@@ -1,0 +1,635 @@
+"""CMS CRUD endpoints for Destinos and Atrativos (D-03, D-04).
+
+Gives operators a read/write API surface over all pipeline records:
+  - Destinos across all routings (Mar + DLQ + descarte)
+  - Atrativos across all FSM sub_states
+
+No new pipeline logic — routing to existing building blocks:
+  validate_and_promote_rio, advance_sub_state, reprocess_record_task, mask_phone.
+
+Not registered in main.py yet — plan 08-04 handles registration (wave isolation).
+
+Security (T-08-01..05):
+  - All read endpoints: require_bearer (401 before any DB work)
+  - All mutation endpoints: require_steward_or_bearer
+  - phone_e164 never returned: _safe_normalized on every atrativo response path
+  - /edit body filters phone_e164 before merging into normalized
+"""
+
+import uuid
+from typing import Any
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
+
+from brave.api.deps import get_db, require_bearer, require_steward_or_bearer
+from brave.core.models import AuditLog, MarRecord, NascenteRecord, RioRecord, mask_phone
+from brave.observability.audit import write_audit
+
+router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Request body models
+# ---------------------------------------------------------------------------
+
+
+class AdvanceBody(BaseModel):
+    """Body for PATCH /api/v1/atrativos/{rio_id}/advance."""
+
+    expected_state: str
+    next_state: str
+
+
+class EditBody(BaseModel):
+    """Body for PATCH /api/v1/destinos/{rio_id}/edit and /api/v1/atrativos/{rio_id}/edit."""
+
+    fields: dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _safe_normalized(normalized: dict | None) -> dict:
+    """Return a copy of the Rio normalized dict with phone_e164 masked (T-08-04, LGPD R3).
+
+    The Rio normalized payload stores the owner's raw E.164 number at
+    normalized["contacts"]["phone_e164"]. This function MUST be called on every
+    atrativo response path — phone_e164 must never be returned to the caller.
+    Replace it with phone_masked so the dashboard receives only the masked form.
+
+    Mirrors atrativos_gate.py _safe_normalized exactly (same contract, no divergence).
+    """
+    n = dict(normalized or {})
+    contacts = n.get("contacts")
+    if isinstance(contacts, dict) and "phone_e164" in contacts:
+        contacts = dict(contacts)
+        contacts["phone_masked"] = mask_phone(contacts.pop("phone_e164", None))
+        n["contacts"] = contacts
+    return n
+
+
+# ===========================================================================
+# DESTINOS SECTION — 6 endpoints (D-03)
+# ===========================================================================
+
+
+@router.get("/api/v1/destinos", dependencies=[Depends(require_bearer)])
+def list_destinos(
+    uf: str | None = Query(None),
+    routing: str | None = Query(None),
+    score_band: str | None = Query(None, description="mar | dlq | descarte"),
+    q: str | None = Query(None, description="Free-text match on canonical_key (ilike)"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> dict:
+    """List destinos across all routings (D-03, T-08-01).
+
+    LEFT JOIN MarRecord so both promoted and unpromoted destinos are returned.
+    Supports filtering by uf, routing, score_band, and free-text q.
+
+    Returns paginated response: {items, total, offset, limit}.
+    """
+    stmt = (
+        select(RioRecord, MarRecord)
+        .outerjoin(MarRecord, MarRecord.rio_id == RioRecord.id)
+        .where(RioRecord.entity_type == "destination")
+    )
+
+    if uf:
+        stmt = stmt.where(RioRecord.uf == uf)
+    if routing:
+        stmt = stmt.where(RioRecord.routing == routing)
+    if score_band:
+        # score_band maps to routing for destinos
+        stmt = stmt.where(RioRecord.routing == score_band)
+    if q:
+        stmt = stmt.where(RioRecord.canonical_key.ilike(f"%{q}%"))
+
+    # Count total before paging (dashboard.py pattern)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.execute(stmt.offset(offset).limit(limit)).all()
+
+    items = [
+        {
+            "id": str(rio.id),
+            "entity_type": rio.entity_type,
+            "uf": rio.uf,
+            "routing": rio.routing,
+            "score": float(rio.score) if rio.score is not None else None,
+            "canonical_key": rio.canonical_key,
+            "name": (rio.normalized or {}).get("name") or (
+                (mar.canonical or {}).get("name") if mar else None
+            ),
+            "validation_pending": rio.routing == "dlq",
+            "mar_id": str(mar.id) if mar else None,
+            "published_at": mar.published_at.isoformat() if mar and mar.published_at else None,
+        }
+        for rio, mar in rows
+    ]
+
+    return {"items": items, "total": total, "offset": offset, "limit": limit}
+
+
+@router.get("/api/v1/destinos/{rio_id}", dependencies=[Depends(require_bearer)])
+def get_destino_detail(
+    rio_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return the full destino detail (D-03, T-08-01).
+
+    Surfaces score_breakdown, normalized, audit_log journey, and
+    child_atrativos count (by sub_state, grouped).
+
+    Read-only: Bearer-guarded, 404 on unknown rio_id.
+    """
+    rio = db.get(RioRecord, rio_id)
+    if rio is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="RioRecord not found"
+        )
+
+    nascente = db.get(NascenteRecord, rio.nascente_id) if rio.nascente_id else None
+    mar = db.scalar(
+        select(MarRecord).where(MarRecord.rio_id == rio.id)
+    )
+
+    audit_rows = list(
+        db.scalars(
+            select(AuditLog)
+            .where(AuditLog.record_id == rio.id)
+            .order_by(AuditLog.created_at.asc())
+        ).all()
+    )
+
+    # Child atrativos summary — only available when destino is promoted to Mar
+    child_atrativos: dict = {"total": 0, "by_sub_state": {}}
+    if mar:
+        mar_id_str = str(mar.id)
+        # Count total atrativos referencing this Mar parent
+        total_child = db.scalar(
+            select(func.count(RioRecord.id)).where(
+                RioRecord.entity_type == "attraction",
+                RioRecord.normalized["parent_mar_id"].as_string() == mar_id_str,
+            )
+        ) or 0
+
+        # Distribution by sub_state
+        sub_state_rows = db.execute(
+            select(RioRecord.sub_state, func.count(RioRecord.id))
+            .where(
+                RioRecord.entity_type == "attraction",
+                RioRecord.normalized["parent_mar_id"].as_string() == mar_id_str,
+            )
+            .group_by(RioRecord.sub_state)
+        ).all()
+
+        by_sub_state = {
+            (ss or "none"): count for ss, count in sub_state_rows
+        }
+        child_atrativos = {"total": total_child, "by_sub_state": by_sub_state}
+
+    return {
+        "id": str(rio.id),
+        "entity_type": rio.entity_type,
+        "uf": rio.uf,
+        "routing": rio.routing,
+        "score": float(rio.score) if rio.score is not None else None,
+        "score_breakdown": rio.score_breakdown or {},
+        "canonical_key": rio.canonical_key,
+        "normalized": rio.normalized or {},
+        "source": nascente.source if nascente else None,
+        "audit_log": [
+            {
+                "action": row.action,
+                "actor": row.actor,
+                "after_state": row.after_state,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in audit_rows
+        ],
+        "child_atrativos": child_atrativos,
+    }
+
+
+@router.patch(
+    "/api/v1/destinos/{rio_id}/promote",
+    status_code=202,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def promote_destino(
+    rio_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Steward promotes a destino: validate_and_promote_rio → Mar + push (D-03, T-08-02).
+
+    Delegates to validate_and_promote_rio (sets human validation score, re-scores,
+    promotes if Mar-eligible). Dispatches push_destination_task on Celery if routing
+    reaches 'mar'. Returns 202 Accepted.
+    """
+    rio = db.get(RioRecord, rio_id)
+    if rio is None:
+        raise HTTPException(status_code=404, detail="RioRecord not found")
+
+    before_state = {"routing": rio.routing, "score": float(rio.score or 0)}
+
+    # Lazy import: avoids circular at module load, matches dlq.py pattern
+    from brave.core.dlq.service import validate_and_promote_rio
+
+    validate_and_promote_rio(db, rio)
+    db.refresh(rio)
+
+    if rio.routing == "mar":
+        try:
+            from brave.tasks.pipeline import push_destination_task
+
+            push_destination_task.delay(str(rio_id))
+        except Exception:
+            pass  # No broker in tests/dev; promote_to_mar already done by service
+
+    write_audit(
+        session=db,
+        action="dlq_validated",
+        entity_type=rio.entity_type,
+        record_id=rio.id,
+        before_state=before_state,
+        after_state={"routing": rio.routing, "score": float(rio.score or 0)},
+        actor="steward",
+    )
+    return {"status": "accepted", "rio_id": str(rio_id), "routing": rio.routing}
+
+
+@router.patch(
+    "/api/v1/destinos/{rio_id}/descarte",
+    status_code=200,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def descarte_destino(
+    rio_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Steward rejects a destino (routing → descarte) (D-03, T-08-02).
+
+    Sets routing='descarte', dlq_reason='steward_rejected'. Writes audit log.
+    """
+    rio = db.get(RioRecord, rio_id)
+    if rio is None:
+        raise HTTPException(status_code=404, detail="RioRecord not found")
+
+    before_state = {"routing": rio.routing, "dlq_reason": rio.dlq_reason}
+    rio.routing = "descarte"
+    rio.dlq_reason = "steward_rejected"
+
+    write_audit(
+        session=db,
+        action="dlq_rejected",
+        entity_type=rio.entity_type,
+        record_id=rio.id,
+        before_state=before_state,
+        after_state={"routing": "descarte", "dlq_reason": "steward_rejected"},
+        actor="steward",
+    )
+    db.commit()
+    return {"status": "ok", "routing": "descarte", "rio_id": str(rio_id)}
+
+
+@router.patch(
+    "/api/v1/destinos/{rio_id}/reprocess",
+    status_code=202,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def reprocess_destino(
+    rio_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Trigger reprocessing of a destino (D-03, T-08-02).
+
+    Dispatches reprocess_record_task via Celery; falls back to synchronous
+    reprocess_record if broker is unavailable (offline tests/dev).
+
+    Returns 202 Accepted.
+    """
+    rio = db.get(RioRecord, rio_id)
+    if rio is None:
+        raise HTTPException(status_code=404, detail="RioRecord not found")
+
+    try:
+        from brave.tasks.pipeline import reprocess_record_task
+
+        reprocess_record_task.delay(str(rio_id))
+    except Exception:
+        from brave.config.settings import ScoreConfig
+        from brave.core.rio.routing import reprocess_record
+
+        reprocess_record(db, rio_id, ScoreConfig())
+
+    write_audit(
+        session=db,
+        action="dlq_reprocessed",
+        entity_type=rio.entity_type,
+        record_id=rio.id,
+        before_state={"routing": rio.routing, "dlq_reason": rio.dlq_reason},
+        actor="steward",
+    )
+    return {"status": "accepted", "rio_id": str(rio_id)}
+
+
+@router.patch(
+    "/api/v1/destinos/{rio_id}/edit",
+    status_code=200,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def edit_destino(
+    rio_id: uuid.UUID,
+    body: EditBody,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Steward edits canonical fields on a destino normalized payload (D-03, T-08-05).
+
+    Merges body.fields into rio.normalized. Uses flag_modified to ensure SQLAlchemy
+    detects the JSON mutation (Pitfall 3 — never mutate in-place without flag_modified).
+
+    Returns 200 OK.
+    """
+    rio = db.get(RioRecord, rio_id)
+    if rio is None:
+        raise HTTPException(status_code=404, detail="RioRecord not found")
+
+    before_state = {"normalized_keys": list((rio.normalized or {}).keys())}
+
+    # Pitfall 3: reassign + flag_modified; never mutate in-place
+    normalized = dict(rio.normalized or {})
+    normalized.update(body.fields)
+    rio.normalized = normalized
+    flag_modified(rio, "normalized")
+
+    write_audit(
+        session=db,
+        action="cms_edited",
+        entity_type=rio.entity_type,
+        record_id=rio.id,
+        before_state=before_state,
+        after_state={"edited_keys": list(body.fields.keys())},
+        actor="steward",
+    )
+    db.commit()
+    return {"status": "ok"}
+
+
+# ===========================================================================
+# ATRATIVOS SECTION — 5 endpoints (D-04)
+# ===========================================================================
+
+
+@router.get("/api/v1/atrativos", dependencies=[Depends(require_bearer)])
+def list_atrativos(
+    uf: str | None = Query(None),
+    sub_state: str | None = Query(None),
+    parent_mar_id: str | None = Query(None),
+    routing: str | None = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> dict:
+    """List atrativos across all FSM sub_states (D-04, T-08-01, T-08-04).
+
+    Filters: uf, sub_state, parent_mar_id (JSON subscript on normalized), routing.
+    parent_mar_id uses as_string() JSON subscript (NOT JSONB @> operator — Pitfall 2).
+
+    LGPD: _safe_normalized applied on every atrativo in the response. phone_e164
+    never returned — only phone_masked (T-08-04).
+
+    Returns paginated response: {items, total, offset, limit}.
+    """
+    stmt = select(RioRecord).where(RioRecord.entity_type == "attraction")
+
+    if uf:
+        stmt = stmt.where(RioRecord.uf == uf)
+    if sub_state:
+        stmt = stmt.where(RioRecord.sub_state == sub_state)
+    if parent_mar_id:
+        # JSON subscript — emits normalized->>'parent_mar_id' in PG
+        # NOT @> JSONB operator (Pitfall 2 — works for both JSON and JSONB columns)
+        stmt = stmt.where(
+            RioRecord.normalized["parent_mar_id"].as_string() == str(parent_mar_id)
+        )
+    if routing:
+        stmt = stmt.where(RioRecord.routing == routing)
+
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = list(db.scalars(stmt.offset(offset).limit(limit)).all())
+
+    items = [
+        {
+            "id": str(rio.id),
+            "entity_type": rio.entity_type,
+            "uf": rio.uf,
+            "routing": rio.routing,
+            "sub_state": rio.sub_state,
+            "score": float(rio.score) if rio.score is not None else None,
+            "name": (rio.normalized or {}).get("name"),
+            "validation_pending": rio.sub_state == "aguardando_consulta_whatsapp",
+            "mar_id": None,  # atrativos don't have direct mar_id in normalized
+            "parent_mar_id": (rio.normalized or {}).get("parent_mar_id"),
+            # T-08-04: never expose raw contacts — apply _safe_normalized
+            "contacts_summary": _safe_normalized(rio.normalized).get("contacts"),
+        }
+        for rio in rows
+    ]
+
+    return {"items": items, "total": total, "offset": offset, "limit": limit}
+
+
+@router.get("/api/v1/atrativos/{rio_id}", dependencies=[Depends(require_bearer)])
+def get_atrativo_detail(
+    rio_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return the full atrativo detail (D-04, T-08-01, T-08-04).
+
+    Surfaces FSM audit trail, score_breakdown, contacts with phone_masked,
+    and parent destino link.
+
+    LGPD: _safe_normalized applied to normalized field. phone_e164 never returned.
+    """
+    rio = db.get(RioRecord, rio_id)
+    if rio is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="RioRecord not found"
+        )
+
+    audit_rows = list(
+        db.scalars(
+            select(AuditLog)
+            .where(AuditLog.record_id == rio.id)
+            .order_by(AuditLog.created_at.asc())
+        ).all()
+    )
+
+    # Load parent destino MarRecord if normalized.parent_mar_id is set
+    parent_destino = None
+    parent_mar_id_str = (rio.normalized or {}).get("parent_mar_id")
+    if parent_mar_id_str:
+        try:
+            parent_mar = db.get(MarRecord, uuid.UUID(str(parent_mar_id_str)))
+            if parent_mar:
+                parent_destino = {
+                    "mar_id": str(parent_mar.id),
+                    "name": (parent_mar.canonical or {}).get("name"),
+                }
+        except (ValueError, TypeError):
+            pass  # Invalid UUID in parent_mar_id — ignore silently
+
+    return {
+        "id": str(rio.id),
+        "entity_type": rio.entity_type,
+        "uf": rio.uf,
+        "routing": rio.routing,
+        "sub_state": rio.sub_state,
+        "score": float(rio.score) if rio.score is not None else None,
+        "score_breakdown": rio.score_breakdown or {},
+        "canonical_key": rio.canonical_key,
+        # T-08-04: _safe_normalized masks phone_e164 → phone_masked
+        "normalized": _safe_normalized(rio.normalized),
+        "audit_log": [
+            {
+                "action": row.action,
+                "actor": row.actor,
+                "after_state": row.after_state,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in audit_rows
+        ],
+        "parent_destino": parent_destino,
+    }
+
+
+@router.patch(
+    "/api/v1/atrativos/{rio_id}/advance",
+    status_code=200,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def advance_atrativo_state(
+    rio_id: uuid.UUID,
+    body: AdvanceBody,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Steward advances the FSM sub_state of an atrativo (D-04, T-08-03).
+
+    Calls advance_sub_state(lock=True) — SELECT FOR UPDATE serializes concurrent
+    requests against the same rio_id. Returns 409 on expected_state mismatch
+    (idempotency guard: already advanced or wrong state).
+
+    Returns 200 with {status, rio_id, sub_state}.
+    """
+    rio = db.get(RioRecord, rio_id)
+    if rio is None:
+        raise HTTPException(status_code=404, detail="RioRecord not found")
+
+    from brave.lanes.atrativos.state_machine import advance_sub_state
+
+    advanced = advance_sub_state(
+        session=db,
+        rio=rio,
+        expected_state=body.expected_state,
+        next_state=body.next_state,
+        actor="steward",
+        lock=True,  # SELECT FOR UPDATE; use lock=False only in offline tests (Pitfall 4)
+    )
+    if not advanced:
+        raise HTTPException(
+            status_code=409,
+            detail=f"sub_state is '{rio.sub_state}', expected '{body.expected_state}'",
+        )
+
+    db.commit()
+    return {"status": "ok", "rio_id": str(rio_id), "sub_state": rio.sub_state}
+
+
+@router.patch(
+    "/api/v1/atrativos/{rio_id}/descarte",
+    status_code=200,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def descarte_atrativo(
+    rio_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Steward rejects an atrativo from the gate (routing → dlq, reason = steward_rejected_gate) (D-04, T-08-02).
+
+    Sets routing='dlq', dlq_reason='steward_rejected_gate', sub_state=None.
+    Writes audit log.
+    """
+    rio = db.get(RioRecord, rio_id)
+    if rio is None:
+        raise HTTPException(status_code=404, detail="RioRecord not found")
+
+    before_state = {"sub_state": rio.sub_state, "routing": rio.routing}
+    rio.routing = "dlq"
+    rio.dlq_reason = "steward_rejected_gate"
+    rio.sub_state = None
+
+    write_audit(
+        session=db,
+        action="whatsapp_gate_rejected",
+        entity_type=rio.entity_type,
+        record_id=rio.id,
+        before_state=before_state,
+        after_state={"routing": "dlq", "dlq_reason": "steward_rejected_gate", "sub_state": None},
+        actor="steward",
+    )
+    db.commit()
+    return {"status": "ok", "routing": "dlq", "rio_id": str(rio_id)}
+
+
+@router.patch(
+    "/api/v1/atrativos/{rio_id}/edit",
+    status_code=200,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def edit_atrativo(
+    rio_id: uuid.UUID,
+    body: EditBody,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Steward edits canonical fields on an atrativo normalized payload (D-04, T-08-05).
+
+    Merges body.fields into rio.normalized, EXCLUDING phone_e164 (T-08-05:
+    never allow overwriting PII via the edit endpoint).
+
+    Uses flag_modified to ensure SQLAlchemy detects the JSON mutation (Pitfall 3).
+
+    Returns 200 OK.
+    """
+    rio = db.get(RioRecord, rio_id)
+    if rio is None:
+        raise HTTPException(status_code=404, detail="RioRecord not found")
+
+    before_state = {"normalized_keys": list((rio.normalized or {}).keys())}
+
+    # T-08-05: exclude phone_e164 from body.fields — never allow PII overwrite via edit
+    sanitized_fields = {k: v for k, v in body.fields.items() if k != "phone_e164"}
+
+    # Pitfall 3: reassign + flag_modified; never mutate in-place
+    normalized = dict(rio.normalized or {})
+    normalized.update(sanitized_fields)
+    rio.normalized = normalized
+    flag_modified(rio, "normalized")
+
+    write_audit(
+        session=db,
+        action="cms_edited",
+        entity_type=rio.entity_type,
+        record_id=rio.id,
+        before_state=before_state,
+        after_state={"edited_keys": list(sanitized_fields.keys())},
+        actor="steward",
+    )
+    db.commit()
+    return {"status": "ok"}
