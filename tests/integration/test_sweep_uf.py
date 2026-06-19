@@ -50,10 +50,11 @@ def isolated_session(db_engine):
 def _patch_fake_llm(monkeypatch) -> None:
     """Make the FakeLLMClient that sweep_uf builds return a valid DesmembramentoResult.
 
-    sweep_uf constructs its own FakeLLMClient() with no fixture when
-    run_real_externals=False, so we patch the class used at the import site to a
-    factory that injects a schema-valid extract() result. Keeps the test offline +
-    keyless while exercising the real DesmembramentoAgent.produce path.
+    sweep_uf constructs its own NullLLMClient() (extract()->None) when
+    run_real_externals=False, so we patch the Null class at its pipeline import site
+    to a factory returning a FakeLLMClient that injects a schema-valid extract()
+    result. Keeps the test offline + keyless while exercising the real
+    DesmembramentoAgent.produce path.
     """
     from brave.lanes.destinos.schemas import DesmembramentoResult, DestinoItem
     from tests.fakes.fake_llm import FakeLLMClient
@@ -74,7 +75,7 @@ def _patch_fake_llm(monkeypatch) -> None:
     def _factory(*args, **kwargs):
         return FakeLLMClient(fixture_result=result)
 
-    monkeypatch.setattr("tests.fakes.fake_llm.FakeLLMClient", _factory)
+    monkeypatch.setattr("brave.clients.null_llm.NullLLMClient", _factory)
 
 
 def test_sweep_uf_name_resolves():

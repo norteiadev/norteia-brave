@@ -240,9 +240,9 @@ def _patch_fakes(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr("tests.fakes.fake_places.FakePlacesClient", _places_factory)
-    monkeypatch.setattr("tests.fakes.fake_llm.FakeLLMClient", _llm_factory)
-    monkeypatch.setattr("tests.fakes.fake_apify.FakeApifyClient", _apify_factory)
+    monkeypatch.setattr("brave.clients.null_places.NullPlacesClient", _places_factory)
+    monkeypatch.setattr("brave.clients.null_llm.NullLLMClient", _llm_factory)
+    monkeypatch.setattr("brave.clients.null_apify.NullApifyClient", _apify_factory)
 
 
 def _force_inline_fallback(monkeypatch, pipeline) -> None:
