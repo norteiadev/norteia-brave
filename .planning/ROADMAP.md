@@ -282,3 +282,13 @@ Plans:
 **Wave 3** *(depends on Wave 1 + Wave 2 — tests validate endpoint contracts)*
 
 - [x] 08-07-PLAN.md — Backend pytest offline: test_cms_endpoints.py (Bearer 401, list/detail shapes, phone_e164 absent, advance 409, promote→mar) + test_workers_endpoints.py (broker-down 200, queues null, payload absent); 100% offline (monkeypatch inspect + fakeredis)
+
+### Phase 9: Close gap: INT-BLOCKER-01 — Null Places/LLM/Apify clients for offline task branch
+
+**Goal**: Every Celery sweep/discovery/FSM task runs under the documented default config (`run_real_externals=False`) from the production wheel (`packages=["brave"]`) without `ModuleNotFoundError` — the offline branch instantiates in-package `NullPlacesClient`/`NullLLMClient`/`NullApifyClient` (mirroring `NullWhatsAppClient`/`NullMturClient`) instead of importing `tests.fakes.*`, and a regression guard proves the `brave` package never imports the `tests` tree.
+**Requirements**: ORCH-01, ORCH-02, ORCH-03, ORCH-04, ATR-01, ATR-02, ATR-03, ATR-04, DEST-01, DEST-02, DEST-03, DEST-04, DEST-05, CORE-10, CORE-11, TEST-03
+**Depends on:** Phase 8
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 9 to break down)
