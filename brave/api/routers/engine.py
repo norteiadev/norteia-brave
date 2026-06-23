@@ -111,6 +111,15 @@ def engine_start(
             detail="depth is required: nascente|nascente_rio|nascente_rio_mar",
         )
 
+    # Validate source BEFORE start_run — same order as depth (T-11-03-03).
+    # Invalid source must return 422 before any engine state mutation.
+    source = body.get("source", "default")
+    if source not in collection_engine._VALID_SOURCES:
+        raise HTTPException(
+            status_code=422,
+            detail="source must be 'default' or 'tripadvisor'",
+        )
+
     if not collection_engine.start_run(redis, ufs_total=len(ufs)):
         raise HTTPException(
             status_code=409,
@@ -118,11 +127,12 @@ def engine_start(
         )
 
     collection_engine.set_depth(redis, depth)
+    collection_engine.set_source(redis, source)
 
     try:
         from brave.tasks.pipeline import engine_sweep_run
 
-        engine_sweep_run.delay(ufs=ufs, lane=lane, depth=depth)
+        engine_sweep_run.delay(ufs=ufs, lane=lane, depth=depth, source=source)
     except Exception as exc:  # broker-down
         from brave.config.settings import AppConfig
 
@@ -135,8 +145,8 @@ def engine_start(
             ) from exc
         # Offline (tests/dev): no broker — leave state running; orchestrator is exercised separately.
 
-    logger.info("engine_started", ufs=len(ufs), lane=lane, depth=depth)
-    return {"status": "started", "ufs_total": len(ufs), "lane": lane, "depth": depth}
+    logger.info("engine_started", ufs=len(ufs), lane=lane, depth=depth, source=source)
+    return {"status": "started", "ufs_total": len(ufs), "lane": lane, "depth": depth, "source": source}
 
 
 @router.post(

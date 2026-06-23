@@ -55,3 +55,8 @@ app.include_router(workers_router)
 from brave.api.routers.engine import router as engine_router
 
 app.include_router(engine_router)
+
+# Phase 11: TripAdvisor mar-ready promote-override endpoints (TA-05, TA-06)
+from brave.api.routers.atrativos import router as atrativos_router
+
+app.include_router(atrativos_router)
