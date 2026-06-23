@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Completed 07-06-PLAN.md
-last_updated: "2026-06-19T15:59:56.994Z"
-last_activity: 2026-06-19 -- Phase 09 marked complete
+status: executing
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-06-23T15:09:58.397Z"
+last_activity: 2026-06-23 -- Completed 10-01 (engine depth state + required-depth /start)
 progress:
-  total_phases: 9
-  completed_phases: 9
-  total_plans: 47
-  completed_plans: 48
-  percent: 100
+  total_phases: 1
+  completed_phases: 0
+  total_plans: 4
+  completed_plans: 1
+  percent: 25
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Only validated, reliability-scored canonical records ("Mar", ≥85%) reach the platform — the Nascente→Rio→Mar pipeline with §7.6 scoring and a DLQ gate is the single thing that must work.
-**Current focus:** Phase 09 — close-gap-int-blocker-01-null-places-llm-apify-clients-for-o
+**Current focus:** Phase 10 — Engine Stage-Depth Selector (cost-gated collection)
 
 ## Current Position
 
-Phase: 09 — COMPLETE
-Plan: 1 of 1
-Status: Phase 09 complete
-Last activity: 2026-06-19 -- Phase 09 marked complete
+Phase: 10 (Engine Stage-Depth Selector (cost-gated collection)) — EXECUTING
+Plan: 2 of 4
+Status: Executing Phase 10
+Last activity: 2026-06-23 -- Completed 10-01 (engine depth state + required-depth /start)
 
-Progress: [██████████] 100%
+Progress: [██▌·······] 25%
 
 ## Performance Metrics
 
@@ -86,6 +86,7 @@ Progress: [██████████] 100%
 | Phase 07 P05 | 130 | 1 tasks | 1 files |
 | Phase 07 P06 | 15min | 1 tasks | 2 files |
 | Phase 07 P07 | 4min | 2 tasks | 3 files |
+| Phase 10 P01 | ~12min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -125,6 +126,7 @@ Recent decisions affecting current work:
 - [Phase ?]: D-03: produce_for_destino injects parent_mar.id directly, bypassing _resolve_parent_destino — parent is known from caller context
 - [Phase ?]: G1 gap closure: harness-only corroboration boost (+50) standing in for NotebookLM/2nd-source corroboration; global §7.6 weights/thresholds untouched
 - [Phase ?]: G2 gap closure
+- [Phase 10 P01]: ENG-01/02 — engine depth contract (NASCENTE|NASCENTE_RIO|NASCENTE_RIO_MAR, Redis `brave:engine:depth`) exported from brave/core/engine.py; set_depth raises on invalid (never silently spends); get_status carries depth; POST /start enforces required depth with 422 BEFORE start_run/409 and threads depth into engine_sweep_run.delay (orchestrator accepts it in 10-02); require_steward_or_bearer guard unchanged
 
 ### Pending Todos
 

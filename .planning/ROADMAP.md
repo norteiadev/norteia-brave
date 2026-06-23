@@ -6,7 +6,7 @@
 **Plans:** 4 plans (all Wave 1, parallel)
 
 Plans:
-- [ ] 10-01-PLAN.md — Engine depth state (Redis `brave:engine:depth`) + server-side required-depth validation on `/start` + depth on `/status` (ENG-01/02)
+- [x] 10-01-PLAN.md — Engine depth state (Redis `brave:engine:depth`) + server-side required-depth validation on `/start` + depth on `/status` (ENG-01/02)
 - [ ] 10-02-PLAN.md — Orchestrator + destinos-lane depth gating: nascente=Mtur-only/no-Rio/no-LLM/no-atrativos, nascente_rio=Rio-no-gate, nascente_rio_mar=full (ENG-03/04/05)
 - [ ] 10-03-PLAN.md — Dashboard depth selector + disabled-until-chosen "Ligar motor" + depth in start body + MSW/Vitest (ENG-01/02 client)
 - [ ] 10-04-PLAN.md — StageBadge "nascente" variant for Nascente-only records + Vitest (ENG-06)

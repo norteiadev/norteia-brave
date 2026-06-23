@@ -88,7 +88,7 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 ### Engine Control: Stage-Depth Selector (Phase 10 — cost gating)
 
 - [ ] **ENG-01**: The /processo engine control exposes a pipeline-depth selector with exactly three options — `Apenas nascente`, `Nascente → Rio`, `Nascente → Rio → Mar`. A depth selection is **required** to enable the "Ligar motor" button (button disabled until the operator chooses).
-- [ ] **ENG-02**: The chosen depth is persisted in Redis using the existing `brave:engine:*` convention; `POST /api/v1/engine/start` accepts the depth in its body and `GET /api/v1/engine/status` exposes the current depth back to the dashboard.
+- [x] **ENG-02**: The chosen depth is persisted in Redis using the existing `brave:engine:*` convention; `POST /api/v1/engine/start` accepts the depth in its body and `GET /api/v1/engine/status` exposes the current depth back to the dashboard. *(10-01: `brave:engine:depth` + set_depth/get_depth, required-depth /start, depth on /status.)*
 - [ ] **ENG-03**: Depth `Apenas nascente` runs only the free Mtur seed producer → `store_raw` + §7.6 score; it does NOT call `process_nascente_record` (Rio), NOT run Desmembramento (LLM), NOT run atrativos discovery (Places) — zero external cost. Atrativos do not run in this mode (no free source today).
 - [ ] **ENG-04**: Depth `Nascente → Rio` runs producers + validation up to Rio routing (mar-eligible / dlq / descarte) but does NOT promote any record to Mar and does NOT dispatch the WhatsApp gate/outreach.
 - [ ] **ENG-05**: Depth `Nascente → Rio → Mar` runs the full pipeline including the idempotent norteia-api Mar push (unchanged contract).
