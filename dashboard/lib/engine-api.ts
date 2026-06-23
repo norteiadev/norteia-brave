@@ -31,6 +31,19 @@ export const DEPTH_LABELS: Record<EngineDepth, string> = {
   nascente_rio_mar: "Nascente → Rio → Mar",
 };
 
+/**
+ * Collection source — which lane the sweep uses to ingest territorial data.
+ *   default      — standard lane (Mtur seed + Places validation)
+ *   tripadvisor  — TripAdvisor GraphQL scraper lane (Phase 11)
+ */
+export type EngineSource = "default" | "tripadvisor";
+
+/** PT-BR labels for the source enum — reused by the selector AND the running-state read-back. */
+export const SOURCE_LABELS: Record<EngineSource, string> = {
+  default: "Padrão",
+  tripadvisor: "TripAdvisor",
+};
+
 export interface EnginePipelineCounts {
   nascente: number;
   rio: { in_progress: number; mar: number; dlq: number; descarte: number };
@@ -46,6 +59,8 @@ export interface EngineStatus {
   counts: EnginePipelineCounts;
   /** Active run's pipeline depth, echoed by /status. null when unset/not running. */
   depth: EngineDepth | null;
+  /** Active run's collection source, echoed by /status. null when unset/not running. */
+  source?: EngineSource | null;
 }
 
 export interface EngineActionResult {
@@ -71,6 +86,7 @@ export function startEngine(
     ufs?: string[];
     lane?: "destinos" | "atrativos" | "both";
     depth?: EngineDepth;
+    source?: EngineSource;
   },
 ): Promise<EngineActionResult> {
   return apiFetch<EngineActionResult>("api/v1/engine/start", {

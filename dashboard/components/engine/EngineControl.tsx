@@ -9,11 +9,13 @@ import { ApiError } from "@/lib/api-client";
 import {
   DEPTH_LABELS,
   ENGINE_REFETCH_INTERVAL_MS,
+  SOURCE_LABELS,
   engineKeys,
   fetchEngineStatus,
   startEngine,
   stopEngine,
   type EngineDepth,
+  type EngineSource,
   type EngineState,
 } from "@/lib/engine-api";
 
@@ -22,6 +24,16 @@ const DEPTH_OPTIONS: EngineDepth[] = [
   "nascente",
   "nascente_rio",
   "nascente_rio_mar",
+];
+
+/** Source options — standard first. */
+const SOURCE_OPTIONS: EngineSource[] = ["default", "tripadvisor"];
+
+/** Brazilian UF codes — 27 states for TripAdvisor UF chip multi-select. */
+const BR_UFS = [
+  "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO",
+  "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR",
+  "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO",
 ];
 
 /**
@@ -57,6 +69,8 @@ function explainError(err: unknown): string {
 export function EngineControl() {
   const qc = useQueryClient();
   const [selectedDepth, setSelectedDepth] = useState<EngineDepth | undefined>();
+  const [selectedSource, setSelectedSource] = useState<EngineSource>("default");
+  const [selectedUfs, setSelectedUfs] = useState<string[]>([...BR_UFS]);
 
   const { data, isPending } = useQuery({
     queryKey: engineKeys.status,
@@ -69,7 +83,12 @@ export function EngineControl() {
     void qc.invalidateQueries({ queryKey: engineKeys.status });
 
   const start = useMutation({
-    mutationFn: (depth: EngineDepth) => startEngine({ depth }),
+    mutationFn: (depth: EngineDepth) =>
+      startEngine({
+        depth,
+        source: selectedSource,
+        ...(selectedSource === "tripadvisor" ? { ufs: selectedUfs } : {}),
+      }),
     onError: (err) => toast.error(explainError(err)),
     onSuccess: () => toast.success("Motor ligado — varredura iniciada"),
     onSettled: invalidate,
@@ -144,6 +163,67 @@ export function EngineControl() {
                   );
                 })}
               </div>
+              <div
+                className="flex flex-wrap items-center gap-1.5"
+                role="radiogroup"
+                aria-label="Fonte de coleta"
+                data-testid="engine-source"
+              >
+                {SOURCE_OPTIONS.map((src) => {
+                  const active = selectedSource === src;
+                  return (
+                    <button
+                      key={src}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      disabled={pending}
+                      onClick={() => setSelectedSource(src)}
+                      data-testid={`engine-source-${src}`}
+                      className={`rounded-md border px-2.5 py-1 text-[12px] transition-colors ${
+                        active
+                          ? "border-primary bg-primary/10 font-medium text-foreground"
+                          : "border-border text-muted-foreground hover:bg-muted"
+                      }`}
+                    >
+                      {SOURCE_LABELS[src]}
+                    </button>
+                  );
+                })}
+              </div>
+              {selectedSource === "tripadvisor" && (
+                <div
+                  className="flex flex-wrap items-center gap-1"
+                  data-testid="engine-uf-chips"
+                >
+                  {BR_UFS.map((uf) => {
+                    const selected = selectedUfs.includes(uf);
+                    return (
+                      <button
+                        key={uf}
+                        type="button"
+                        aria-pressed={selected}
+                        disabled={pending}
+                        onClick={() =>
+                          setSelectedUfs((prev) =>
+                            selected
+                              ? prev.filter((u) => u !== uf)
+                              : [...prev, uf],
+                          )
+                        }
+                        data-testid={`engine-uf-${uf}`}
+                        className={`rounded border px-1.5 py-0.5 font-mono text-[11px] transition-colors ${
+                          selected
+                            ? "border-primary bg-primary/10 font-medium text-foreground"
+                            : "border-border text-muted-foreground hover:bg-muted"
+                        }`}
+                      >
+                        {uf}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               <Button
                 size="sm"
                 disabled={pending || !selectedDepth}
@@ -174,6 +254,16 @@ export function EngineControl() {
           data-testid="engine-active-depth"
         >
           Profundidade: {DEPTH_LABELS[data.depth]}
+        </p>
+      )}
+
+      {/* Active-source read-back — the collection source the running sweep was started with */}
+      {state !== "idle" && data?.source && (
+        <p
+          className="mt-1 text-[12px] text-muted-foreground"
+          data-testid="engine-active-source"
+        >
+          Fonte: {SOURCE_LABELS[data.source]}
         </p>
       )}
 
