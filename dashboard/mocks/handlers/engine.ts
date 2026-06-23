@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 
-import type { EngineState, EngineStatus } from "@/lib/engine-api";
+import type { EngineSource, EngineState, EngineStatus } from "@/lib/engine-api";
 
 /**
  * MSW handlers for the collection-engine slice (offline test harness).
@@ -22,15 +22,19 @@ export function engineStatus(overrides: Partial<EngineStatus> = {}) {
       atrativos_by_sub_state: {},
     },
     depth: null,
+    source: null,
     ...overrides,
   };
   return http.get(`${BASE}/status`, () => HttpResponse.json(status));
 }
 
-export function engineStartSuccess(state: EngineState = "running") {
+export function engineStartSuccess(
+  state: EngineState = "running",
+  source: EngineSource = "default",
+) {
   return http.post(`${BASE}/start`, () =>
     HttpResponse.json(
-      { status: "started", ufs_total: 27, lane: "both", depth: "nascente_rio" },
+      { status: "started", ufs_total: 27, lane: "both", depth: "nascente_rio", source },
       { status: 202 },
     ),
   );
