@@ -151,6 +151,12 @@ None yet.
 - [Phase 3 research flag] WhatsApp BSP pricing/policy/limits shift often — re-verify Twilio-vs-Meta-Cloud, template categorization, and rate caps at build time; the Celery-durable-executor + LangGraph multi-day FSM warrants a focused design pass.
 - [Phase 1 code-review follow-ups — deferred, see 01-REVIEW.md] CR-03: harden `process_nascente` Celery retry/quarantine control flow so an exception escaping the quarantine write can't ack-and-lose a record. CR-04 (atomicity): make the USD cost guard reserve-before-call (atomic INCRBYFLOAT-then-check or Lua) so concurrent workers can't overshoot the daily ceiling; also crash-safe TTL + UTC-consistent daily key. Plus warnings: `get_redis` must not silently cache fakeredis in prod; `/health` should report non-200/degraded when DB/Redis are down. (CR-01, CR-02, CR-04-recording already fixed in 6b69226.)
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260623-j78 | Fix Celery worker registering zero tasks (autodiscover related_name="pipeline") | 2026-06-23 | 22f9c25 | [260623-j78-fix-celery-worker-registering-zero-tasks](./quick/260623-j78-fix-celery-worker-registering-zero-tasks/) |
+
 ## Deferred Items
 
 Items acknowledged and carried forward from previous milestone close:
