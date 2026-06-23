@@ -126,4 +126,82 @@ describe("EngineControl", () => {
     // Renders the idle fallback (no status) without crashing.
     expect(await screen.findByTestId("engine-control")).toBeInTheDocument();
   });
+
+  it("renders all three depth options with PT-BR labels on idle", async () => {
+    server.use(engineStatus());
+    renderWithClient(<EngineControl />);
+
+    const group = await screen.findByTestId("engine-depth");
+    expect(group.textContent).toContain("Apenas nascente");
+    expect(group.textContent).toContain("Nascente → Rio");
+    expect(group.textContent).toContain("Nascente → Rio → Mar");
+    // Each option carries its enum value.
+    expect(screen.getByTestId("engine-depth-nascente")).toBeInTheDocument();
+    expect(screen.getByTestId("engine-depth-nascente_rio")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("engine-depth-nascente_rio_mar"),
+    ).toBeInTheDocument();
+  });
+
+  it("disables 'Ligar motor' until a depth is selected (ENG-01)", async () => {
+    server.use(engineStatus());
+    const user = userEvent.setup();
+    renderWithClient(<EngineControl />);
+
+    const startBtn = await screen.findByTestId("engine-start");
+    expect(startBtn).toBeDisabled();
+
+    await user.click(screen.getByTestId("engine-depth-nascente_rio"));
+    expect(startBtn).toBeEnabled();
+  });
+
+  it("sends the selected depth in the POST /start body (ENG-02)", async () => {
+    let capturedDepth: string | undefined;
+    let startCalled = false;
+    server.use(
+      http.post(
+        "http://localhost:3000/api/api/v1/engine/start",
+        async ({ request }) => {
+          const body = (await request.json()) as { depth?: string };
+          capturedDepth = body.depth;
+          startCalled = true;
+          return HttpResponse.json(
+            { status: "started", ufs_total: 27, depth: body.depth },
+            { status: 202 },
+          );
+        },
+      ),
+      http.get("http://localhost:3000/api/api/v1/engine/status", () =>
+        HttpResponse.json(
+          startCalled
+            ? buildStatus({ state: "running", depth: "nascente_rio_mar" })
+            : buildStatus({}),
+        ),
+      ),
+    );
+
+    const user = userEvent.setup();
+    renderWithClient(<EngineControl />);
+
+    await user.click(await screen.findByTestId("engine-depth-nascente_rio_mar"));
+    await user.click(screen.getByTestId("engine-start"));
+
+    await waitFor(() => expect(capturedDepth).toBe("nascente_rio_mar"));
+  });
+
+  it("reads back the active depth when running (ENG-02 status→UI)", async () => {
+    server.use(
+      engineStatus({
+        state: "running",
+        current_uf: "BA",
+        ufs_done: 5,
+        ufs_total: 27,
+        depth: "nascente_rio",
+      }),
+    );
+    renderWithClient(<EngineControl />);
+
+    const readback = await screen.findByTestId("engine-active-depth");
+    expect(readback).toHaveTextContent("Nascente → Rio");
+  });
 });
