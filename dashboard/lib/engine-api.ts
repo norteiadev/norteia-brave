@@ -15,6 +15,22 @@ import { apiFetch } from "@/lib/api-client";
 
 export type EngineState = "idle" | "running" | "stopping";
 
+/**
+ * Pipeline depth — the operator-chosen cost checkpoint for a sweep run.
+ * Values are identical to the backend contract (brave/core/engine.py):
+ *   nascente          — ingest + §7.6 score only (free, Mtur seed only)
+ *   nascente_rio      — + Places + LLM validation up to Rio routing (paid)
+ *   nascente_rio_mar  — full pipeline incl. the idempotent Mar push
+ */
+export type EngineDepth = "nascente" | "nascente_rio" | "nascente_rio_mar";
+
+/** PT-BR labels for the depth enum — reused by the selector AND the running-state read-back. */
+export const DEPTH_LABELS: Record<EngineDepth, string> = {
+  nascente: "Apenas nascente",
+  nascente_rio: "Nascente → Rio",
+  nascente_rio_mar: "Nascente → Rio → Mar",
+};
+
 export interface EnginePipelineCounts {
   nascente: number;
   rio: { in_progress: number; mar: number; dlq: number; descarte: number };
@@ -28,6 +44,8 @@ export interface EngineStatus {
   ufs_done: number;
   ufs_total: number;
   counts: EnginePipelineCounts;
+  /** Active run's pipeline depth, echoed by /status. null when unset/not running. */
+  depth: EngineDepth | null;
 }
 
 export interface EngineActionResult {
@@ -49,7 +67,11 @@ export function fetchEngineStatus(): Promise<EngineStatus> {
 }
 
 export function startEngine(
-  body?: { ufs?: string[]; lane?: "destinos" | "atrativos" | "both" },
+  body?: {
+    ufs?: string[];
+    lane?: "destinos" | "atrativos" | "both";
+    depth?: EngineDepth;
+  },
 ): Promise<EngineActionResult> {
   return apiFetch<EngineActionResult>("api/v1/engine/start", {
     method: "POST",

@@ -21,6 +21,7 @@ export function engineStatus(overrides: Partial<EngineStatus> = {}) {
       mar: 0,
       atrativos_by_sub_state: {},
     },
+    depth: null,
     ...overrides,
   };
   return http.get(`${BASE}/status`, () => HttpResponse.json(status));
@@ -28,7 +29,10 @@ export function engineStatus(overrides: Partial<EngineStatus> = {}) {
 
 export function engineStartSuccess(state: EngineState = "running") {
   return http.post(`${BASE}/start`, () =>
-    HttpResponse.json({ status: "started", ufs_total: 27, lane: "both" }, { status: 202 }),
+    HttpResponse.json(
+      { status: "started", ufs_total: 27, lane: "both", depth: "nascente_rio" },
+      { status: 202 },
+    ),
   );
 }
 
