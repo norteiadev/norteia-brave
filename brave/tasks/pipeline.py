@@ -928,10 +928,15 @@ def sweep_tripadvisor(self, uf: str, depth: str | None = None) -> None:
         app_config = AppConfig()
 
         if app_config.run_real_externals:
-            from brave.clients.tripadvisor import TripAdvisorClient
+            import redis as _redis_lib
+            from brave.lanes.tripadvisor.client import TripAdvisorClient
             from brave.config.settings import TripAdvisorConfig
+            _ta_redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
             ta_config = TripAdvisorConfig()
-            ta_client = TripAdvisorClient(config=ta_config)
+            ta_client = TripAdvisorClient(
+                config=ta_config,
+                redis=_redis_lib.from_url(_ta_redis_url),
+            )
         else:
             from brave.clients.null_tripadvisor import NullTripAdvisorClient
             ta_client = NullTripAdvisorClient()

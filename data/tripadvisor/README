@@ -8,7 +8,7 @@ Authority: TripAdvisor LLC (public website)
 GraphQL endpoint: https://www.tripadvisor.com/data/graphql/ids
   (persisted-query endpoint; no API key required)
 Anti-bot bootstrap: Playwright-driven session initialisation + DataDome cookie
-  harvesting (see brave/clients/tripadvisor/session.py)
+  harvesting (see brave/lanes/tripadvisor/client.py::_bootstrap_session)
 
 Data collected: destination listings (locationId, name, municipality, UF,
   review_count, rating, most_recent_review_at) and attraction listings (same
@@ -58,7 +58,7 @@ The following mitigations reduce exposure but do NOT eliminate the ToS violation
 (a) Low request rate — maximum one UF per minute; no continuous autonomous crawl.
     The sweep is deliberately slow and is never placed on the automated Celery beat.
 
-(b) Residential proxy seam — brave/clients/tripadvisor/client.py accepts a
+(b) Residential proxy seam — brave/lanes/tripadvisor/client.py accepts a
     config.proxy_url parameter. Configuring a residential proxy shields the
     origin datacenter IP from TripAdvisor's datacenter-block heuristics.
 
@@ -126,4 +126,5 @@ To run a TripAdvisor sweep:
 
 The sweep does NOT run automatically. It is NOT scheduled on the Celery beat.
 CI and offline tests never set RUN_REAL_EXTERNALS — all TripAdvisor client
-calls are handled by FakeTripAdvisorClient (brave/clients/tripadvisor/fake.py).
+calls are handled by NullTripAdvisorClient (brave/clients/null_tripadvisor.py);
+unit tests use FakeTripAdvisorClient (tests/fakes/fake_tripadvisor.py).
