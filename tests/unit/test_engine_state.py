@@ -69,3 +69,47 @@ def test_graceful_stop_lifecycle(redis):
     assert engine.is_running(redis) is False
     engine.mark_idle(redis)
     assert engine.get_state(redis) == engine.IDLE
+
+
+# --- Depth (pipeline reach / cost checkpoint) -------------------------------
+
+
+def test_get_depth_is_none_on_fresh_redis(redis):
+    assert engine.get_depth(redis) is None
+
+
+@pytest.mark.parametrize(
+    "depth",
+    [engine.NASCENTE, engine.NASCENTE_RIO, engine.NASCENTE_RIO_MAR],
+)
+def test_set_depth_then_get_depth_round_trips(redis, depth):
+    engine.set_depth(redis, depth)
+    assert engine.get_depth(redis) == depth
+
+
+def test_depth_constant_values_are_the_fixed_contract():
+    assert engine.NASCENTE == "nascente"
+    assert engine.NASCENTE_RIO == "nascente_rio"
+    assert engine.NASCENTE_RIO_MAR == "nascente_rio_mar"
+    assert engine._VALID_DEPTHS == frozenset(
+        {"nascente", "nascente_rio", "nascente_rio_mar"}
+    )
+
+
+def test_set_depth_rejects_invalid_value(redis):
+    with pytest.raises(ValueError):
+        engine.set_depth(redis, "bogus")
+    # Nothing was persisted on the invalid write.
+    assert engine.get_depth(redis) is None
+
+
+def test_get_depth_ignores_a_corrupt_persisted_value(redis):
+    redis.set(engine._DEPTH_KEY, "rio")  # bypass the setter
+    assert engine.get_depth(redis) is None
+
+
+def test_get_status_carries_depth(redis):
+    status = engine.get_status(redis)
+    assert status["depth"] is None
+    engine.set_depth(redis, engine.NASCENTE_RIO)
+    assert engine.get_status(redis)["depth"] == engine.NASCENTE_RIO
