@@ -92,7 +92,7 @@ Requirements for the foundational milestone: entity-agnostic Brave core + Destin
 - [x] **ENG-03**: Depth `Apenas nascente` runs only the free Mtur seed producer → `store_raw` + §7.6 score; it does NOT call `process_nascente_record` (Rio), NOT run Desmembramento (LLM), NOT run atrativos discovery (Places) — zero external cost. Atrativos do not run in this mode (no free source today).
 - [x] **ENG-04**: Depth `Nascente → Rio` runs producers + validation up to Rio routing (mar-eligible / dlq / descarte) but does NOT promote any record to Mar and does NOT dispatch the WhatsApp gate/outreach.
 - [x] **ENG-05**: Depth `Nascente → Rio → Mar` runs the full pipeline including the idempotent norteia-api Mar push (unchanged contract).
-- [ ] **ENG-06**: A per-entity "nascente" StageBadge variant renders in the dashboard (`StageBadge.tsx`) for records that exist only in the Nascente layer (no Rio row yet).
+- [x] **ENG-06**: A per-entity "nascente" StageBadge variant renders in the dashboard (`StageBadge.tsx`) for records that exist only in the Nascente layer (no Rio row yet).
 - [x] **ENG-07**: All Phase 10 behavior is 100%-offline-testable — backend via pytest with fakeredis (no broker, no externals), dashboard via Vitest + MSW. No test depends on `RUN_REAL_EXTERNALS`.
 
 ## v2 Requirements
