@@ -156,6 +156,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260623-j78 | Fix Celery worker registering zero tasks (autodiscover related_name="pipeline") | 2026-06-23 | 22f9c25 | [260623-j78-fix-celery-worker-registering-zero-tasks](./quick/260623-j78-fix-celery-worker-registering-zero-tasks/) |
+| 260623-jw3 | Desmembramento None-result guard (offline NullLLMClient crash + Mtur-seed rollback) | 2026-06-23 | a49ebbd | [260623-jw3-desmembramento-none-result-guard-offline](./quick/260623-jw3-desmembramento-none-result-guard-offline/) |
 
 ## Deferred Items
 
