@@ -28,10 +28,22 @@ RUNNING = "running"
 STOPPING = "stopping"
 _VALID = {IDLE, RUNNING, STOPPING}
 
+# Pipeline depth = how far a run reaches (the cost-checkpoint contract, shared
+# verbatim with the dashboard TS layer). Orthogonal to `lane` (which entity
+# families run). Depth is the spend gate:
+#   nascente         — ingest + §7.6 score only. Free (no Places, no LLM).
+#   nascente_rio     — + Places/LLM validation up to Rio routing (paid).
+#   nascente_rio_mar — full pipeline incl. the idempotent norteia-api Mar push.
+NASCENTE = "nascente"
+NASCENTE_RIO = "nascente_rio"
+NASCENTE_RIO_MAR = "nascente_rio_mar"
+_VALID_DEPTHS = frozenset({NASCENTE, NASCENTE_RIO, NASCENTE_RIO_MAR})
+
 _STATE_KEY = "brave:engine:state"
 _CURRENT_UF_KEY = "brave:engine:current_uf"
 _UFS_DONE_KEY = "brave:engine:ufs_done"
 _UFS_TOTAL_KEY = "brave:engine:ufs_total"
+_DEPTH_KEY = "brave:engine:depth"
 
 
 def _decode(value: Any) -> str:
@@ -87,6 +99,27 @@ def mark_uf_dispatched(redis: Any, uf: str) -> None:
     redis.incr(_UFS_DONE_KEY)
 
 
+def set_depth(redis: Any, depth: str) -> None:
+    """Persist the chosen pipeline depth. Rejects anything outside the contract.
+
+    Invalid values raise ValueError and are never written — the engine must not
+    silently spend on an unrecognized (possibly more expensive) reach. Kept
+    orthogonal to start_run so lane (entity family) and depth (reach) stay
+    independent; the API edge sets depth around start_run.
+    """
+    if depth not in _VALID_DEPTHS:
+        raise ValueError(
+            f"invalid depth {depth!r}; expected one of {sorted(_VALID_DEPTHS)}"
+        )
+    redis.set(_DEPTH_KEY, depth)
+
+
+def get_depth(redis: Any) -> str | None:
+    """Persisted depth, or None when absent/corrupt (unset → required at the edge)."""
+    raw = _decode(redis.get(_DEPTH_KEY))
+    return raw if raw in _VALID_DEPTHS else None
+
+
 def get_status(redis: Any) -> dict[str, Any]:
     """Engine status snapshot for the dashboard."""
     return {
@@ -94,4 +127,5 @@ def get_status(redis: Any) -> dict[str, Any]:
         "current_uf": _decode(redis.get(_CURRENT_UF_KEY)) or None,
         "ufs_done": int(_decode(redis.get(_UFS_DONE_KEY)) or 0),
         "ufs_total": int(_decode(redis.get(_UFS_TOTAL_KEY)) or 0),
+        "depth": get_depth(redis),
     }
