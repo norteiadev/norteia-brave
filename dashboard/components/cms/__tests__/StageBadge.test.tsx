@@ -108,6 +108,35 @@ describe("D-02 StageBadge", () => {
     expect(screen.queryByText("Aguardando")).not.toBeInTheDocument();
   });
 
+  it("renders the 'Nascente' chip only when the nascente prop is set", () => {
+    // nascente true → PT-BR "Nascente" label appears, stage-first.
+    const { container, unmount } = render(<StageBadge nascente />);
+    expect(screen.getByText("Nascente")).toBeInTheDocument();
+    // Chip uses a CSS-var token, never a hardcoded hex color.
+    expect(container.innerHTML).toMatch(/var\(--/);
+    expect(container.innerHTML).not.toMatch(/#[0-9a-fA-F]{3,6}\b/);
+    unmount();
+
+    // Absent / false → no "Nascente" text.
+    const { unmount: u2 } = render(<StageBadge />);
+    expect(screen.queryByText("Nascente")).not.toBeInTheDocument();
+    u2();
+
+    render(<StageBadge nascente={false} routing="mar" />);
+    expect(screen.queryByText("Nascente")).not.toBeInTheDocument();
+  });
+
+  it("renders the nascente chip first (stage-first) when composed with other props", () => {
+    const { container } = render(<StageBadge nascente routing="dlq" />);
+    const badges = Array.from(
+      container.querySelectorAll("span > span"),
+    ) as HTMLElement[];
+    expect(badges.length).toBe(2);
+    // Stage-first: the nascente chip leads the sequence.
+    expect(badges[0].textContent).toBe("Nascente");
+    expect(badges[1].textContent).toBe("DLQ");
+  });
+
   it("renders nothing visible when all props are absent", () => {
     const { container } = render(<StageBadge />);
     // The wrapper span exists but contains no badge children.

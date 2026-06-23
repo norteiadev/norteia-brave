@@ -17,6 +17,12 @@ import { cn } from "@/lib/utils";
  */
 
 export interface StageBadgeProps {
+  /**
+   * nascente: record exists in the Nascente layer with no Rio row yet
+   * (the records the `Apenas nascente` engine depth parks at the free layer).
+   * Prop-driven — stage is implicit by table membership; this is the visual.
+   */
+  nascente?: boolean;
   routing?: string | null;
   subState?: string | null;
   score?: number | null;
@@ -77,6 +83,7 @@ function toTitleCase(s: string): string {
 }
 
 export function StageBadge({
+  nascente,
   routing,
   subState,
   score,
@@ -86,6 +93,15 @@ export function StageBadge({
 }: StageBadgeProps) {
   return (
     <span className={cn("inline-flex flex-wrap items-center gap-1", className)}>
+      {nascente ? (
+        <Badge
+          variant="outline"
+          className="border-transparent bg-[var(--color-primary)]/15 font-mono text-[12px] font-semibold text-[var(--color-primary)]"
+        >
+          Nascente
+        </Badge>
+      ) : null}
+
       {routing ? (
         <Badge
           variant="outline"
