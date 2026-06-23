@@ -78,6 +78,19 @@ def route_by_score(
     else:
         rio_record.dlq_reason = None
 
+    # Set mar_ready flag for TA attractions meeting the promote bar (TA-05, T-11-02-02).
+    # Explicit False for ALL non-qualifying paths so that re-scoring always resets the flag
+    # (never leaves a stale True from a previous score run with different inputs).
+    # Security: flag only True when entity_type=="attraction" AND canonical_key starts with
+    # "tripadvisor:" AND atualidade≥bar AND corroboracao≥bar. This ensures mar_ready can
+    # never be set by mtur, places, or any other non-TA source.
+    rio_record.mar_ready = (
+        rio_record.entity_type == "attraction"
+        and (rio_record.canonical_key or "").startswith("tripadvisor:")
+        and score_input.atualidade_value >= config.mar_ready_atualidade_bar
+        and score_input.corroboracao_value >= config.mar_ready_corrob_bar
+    )
+
     return rio_record
 
 
