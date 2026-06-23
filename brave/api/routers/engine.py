@@ -90,12 +90,26 @@ def engine_start(
 ) -> dict:
     """Start the full sweep. Idempotent: 409 if a run is already active.
 
-    Optional body: { "ufs": ["BA", ...], "lane": "destinos|atrativos|both" }.
+    Required body: { "depth": "nascente|nascente_rio|nascente_rio_mar", ... }.
+    Optional: { "ufs": ["BA", ...], "lane": "destinos|atrativos|both" }.
+
+    `depth` is the cost-checkpoint contract and is **required** — there is no
+    implicit default, so the engine never silently spends.
     """
     from brave.tasks.beat_schedule import UF_LIST
 
     ufs = body.get("ufs") or list(UF_LIST)
     lane = body.get("lane", "both")
+
+    # Validate depth BEFORE start_run (and before the already-running/409 branch):
+    # a missing/invalid depth must return 422 even mid-run, never flipping engine
+    # state nor first tripping 409 (T-10-02).
+    depth = body.get("depth")
+    if depth not in collection_engine._VALID_DEPTHS:
+        raise HTTPException(
+            status_code=422,
+            detail="depth is required: nascente|nascente_rio|nascente_rio_mar",
+        )
 
     if not collection_engine.start_run(redis, ufs_total=len(ufs)):
         raise HTTPException(
@@ -103,10 +117,12 @@ def engine_start(
             detail="Engine already running — stop it before starting a new run.",
         )
 
+    collection_engine.set_depth(redis, depth)
+
     try:
         from brave.tasks.pipeline import engine_sweep_run
 
-        engine_sweep_run.delay(ufs=ufs, lane=lane)
+        engine_sweep_run.delay(ufs=ufs, lane=lane, depth=depth)
     except Exception as exc:  # broker-down
         from brave.config.settings import AppConfig
 
@@ -119,8 +135,8 @@ def engine_start(
             ) from exc
         # Offline (tests/dev): no broker — leave state running; orchestrator is exercised separately.
 
-    logger.info("engine_started", ufs=len(ufs), lane=lane)
-    return {"status": "started", "ufs_total": len(ufs), "lane": lane}
+    logger.info("engine_started", ufs=len(ufs), lane=lane, depth=depth)
+    return {"status": "started", "ufs_total": len(ufs), "lane": lane, "depth": depth}
 
 
 @router.post(
