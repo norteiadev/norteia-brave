@@ -52,5 +52,10 @@ app.conf.update(
     enable_utc=True,
 )
 
-# Auto-discover tasks in brave.tasks.pipeline
-app.autodiscover_tasks(["brave.tasks"])
+# Auto-discover tasks in brave.tasks.pipeline.
+# related_name MUST be "pipeline": the @shared_task definitions live in
+# brave/tasks/pipeline.py, not the Celery default brave/tasks/tasks.py. Without
+# this, autodiscover imports a non-existent module, the worker boots with an
+# empty [tasks] list, and every dispatched task (engine_sweep_run/sweep_uf/…)
+# silently never runs.
+app.autodiscover_tasks(["brave.tasks"], related_name="pipeline")
