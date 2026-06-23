@@ -186,6 +186,14 @@ class DesmembramentoAgent:
                 )
                 continue  # Skip this município, continue fan-out
 
+            # Offline NullLLMClient (or a degenerate LLM response) returns None.
+            # Treat as "no sub-destinos extracted" and skip — accessing
+            # result.destinos here would raise AttributeError, which propagates
+            # out of produce() and rolls back the whole sweep_uf transaction,
+            # silently discarding the already-written Mtur seed records.
+            if result is None:
+                continue
+
             # Each valid destino → Nascente with origem=40 (D-06 firewall)
             for destino in result.destinos:
                 slug = (

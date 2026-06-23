@@ -105,6 +105,40 @@ async def test_desmembramento_agent_happy_path(
 
 
 # ---------------------------------------------------------------------------
+# Offline NullLLMClient path test (regression: result-is-None must not crash)
+# ---------------------------------------------------------------------------
+
+
+async def test_desmembramento_offline_null_llm_does_not_crash(
+    db_session, score_config, porto_seguro_fixture
+):
+    """NullLLMClient.extract() returns None — produce() must skip, not crash.
+
+    Regression (quick task 260623-jw3): accessing result.destinos on a None result
+    raised AttributeError out of produce(), which rolled back the whole sweep_uf
+    transaction and silently discarded the already-written Mtur seed. produce()
+    must instead treat None as "no sub-destinos extracted":
+      - does NOT raise
+      - writes zero source="desm" NascenteRecords
+    """
+    from brave.clients.null_llm import NullLLMClient
+    from brave.core.models import NascenteRecord
+
+    agent = DesmembramentoAgent(
+        llm_client=NullLLMClient(),
+        mtur_client=FakeMturClient(fixtures=porto_seguro_fixture),
+        session=db_session,
+        config=score_config,
+    )
+
+    # Must not raise even though the município is Oferta Principal (extract is called).
+    await agent.produce("BA")
+
+    records = db_session.query(NascenteRecord).filter_by(source="desm").all()
+    assert records == [], f"Expected no desm records, got {len(records)}"
+
+
+# ---------------------------------------------------------------------------
 # Quarantine path test
 # ---------------------------------------------------------------------------
 
