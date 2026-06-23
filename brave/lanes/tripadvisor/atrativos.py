@@ -1,7 +1,27 @@
 """TripAdvisorAtrativosIngest — TA-02.
 
-Reads TripAdvisor attractions via TripAdvisorClientProtocol and ingests them
-into Nascente (source='tripadvisor', entity_type='attraction', origem=65.0).
+This lane scrapes TripAdvisor attraction listings via the GraphQL hybrid
+client (TripAdvisorClientProtocol) and ingests them into Nascente with
+source='tripadvisor', entity_type='attraction', origem=65.0.
+
+ToS WARNING: Systematic scraping violates TripAdvisor's Terms of Service
+(Section 5, "Use of Site"). This module must NOT be used without operator
+acknowledgement of the legal-risk posture documented in data/tripadvisor/README.
+
+LGPD: Only aggregate review signals are stored — review_count, rating, and
+most_recent_review_at. Author names, reviewer IDs, and review text are NEVER
+extracted or persisted. TripAdvisorReviewSignals enforces extra="forbid" to
+prevent drift toward PII fields.
+
+OPERATOR GATE: This producer is NOT on the autonomous Celery beat. A sweep
+requires RUN_REAL_EXTERNALS=1 and an explicit POST /api/v1/engine/start with
+source="tripadvisor". See data/tripadvisor/README for the full operator
+checklist (proxy setup, scraper dep group, LGPD acknowledgement).
+
+NO WHATSAPP OUTREACH: TA attractions NEVER enter the WhatsApp outreach pipeline.
+They are review-signal validated only (corroboracao + atualidade from aggregate
+review data). Promotion to Mar requires a human steward's audited
+promote_override action — there is no automated Mar push path for this lane.
 
 Mirrors TripAdvisorDestinosIngest in structure. Adds parent destino linkage:
   - parent_rio_id: from destino_rio_map (dict[ibge_code, (rio_id, source_ref)])

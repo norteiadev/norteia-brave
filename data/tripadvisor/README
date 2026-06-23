@@ -1,0 +1,129 @@
+TripAdvisor — Dataset
+======================
+
+SOURCE
+------
+
+Authority: TripAdvisor LLC (public website)
+GraphQL endpoint: https://www.tripadvisor.com/data/graphql/ids
+  (persisted-query endpoint; no API key required)
+Anti-bot bootstrap: Playwright-driven session initialisation + DataDome cookie
+  harvesting (see brave/clients/tripadvisor/session.py)
+
+Data collected: destination listings (locationId, name, municipality, UF,
+  review_count, rating, most_recent_review_at) and attraction listings (same
+  fields plus parent location reference).
+
+No TripAdvisor API partnership or data-licensing agreement is in place.
+This source is operated under an accepted legal-risk posture (see LEGAL RISK).
+
+
+CURRENT FILES
+-------------
+
+uf_geoids.json
+    Maps each Brazilian UF abbreviation to TripAdvisor's internal geoId for
+    that state. Used by TripAdvisorGraphQLClient to scope queries to one UF
+    at a time and avoid full-site crawls.
+
+    Source: manually compiled from TripAdvisor location pages (one-time lookup).
+    Updated only when TripAdvisor changes their internal geoId assignments
+    (very rare; requires manual verification).
+
+
+LEGAL RISK
+----------
+
+TripAdvisor's Terms of Service, Section 5 ("Use of Site"), explicitly prohibit:
+  - Systematic or automated data collection of any kind
+  - Scraping, data mining, or harvesting content
+  - Reproduction or redistribution of listings content without written permission
+
+Using this source as implemented constitutes a Terms of Service violation and
+exposes the operator to:
+  - IP bans and DataDome/bot-detection challenges
+  - Cease-and-desist legal communications
+  - Account suspension if any TripAdvisor account is associated
+
+This risk is DOCUMENTED AND ACCEPTED under the following conditions (see
+MITIGATIONS and OPERATOR GATE). Operators must acknowledge this risk before
+enabling the source.
+
+
+MITIGATIONS
+-----------
+
+The following mitigations reduce exposure but do NOT eliminate the ToS violation:
+
+(a) Low request rate — maximum one UF per minute; no continuous autonomous crawl.
+    The sweep is deliberately slow and is never placed on the automated Celery beat.
+
+(b) Residential proxy seam — brave/clients/tripadvisor/client.py accepts a
+    config.proxy_url parameter. Configuring a residential proxy shields the
+    origin datacenter IP from TripAdvisor's datacenter-block heuristics.
+
+(c) No PII stored — only aggregate review signals are persisted:
+      review_count    (integer count of reviews)
+      rating          (float average rating)
+      most_recent_review_at  (datetime of the most recent review, no text)
+    Author names, reviewer IDs, profile links, and review text are NEVER
+    extracted, logged, or stored. TripAdvisorReviewSignals enforces
+    extra="forbid" (Pydantic) to prevent future drift toward PII fields.
+
+(d) Operator-gated sweep — the TripAdvisor sweep is NOT registered on the
+    autonomous Celery beat. It requires an explicit engine start with
+    source="tripadvisor" (POST /api/v1/engine/start). See OPERATOR GATE.
+
+(e) Human promote-override — no automated path from TripAdvisor data to Mar.
+    Every TA attraction that reaches DLQ requires a human steward action
+    (promote_override) before the record can advance to Mar. This gives a
+    human-review gate between scraped data and the canonical platform.
+
+
+LGPD BASIS
+----------
+
+Legal basis: Legitimate interest (Art. 7º, IX, Lei 13.709/2018 — LGPD) in
+territorial data quality for the Norteia platform.
+
+Data minimisation applied: only aggregate review signals (review_count, rating,
+most_recent_review_at) are stored. No individual reviewer data is processed,
+retained, or transmitted. The LGPD basis applies exclusively to these aggregate
+signals — not to any individual person's data.
+
+TripAdvisorReviewSignals (brave/lanes/tripadvisor/schemas.py) enforces
+model_config=ConfigDict(extra="forbid"). Any field that could identify an
+individual (author, reviewer_id, review_text, profile_url, etc.) raises a
+Pydantic ValidationError and is discarded before persistence.
+
+No data subject rights obligations apply to this dataset because no personal
+data is collected.
+
+
+OPERATOR GATE
+-------------
+
+The TripAdvisor sweep is NOT enabled by default and does NOT run in CI.
+
+To run a TripAdvisor sweep:
+
+  1. Acknowledge legal risk (see LEGAL RISK above).
+
+  2. Set the opt-in environment variable:
+       RUN_REAL_EXTERNALS=1
+
+  3. Install the optional scraper dependency group:
+       pip install 'norteia-brave[scraper]'
+       playwright install chromium
+
+  4. (Optional) Configure a residential proxy:
+       BRAVE_TA_PROXY_URL=socks5://user:pass@proxy-host:port
+
+  5. Start the sweep via the engine API:
+       POST /api/v1/engine/start
+       Content-Type: application/json
+       {"source": "tripadvisor", "depth": "NASCENTE_RIO"}
+
+The sweep does NOT run automatically. It is NOT scheduled on the Celery beat.
+CI and offline tests never set RUN_REAL_EXTERNALS — all TripAdvisor client
+calls are handled by FakeTripAdvisorClient (brave/clients/tripadvisor/fake.py).
