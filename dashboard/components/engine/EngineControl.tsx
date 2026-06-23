@@ -1,18 +1,28 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api-client";
 import {
+  DEPTH_LABELS,
   ENGINE_REFETCH_INTERVAL_MS,
   engineKeys,
   fetchEngineStatus,
   startEngine,
   stopEngine,
+  type EngineDepth,
   type EngineState,
 } from "@/lib/engine-api";
+
+/** Depth options in cost order — free first. */
+const DEPTH_OPTIONS: EngineDepth[] = [
+  "nascente",
+  "nascente_rio",
+  "nascente_rio_mar",
+];
 
 /**
  * EngineControl — the operator start/stop panel for the Brave collection sweep.
@@ -46,6 +56,7 @@ function explainError(err: unknown): string {
 
 export function EngineControl() {
   const qc = useQueryClient();
+  const [selectedDepth, setSelectedDepth] = useState<EngineDepth | undefined>();
 
   const { data, isPending } = useQuery({
     queryKey: engineKeys.status,
@@ -58,7 +69,7 @@ export function EngineControl() {
     void qc.invalidateQueries({ queryKey: engineKeys.status });
 
   const start = useMutation({
-    mutationFn: () => startEngine(),
+    mutationFn: (depth: EngineDepth) => startEngine({ depth }),
     onError: (err) => toast.error(explainError(err)),
     onSuccess: () => toast.success("Motor ligado — varredura iniciada"),
     onSettled: invalidate,
@@ -102,16 +113,46 @@ export function EngineControl() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {state === "idle" ? (
-            <Button
-              size="sm"
-              disabled={pending}
-              onClick={() => start.mutate()}
-              data-testid="engine-start"
-            >
-              Ligar motor
-            </Button>
+            <>
+              <div
+                className="flex flex-wrap items-center gap-1.5"
+                role="radiogroup"
+                aria-label="Profundidade da varredura"
+                data-testid="engine-depth"
+              >
+                {DEPTH_OPTIONS.map((depth) => {
+                  const active = selectedDepth === depth;
+                  return (
+                    <button
+                      key={depth}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      disabled={pending}
+                      onClick={() => setSelectedDepth(depth)}
+                      data-testid={`engine-depth-${depth}`}
+                      className={`rounded-md border px-2.5 py-1 text-[12px] transition-colors ${
+                        active
+                          ? "border-primary bg-primary/10 font-medium text-foreground"
+                          : "border-border text-muted-foreground hover:bg-muted"
+                      }`}
+                    >
+                      {DEPTH_LABELS[depth]}
+                    </button>
+                  );
+                })}
+              </div>
+              <Button
+                size="sm"
+                disabled={pending || !selectedDepth}
+                onClick={() => selectedDepth && start.mutate(selectedDepth)}
+                data-testid="engine-start"
+              >
+                Ligar motor
+              </Button>
+            </>
           ) : (
             <Button
               size="sm"
@@ -125,6 +166,16 @@ export function EngineControl() {
           )}
         </div>
       </div>
+
+      {/* Active-depth read-back — the depth the running sweep was started with */}
+      {state !== "idle" && data?.depth && (
+        <p
+          className="mt-2 text-[12px] text-muted-foreground"
+          data-testid="engine-active-depth"
+        >
+          Profundidade: {DEPTH_LABELS[data.depth]}
+        </p>
+      )}
 
       {/* Progress — UFs fanned out this run */}
       {state !== "idle" && data && data.ufs_total > 0 && (

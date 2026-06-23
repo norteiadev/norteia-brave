@@ -104,7 +104,9 @@ describe("EngineControl", () => {
     const user = userEvent.setup();
     renderWithClient(<EngineControl />);
 
-    await user.click(await screen.findByTestId("engine-start"));
+    // Required-selection: pick a depth before the start button is enabled.
+    await user.click(await screen.findByTestId("engine-depth-nascente"));
+    await user.click(screen.getByTestId("engine-start"));
 
     await waitFor(() =>
       expect(screen.getByTestId("engine-state")).toHaveTextContent("Varrendo"),
