@@ -22,6 +22,7 @@ const SURFACES = [
   { href: "/destinos", title: "Destinos", desc: "CMS territorial · lista/detalhe/ações por etapa" },
   { href: "/atrativos", title: "Atrativos", desc: "CMS atrativo · FSM sub_state · detalhe/ações" },
   { href: "/processo", title: "Processo", desc: "Workers · falhas · fila humana · funil" },
+  { href: "/mar-ready", title: "Mar Ready", desc: "Atrativos TripAdvisor prontos para promoção manual → Mar" },
 ];
 
 export default function Home() {
