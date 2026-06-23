@@ -1,13 +1,14 @@
 """Pydantic-settings configuration hierarchy for norteia-brave.
 
 Three root config classes (D-10, D-12):
-  - ScoreConfig    — §7.6 weights and thresholds (env_prefix BRAVE_SCORE_)
-  - LLMConfig      — LLM provider slugs and budget (env_prefix BRAVE_LLM_)
-  - DBConfig       — database and Redis URLs (env_prefix BRAVE_DB_)
-  - WhatsAppConfig — WhatsApp BSP (Twilio) config (env_prefix BRAVE_WA_)
-  - RampConfig     — volume ramp limits (env_prefix BRAVE_WA_RAMP_)
+  - ScoreConfig        — §7.6 weights and thresholds (env_prefix BRAVE_SCORE_)
+  - LLMConfig          — LLM provider slugs and budget (env_prefix BRAVE_LLM_)
+  - DBConfig           — database and Redis URLs (env_prefix BRAVE_DB_)
+  - WhatsAppConfig     — WhatsApp BSP (Twilio) config (env_prefix BRAVE_WA_)
+  - RampConfig         — volume ramp limits (env_prefix BRAVE_WA_RAMP_)
+  - TripAdvisorConfig  — TripAdvisor scraper config (env_prefix BRAVE_TA_)
 
-Plus a composite AppConfig that aggregates all five.
+Plus a composite AppConfig that aggregates all six.
 
 CR-02: No Field(alias=...) on any field in any config class.
   Aliases let a bare env var shadow the prefixed key (secret-shadowing).
@@ -33,6 +34,14 @@ class ScoreConfig(BaseSettings):
     weight_corroboracao: float = 20.0
     weight_atualidade: float = 15.0
     weight_validacao_humana: float = 15.0
+
+    # mar_ready promotion thresholds for TripAdvisor attractions (TA-05).
+    # Not TA-specific — they belong in ScoreConfig so route_by_score can read them
+    # from the same config object without importing TripAdvisorConfig.
+    # Env: BRAVE_SCORE_MAR_READY_ATUALIDADE_BAR, BRAVE_SCORE_MAR_READY_CORROB_BAR
+    # CR-02: no alias.
+    mar_ready_atualidade_bar: float = 70.0
+    mar_ready_corrob_bar: float = 60.0
 
     # Routing thresholds
     threshold_mar: float = 85.0
@@ -220,6 +229,64 @@ class RampConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="BRAVE_WA_RAMP_", populate_by_name=True)
 
 
+class TripAdvisorConfig(BaseSettings):
+    """TripAdvisor GraphQL scraper configuration (TA-01).
+
+    Controls the Playwright DataDome session bootstrap, httpx persisted-query
+    client, proxy seam, and IBGE municipality resolver thresholds.
+
+    No env-var aliases (CR-02): each field resolves from its exact BRAVE_TA_
+    prefixed name only.
+
+    Env prefix: BRAVE_TA_
+      BRAVE_TA_PROXY_URL             — residential proxy URL (empty = no proxy)
+      BRAVE_TA_SESSION_TTL           — DataDome cookie TTL in seconds (default 1800)
+      BRAVE_TA_QUERY_ID_OVERRIDE     — JSON dict of queryId overrides (e.g. {"destinations": "abc"})
+      BRAVE_TA_IBGE_MATCH_THRESHOLD  — rapidfuzz token_sort_ratio cutoff (default 88)
+      BRAVE_TA_IBGE_MAX_DISTANCE_KM  — haversine fallback radius in km (default 15.0)
+    """
+
+    proxy_url: str = Field(
+        default="",
+        description=(
+            "Residential proxy URL for DataDome bypass (e.g. 'http://user:pass@proxy:port'). "
+            "Empty string = no proxy (dev default). Never emitted in logs — T-11-01-01."
+        ),
+    )
+    session_ttl: int = Field(
+        default=1800,
+        description=(
+            "DataDome session cookie TTL in seconds (BRAVE_TA_SESSION_TTL). "
+            "Conservative default: 1800s (30 min). Tune based on empirical cookie expiry."
+        ),
+    )
+    query_id_override: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Override map for GraphQL queryIds (BRAVE_TA_QUERY_ID_OVERRIDE). "
+            "Keys: 'destinations', 'attractions'. Set when TA rotates queryIds "
+            "faster than the live-capture bootstrap can recover."
+        ),
+    )
+    ibge_match_threshold: int = Field(
+        default=88,
+        description=(
+            "rapidfuzz token_sort_ratio cutoff for IBGE municipality name matching "
+            "(BRAVE_TA_IBGE_MATCH_THRESHOLD). Values below 80 risk false matches."
+        ),
+    )
+    ibge_max_distance_km: float = Field(
+        default=15.0,
+        description=(
+            "Haversine distance threshold in km for the IBGE coordinate fallback "
+            "(BRAVE_TA_IBGE_MAX_DISTANCE_KM). Used when name fuzzy-match falls below threshold."
+        ),
+    )
+
+    model_config = SettingsConfigDict(env_prefix="BRAVE_TA_")
+    # CR-02: NO Field(alias=...) anywhere in this class.
+
+
 class AppConfig(BaseSettings):
     """Composite application configuration.
 
@@ -231,6 +298,7 @@ class AppConfig(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     ramp: RampConfig = Field(default_factory=RampConfig)
+    tripadvisor: TripAdvisorConfig = Field(default_factory=TripAdvisorConfig)
 
     # run_real_externals=True enables real API calls (tests and CI default to False)
     run_real_externals: bool = False
