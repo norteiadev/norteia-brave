@@ -49,17 +49,18 @@ class IbgeMunicipio:
 # ---------------------------------------------------------------------------
 
 
-def load_ibge_csv(path: Path) -> list[IbgeMunicipio]:
+def load_ibge_csv(path: Path | str) -> list[IbgeMunicipio]:
     """Load IBGE municipality CSV into a list of IbgeMunicipio records.
 
     CSV header: ibge_code,nome,uf,lat,lng
 
     Args:
-        path: Path to ibge_municipios.csv.
+        path: Path to ibge_municipios.csv (Path or str — str is coerced).
 
     Returns:
         List of IbgeMunicipio records (empty list if file has only header).
     """
+    path = Path(path)
     records: list[IbgeMunicipio] = []
     with path.open(encoding="utf-8") as f:
         reader = csv.DictReader(f)

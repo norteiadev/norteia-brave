@@ -131,59 +131,74 @@ class TripAdvisorClient:
         if proxy_args:
             launch_kwargs["proxy"] = proxy_args
 
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(**launch_kwargs)
-            context = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                )
-            )
-            page = context.new_page()
-            page.on("request", _on_request)
+        def _run_sync() -> list[dict[str, Any]]:
+            """Run the sync_playwright bootstrap and return the captured cookies.
 
-            # Navigate to a TA page to trigger GraphQL requests + DataDome cookies
-            try:
-                page.goto(
-                    "https://www.tripadvisor.com/Tourism-g303506-Rio_de_Janeiro_State_of_Rio_de_Janeiro-Vacations.html",
-                    wait_until="networkidle",
-                    timeout=30_000,
-                )
-            except Exception:
-                # Page may timeout or redirect — captured requests may still be valid
-                pass
-
-            # Extract queryIds from intercepted requests
-            for body in captured:
-                if isinstance(body, list):
-                    # Shape A: [{"query": queryId, "variables": {...}}]
-                    for item in body:
-                        if isinstance(item, dict) and "query" in item:
-                            qid = item["query"]
-                            vars_ = item.get("variables", {})
-                            if "locationId" in vars_ or "geoId" in vars_:
-                                # Heuristic: distinguish destinations vs attractions
-                                if "ATTRACTION" in str(vars_).upper():
-                                    query_ids.setdefault("attractions", qid)
-                                else:
-                                    query_ids.setdefault("destinations", qid)
-                elif isinstance(body, dict) and "extensions" in body:
-                    # Shape B: {"extensions": {"persistedQuery": {"sha256Hash": ...}}}
-                    sha = (
-                        body.get("extensions", {})
-                        .get("persistedQuery", {})
-                        .get("sha256Hash", "")
+            Executed in a dedicated thread so the Playwright Sync API never runs
+            inside a running asyncio loop. The async producers call this client
+            via asyncio.run(produce(...)), which would otherwise trip Playwright's
+            "Sync API inside the asyncio loop" guard. The Celery (sync) path is
+            unaffected — it also gets a clean, loop-free thread.
+            """
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(**launch_kwargs)
+                context = browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/124.0.0.0 Safari/537.36"
                     )
-                    if sha:
-                        query_ids.setdefault("destinations", sha)
+                )
+                page = context.new_page()
+                page.on("request", _on_request)
 
-            # Apply config overrides (escape hatch for queryId rotation)
-            query_ids.update(self._config.query_id_override)
+                # Navigate to a TA page to trigger GraphQL requests + DataDome cookies
+                try:
+                    page.goto(
+                        "https://www.tripadvisor.com/Tourism-g303506-Rio_de_Janeiro_State_of_Rio_de_Janeiro-Vacations.html",
+                        wait_until="networkidle",
+                        timeout=30_000,
+                    )
+                except Exception:
+                    # Page may timeout or redirect — captured requests may still be valid
+                    pass
 
-            # Extract cookies from the browser context
-            cookies = context.cookies()
-            browser.close()
+                # Extract cookies from the browser context (before close)
+                browser_cookies = context.cookies()
+                browser.close()
+            return browser_cookies
+
+        import concurrent.futures  # noqa: PLC0415
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
+            cookies = _ex.submit(_run_sync).result()
+
+        # Extract queryIds from intercepted requests (captured during page.goto)
+        for body in captured:
+            if isinstance(body, list):
+                # Shape A: [{"query": queryId, "variables": {...}}]
+                for item in body:
+                    if isinstance(item, dict) and "query" in item:
+                        qid = item["query"]
+                        vars_ = item.get("variables", {})
+                        if "locationId" in vars_ or "geoId" in vars_:
+                            # Heuristic: distinguish destinations vs attractions
+                            if "ATTRACTION" in str(vars_).upper():
+                                query_ids.setdefault("attractions", qid)
+                            else:
+                                query_ids.setdefault("destinations", qid)
+            elif isinstance(body, dict) and "extensions" in body:
+                # Shape B: {"extensions": {"persistedQuery": {"sha256Hash": ...}}}
+                sha = (
+                    body.get("extensions", {})
+                    .get("persistedQuery", {})
+                    .get("sha256Hash", "")
+                )
+                if sha:
+                    query_ids.setdefault("destinations", sha)
+
+        # Apply config overrides (escape hatch for queryId rotation)
+        query_ids.update(self._config.query_id_override)
 
         session: dict[str, Any] = {
             "cookies": cookies,
