@@ -632,11 +632,18 @@ def push_destination_task(self, rio_id: str) -> None:
     reject_on_worker_lost=True,
     time_limit=600,  # Places API can be slow — 10 min limit
 )
-def discover_atrativo_task(self, uf: str) -> None:
+def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
     """Fan-out attraction discovery for one UF (sub_state → discovered).
 
     Sweeps Google Places for attractions in the given UF, resolves parent
     destinos from Mar, extracts via DeepSeek/instructor, and writes to Nascente.
+
+    Depth gate (plan 10-02): discovery + Rio always run for atrativos at the
+    rio depths, but the WhatsApp-gate FSM chain (find_contacts → gate) is only
+    kicked when depth == NASCENTE_RIO_MAR. Under NASCENTE_RIO the chain is NOT
+    kicked (neither find_contacts_task.delay nor its inline .run fallback fires).
+    depth arrives ONLY as this arg — never read from Redis here. depth=None
+    (legacy/direct call) defaults to NASCENTE_RIO_MAR (full chain).
 
     Idempotency: store_raw is idempotent by content_hash (D-03).
     Error handling: transient → retry; permanent → quarantine_poison.
@@ -644,9 +651,13 @@ def discover_atrativo_task(self, uf: str) -> None:
 
     Args:
         uf: Two-letter Brazilian state code (e.g. "BA", "RJ").
+        depth: Pipeline depth (nascente_rio | nascente_rio_mar). None → full.
     """
+    from brave.core import engine as collection_engine
     from brave.core.quarantine import quarantine_poison as _quarantine
     from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+
+    effective_depth = depth or collection_engine.NASCENTE_RIO_MAR
 
     session, engine = _get_session()
     try:
@@ -701,11 +712,16 @@ def discover_atrativo_task(self, uf: str) -> None:
                 RioRecord.sub_state == "discovered",
             )
         ).all()
-        for rio_id in discovered_ids:
-            try:
-                find_contacts_task.delay(str(rio_id))
-            except Exception:
-                find_contacts_task.run(str(rio_id))
+        # Depth gate (plan 10-02): only NASCENTE_RIO_MAR kicks the WhatsApp-gate
+        # FSM chain. Under NASCENTE_RIO discovery/Rio still ran above, but the
+        # ENTIRE fan-out below — both the .delay dispatch AND the .run inline
+        # fallback — is suppressed so the chain never advances toward the gate.
+        if effective_depth != collection_engine.NASCENTE_RIO:
+            for rio_id in discovered_ids:
+                try:
+                    find_contacts_task.delay(str(rio_id))
+                except Exception:
+                    find_contacts_task.run(str(rio_id))
 
     except PermanentError as exc:
         session.rollback()
@@ -761,12 +777,18 @@ def discover_atrativo_task(self, uf: str) -> None:
     reject_on_worker_lost=True,
     time_limit=600,  # producers fan out per-município; allow headroom
 )
-def sweep_uf(self, uf: str) -> None:
+def sweep_uf(self, uf: str, depth: str | None = None) -> None:
     """Recurring Destinos sweep for one UF (ORCH-01, D-01/D-02).
 
     Composes the two destino producers:
       1. MturSeedIngest.produce(uf)      — idempotent seed re-ingest (origem=100).
       2. DesmembramentoAgent.produce(uf) — recurring LLM sub-destino discovery (origem=40).
+
+    Depth gate (plan 10-02): depth arrives as an explicit task arg (never read
+    from Redis here — the orchestrator owns the read). Under depth=NASCENTE the
+    Mtur seed runs Nascente-only (run_rio=False) and the LLM Desmembramento is
+    skipped entirely — zero external cost. At the rio depths both run as today.
+    depth=None (legacy/direct call) defaults to the full path.
 
     Producer-only (D-02): both producers call store_raw + process_nascente_record
     internally, so records land in DLQ/Mar/descarte by §7.6 automatically. This task
@@ -783,9 +805,14 @@ def sweep_uf(self, uf: str) -> None:
         uf: Two-letter Brazilian state code (e.g. "BA", "RJ").
     """
     from brave.clients.mtur import MturClient
+    from brave.core import engine as collection_engine
     from brave.core.quarantine import quarantine_poison as _quarantine
     from brave.lanes.destinos.desmembramento import DesmembramentoAgent
     from brave.lanes.destinos.mtur import MturSeedIngest
+
+    # Depth derivation — nascente is the free Nascente-only path: no Rio, no LLM.
+    run_rio = depth != collection_engine.NASCENTE
+    run_desmembramento = depth != collection_engine.NASCENTE
 
     session, engine = _get_session()
     try:
@@ -794,23 +821,26 @@ def sweep_uf(self, uf: str) -> None:
 
         try:
             # Mtur seed re-ingest (idempotent — store_raw dedups by content_hash).
+            # run_rio=False under nascente: Nascente + §7.6 score only, no Rio.
             seed = MturSeedIngest(MturClient(), session, config)
-            asyncio.run(seed.produce(uf))
+            asyncio.run(seed.produce(uf, run_rio=run_rio))
 
             # Desmembramento — the real recurring LLM discovery (origem=40 firewall).
+            # Skipped entirely under nascente (it is paid LLM, not a free source).
             # LLM client selection mirrors discover_atrativo_task (real vs fake).
-            redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-            import redis as redis_lib
-            redis_client = redis_lib.from_url(redis_url)
-            if app_config.run_real_externals:
-                from brave.clients.llm import RealLLMClient
-                llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="destinos")
-            else:
-                from brave.clients.null_llm import NullLLMClient
-                llm_client = NullLLMClient()
-            # Ctor arg order: llm FIRST, then mtur (desmembramento.py:128).
-            desm = DesmembramentoAgent(llm_client, MturClient(), session, config)
-            asyncio.run(desm.produce(uf))
+            if run_desmembramento:
+                redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+                import redis as redis_lib
+                redis_client = redis_lib.from_url(redis_url)
+                if app_config.run_real_externals:
+                    from brave.clients.llm import RealLLMClient
+                    llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="destinos")
+                else:
+                    from brave.clients.null_llm import NullLLMClient
+                    llm_client = NullLLMClient()
+                # Ctor arg order: llm FIRST, then mtur (desmembramento.py:128).
+                desm = DesmembramentoAgent(llm_client, MturClient(), session, config)
+                asyncio.run(desm.produce(uf))
         except FileNotFoundError as exc:
             # A missing Mtur seed CSV is permanent — quarantine, never retry (T-05-03).
             raise PermanentError(f"Mtur seed CSV missing for sweep {uf}: {exc}") from exc
@@ -1547,7 +1577,12 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
     reject_on_worker_lost=True,
     time_limit=3600,  # paces across up to 27 UFs; only dispatches (does not await)
 )
-def engine_sweep_run(self, ufs: list[str] | None = None, lane: str = "both") -> dict:
+def engine_sweep_run(
+    self,
+    ufs: list[str] | None = None,
+    lane: str = "both",
+    depth: str | None = None,
+) -> dict:
     """Operator-started full sweep orchestrator (engine ON).
 
     Fans out the existing producer tasks per UF — sweep_uf (destinos) and
@@ -1555,6 +1590,19 @@ def engine_sweep_run(self, ufs: list[str] | None = None, lane: str = "both") -> 
     gate). Between UFs it re-reads the Redis engine state and breaks the loop the
     moment Stop is requested: already-dispatched UF tasks finish on the workers
     (graceful drain), no further UFs are fanned out, and the engine returns to idle.
+
+    Depth gate (plan 10-02): depth is read ONCE at the authenticated /start edge
+    (plan 10-01) and passed in as an arg — never re-read from Redis in this loop,
+    so a stale/mutated Redis depth mid-run cannot escalate spend (T-10-04). It is
+    threaded down to sweep_uf / discover_atrativo_task as their own depth arg:
+      - NASCENTE: dispatch ONLY sweep_uf (Mtur-only, run_rio=False); atrativos are
+        NEVER dispatched regardless of lane (they have no free source); no LLM.
+      - NASCENTE_RIO / NASCENTE_RIO_MAR: honor lane as today. The difference is
+        downstream: nascente_rio runs producers + Rio but does not kick the
+        atrativos WhatsApp-gate chain; nascente_rio_mar kicks it.
+    depth=None (legacy/direct call) defaults to NASCENTE_RIO_MAR. The sweep adds
+    NO automated promote_to_mar / Mar push under any depth — Mar push stays on
+    the unchanged human DLQ gate + WhatsApp finalize path (ENG-05).
 
     Never auto-validates, never reaches the WhatsApp send path — it only kicks the
     same producer/chain tasks the beat and /sweep endpoint already use.
@@ -1571,23 +1619,38 @@ def engine_sweep_run(self, ufs: list[str] | None = None, lane: str = "both") -> 
     targets = ufs or list(UF_LIST)
     per_uf_delay = float(os.environ.get("BRAVE_ENGINE_UF_DELAY_SECONDS", "3"))
 
+    # depth read once at /start (10-01) and passed in; default full for legacy callers.
+    effective_depth = depth or collection_engine.NASCENTE_RIO_MAR
+    nascente_only = effective_depth == collection_engine.NASCENTE
+
     dispatched = 0
     try:
         for uf in targets:
             if collection_engine.get_state(rc) != collection_engine.RUNNING:
                 logger.info("engine_stop_drain", at_uf=uf, dispatched=dispatched)
                 break
-            if lane in ("destinos", "both"):
-                sweep_uf.delay(uf)
-            if lane in ("atrativos", "both"):
-                discover_atrativo_task.delay(uf)
+            if nascente_only:
+                # Free path: Mtur-only seed regardless of lane (atrativos = Places,
+                # no free source). Threaded depth makes sweep_uf skip Rio + LLM.
+                sweep_uf.delay(uf, depth=effective_depth)
+            else:
+                if lane in ("destinos", "both"):
+                    sweep_uf.delay(uf, depth=effective_depth)
+                if lane in ("atrativos", "both"):
+                    discover_atrativo_task.delay(uf, depth=effective_depth)
             collection_engine.mark_uf_dispatched(rc, uf)
             dispatched += 1
-            logger.info("engine_uf_dispatched", uf=uf, dispatched=dispatched, lane=lane)
+            logger.info(
+                "engine_uf_dispatched",
+                uf=uf,
+                dispatched=dispatched,
+                lane=lane,
+                depth=effective_depth,
+            )
             if per_uf_delay > 0:
                 _time.sleep(per_uf_delay)
     finally:
         collection_engine.mark_idle(rc)
-        logger.info("engine_run_complete", dispatched=dispatched)
+        logger.info("engine_run_complete", dispatched=dispatched, depth=effective_depth)
 
-    return {"dispatched": dispatched, "lane": lane}
+    return {"dispatched": dispatched, "lane": lane, "depth": effective_depth}

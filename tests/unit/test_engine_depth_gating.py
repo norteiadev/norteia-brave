@@ -136,18 +136,28 @@ def running_engine(monkeypatch):
     return fake
 
 
+class _FakeTask:
+    """Stand-in for a Celery task that records every .delay call.
+
+    The orchestrator references producer tasks as module globals and calls
+    `task.delay(...)`. Celery resolves `.delay` through a proxy such that a
+    per-instance attribute patch is bypassed inside a running task, so we swap
+    the whole task object on the module to capture dispatch deterministically.
+    """
+
+    def __init__(self, sink):
+        self._sink = sink
+
+    def delay(self, *args, **kwargs):
+        self._sink.append((args, kwargs))
+
+
 @pytest.fixture
 def dispatch_spy(monkeypatch):
     """Record sweep_uf.delay / discover_atrativo_task.delay calls (no broker)."""
     calls = {"sweep_uf": [], "discover": []}
-    monkeypatch.setattr(
-        pipeline.sweep_uf, "delay", lambda *a, **k: calls["sweep_uf"].append((a, k))
-    )
-    monkeypatch.setattr(
-        pipeline.discover_atrativo_task,
-        "delay",
-        lambda *a, **k: calls["discover"].append((a, k)),
-    )
+    monkeypatch.setattr(pipeline, "sweep_uf", _FakeTask(calls["sweep_uf"]))
+    monkeypatch.setattr(pipeline, "discover_atrativo_task", _FakeTask(calls["discover"]))
     return calls
 
 
@@ -273,17 +283,16 @@ def _patched_discover(discovered_ids=("rio-1", "rio-2")):
         async def produce(self, uf):
             return None
 
-    def _spy_delay(*_a, **_k):
-        fc_calls["delay"] += 1
+    class _SpyFindContacts:
+        def delay(self, *_a, **_k):
+            fc_calls["delay"] += 1
 
-    def _spy_run(*_a, **_k):
-        fc_calls["run"] += 1
+        def run(self, *_a, **_k):
+            fc_calls["run"] += 1
 
     with patch.object(pipeline, "_get_session", return_value=(fake_session, MagicMock())), patch(
         "brave.lanes.atrativos.discovery_agent.DiscoveryAgent", _FakeDiscovery
-    ), patch.object(pipeline.find_contacts_task, "delay", _spy_delay), patch.object(
-        pipeline.find_contacts_task, "run", _spy_run
-    ):
+    ), patch.object(pipeline, "find_contacts_task", _SpyFindContacts()):
         yield fc_calls
 
 
@@ -324,10 +333,10 @@ def test_sweep_never_auto_promotes_to_mar(running_engine, dispatch_spy, depth, m
     """
     promote_spy = MagicMock()
     monkeypatch.setattr("brave.core.mar.service.promote_to_mar", promote_spy)
-    push_spy = MagicMock()
-    monkeypatch.setattr(pipeline.push_mar, "delay", push_spy)
+    push_calls = []
+    monkeypatch.setattr(pipeline, "push_mar", _FakeTask(push_calls))
 
     pipeline.engine_sweep_run.run(ufs=["BA"], lane="both", depth=depth)
 
     assert promote_spy.call_count == 0
-    assert push_spy.call_count == 0
+    assert push_calls == []
