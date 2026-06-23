@@ -102,18 +102,28 @@ class MturSeedIngest:
         self._session = session
         self._config = config
 
-    async def produce(self, uf: str) -> None:
+    async def produce(self, uf: str, *, run_rio: bool = True) -> None:
         """Ingest one full UF sweep for the Mtur lane.
 
         Fetches all Mtur-categorized municipalities for the given state,
-        writes each to Nascente with source='mtur' and origem_value=100,
-        then immediately triggers the Rio pipeline.
+        writes each to Nascente with source='mtur' and origem_value=100, then —
+        when run_rio is True — immediately triggers the Rio pipeline.
+
+        run_rio is the depth gate (plan 10-02): the orchestrator owns the depth
+        read and passes run_rio down; this lane NEVER reads Redis depth itself.
+          - run_rio=True (default): store_raw then process_nascente_record, as today.
+          - run_rio=False: the `Apenas nascente` (free) path — Nascente + the §7.6
+            *_value score inputs are still written via store_raw, but
+            process_nascente_record (Rio) is skipped entirely. No RioRecord is
+            created, zero LLM/Places, zero external cost.
 
         Idempotent: store_raw deduplicates by (source, source_ref, content_hash).
         Re-running produce() for the same UF with the same data is a no-op.
 
         Args:
             uf: Two-letter Brazilian state code (e.g. "BA", "RJ", "SP").
+            run_rio: When False, skip process_nascente_record (Nascente-only,
+                free). Defaults to True (full Nascente → Rio).
         """
         municipalities = await self._client.fetch_municipalities(uf)
 
@@ -155,11 +165,12 @@ class MturSeedIngest:
                 payload=payload,
             )
 
-            process_nascente_record(
-                session=self._session,
-                nascente=nascente,
-                config=self._config,
-            )
+            if run_rio:
+                process_nascente_record(
+                    session=self._session,
+                    nascente=nascente,
+                    config=self._config,
+                )
 
 
 # MturSeedIngest satisfies LaneProtocol (brave/lanes/base.py)
