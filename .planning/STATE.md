@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 10-01-PLAN.md
-last_updated: "2026-06-23T15:09:58.397Z"
-last_activity: 2026-06-23 -- Completed 10-01 (engine depth state + required-depth /start)
+stopped_at: Completed 10-02-PLAN.md
+last_updated: "2026-06-23T15:24:26.123Z"
+last_activity: 2026-06-23 -- Completed 10-02 (engine depth threaded orchestrator->producers; per-depth gating)
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 4
-  completed_plans: 1
-  percent: 25
+  completed_plans: 2
+  percent: 0
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 10 (Engine Stage-Depth Selector (cost-gated collection)) — EXECUTING
-Plan: 2 of 4
-Status: Executing Phase 10
-Last activity: 2026-06-23 -- Completed 10-01 (engine depth state + required-depth /start)
+Plan: 3 of 4
+Status: Ready to execute
+Last activity: 2026-06-23 -- Completed 10-02 (engine depth threaded orchestrator->producers; per-depth gating)
 
-Progress: [██▌·······] 25%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -87,6 +87,7 @@ Progress: [██▌·······] 25%
 | Phase 07 P06 | 15min | 1 tasks | 2 files |
 | Phase 07 P07 | 4min | 2 tasks | 3 files |
 | Phase 10 P01 | ~12min | 2 tasks | 4 files |
+| Phase 10 P02 | 25min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -127,6 +128,7 @@ Recent decisions affecting current work:
 - [Phase ?]: G1 gap closure: harness-only corroboration boost (+50) standing in for NotebookLM/2nd-source corroboration; global §7.6 weights/thresholds untouched
 - [Phase ?]: G2 gap closure
 - [Phase 10 P01]: ENG-01/02 — engine depth contract (NASCENTE|NASCENTE_RIO|NASCENTE_RIO_MAR, Redis `brave:engine:depth`) exported from brave/core/engine.py; set_depth raises on invalid (never silently spends); get_status carries depth; POST /start enforces required depth with 422 BEFORE start_run/409 and threads depth into engine_sweep_run.delay (orchestrator accepts it in 10-02); require_steward_or_bearer guard unchanged
+- [Phase ?]: [Phase 10 P02]: ENG-03/04/05/07 — engine depth threaded orchestrator->producers; nascente forces Mtur-only (run_rio=False, no Desmembramento, no atrativos); nascente_rio gates the entire find_contacts fan-out (delay + inline .run) so the WhatsApp chain is never kicked; no automated Mar push added under any depth (stays on human DLQ gate + WhatsApp finalize); lanes never read Redis depth
 
 ### Pending Todos
 
@@ -155,6 +157,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-18T19:52:39.239Z
+Last session: 2026-06-23T15:24:13.117Z
 Stopped at: Completed 07-06-PLAN.md
 Resume file: None
