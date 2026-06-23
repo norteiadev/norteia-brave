@@ -1,4 +1,4 @@
-"""Client Protocol boundary definitions for all 8 external systems (D-09, D-18).
+"""Client Protocol boundary definitions for all 9 external systems (D-09, D-18).
 
 Every external system sits behind a typed typing.Protocol interface.
 Production code accepts these protocol types; tests inject fakes from tests/fakes/.
@@ -7,15 +7,16 @@ Protocols use structural typing — no isinstance() checks anywhere.
 Runtime-checkable is intentionally False: Protocol is the static boundary,
 not a runtime check.
 
-Eight protocols (CORE-11):
-  1. LLMClientProtocol         — LLM extraction (OpenRouter/DeepSeek + Anthropic)
-  2. NorteiaApiClientProtocol  — Mar push to norteia-api
-  3. PlacesClientProtocol      — Google Places (New API) search/details
-  4. OTAClientProtocol         — OTA price check (ticketed attractions)
-  5. ApifyClientProtocol       — IG/X scraping (best-effort signal)
-  6. WhatsAppClientProtocol    — WhatsApp Business API template messages
-  7. MturClientProtocol        — Mtur municipality catalog
-  8. NotebookLMClientProtocol  — NotebookLM structured reports
+Nine protocols (CORE-11 + TA-01):
+  1. LLMClientProtocol          — LLM extraction (OpenRouter/DeepSeek + Anthropic)
+  2. NorteiaApiClientProtocol   — Mar push to norteia-api
+  3. PlacesClientProtocol       — Google Places (New API) search/details
+  4. OTAClientProtocol          — OTA price check (ticketed attractions)
+  5. ApifyClientProtocol        — IG/X scraping (best-effort signal)
+  6. WhatsAppClientProtocol     — WhatsApp Business API template messages
+  7. MturClientProtocol         — Mtur municipality catalog
+  8. NotebookLMClientProtocol   — NotebookLM structured reports
+  9. TripAdvisorClientProtocol  — TripAdvisor GraphQL hybrid scraper (Phase 11)
 """
 
 from typing import Any, Protocol
@@ -230,5 +231,58 @@ class NotebookLMClientProtocol(Protocol):
 
         Returns:
             Structured report dict with tourism highlights, taxonomy labels, ...
+        """
+        ...
+
+
+class TripAdvisorClientProtocol(Protocol):
+    """TripAdvisor GraphQL hybrid scraper client (Phase 11, TA-01).
+
+    Acquisition seam: Playwright bootstraps DataDome session → cookies injected
+    into httpx → persisted-query POST to TripAdvisor's GraphQL endpoint.
+    Consumers accept TripAdvisorClientProtocol; production code uses
+    TripAdvisorClient (real) or NullTripAdvisorClient (offline/CI).
+    """
+
+    async def fetch_destinations(self, uf: str) -> list[dict[str, Any]]:
+        """Fetch TripAdvisor destinations (GEO entities) for a Brazilian UF.
+
+        Args:
+            uf: Two-letter Brazilian state code (e.g. "BA").
+
+        Returns:
+            List of location dicts from the GraphQL response
+            (at minimum: locationId, name, latitude, longitude).
+        """
+        ...
+
+    async def fetch_attractions(
+        self, geo_id: int, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """Fetch TripAdvisor attractions (ATTRACTION entities) for a geoId.
+
+        Args:
+            geo_id: TripAdvisor integer geoId for the state/city.
+            offset: Pagination offset (0, 20, 40, ...). Max 20 results per call.
+
+        Returns:
+            List of attraction dicts from the GraphQL response
+            (at minimum: locationId, name, reviewSummary.count, reviewSummary.rating).
+        """
+        ...
+
+    async def resolve_geo_id(self, uf: str) -> int:
+        """Resolve a Brazilian UF code to its TripAdvisor integer geoId.
+
+        Delegates to geo.resolve_geo_id (Redis cache → seed JSON fallback).
+
+        Args:
+            uf: Two-letter Brazilian state code.
+
+        Returns:
+            TripAdvisor integer geoId, or 0 for the null/offline stub.
+
+        Raises:
+            ValueError: When UF is unknown and no cache/seed entry exists (real client).
         """
         ...
