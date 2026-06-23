@@ -1,7 +1,22 @@
 """TripAdvisorDestinosIngest — TA-02.
 
-Reads TripAdvisor destinations via TripAdvisorClientProtocol and ingests them
-into Nascente (source='tripadvisor', origem=65.0).
+This lane scrapes TripAdvisor destination listings via the GraphQL hybrid
+client (TripAdvisorClientProtocol) and ingests them into Nascente with
+source='tripadvisor', entity_type='destination', origem=65.0.
+
+ToS WARNING: Systematic scraping violates TripAdvisor's Terms of Service
+(Section 5, "Use of Site"). This module must NOT be used without operator
+acknowledgement of the legal-risk posture documented in data/tripadvisor/README.
+
+LGPD: Only aggregate review signals are stored — review_count, rating, and
+most_recent_review_at. Author names, reviewer IDs, and review text are NEVER
+extracted or persisted. TripAdvisorReviewSignals enforces extra="forbid" to
+prevent drift toward PII fields.
+
+OPERATOR GATE: This producer is NOT on the autonomous Celery beat. A sweep
+requires RUN_REAL_EXTERNALS=1 and an explicit POST /api/v1/engine/start with
+source="tripadvisor". See data/tripadvisor/README for the full operator
+checklist (proxy setup, scraper dep group, LGPD acknowledgement).
 
 Mirrors brave/lanes/destinos/mtur.py exactly in class structure (D-18).
 
