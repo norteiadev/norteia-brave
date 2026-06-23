@@ -44,6 +44,12 @@ _CURRENT_UF_KEY = "brave:engine:current_uf"
 _UFS_DONE_KEY = "brave:engine:ufs_done"
 _UFS_TOTAL_KEY = "brave:engine:ufs_total"
 _DEPTH_KEY = "brave:engine:depth"
+_SOURCE_KEY = "brave:engine:source"
+
+# Source selects which ingest lane the orchestrator dispatches:
+#   default      — existing Mtur/Discovery lane (sweep_uf + discover_atrativo_task)
+#   tripadvisor  — TripAdvisor lane (sweep_tripadvisor task, plan 11-03)
+_VALID_SOURCES = frozenset({"default", "tripadvisor"})
 
 
 def _decode(value: Any) -> str:
@@ -120,6 +126,26 @@ def get_depth(redis: Any) -> str | None:
     return raw if raw in _VALID_DEPTHS else None
 
 
+def set_source(redis: Any, source: str) -> None:
+    """Persist the chosen ingest source lane. Rejects anything outside the contract.
+
+    Invalid values raise ValueError and are never written — the engine must not
+    silently dispatch an unrecognized (possibly expensive or unknown) lane.
+    Mirrors set_depth exactly.
+    """
+    if source not in _VALID_SOURCES:
+        raise ValueError(
+            f"invalid source {source!r}; expected one of {sorted(_VALID_SOURCES)}"
+        )
+    redis.set(_SOURCE_KEY, source)
+
+
+def get_source(redis: Any) -> str | None:
+    """Persisted source lane, or None when absent/corrupt (defaults to 'default' at /start)."""
+    raw = _decode(redis.get(_SOURCE_KEY))
+    return raw if raw in _VALID_SOURCES else None
+
+
 def get_status(redis: Any) -> dict[str, Any]:
     """Engine status snapshot for the dashboard."""
     return {
@@ -128,4 +154,5 @@ def get_status(redis: Any) -> dict[str, Any]:
         "ufs_done": int(_decode(redis.get(_UFS_DONE_KEY)) or 0),
         "ufs_total": int(_decode(redis.get(_UFS_TOTAL_KEY)) or 0),
         "depth": get_depth(redis),
+        "source": get_source(redis),
     }
