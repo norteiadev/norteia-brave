@@ -150,6 +150,13 @@ class RioRecord(Base):
     canonical_key: Mapped[str | None] = mapped_column(
         String(256), nullable=True, unique=True
     )
+    # mar_ready: TA-05 promote-override gate. True only for TA attractions that meet
+    # the atualidade + corroboracao bars (route_by_score sets this). Default false via
+    # server_default="false" — no client-side default needed (Alembic 0006 migration
+    # adds this column; plan 11-02 adds it here; migration is in plan 11-03).
+    mar_ready: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), index=True
+    )
 
     # Relationship helpers
     nascente: Mapped["NascenteRecord"] = relationship("NascenteRecord", foreign_keys=[nascente_id])

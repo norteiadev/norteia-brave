@@ -1,0 +1,42 @@
+IBGE Municipalities — Dataset
+==============================
+
+SOURCE
+------
+Authority: IBGE (Instituto Brasileiro de Geografia e Estatística)
+Repository: github.com/kelvins/municipios-brasileiros (CC0 / public domain)
+Original data: IBGE official shapefile / municipality registry
+License: CC0 1.0 — may be reproduced without restriction
+
+CURRENT FILES
+-------------
+ibge_municipios.csv — 5571 Brazilian municipalities (all states + DF)
+  - Derived from kelvins/municipios-brasileiros CSV (lat/lng from the repository)
+  - UF abbreviation mapped from codigo_uf (IBGE state code → two-letter code)
+  - Static reference file; never mutated by pipeline
+  - Updated when IBGE revises the municipality registry (rare; municipal mergers)
+
+CSV SCHEMA
+----------
+ibge_code  string    7-digit IBGE municipality code (e.g. "3550308" for São Paulo)
+nome       string    Official IBGE municipality name (UTF-8, with diacritics)
+uf         string    2-letter state abbreviation (e.g. "SP", "BA", "RJ")
+lat        float     Latitude (decimal degrees, negative = south)
+lng        float     Longitude (decimal degrees, negative = west)
+
+LOADER BEHAVIOR
+---------------
+Loaded by brave.lanes.tripadvisor.ibge.load_ibge_csv(path: Path).
+- Called once at TripAdvisorDestinosIngest / TripAdvisorAtrativosIngest construction.
+- Returns list[IbgeMunicipio] held in memory for the duration of the sweep.
+- No per-request file I/O (T-11-02-03).
+
+Resolver: brave.lanes.tripadvisor.ibge.resolve_municipio()
+- rapidfuzz token_sort_ratio ≥ 88 (configurable via BRAVE_TA_IBGE_MATCH_THRESHOLD)
+- Haversine fallback < 15km (configurable via BRAVE_TA_IBGE_MAX_DISTANCE_KM)
+- Returns None on miss → caller quarantines as "ibge_unmatched" (TA-03)
+
+COVERAGE
+--------
+5571 rows covering all 26 states + Distrito Federal.
+Fernando de Noronha (PE) included under Pernambuco.
