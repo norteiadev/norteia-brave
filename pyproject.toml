@@ -38,6 +38,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# scraper: Playwright headless browser for TripAdvisor DataDome bootstrap (TA-01).
+# NOT in dev or CI groups — opt-in only for production scrapers.
+# Install: pip install 'norteia-brave[scraper]' && playwright install chromium
+# See data/tripadvisor/README for compliance notes.
+scraper = [
+    "playwright>=1.52.0",
+]
+
 dev = [
     "pytest==9.0.3",
     "respx==0.23.1",
@@ -90,4 +98,5 @@ testpaths = ["tests"]
 addopts = "-q"
 markers = [
     "integration: marks tests that require docker-compose services (DB + Redis)",
+    "real_browser: marks tests that require a live browser + TripAdvisor access (opt-in, skipped in CI)",
 ]
