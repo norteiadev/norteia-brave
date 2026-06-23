@@ -28,6 +28,25 @@ from brave.config.settings import AppConfig, DBConfig, ScoreConfig
 
 
 # ---------------------------------------------------------------------------
+# Marker gating: skip opt-in real-browser tests unless RUN_REAL_EXTERNALS=1
+# real_browser tests need a live browser + TripAdvisor access (real external).
+# CI runs with RUN_REAL_EXTERNALS=0, so they skip by default.
+# ---------------------------------------------------------------------------
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip @pytest.mark.real_browser tests unless RUN_REAL_EXTERNALS=1."""
+    if os.environ.get("RUN_REAL_EXTERNALS") == "1":
+        return
+    skip_real_browser = pytest.mark.skip(
+        reason="real_browser test skipped — set RUN_REAL_EXTERNALS=1 to opt in"
+    )
+    for item in items:
+        if "real_browser" in item.keywords:
+            item.add_marker(skip_real_browser)
+
+
+# ---------------------------------------------------------------------------
 # pytest-socket: disable real network in unit tests
 # Unit tests should not make any outbound connections.
 # Integration tests that need localhost (DB, Redis) use pytest.mark.enable_socket.
