@@ -181,6 +181,24 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | ORCH-02 | Phase 5 | Complete |
 | ORCH-03 | Phase 5 | Complete |
 | ORCH-04 | Phase 5 | Complete |
+| TA-01 | Phase 11 | Pending |
+| TA-02 | Phase 11 | Pending |
+| TA-03 | Phase 11 | Pending |
+| TA-04 | Phase 11 | Pending |
+| TA-05 | Phase 11 | Pending |
+| TA-06 | Phase 11 | Pending |
+| TA-07 | Phase 11 | Pending |
+| TA-08 | Phase 11 | Pending |
+
+**Phase 11 — TripAdvisor source lane (TA-01 … TA-08):**
+- **TA-01** — `brave/lanes/tripadvisor/` GraphQL hybrid client: Playwright bootstraps a DataDome session, captures the rotating `queryId` live (never hardcoded), injects cookies into `httpx` for persisted-query POSTs; residential-proxy seam; Playwright lazy-imported (never in CI); Null/Fake clients + `TripAdvisorConfig` (`BRAVE_TA_*`). UF→`geoId` resolution cached (Redis + 27-UF seed JSON).
+- **TA-02** — Producers `TripAdvisorDestinosIngest` + `TripAdvisorAtrativosIngest` (`produce(uf, *, run_rio=True)`, mirror Mtur) scrape per UF and write Nascente via `store_raw` → `process_nascente_record`; `source='tripadvisor'`.
+- **TA-03** — IBGE linkage via local `data/ibge/ibge_municipios.csv` (rapidfuzz name + haversine fallback); no-match → quarantine `ibge_unmatched`. Attraction parent = destino **RioRecord produced in the same sweep** (carry `parent_rio_id`/`parent_source_ref`; `parent_mar_id` only if already in Mar); quarantine `parent_destino_absent` only when no destino RioRecord exists.
+- **TA-04** — Reviews → §7.6: `corroboracao` (volume/rating) + `atualidade` (recency); `origem=65`; LGPD-safe (only `review_count`/`rating`/`most_recent_review_at`, never author/text). Calibrated so typical record routes DLQ (never auto-Mar).
+- **TA-05** — `mar_ready` flag (migration 0006 `rio_records.mar_ready`) set in `route_by_score` for TA attractions with `atualidade≥70` & `corroboracao≥bar`; audited human promote-override (`promote_override`) bypasses the ≥85 gate only for `mar_ready` records, with `promotion_reason` provenance + audit log.
+- **TA-06** — Engine source-awareness: `sweep_tripadvisor` task; `engine_sweep_run` source branch; engine `set_source/get_source` (whitelist, fail-closed); `/engine/start` accepts+validates `source` (422); promote-override API single (`PATCH /atrativos/{id}/promote`) + batch (`POST /atrativos/promote-batch`), steward-auth, non-`mar_ready` → 409.
+- **TA-07** — Dashboard: source + UF selector on EngineControl; new `/mar-ready` route (nav `SURFACES`) with optimistic single + bulk multi-select promote (mirror DLQ actions); MSW/Vitest.
+- **TA-08** — Compliance: `data/tripadvisor/README` legal-risk note (ToS, mitigations, operator-gated), lane docstring note, root `SOURCES.md` index. 100% offline tests by default; live scrape only via opt-in `@pytest.mark.real_browser`.
 
 **Coverage:**
 - v1 requirements: 48 total (CORE 12 · SCORE 3 · OBS 4 · CNTR 2 · DEST 5 · ATR 6 · DASH 6 · COMP 3 · TEST 3 · ORCH 4)
