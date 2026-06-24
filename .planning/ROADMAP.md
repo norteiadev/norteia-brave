@@ -13,6 +13,16 @@ Plans:
 
 **Locked decisions (see 10-CONTEXT.md):** stage map as cost checkpoints (Nascente = free ingest+score; Nascente→Rio = Places+LLM; Rio→Mar = WhatsApp+human); atrativos have no free source today, so `Apenas nascente` runs destinos (Mtur) only; keep table-per-layer model (no `incoming_attractions(status)` migration); WhatsApp stays single-channel. Out of scope (future phases): gov source for atrativos + moving Places to the Nascente→Rio edge (Phase B); structured hours/price (Phase C); free LLM model for Desmembramento; dedicated contacts table.
 
+### Phase 13: TripAdvisor real listing query — identify + wire data-fetch contract (GAP-12-A)
+
+**Goal:** Close GAP-12-A (12-HUMAN-UAT.md): the TripAdvisor lane still does not collect real data because the **organic per-UF destinations/attractions listing persisted-query was never identified**. Phase 12's session-injection seam works end-to-end (cookie portability + canary + fail-fast verified live) and the corrected payload envelope (`extensions.preRegisteredQueryId`, batch array) is right — but `client.py`'s `{locationId, offset, limit}` variables match NO real query. Live probing (2026-06-24) proved the two queryIds the Phase-11 spike recorded are mislabeled: `46dcf3e69ea8ba5a` = `ad_mission_control.GetPageSlotSettings` (ad-slot config), `25f9ddb1ce629144` = `Trips_ReferenceInput` (saves/trips) — both return HTTP 200 (cookies valid) but neither is a listing. Across the spike + 3 operator captures only telemetry/GTM/sponsored-ad/ad-config/trips queries surfaced. This phase must: (1) identify the REAL listing query — capture the specific `graphql/ids` XHR whose Response carries attraction names + integer locationIds + pagination, recording its real `preRegisteredQueryId` + full `variables` verbatim; OR confirm listings are SSR-only (a plain httpx GET of the listing HTML returns 403 DataDome, so SSR ⇒ httpx cannot reach them ⇒ the deferred managed-browser/residential-proxy decision reopens); (2) rebuild `fetch_destinations`/`fetch_attractions` around the real query (qid source, variable shape, response-path parsing); (3) make `ta_bootstrap` extract the LISTING queryId specifically (reject ad/telemetry/trips qids) and fix the TA-09 runbook; (4) re-run Level 3 to confirm Nascente records > 0.
+**Requirements**: TA-12 (data-fetch correctness — extends Phase 12)
+**Depends on:** Phase 12
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 13 to break down)
+
 ---
 
 ### Phase 11: TripAdvisor source lane (GraphQL scraper → Nascente)
