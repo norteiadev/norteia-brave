@@ -11,8 +11,7 @@ All tests run 100% offline (fakeredis, no DB needed, no real TripAdvisor calls).
 
 from __future__ import annotations
 
-import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis
 import pytest
@@ -21,23 +20,6 @@ from brave.lanes.tripadvisor.client import SessionExpiredError, SessionMissingEr
 
 # The Redis key that sweep_tripadvisor sets when it fails fast on session errors.
 _TA_NEEDS_BOOTSTRAP_KEY = "brave:ta:needs_bootstrap"
-
-
-def _make_sweep_task():
-    """Return the sweep_tripadvisor Celery task function (bound to a mock self)."""
-    from brave.tasks.pipeline import sweep_tripadvisor  # noqa: PLC0415
-
-    # Celery bind=True means sweep_tripadvisor is a Task class; get the run function.
-    return sweep_tripadvisor
-
-
-def _make_mock_self(fake_redis_url: str) -> MagicMock:
-    """Create a mock Celery task `self` that records retry attempts."""
-    mock_self = MagicMock()
-    # retry should raise the Retry exception — but we assert it is NOT called on session errors.
-    mock_self.retry.side_effect = Exception("self.retry should not have been called")
-    mock_self.MaxRetriesExceededError = Exception
-    return mock_self
 
 
 class _StubMissingSessionClient:
@@ -89,40 +71,51 @@ class _StubGenericErrorClient:
 
 
 def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
-    """Helper: patch pipeline to use a stub TripAdvisorClient + fakeredis, run sweep."""
-    # Patch TripAdvisorClient import inside pipeline.py
-    monkeypatch.setattr(
-        "brave.tasks.pipeline.TripAdvisorClient",
-        stub_client_class,
-        raising=False,
-    )
-    # Force run_real_externals=True so the real-client branch runs (with our stub)
-    from brave.config.settings import AppConfig  # noqa: PLC0415
+    """Helper: patch pipeline to use a stub TripAdvisorClient + fakeredis, run sweep.
 
-    mock_app_config = MagicMock(spec=AppConfig)
+    Patching strategy:
+    - patch 'brave.lanes.tripadvisor.client.TripAdvisorClient' so that the lazy
+      `from brave.lanes.tripadvisor.client import TripAdvisorClient` in pipeline.py
+      gets our stub class.
+    - patch AppConfig to return run_real_externals=True so the real-client branch runs.
+    - patch redis.from_url to return fakeredis (for both the client and _mark_needs_bootstrap).
+    - patch _get_session (SQLAlchemy factory) to return mock DB session/engine.
+    - patch load_ibge_csv to return empty list.
+    - patch TripAdvisorDestinosIngest and TripAdvisorAtrativosIngest so that their
+      produce() raises the exception from the stub client directly.
+    """
+    # Build a mock AppConfig with run_real_externals=True
+    mock_app_config = MagicMock()
     mock_app_config.run_real_externals = True
 
-    # Patch AppConfig() call inside task to return our mock
+    # Build a mock ScoreConfig
+    mock_score_config = MagicMock()
+
+    # Build mock DB session / engine (SQLAlchemy _get_session factory)
+    mock_db_session = MagicMock()
+    mock_db_session.execute.return_value = MagicMock(all=lambda: [])
+    mock_db_engine = MagicMock()
+
+    # Build stub TA client instance
+    stub_client = stub_client_class()
+
+    # Patch TripAdvisorClient at the source module so the local import in pipeline.py gets it
     monkeypatch.setattr(
-        "brave.tasks.pipeline.AppConfig",
-        lambda: mock_app_config,
+        "brave.lanes.tripadvisor.client.TripAdvisorClient",
+        stub_client_class,
     )
 
+    # Patch AppConfig and ScoreConfig constructors
+    monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
+    monkeypatch.setattr("brave.tasks.pipeline.ScoreConfig", lambda: mock_score_config)
+
     # Patch redis.from_url to return fakeredis
-    monkeypatch.setattr(
-        "redis.from_url",
-        lambda url, **kw: fake_redis,
-    )
+    monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
 
     # Patch os.environ for Redis URL
     monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
 
-    # Patch _get_session (the SQLAlchemy session factory, not the TA session)
-    mock_db_session = MagicMock()
-    mock_db_session.__enter__ = lambda s: s
-    mock_db_session.__exit__ = MagicMock(return_value=False)
-    mock_db_engine = MagicMock()
-
+    # Patch _get_session (SQLAlchemy session factory)
     monkeypatch.setattr(
         "brave.tasks.pipeline._get_session",
         lambda: (mock_db_session, mock_db_engine),
@@ -131,20 +124,40 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
     # Patch TripAdvisorConfig
     from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
 
+    mock_ta_config = MagicMock(spec=TripAdvisorConfig)
     monkeypatch.setattr(
-        "brave.tasks.pipeline.TripAdvisorConfig",
-        MagicMock(return_value=MagicMock(spec=TripAdvisorConfig)),
-        raising=False,
+        "brave.config.settings.TripAdvisorConfig",
+        lambda: mock_ta_config,
     )
 
-    # Patch load_ibge_csv to return empty list (no IBGE records needed)
+    # Patch load_ibge_csv to return empty list
     monkeypatch.setattr(
         "brave.lanes.tripadvisor.ibge.load_ibge_csv",
         lambda path: [],
-        raising=False,
     )
 
-    # Build mock self
+    # Patch the destinos and atrativos produce() to actually call the stub client
+    # and propagate its errors — this is what the real produce() would do.
+    async def _stub_produce(uf, run_rio=True):
+        # Call fetch_destinations to propagate stub errors
+        await stub_client.fetch_destinations()
+
+    mock_destinos_ingest = MagicMock()
+    mock_destinos_ingest.produce = AsyncMock(side_effect=_stub_produce)
+
+    mock_atrativos_ingest = MagicMock()
+    mock_atrativos_ingest.produce = AsyncMock(side_effect=_stub_produce)
+
+    monkeypatch.setattr(
+        "brave.lanes.tripadvisor.destinos.TripAdvisorDestinosIngest",
+        lambda **kw: mock_destinos_ingest,
+    )
+    monkeypatch.setattr(
+        "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
+        lambda **kw: mock_atrativos_ingest,
+    )
+
+    # Build mock Celery task self
     mock_self = MagicMock()
     mock_self.MaxRetriesExceededError = type("MaxRetriesExceededError", (Exception,), {})
 
@@ -156,12 +169,17 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
 
     mock_self.retry.side_effect = _recording_retry
 
-    sweep = _make_sweep_task()
+    from brave.tasks.pipeline import sweep_tripadvisor  # noqa: PLC0415
+
+    # For bind=True Celery tasks, the raw function is at __wrapped__.__func__.
+    # Calling sweep_tripadvisor.run() uses the task's own self (no mock injection).
+    # We need __func__ to inject our mock_self that records retry calls.
+    raw_fn = sweep_tripadvisor.__wrapped__.__func__
 
     try:
-        sweep.run(mock_self, uf="BA")
+        raw_fn(mock_self, uf="BA")
     except Exception:
-        pass  # Expected for retry paths
+        pass  # Expected for retry paths / MaxRetriesExceededError
 
     return mock_self, retry_calls
 
@@ -220,13 +238,6 @@ class TestSweepTripAdvisorSessionFailFast:
         """SessionMissingError does NOT create a PoisonQuarantine row."""
         fake_redis = fakeredis.FakeRedis()
         quarantine_calls = []
-
-        original_quarantine = None
-        try:
-            from brave.core.quarantine import quarantine_poison  # noqa: PLC0415
-            original_quarantine = quarantine_poison
-        except ImportError:
-            pass
 
         with patch("brave.core.quarantine.quarantine_poison") as mock_q:
             mock_q.side_effect = lambda **kw: quarantine_calls.append(kw)
