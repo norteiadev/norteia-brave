@@ -60,3 +60,8 @@ app.include_router(engine_router)
 from brave.api.routers.atrativos import router as atrativos_router
 
 app.include_router(atrativos_router)
+
+# Phase 12: TripAdvisor session injection seam (TA-10, TA-11)
+from brave.api.routers import tripadvisor_session
+
+app.include_router(tripadvisor_session.router)
