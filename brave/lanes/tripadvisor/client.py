@@ -1,27 +1,28 @@
-"""TripAdvisor GraphQL hybrid client (TA-01).
+"""TripAdvisor GraphQL hybrid client.
 
-Acquisition model:
-  1. _bootstrap_session(): Playwright (lazy-imported, sync_playwright) launches
-     headless Chromium, intercepts outbound GraphQL requests to capture live
-     queryIds and DataDome session cookies.
-  2. _get_session(): Returns cached session from Redis (brave:ta:session) or
-     calls _bootstrap_session() on cache miss.
-  3. fetch_destinations() / fetch_attractions(): Use httpx with session cookies
-     to POST persisted queries. On 403/429 → raise SessionExpiredError.
+Acquisition model (Phase 12):
+  Session is injected by an operator via POST /api/v1/tripadvisor/session
+  after capturing cookies from a real logged-in browser (DevTools Copy-as-cURL).
+  _get_session() reads Redis only; SessionMissingError raised on miss.
+  See scripts/ta_bootstrap.py for the injection helper.
+
+Session dict shape (written by injection endpoint, read by _get_session):
+  {
+    "cookies": {"datadome": "abc", "TASession": "xyz", ...},
+    "query_ids": {"destinations": "<16-hex>", "attractions": "<16-hex>"},
+    "user_agent": "Mozilla/5.0 ...",
+    "acquired_at": "2026-06-24T12:00:00Z",
+  }
+
+Backwards compatibility: Phase 11 stored cookies as a list of
+  {"name": ..., "value": ..., "domain": ...} dicts.
+_get_session() normalises both shapes to a flat dict.
 
 Security notes:
   - T-11-01-01: config.proxy_url never emitted in structlog calls.
   - T-11-01-02: Session cookie jar cached in Redis with TTL; never logged.
-  - T-11-01-03: Playwright lazy-imported — never reachable from API path.
 
 Offline usage: inject NullTripAdvisorClient or FakeTripAdvisorClient instead.
-
-Important:
-  - Playwright is NOT imported at module top-level.
-  - Import only happens inside _bootstrap_session().
-  - Consumers in CI will never trigger the import path.
-  - The scraper optional dep group must be installed separately:
-    pip install 'norteia-brave[scraper]' && playwright install chromium
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 # Redis key for the cached session (cookie jar + queryId map)
-# TTL is set to config.session_ttl (default 1800s / 30 min).
+# TTL is set by the injection endpoint (config.session_ttl, default 1800s / 30 min).
 BRAVE_TA_SESSION_KEY: str = "brave:ta:session"
 
 # GraphQL endpoint — all persisted-query POSTs target this URL
@@ -52,7 +53,16 @@ class SessionExpiredError(Exception):
     """Raised when a GraphQL request returns 403 or 429.
 
     Indicates the DataDome session cookies have expired or the queryId has
-    rotated. Caller should trigger a re-bootstrap via _bootstrap_session().
+    rotated. Operator must re-inject a fresh session.
+    """
+
+
+class SessionMissingError(Exception):
+    """Raised when BRAVE_TA_SESSION_KEY is absent from Redis.
+
+    Operator must run scripts/ta_bootstrap.py --endpoint <URL> to inject a
+    session before sweeping. The injection endpoint validates the session
+    (canary check) before writing to Redis.
     """
 
 
@@ -61,8 +71,9 @@ class TripAdvisorClient:
 
     Accepts TripAdvisorClientProtocol structurally — see _check_protocol_compliance().
 
-    Constructor does NOT import Playwright; only _bootstrap_session() does,
-    on first session cache miss.
+    Constructor does NOT import Playwright. Session acquisition is fully
+    operator-gated: a human captures cookies from a real browser and POSTs
+    them to /api/v1/tripadvisor/session. _get_session() reads from Redis only.
 
     Args:
         config: TripAdvisorConfig (proxy_url, session_ttl, query_id_override, ...).
@@ -77,159 +88,32 @@ class TripAdvisorClient:
     # Session management
     # ------------------------------------------------------------------
 
-    def _proxy_args(self) -> dict[str, str] | None:
-        """Build Playwright proxy dict from config.proxy_url.
-
-        Returns None (no proxy) when proxy_url is empty — safe default for dev.
-        Never logs the proxy URL (T-11-01-01 security requirement).
-        """
-        if not self._config.proxy_url:
-            return None
-        # Log at debug level without including the URL value
-        logger.debug("ta_client_proxy_configured", proxy="[redacted]")
-        return {"server": self._config.proxy_url}
-
-    def _bootstrap_session(self) -> dict[str, Any]:
-        """Bootstrap a DataDome session via Playwright headless Chromium.
-
-        Lazy-imports sync_playwright — only reachable from Celery sweep tasks,
-        never from the API path or CI (T-11-01-03). Requires the scraper
-        optional dep group: pip install 'norteia-brave[scraper]' && playwright install chromium
+    def _get_session(self) -> dict[str, Any]:
+        """Return the operator-injected session from Redis.
 
         Returns:
-            Session dict:
-                {
-                    "cookies": [{"name": ..., "value": ..., "domain": ...}, ...],
-                    "query_ids": {"destinations": "<queryId>", "attractions": "<queryId>"},
-                }
+            Session dict with 'cookies' (flat dict), 'query_ids', 'user_agent',
+            and 'acquired_at' keys.
 
         Raises:
-            ImportError: When Playwright is not installed (scraper dep group missing).
-            SessionExpiredError: When bootstrap fails to capture any queryId.
-        """
-        try:
-            from playwright.sync_api import sync_playwright  # noqa: PLC0415
-        except ImportError as exc:
-            raise ImportError(
-                "Playwright is not installed. Install the scraper dep group: "
-                "pip install 'norteia-brave[scraper]' then run playwright install chromium"
-            ) from exc
-
-        captured: list[dict[str, Any]] = []
-        query_ids: dict[str, str] = {}
-
-        def _on_request(request: Any) -> None:
-            if "graphql/ids" in request.url and request.method == "POST":
-                try:
-                    body = json.loads(request.post_data or "{}")
-                    captured.append(body)
-                except Exception:
-                    pass
-
-        proxy_args = self._proxy_args()
-        launch_kwargs: dict[str, Any] = {"headless": True}
-        if proxy_args:
-            launch_kwargs["proxy"] = proxy_args
-
-        def _run_sync() -> list[dict[str, Any]]:
-            """Run the sync_playwright bootstrap and return the captured cookies.
-
-            Executed in a dedicated thread so the Playwright Sync API never runs
-            inside a running asyncio loop. The async producers call this client
-            via asyncio.run(produce(...)), which would otherwise trip Playwright's
-            "Sync API inside the asyncio loop" guard. The Celery (sync) path is
-            unaffected — it also gets a clean, loop-free thread.
-            """
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch(**launch_kwargs)
-                context = browser.new_context(
-                    user_agent=(
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/124.0.0.0 Safari/537.36"
-                    )
-                )
-                page = context.new_page()
-                page.on("request", _on_request)
-
-                # Navigate to a TA page to trigger GraphQL requests + DataDome cookies
-                try:
-                    page.goto(
-                        "https://www.tripadvisor.com/Tourism-g303506-Rio_de_Janeiro_State_of_Rio_de_Janeiro-Vacations.html",
-                        wait_until="networkidle",
-                        timeout=30_000,
-                    )
-                except Exception:
-                    # Page may timeout or redirect — captured requests may still be valid
-                    pass
-
-                # Extract cookies from the browser context (before close)
-                browser_cookies = context.cookies()
-                browser.close()
-            return browser_cookies
-
-        import concurrent.futures  # noqa: PLC0415
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
-            cookies = _ex.submit(_run_sync).result()
-
-        # Extract queryIds from intercepted requests (captured during page.goto)
-        for body in captured:
-            if isinstance(body, list):
-                # Shape A: [{"query": queryId, "variables": {...}}]
-                for item in body:
-                    if isinstance(item, dict) and "query" in item:
-                        qid = item["query"]
-                        vars_ = item.get("variables", {})
-                        if "locationId" in vars_ or "geoId" in vars_:
-                            # Heuristic: distinguish destinations vs attractions
-                            if "ATTRACTION" in str(vars_).upper():
-                                query_ids.setdefault("attractions", qid)
-                            else:
-                                query_ids.setdefault("destinations", qid)
-            elif isinstance(body, dict) and "extensions" in body:
-                # Shape B: {"extensions": {"persistedQuery": {"sha256Hash": ...}}}
-                sha = (
-                    body.get("extensions", {})
-                    .get("persistedQuery", {})
-                    .get("sha256Hash", "")
-                )
-                if sha:
-                    query_ids.setdefault("destinations", sha)
-
-        # Apply config overrides (escape hatch for queryId rotation)
-        query_ids.update(self._config.query_id_override)
-
-        session: dict[str, Any] = {
-            "cookies": cookies,
-            "query_ids": query_ids,
-        }
-
-        # Cache in Redis — never log the cookie values (T-11-01-02)
-        self._redis.setex(
-            BRAVE_TA_SESSION_KEY,
-            self._config.session_ttl,
-            json.dumps(session),
-        )
-        logger.info(
-            "ta_session_bootstrapped",
-            query_ids_captured=list(query_ids.keys()),
-            cookie_count=len(cookies),
-        )
-        return session
-
-    def _get_session(self) -> dict[str, Any]:
-        """Return the cached session or bootstrap a new one.
-
-        Returns:
-            Session dict with 'cookies' and 'query_ids' keys.
+            SessionMissingError: When BRAVE_TA_SESSION_KEY is absent from Redis.
+                Operator must inject a session via scripts/ta_bootstrap.py.
         """
         raw = self._redis.get(BRAVE_TA_SESSION_KEY)
-        if raw:
-            if isinstance(raw, bytes):
-                raw = raw.decode("utf-8")
-            return json.loads(raw)
-        return self._bootstrap_session()
+        if raw is None:
+            raise SessionMissingError(
+                "No TripAdvisor session in Redis. "
+                "Run: python scripts/ta_bootstrap.py --endpoint <URL>"
+            )
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        session = json.loads(raw)
+        # Backwards compat: Phase 11 stored cookies as a list of {name, value, domain}
+        # The injection endpoint (plan 12-02) stores them as a flat dict.
+        # Normalise to flat dict here so fetch_* can always do cookies["datadome"].
+        if isinstance(session.get("cookies"), list):
+            session["cookies"] = {c["name"]: c["value"] for c in session["cookies"]}
+        return session
 
     # ------------------------------------------------------------------
     # Public protocol methods
@@ -238,7 +122,7 @@ class TripAdvisorClient:
     async def fetch_destinations(self, uf: str) -> list[dict[str, Any]]:
         """Fetch TripAdvisor destinations (GEO entities) for a Brazilian UF.
 
-        Uses the cached session cookies and queryId to POST a persisted GraphQL
+        Uses the injected session cookies and queryId to POST a persisted GraphQL
         query. Raises SessionExpiredError on 403/429.
 
         Args:
@@ -248,6 +132,7 @@ class TripAdvisorClient:
             List of location dicts from the GraphQL response.
 
         Raises:
+            SessionMissingError: When no session is in Redis (operator gate).
             SessionExpiredError: On 403 or 429 HTTP status (DataDome block / rate limit).
         """
         from brave.lanes.tripadvisor.geo import resolve_geo_id  # noqa: PLC0415
@@ -255,28 +140,32 @@ class TripAdvisorClient:
         geo_id = resolve_geo_id(uf, self._redis, self._config)
         session = self._get_session()
         query_id = session.get("query_ids", {}).get("destinations", "")
-        cookies = {c["name"]: c["value"] for c in session.get("cookies", [])}
+        cookies = session.get("cookies", {})
+        user_agent = session.get("user_agent", "")
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if user_agent:
+            headers["User-Agent"] = user_agent
 
         results: list[dict[str, Any]] = []
         for page_num in range(_MAX_PAGES):
             offset = page_num * 20
             payload = [
                 {
-                    "query": query_id,
                     "variables": {"locationId": geo_id, "offset": offset, "limit": 20},
+                    "extensions": {"preRegisteredQueryId": query_id},
                 }
             ]
             async with httpx.AsyncClient(cookies=cookies, follow_redirects=True) as hc:
                 resp = await hc.post(
                     _TA_GRAPHQL_URL,
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    headers=headers,
                 )
 
             if resp.status_code in (403, 429):
                 raise SessionExpiredError(
                     f"TripAdvisor GraphQL returned {resp.status_code} — "
-                    "DataDome session expired or queryId rotated. Re-bootstrap required."
+                    "DataDome session expired or queryId rotated. Re-inject required."
                 )
 
             resp.raise_for_status()
@@ -310,29 +199,34 @@ class TripAdvisorClient:
             List of attraction dicts from the GraphQL response.
 
         Raises:
+            SessionMissingError: When no session is in Redis (operator gate).
             SessionExpiredError: On 403 or 429 HTTP status.
         """
         session = self._get_session()
         query_id = session.get("query_ids", {}).get("attractions", "")
-        cookies = {c["name"]: c["value"] for c in session.get("cookies", [])}
+        cookies = session.get("cookies", {})
+        user_agent = session.get("user_agent", "")
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if user_agent:
+            headers["User-Agent"] = user_agent
 
         payload = [
             {
-                "query": query_id,
                 "variables": {"locationId": geo_id, "offset": offset, "limit": 20},
+                "extensions": {"preRegisteredQueryId": query_id},
             }
         ]
         async with httpx.AsyncClient(cookies=cookies, follow_redirects=True) as hc:
             resp = await hc.post(
                 _TA_GRAPHQL_URL,
                 json=payload,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
             )
 
         if resp.status_code in (403, 429):
             raise SessionExpiredError(
                 f"TripAdvisor GraphQL returned {resp.status_code} — "
-                "DataDome session expired or queryId rotated. Re-bootstrap required."
+                "DataDome session expired or queryId rotated. Re-inject required."
             )
 
         resp.raise_for_status()

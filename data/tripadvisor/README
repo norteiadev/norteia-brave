@@ -7,8 +7,10 @@ SOURCE
 Authority: TripAdvisor LLC (public website)
 GraphQL endpoint: https://www.tripadvisor.com/data/graphql/ids
   (persisted-query endpoint; no API key required)
-Anti-bot bootstrap: Playwright-driven session initialisation + DataDome cookie
-  harvesting (see brave/lanes/tripadvisor/client.py::_bootstrap_session)
+Session acquisition: Operator captures DataDome cookies + preRegisteredQueryId
+  from a real logged-in browser (DevTools "Copy as cURL") and injects via
+  POST /api/v1/tripadvisor/session. See OPERATOR GATE below and
+  scripts/ta_bootstrap.py for the injection helper.
 
 Data collected: destination listings (locationId, name, municipality, UF,
   review_count, rating, most_recent_review_at) and attraction listings (same
@@ -29,6 +31,17 @@ uf_geoids.json
     Source: manually compiled from TripAdvisor location pages (one-time lookup).
     Updated only when TripAdvisor changes their internal geoId assignments
     (very rare; requires manual verification).
+
+    KNOWN CAVEAT — ES (Espírito Santo):
+    During the 2026-06-24 spike, ES geoId 303516 was observed to redirect to
+    MG (Minas Gerais, geoId 303380) on the TripAdvisor location page.
+    The correct geoId for Espírito Santo on TripAdvisor may differ from 303516.
+    Operators MUST verify this geoId before sweeping ES:
+      1. Open https://www.tripadvisor.com/Tourism-g303516-Espirito_Santo_State-Vacations.html
+      2. If the page redirects to MG, the ES geoId needs updating.
+      3. Search TripAdvisor for "Espírito Santo" to find the real geoId.
+      4. Update uf_geoids.json["ES"] with the confirmed geoId.
+    The value 303516 is retained as a placeholder until confirmed.
 
 
 LEGAL RISK
@@ -105,16 +118,36 @@ OPERATOR GATE
 
 The TripAdvisor sweep is NOT enabled by default and does NOT run in CI.
 
-To run a TripAdvisor sweep:
+To run a TripAdvisor sweep (Phase 12 session-injection model):
 
   1. Acknowledge legal risk (see LEGAL RISK above).
 
-  2. Set the opt-in environment variable:
-       RUN_REAL_EXTERNALS=1
+  2. Capture a session from a real logged-in browser:
+       a. Open https://www.tripadvisor.com in your real Chrome/Firefox.
+       b. Log in if prompted (DataDome is less aggressive for logged-in users).
+       c. Open DevTools → Network tab.
+       d. Navigate to any TripAdvisor state page (e.g., Bahia tourism).
+       e. Find a POST to https://www.tripadvisor.com/data/graphql/ids.
+       f. Right-click → "Copy as cURL". Save the cURL command.
 
-  3. Install the optional scraper dependency group:
-       pip install 'norteia-brave[scraper]'
-       playwright install chromium
+  3. Inject the session via scripts/ta_bootstrap.py:
+       python scripts/ta_bootstrap.py \
+         --curl-file /path/to/captured_curl.sh \
+         --endpoint http://localhost:8000
+
+     Or POST directly:
+       POST /api/v1/tripadvisor/session
+       Authorization: Bearer <steward-token>
+       Content-Type: application/json
+       {
+         "cookies": {"datadome": "...", "TASession": "..."},
+         "query_ids": {"destinations": "<hex-id>", "attractions": "<hex-id>"},
+         "user_agent": "Mozilla/5.0 ...",
+         "acquired_at": "2026-06-24T12:00:00Z"
+       }
+
+     The endpoint runs a canary check before writing to Redis. If the session
+     is invalid, it returns 422 with reason=invalid_session.
 
   4. (Optional) Configure a residential proxy:
        BRAVE_TA_PROXY_URL=socks5://user:pass@proxy-host:port
