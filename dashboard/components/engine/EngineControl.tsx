@@ -12,11 +12,14 @@ import {
   SOURCE_LABELS,
   engineKeys,
   fetchEngineStatus,
+  fetchTASessionStatus,
   startEngine,
   stopEngine,
+  taSessionKeys,
   type EngineDepth,
   type EngineSource,
   type EngineState,
+  type TASessionStatus,
 } from "@/lib/engine-api";
 
 /** Depth options in cost order — free first. */
@@ -66,6 +69,20 @@ function explainError(err: unknown): string {
   return "Falha ao controlar o motor.";
 }
 
+/** Derive the PT-BR display label for a TA session status. */
+function sessionLabel(s: TASessionStatus): string {
+  if (s.present) return "Pronta";
+  if (s.reason === "needs_bootstrap") return "Precisa bootstrap";
+  return "Expirada";
+}
+
+/** Derive the Tailwind colour class for a TA session status. */
+function sessionColor(s: TASessionStatus): string {
+  if (s.present) return "text-emerald-600";
+  if (s.reason === "needs_bootstrap") return "text-amber-600";
+  return "text-rose-600";
+}
+
 export function EngineControl() {
   const qc = useQueryClient();
   const [selectedDepth, setSelectedDepth] = useState<EngineDepth | undefined>();
@@ -76,6 +93,22 @@ export function EngineControl() {
     queryKey: engineKeys.status,
     queryFn: fetchEngineStatus,
     refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchOnWindowFocus: false,
+  });
+
+  // Show the session-health pill when TripAdvisor is selected OR when the engine
+  // is actively running with source=tripadvisor (even after the source selector
+  // is hidden by the running-state UI branch).
+  const state: EngineState = data?.state ?? "idle";
+  const showSessionStatus =
+    selectedSource === "tripadvisor" ||
+    (state !== "idle" && data?.source === "tripadvisor");
+
+  const { data: sessionStatus } = useQuery({
+    queryKey: taSessionKeys.status,
+    queryFn: fetchTASessionStatus,
+    enabled: showSessionStatus,
+    refetchInterval: showSessionStatus ? ENGINE_REFETCH_INTERVAL_MS : false,
     refetchOnWindowFocus: false,
   });
 
@@ -101,7 +134,6 @@ export function EngineControl() {
     onSettled: invalidate,
   });
 
-  const state: EngineState = data?.state ?? "idle";
   const pending = start.isPending || stop.isPending;
   const counts = data?.counts;
   const progressPct =
@@ -265,6 +297,27 @@ export function EngineControl() {
         >
           Fonte: {SOURCE_LABELS[data.source]}
         </p>
+      )}
+
+      {/* Session health pill — visible when TripAdvisor source is selected or running */}
+      {showSessionStatus && sessionStatus !== undefined && (
+        <div
+          className="mt-2 flex items-center gap-2 text-[12px]"
+          data-testid="ta-session-health"
+        >
+          <span className="text-muted-foreground">Sessão TA:</span>
+          <span
+            data-testid="ta-session-status"
+            className={`font-medium ${sessionColor(sessionStatus)}`}
+          >
+            {sessionLabel(sessionStatus)}
+          </span>
+          {sessionStatus.present && sessionStatus.expires_in !== undefined && (
+            <span className="text-muted-foreground">
+              ({Math.round(sessionStatus.expires_in / 60)} min)
+            </span>
+          )}
+        </div>
       )}
 
       {/* Progress — UFs fanned out this run */}

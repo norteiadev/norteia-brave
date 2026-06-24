@@ -43,6 +43,31 @@ from brave.core.rio.routing import process_nascente_record, reprocess_record
 
 logger = structlog.get_logger(__name__)
 
+# Redis key that sweep_tripadvisor sets when a session error halts the sweep.
+# Operator must re-inject a fresh session via POST /api/v1/tripadvisor/session
+# and then re-trigger the sweep. Cleared when a new session is successfully injected.
+_TA_NEEDS_BOOTSTRAP_KEY = "brave:ta:needs_bootstrap"
+
+
+def _mark_needs_bootstrap() -> None:
+    """Set the needs_bootstrap Redis marker after a session fail-fast.
+
+    Best-effort: if Redis is unreachable, we log a warning but do NOT raise.
+    The session error is already logged before this is called; the marker is
+    purely for dashboard visibility (EngineControl session-health pill).
+
+    T-12-04-01: Only the key name is written (no cookie fragments, no exc str).
+    """
+    try:
+        import redis as _redis_lib  # noqa: PLC0415
+
+        _rc = _redis_lib.from_url(
+            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        )
+        _rc.set(_TA_NEEDS_BOOTSTRAP_KEY, "1")
+    except Exception:  # noqa: BLE001
+        logger.warning("mark_needs_bootstrap_failed")  # best-effort; never mask session error
+
 
 def _extract_contact_phone(rio: "RioRecord") -> str:
     """Return the canonical E.164 contact phone for an atrativo, or "" if absent.
@@ -917,6 +942,7 @@ def sweep_tripadvisor(self, uf: str, depth: str | None = None) -> None:
     from brave.core import engine as collection_engine
     from brave.core.quarantine import quarantine_poison as _quarantine
     from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+    from brave.lanes.tripadvisor.client import SessionExpiredError, SessionMissingError
     from brave.lanes.tripadvisor.destinos import TripAdvisorDestinosIngest
     from brave.lanes.tripadvisor.ibge import load_ibge_csv
 
@@ -991,6 +1017,22 @@ def sweep_tripadvisor(self, uf: str, depth: str | None = None) -> None:
         _asyncio.run(atrativos_ingest.produce(uf, run_rio=run_rio))
 
         session.commit()
+
+    except (SessionMissingError, SessionExpiredError) as exc:
+        # Operator error: session not injected (Missing) or expired at DataDome (Expired).
+        # Do NOT retry — retries would silently ingest 0 records each time.
+        # Do NOT quarantine — this is not a pipeline bug.
+        # Set the needs_bootstrap marker so EngineControl shows the operator signal.
+        session.rollback()
+        _mark_needs_bootstrap()
+        logger.warning(
+            "sweep_tripadvisor_session_fail_fast",
+            uf=uf,
+            # T-12-04-01: log only the exception class name, never exc str
+            # (exc str may contain cookie fragments from error context)
+            error_type=type(exc).__name__,
+        )
+        return  # No retry, no quarantine — operator must re-inject session
 
     except PermanentError as exc:
         session.rollback()

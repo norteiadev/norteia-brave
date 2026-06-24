@@ -1,6 +1,11 @@
 import { http, HttpResponse } from "msw";
 
-import type { EngineSource, EngineState, EngineStatus } from "@/lib/engine-api";
+import type {
+  EngineSource,
+  EngineState,
+  EngineStatus,
+  TASessionStatus,
+} from "@/lib/engine-api";
 
 /**
  * MSW handlers for the collection-engine slice (offline test harness).
@@ -8,6 +13,7 @@ import type { EngineSource, EngineState, EngineStatus } from "@/lib/engine-api";
  */
 
 const BASE = "http://localhost:3000/api/api/v1/engine";
+const TA_BASE = "http://localhost:3000/api/api/v1/tripadvisor";
 
 export function engineStatus(overrides: Partial<EngineStatus> = {}) {
   const status: EngineStatus = {
@@ -51,9 +57,25 @@ export function engineUnauthorized() {
   return [http.all(BASE, unauth), http.all(`${BASE}/*`, unauth)];
 }
 
-/** Default barrel: idle status + start/stop success. */
+/**
+ * TA session status handler — default returns a "Pronta" (ready) session.
+ * Override per-test via server.use(taSessionStatus({ present: false, ... })).
+ */
+export function taSessionStatus(overrides: Partial<TASessionStatus> = {}) {
+  const status: TASessionStatus = {
+    present: true,
+    expires_in: 1200,
+    query_ids: ["destinations", "attractions"],
+    reason: null,
+    ...overrides,
+  };
+  return http.get(`${TA_BASE}/session/status`, () => HttpResponse.json(status));
+}
+
+/** Default barrel: idle status + start/stop success + TA session ready. */
 export const engineHandlers = [
   engineStatus(),
   engineStartSuccess(),
   engineStopSuccess(),
+  taSessionStatus(),
 ];
