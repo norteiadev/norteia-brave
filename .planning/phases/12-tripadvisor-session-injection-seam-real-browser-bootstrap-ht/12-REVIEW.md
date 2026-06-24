@@ -24,8 +24,22 @@ findings:
   warning: 7
   info: 5
   total: 14
-status: issues_found
+status: partially_resolved
+resolved: [CR-01, CR-02, WR-02, WR-03, WR-06, WR-07, IN-01]
+deferred: [WR-01, WR-04, WR-05, IN-02, IN-03, IN-04, IN-05]
+resolved_in: 09453de
 ---
+
+> **Resolution (2026-06-24, commit `09453de`):** Both BLOCKERs and the high-value
+> warnings were fixed inline during phase execution per operator decision.
+> Fixed: CR-01 (cookie-leak redaction), CR-02 (proxy threading), WR-02 (infra→503,
+> no key delete), WR-03 (expires_in>0 badge guard), WR-06 (canary single-page),
+> WR-07/IN-01 (no raw-body echo). Regression tests added (proxy set/empty,
+> max_pages=1, canary infra→503-no-delete, expired→422-delete). Deferred (lower
+> impact / scope): WR-01 (ASGI body-size middleware), WR-04 (query_ids README
+> shape note), WR-05 (audit-skip → error log), IN-02..IN-05 (stale docstrings,
+> dead config fields, dead `lane` param). Track via `/gsd:plan-phase 12 --gaps`
+> or a follow-up todo if desired.
 
 # Phase 12: Code Review Report
 
