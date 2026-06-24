@@ -6,7 +6,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { EngineControl } from "@/components/engine/EngineControl";
 import type { EngineStatus } from "@/lib/engine-api";
 import { server } from "@/mocks/server";
-import { engineStatus, engineUnauthorized } from "@/mocks/handlers/engine";
+import {
+  engineStatus,
+  engineUnauthorized,
+  taSessionStatus,
+} from "@/mocks/handlers/engine";
 
 import { renderWithClient } from "../../cms/__tests__/test-utils";
 
@@ -205,5 +209,79 @@ describe("EngineControl", () => {
 
     const readback = await screen.findByTestId("engine-active-depth");
     expect(readback).toHaveTextContent("Nascente → Rio");
+  });
+});
+
+describe("EngineControl — session health pill (TA-13)", () => {
+  it("shows 'Pronta' pill when source=tripadvisor and session is present", async () => {
+    server.use(
+      engineStatus({ state: "idle" }),
+      taSessionStatus({ present: true, expires_in: 900, reason: null }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<EngineControl />);
+
+    // Select tripadvisor source
+    const taBtn = await screen.findByTestId("engine-source-tripadvisor");
+    await user.click(taBtn);
+
+    // Pill should appear with "Pronta"
+    const pill = await screen.findByTestId("ta-session-status");
+    expect(pill).toHaveTextContent("Pronta");
+  });
+
+  it("shows 'Precisa bootstrap' pill when reason='needs_bootstrap'", async () => {
+    server.use(
+      engineStatus({ state: "idle" }),
+      taSessionStatus({ present: false, reason: "needs_bootstrap" }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<EngineControl />);
+
+    await user.click(await screen.findByTestId("engine-source-tripadvisor"));
+
+    const pill = await screen.findByTestId("ta-session-status");
+    expect(pill).toHaveTextContent("Precisa bootstrap");
+  });
+
+  it("shows 'Expirada' pill when present=false and reason=null", async () => {
+    server.use(
+      engineStatus({ state: "idle" }),
+      taSessionStatus({ present: false, reason: null }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<EngineControl />);
+
+    await user.click(await screen.findByTestId("engine-source-tripadvisor"));
+
+    const pill = await screen.findByTestId("ta-session-status");
+    expect(pill).toHaveTextContent("Expirada");
+  });
+
+  it("does NOT render the session-health pill when source=default is selected", async () => {
+    server.use(engineStatus({ state: "idle" }), taSessionStatus());
+    renderWithClient(<EngineControl />);
+
+    // Default source is "default" — pill should not be present
+    await screen.findByTestId("engine-start"); // wait for idle render
+    expect(screen.queryByTestId("ta-session-status")).toBeNull();
+  });
+
+  it("shows pill when engine is running with source=tripadvisor", async () => {
+    server.use(
+      engineStatus({
+        state: "running",
+        current_uf: "BA",
+        ufs_done: 1,
+        ufs_total: 27,
+        source: "tripadvisor",
+      }),
+      taSessionStatus({ present: false, reason: "needs_bootstrap" }),
+    );
+    renderWithClient(<EngineControl />);
+
+    // Engine is running with tripadvisor — pill should render without selecting source
+    const pill = await screen.findByTestId("ta-session-status");
+    expect(pill).toHaveTextContent("Precisa bootstrap");
   });
 });

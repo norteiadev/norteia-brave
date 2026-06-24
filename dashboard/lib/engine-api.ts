@@ -101,3 +101,27 @@ export function stopEngine(): Promise<EngineActionResult> {
     method: "POST",
   });
 }
+
+/**
+ * TripAdvisor session status — returned by GET /api/v1/tripadvisor/session/status
+ * (plan 12-02). Three states:
+ *   present=true               — session is in Redis, ready for sweep
+ *   present=false, reason="needs_bootstrap"  — operator must inject a session
+ *   present=false, reason=null — session was present but has expired / was never injected
+ */
+export interface TASessionStatus {
+  present: boolean;
+  expires_in?: number;
+  query_ids?: string[];
+  reason: "needs_bootstrap" | null;
+}
+
+/** TanStack Query key for TA session status. */
+export const taSessionKeys = {
+  status: ["ta", "session", "status"] as const,
+};
+
+/** Fetch TripAdvisor session status from the BFF. */
+export function fetchTASessionStatus(): Promise<TASessionStatus> {
+  return apiFetch<TASessionStatus>("api/v1/tripadvisor/session/status");
+}
