@@ -7,8 +7,10 @@ SOURCE
 Authority: TripAdvisor LLC (public website)
 GraphQL endpoint: https://www.tripadvisor.com/data/graphql/ids
   (persisted-query endpoint; no API key required)
-Anti-bot session: operator-captured browser cookies injected via ta_bootstrap
-  (see OPERATOR GATE below and scripts/ta_bootstrap.py)
+Session acquisition: Operator captures DataDome cookies + preRegisteredQueryId
+  from a real logged-in browser (DevTools "Copy as cURL") and injects via
+  POST /api/v1/tripadvisor/session. See OPERATOR GATE below and
+  scripts/ta_bootstrap.py for the injection helper.
 
 Data collected: destination listings (locationId, name, municipality, UF,
   review_count, rating, most_recent_review_at) and attraction listings (same
@@ -29,6 +31,17 @@ uf_geoids.json
     Source: manually compiled from TripAdvisor location pages (one-time lookup).
     Updated only when TripAdvisor changes their internal geoId assignments
     (very rare; requires manual verification).
+
+    KNOWN CAVEAT — ES (Espírito Santo):
+    During the 2026-06-24 spike, ES geoId 303516 was observed to redirect to
+    MG (Minas Gerais, geoId 303380) on the TripAdvisor location page.
+    The correct geoId for Espírito Santo on TripAdvisor may differ from 303516.
+    Operators MUST verify this geoId before sweeping ES:
+      1. Open https://www.tripadvisor.com/Tourism-g303516-Espirito_Santo_State-Vacations.html
+      2. If the page redirects to MG, the ES geoId needs updating.
+      3. Search TripAdvisor for "Espírito Santo" to find the real geoId.
+      4. Update uf_geoids.json["ES"] with the confirmed geoId.
+    The value 303516 is retained as a placeholder until confirmed.
 
 
 LEGAL RISK
