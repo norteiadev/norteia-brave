@@ -7,8 +7,8 @@ SOURCE
 Authority: TripAdvisor LLC (public website)
 GraphQL endpoint: https://www.tripadvisor.com/data/graphql/ids
   (persisted-query endpoint; no API key required)
-Anti-bot bootstrap: Playwright-driven session initialisation + DataDome cookie
-  harvesting (see brave/lanes/tripadvisor/client.py::_bootstrap_session)
+Anti-bot session: operator-captured browser cookies injected via ta_bootstrap
+  (see OPERATOR GATE below and scripts/ta_bootstrap.py)
 
 Data collected: destination listings (locationId, name, municipality, UF,
   review_count, rating, most_recent_review_at) and attraction listings (same
@@ -58,9 +58,11 @@ The following mitigations reduce exposure but do NOT eliminate the ToS violation
 (a) Low request rate — maximum one UF per minute; no continuous autonomous crawl.
     The sweep is deliberately slow and is never placed on the automated Celery beat.
 
-(b) Residential proxy seam — brave/lanes/tripadvisor/client.py accepts a
-    config.proxy_url parameter. Configuring a residential proxy shields the
-    origin datacenter IP from TripAdvisor's datacenter-block heuristics.
+(b) Session injected via operator-captured browser cookies (DevTools Copy-as-cURL);
+    automated browsers are DataDome-walled from datacenter/home IPs. Spike
+    2026-06-24 confirmed: raw httpx, headless Playwright, and headed+stealth
+    browsers all received 403; only genuine logged-in human browser sessions pass.
+    See OPERATOR GATE for acquisition procedure.
 
 (c) No PII stored — only aggregate review signals are persisted:
       review_count    (integer count of reviews)
@@ -104,25 +106,77 @@ OPERATOR GATE
 -------------
 
 The TripAdvisor sweep is NOT enabled by default and does NOT run in CI.
+DataDome blocks all automated browsers from datacenter/home IPs — only a real
+logged-in human browser session passes. Session acquisition and bulk fetch are
+deliberately separated: the operator captures the session once; httpx replays it.
 
-To run a TripAdvisor sweep:
-
+ACQUISITION (human step — runs on operator's browser):
   1. Acknowledge legal risk (see LEGAL RISK above).
 
-  2. Set the opt-in environment variable:
-       RUN_REAL_EXTERNALS=1
+  2. Open Chrome or Firefox. Log in to tripadvisor.com, or navigate to any
+     TripAdvisor destination page to ensure a fresh DataDome cookie is issued.
 
-  3. Install the optional scraper dependency group:
-       pip install 'norteia-brave[scraper]'
-       playwright install chromium
+  3. Open DevTools (F12) → Network tab.
 
-  4. (Optional) Configure a residential proxy:
-       BRAVE_TA_PROXY_URL=socks5://user:pass@proxy-host:port
+  4. Navigate to a TripAdvisor destination page for a Brazilian state, for example:
+       https://www.tripadvisor.com/Tourism-g303380-Minas_Gerais_State.html
+     (ES page may redirect to MG 303380 — see geoId note below)
 
-  5. Start the sweep via the engine API:
-       POST /api/v1/engine/start
-       Content-Type: application/json
-       {"source": "tripadvisor", "depth": "NASCENTE_RIO"}
+  5. In the Network tab, filter for "graphql/ids".
+     Right-click any POST request to that URL → "Copy as cURL (bash)".
+
+  6. Save the copied cURL string to a local file:
+       /tmp/ta_session.curl
+
+  Note: the cURL string contains your live DataDome cookie and TA session cookies.
+  Treat it as a short-lived credential. Do NOT commit it to the repository.
+
+INJECTION (script step — runs on the server):
+  7. Run ta_bootstrap to parse the cURL and inject the session:
+       python scripts/ta_bootstrap.py --curl /tmp/ta_session.curl \
+           --endpoint http://localhost:8000
+
+     Or omit --curl to paste the cURL string interactively:
+       python scripts/ta_bootstrap.py --endpoint http://localhost:8000
+
+     Or use the shell wrapper:
+       ./scripts/ta_bootstrap --curl /tmp/ta_session.curl --endpoint http://localhost:8000
+
+  8. ta_bootstrap will print:
+       Parsed: N cookies, query_ids={...}
+       Session injected — canary result: ready
+     On failure it will print a validation error or raise SystemExit with the HTTP status.
+
+  9. (Optional) Verify session status:
+       GET /api/v1/tripadvisor/session/status
+     Returns: {"present": true, "expires_in": <seconds>, "query_ids": {...}}
+
+SWEEP (engine step):
+  10. Set the opt-in environment variable:
+        RUN_REAL_EXTERNALS=1
+
+  11. (Optional) Configure a residential proxy:
+        BRAVE_TA_PROXY_URL=socks5://user:pass@proxy-host:port
+
+  12. Start the sweep via the engine API:
+        POST /api/v1/engine/start
+        Content-Type: application/json
+        {"source": "tripadvisor", "depth": "NASCENTE_RIO"}
+
+SESSION LIFETIME:
+  The server-side TTL is controlled by BRAVE_TA_SESSION_TTL (default 1800 s / 30 min).
+  Re-run ta_bootstrap before each sweep or when GET /api/v1/tripadvisor/session/status
+  shows present=false. The real DataDome token lifetime is not yet characterised (may
+  be longer than 30 min — the server TTL is conservative).
+
+  When the session expires mid-sweep, the sweep stops cleanly (SessionMissingError)
+  and marks the UF as needs_bootstrap. Partial records already ingested are kept.
+
+geoId VERIFICATION NOTE:
+  data/tripadvisor/uf_geoids.json maps ES (Espírito Santo) → 303516. As of
+  2026-06-24, the real ES destination page redirects to MG (Minas Gerais) 303380.
+  Before sweeping, verify the geoId in your captured cURL request matches the UF
+  you intend to sweep. Update uf_geoids.json manually if the seed is wrong.
 
 The sweep does NOT run automatically. It is NOT scheduled on the Celery beat.
 CI and offline tests never set RUN_REAL_EXTERNALS — all TripAdvisor client

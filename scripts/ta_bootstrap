@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# TripAdvisor session-injection bootstrap helper (TA-09)
+# Usage: ./scripts/ta_bootstrap [--curl FILE] [--endpoint URL] [--bearer TOKEN]
+exec python "$(dirname "$0")/ta_bootstrap.py" "$@"
