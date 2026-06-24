@@ -104,3 +104,34 @@ it. The session-injection seam is sound; the data-source assumption (Phase 11) i
 This likely intersects the deferred "autonomous 24/7 TA needs paid/licensed source
 or managed browser+proxy" decision — the data-fetch half may be harder than the
 session seam assumed.
+
+**DEFINITIVE ROOT CAUSE (probed live with the valid session, 2026-06-24):**
+Replaying the two persisted-query IDs the spike recorded — which the spike memo
+LABELED "AttractionsFusion page" (`46dcf3e69ea8ba5a`) and "location lookup"
+(`25f9ddb1ce629144`) — through httpx with the operator cookies returns **HTTP 200**
+(cookies/DataDome confirmed working) but **GraphQL variable-validation errors that
+reveal these are NOT listing queries**:
+  - `46dcf3e69ea8ba5a` requires `$page:String!, $locale:String!,
+    $platform:ad_mission_control__GetPageSlotSettingsRequestPlatform!`
+    → an **ad-slot-config** query (ad_mission_control.GetPageSlotSettings), not attractions.
+  - `25f9ddb1ce629144` requires `$request:Trips_ReferenceInput!`
+    → a **Trips/saves** query, not a location lookup.
+
+So the spike's "HTTP 200 + real GraphQL data" validated **cookie portability only** —
+the two queryIds it captured/recorded are ads + trips operations, NOT the organic
+per-UF destinations/attractions listing. The client's hardcoded
+`{locationId, offset, limit}` variables match no real query observed. The organic
+listing persisted-query (operation name + variable shape + response path) has **never
+actually been identified** — not in the spike, not across 3 operator captures today.
+
+Corrected next action:
+1. Capture the SPECIFIC XHR that renders the organic attractions/destinations LIST
+   (inspect Response for attraction names + integer locationIds + pagination), and
+   record its real preRegisteredQueryId + full `variables` object verbatim. If no such
+   XHR exists (list is SSR HTML), confirm that — httpx GET of the listing HTML returns
+   403 DataDome, so SSR would mean httpx cannot reach listings at all.
+2. Rebuild `client.py.fetch_destinations/fetch_attractions` around the REAL captured
+   query (correct qid source from the session, correct variables, correct response
+   parsing). The current variable shape is a Phase-11 assumption, never validated.
+3. `ta_bootstrap` must extract the LISTING queryId specifically (reject ad/telemetry/
+   trips qids); TA-09 runbook must tell operators exactly which request to copy.
