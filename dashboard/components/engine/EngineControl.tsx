@@ -312,11 +312,16 @@ export function EngineControl() {
           >
             {sessionLabel(sessionStatus)}
           </span>
-          {sessionStatus.present && sessionStatus.expires_in !== undefined && (
-            <span className="text-muted-foreground">
-              ({Math.round(sessionStatus.expires_in / 60)} min)
-            </span>
-          )}
+          {/* WR-03: only render the minutes badge when there is real remaining
+              TTL. expires_in can be 0 (no-TTL or just-expired key) — rendering
+              "(0 min)" beside a healthy pill would mislead the operator. */}
+          {sessionStatus.present &&
+            sessionStatus.expires_in !== undefined &&
+            sessionStatus.expires_in > 0 && (
+              <span className="text-muted-foreground">
+                ({Math.round(sessionStatus.expires_in / 60)} min)
+              </span>
+            )}
         </div>
       )}
 

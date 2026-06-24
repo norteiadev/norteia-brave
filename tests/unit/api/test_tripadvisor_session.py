@@ -299,3 +299,74 @@ def test_status_unauthenticated_gets_401(client):
     """GET /session/status without auth → 401."""
     resp = client.get("/api/v1/tripadvisor/session/status")
     assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# WR-02: canary distinguishes a provably-bad session from an infra fault.
+# These exercise the REAL _run_canary (not the monkeypatched stub) by forcing
+# the internally-constructed TripAdvisorClient.fetch_destinations to raise.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_canary_infra_error_returns_503_and_keeps_key(fake_redis, monkeypatch):
+    """WR-02: an infra fault (e.g. unknown-UF ValueError) → 503 canary_unverified,
+    and the freshly-injected session key is NOT deleted."""
+    import json
+
+    from fastapi import HTTPException
+
+    import brave.api.routers.tripadvisor_session as ts_module
+    from brave.config.settings import TripAdvisorConfig
+    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+
+    session = {"cookies": {"datadome": "x"}, "query_ids": {"destinations": "qid"}}
+    fake_redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session))
+
+    async def _raise_infra(self, uf, max_pages=None):
+        raise ValueError("unknown UF / missing seed")
+
+    monkeypatch.setattr(TripAdvisorClient, "fetch_destinations", _raise_infra)
+
+    with pytest.raises(HTTPException) as ei:
+        await ts_module._run_canary(session, TripAdvisorConfig(), fake_redis)
+
+    assert ei.value.status_code == 503
+    assert ei.value.detail == "canary_unverified"
+    assert fake_redis.exists(BRAVE_TA_SESSION_KEY), (
+        "infra fault must NOT destroy a possibly-valid session key (WR-02)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_canary_session_expired_returns_422_and_deletes_key(fake_redis, monkeypatch):
+    """WR-02 complement: a provably-bad session (SessionExpiredError) → 422
+    invalid_session, key deleted."""
+    import json
+
+    from fastapi import HTTPException
+
+    import brave.api.routers.tripadvisor_session as ts_module
+    from brave.config.settings import TripAdvisorConfig
+    from brave.lanes.tripadvisor.client import (
+        BRAVE_TA_SESSION_KEY,
+        SessionExpiredError,
+        TripAdvisorClient,
+    )
+
+    session = {"cookies": {"datadome": "x"}, "query_ids": {"destinations": "qid"}}
+    fake_redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session))
+
+    async def _raise_expired(self, uf, max_pages=None):
+        raise SessionExpiredError("403 DataDome block")
+
+    monkeypatch.setattr(TripAdvisorClient, "fetch_destinations", _raise_expired)
+
+    with pytest.raises(HTTPException) as ei:
+        await ts_module._run_canary(session, TripAdvisorConfig(), fake_redis)
+
+    assert ei.value.status_code == 422
+    assert ei.value.detail == "invalid_session"
+    assert not fake_redis.exists(BRAVE_TA_SESSION_KEY), (
+        "provably-bad session key must be deleted (fail closed)"
+    )

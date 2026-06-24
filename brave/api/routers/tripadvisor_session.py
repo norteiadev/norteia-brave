@@ -122,11 +122,16 @@ async def _run_canary(session: dict[str, Any], ta_config: Any, redis: Redis) -> 
 
     client = TripAdvisorClient(config=ta_config, redis=redis)
     try:
+        # WR-06: a canary only needs to prove the session returns *any* data.
+        # Bound it to a single page so a slow large-UF paginate can't exceed the
+        # timeout and destroy a valid session.
         results = await asyncio.wait_for(
-            client.fetch_destinations("RJ"),
+            client.fetch_destinations("RJ", max_pages=1),
             timeout=_CANARY_TIMEOUT_SECONDS,
         )
     except (SessionExpiredError, asyncio.TimeoutError) as exc:
+        # Session is provably bad (DataDome 403/429) or unresponsive within the
+        # bounded single-page window → delete the key and fail closed.
         redis.delete(BRAVE_TA_SESSION_KEY)
         logger.warning(
             "ta_session_canary_failed",
@@ -137,14 +142,18 @@ async def _run_canary(session: dict[str, Any], ta_config: Any, redis: Redis) -> 
         )
         raise HTTPException(status_code=422, detail="invalid_session") from exc
     except Exception as exc:
-        redis.delete(BRAVE_TA_SESSION_KEY)
+        # WR-02: an infrastructure fault (unknown-UF ValueError, Redis down, DNS,
+        # proxy unreachable) is NOT proof the session is bad. Do NOT delete the
+        # freshly-injected key — return 503 so the operator can retry without
+        # re-capturing a scarce manually-obtained credential.
+        # CR-01: log only the exception CLASS — str(exc) may carry cookie fragments.
         logger.warning(
-            "ta_session_canary_error",
-            reason=str(exc),
+            "ta_session_canary_unverified",
+            reason=type(exc).__name__,
             cookie_count=len(session.get("cookies", {})),
             query_ids_keys=list(session.get("query_ids", {}).keys()),
         )
-        raise HTTPException(status_code=422, detail="invalid_session") from exc
+        raise HTTPException(status_code=503, detail="canary_unverified") from exc
 
     # Empty-result guard: a valid 200 response with empty data means stale queryId
     if not results:

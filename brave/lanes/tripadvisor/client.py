@@ -119,7 +119,9 @@ class TripAdvisorClient:
     # Public protocol methods
     # ------------------------------------------------------------------
 
-    async def fetch_destinations(self, uf: str) -> list[dict[str, Any]]:
+    async def fetch_destinations(
+        self, uf: str, max_pages: int | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch TripAdvisor destinations (GEO entities) for a Brazilian UF.
 
         Uses the injected session cookies and queryId to POST a persisted GraphQL
@@ -127,6 +129,10 @@ class TripAdvisorClient:
 
         Args:
             uf: Two-letter Brazilian state code.
+            max_pages: Cap on pages to fetch. None (default) paginates up to
+                _MAX_PAGES. The canary passes max_pages=1 — it only needs to prove
+                the session returns any data, so it must not paginate a large UF
+                past the 15 s timeout (WR-06).
 
         Returns:
             List of location dicts from the GraphQL response.
@@ -146,8 +152,14 @@ class TripAdvisorClient:
         if user_agent:
             headers["User-Agent"] = user_agent
 
+        # CR-02: route through the configured residential proxy (BRAVE_TA_PROXY_URL).
+        # Without this every request egresses the server's datacenter IP — the IP
+        # class the README/MITIGATIONS document as DataDome-walled.
+        proxy = self._config.proxy_url or None
+
+        page_limit = _MAX_PAGES if max_pages is None else min(max_pages, _MAX_PAGES)
         results: list[dict[str, Any]] = []
-        for page_num in range(_MAX_PAGES):
+        for page_num in range(page_limit):
             offset = page_num * 20
             payload = [
                 {
@@ -155,7 +167,9 @@ class TripAdvisorClient:
                     "extensions": {"preRegisteredQueryId": query_id},
                 }
             ]
-            async with httpx.AsyncClient(cookies=cookies, follow_redirects=True) as hc:
+            async with httpx.AsyncClient(
+                cookies=cookies, follow_redirects=True, proxy=proxy
+            ) as hc:
                 resp = await hc.post(
                     _TA_GRAPHQL_URL,
                     json=payload,
@@ -210,13 +224,18 @@ class TripAdvisorClient:
         if user_agent:
             headers["User-Agent"] = user_agent
 
+        # CR-02: route through the configured residential proxy (BRAVE_TA_PROXY_URL).
+        proxy = self._config.proxy_url or None
+
         payload = [
             {
                 "variables": {"locationId": geo_id, "offset": offset, "limit": 20},
                 "extensions": {"preRegisteredQueryId": query_id},
             }
         ]
-        async with httpx.AsyncClient(cookies=cookies, follow_redirects=True) as hc:
+        async with httpx.AsyncClient(
+            cookies=cookies, follow_redirects=True, proxy=proxy
+        ) as hc:
             resp = await hc.post(
                 _TA_GRAPHQL_URL,
                 json=payload,

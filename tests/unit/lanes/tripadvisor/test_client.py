@@ -487,3 +487,139 @@ class TestTripAdvisorClientPayloadShape:
         assert "playwright" not in content, (
             "playwright must be removed from pyproject.toml"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 12 review fixes: proxy threading (CR-02) + canary single-page (WR-06)
+# ---------------------------------------------------------------------------
+
+
+class TestTripAdvisorClientProxyAndPaging:
+    """CR-02: BRAVE_TA_PROXY_URL is threaded into httpx; WR-06: max_pages bounds paging."""
+
+    @staticmethod
+    def _seed(redis):
+        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+
+        redis.set(
+            BRAVE_TA_SESSION_KEY,
+            json.dumps(
+                {
+                    "cookies": {"datadome": "abc"},
+                    "query_ids": {"destinations": "qid_d", "attractions": "qid_a"},
+                    "user_agent": "UA",
+                    "acquired_at": "2026-06-24T12:00:00Z",
+                }
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_fetch_destinations_threads_configured_proxy(self, monkeypatch):
+        """CR-02: the configured proxy_url is passed to httpx.AsyncClient(proxy=...)."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor import client as client_mod
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor.model_copy(
+            update={"proxy_url": "socks5://user:pass@proxy:1080"}
+        )
+        redis = fakeredis.FakeRedis()
+        self._seed(redis)
+
+        captured: dict = {}
+
+        class _FakeClient:
+            def __init__(self, *args, **kwargs):
+                captured["proxy"] = kwargs.get("proxy")
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def post(self, *args, **kwargs):
+                return httpx.Response(
+                    200,
+                    json=[{"data": {"locations": []}}],
+                    request=httpx.Request("POST", "https://www.tripadvisor.com/data/graphql/ids"),
+                )
+
+        monkeypatch.setattr(client_mod.httpx, "AsyncClient", _FakeClient)
+
+        ta_client = TripAdvisorClient(config=config, redis=redis)
+        await ta_client.fetch_destinations(uf="BA")
+
+        assert captured["proxy"] == "socks5://user:pass@proxy:1080"
+
+    @pytest.mark.asyncio
+    async def test_fetch_destinations_no_proxy_passes_none(self, monkeypatch):
+        """CR-02: empty proxy_url resolves to proxy=None (no accidental empty-string proxy)."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor import client as client_mod
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor.model_copy(update={"proxy_url": ""})
+        redis = fakeredis.FakeRedis()
+        self._seed(redis)
+
+        captured: dict = {}
+
+        class _FakeClient:
+            def __init__(self, *args, **kwargs):
+                captured["proxy"] = kwargs.get("proxy", "MISSING")
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def post(self, *args, **kwargs):
+                return httpx.Response(
+                    200,
+                    json=[{"data": {"locations": []}}],
+                    request=httpx.Request("POST", "https://www.tripadvisor.com/data/graphql/ids"),
+                )
+
+        monkeypatch.setattr(client_mod.httpx, "AsyncClient", _FakeClient)
+
+        ta_client = TripAdvisorClient(config=config, redis=redis)
+        await ta_client.fetch_destinations(uf="BA")
+
+        assert captured["proxy"] is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_destinations_max_pages_one_stops_after_first(self):
+        """WR-06: max_pages=1 issues exactly one request even on a full first page."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        self._seed(redis)
+
+        call_count = 0
+        full_page = [{"locationId": i} for i in range(20)]  # 20 items → would normally page again
+
+        with respx.mock:
+            def handler(request):
+                nonlocal call_count
+                call_count += 1
+                return httpx.Response(200, json=[{"data": {"locations": full_page}}])
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=handler
+            )
+            results = await TripAdvisorClient(config=config, redis=redis).fetch_destinations(
+                uf="BA", max_pages=1
+            )
+
+        assert call_count == 1, f"max_pages=1 should issue exactly one request, got {call_count}"
+        assert len(results) == 20

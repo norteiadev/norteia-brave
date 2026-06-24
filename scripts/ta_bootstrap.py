@@ -188,10 +188,17 @@ def inject_session(payload: dict, endpoint: str, bearer: str) -> None:
             canary = resp_body
         print(f"Session injected — canary result: {canary}")
     elif status == 422:
-        print(f"Validation error — check cookies/query_ids")
-        print(f"Response: {resp_body}", file=sys.stderr)
+        # WR-07: never print the raw response body — a Pydantic 422 echoes the
+        # offending input, which for this endpoint includes the submitted cookies
+        # (live DataDome credential). Rely on the server's redacted logs.
+        print(
+            "Validation error — check cookies/query_ids; see server logs for detail.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     else:
-        raise SystemExit(f"HTTP {status}: {resp_body}")
+        # WR-07: omit the body — surface only the status code.
+        raise SystemExit(f"HTTP {status}")
 
 
 def main() -> None:
