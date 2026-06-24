@@ -189,6 +189,11 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | TA-06 | Phase 11 | Pending |
 | TA-07 | Phase 11 | Pending |
 | TA-08 | Phase 11 | Pending |
+| TA-09 | Phase 12 | Pending |
+| TA-10 | Phase 12 | Pending |
+| TA-11 | Phase 12 | Pending |
+| TA-12 | Phase 12 | Pending |
+| TA-13 | Phase 12 | Pending |
 
 **Phase 11 — TripAdvisor source lane (TA-01 … TA-08):**
 - **TA-01** — `brave/lanes/tripadvisor/` GraphQL hybrid client: Playwright bootstraps a DataDome session, captures the rotating `queryId` live (never hardcoded), injects cookies into `httpx` for persisted-query POSTs; residential-proxy seam; Playwright lazy-imported (never in CI); Null/Fake clients + `TripAdvisorConfig` (`BRAVE_TA_*`). UF→`geoId` resolution cached (Redis + 27-UF seed JSON).
@@ -199,6 +204,14 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 - **TA-06** — Engine source-awareness: `sweep_tripadvisor` task; `engine_sweep_run` source branch; engine `set_source/get_source` (whitelist, fail-closed); `/engine/start` accepts+validates `source` (422); promote-override API single (`PATCH /atrativos/{id}/promote`) + batch (`POST /atrativos/promote-batch`), steward-auth, non-`mar_ready` → 409.
 - **TA-07** — Dashboard: source + UF selector on EngineControl; new `/mar-ready` route (nav `SURFACES`) with optimistic single + bulk multi-select promote (mirror DLQ actions); MSW/Vitest.
 - **TA-08** — Compliance: `data/tripadvisor/README` legal-risk note (ToS, mitigations, operator-gated), lane docstring note, root `SOURCES.md` index. 100% offline tests by default; live scrape only via opt-in `@pytest.mark.real_browser`.
+
+**Phase 12 — TripAdvisor session-injection seam (TA-09 … TA-13):**
+> Validated by spike 2026-06-24: a browser-earned DataDome cookie survives `httpx` replay (200 + real data, same IP, different TLS/JA3). Real persisted-query format is `extensions.preRegisteredQueryId` (batch array), NOT `{"query": queryId}`. Design doc: `~/.gstack/projects/norteia-brave/leandro-main-design-20260624-121942.md`.
+- **TA-09** — Operator session-acquisition runbook: capture a TripAdvisor session (cookies incl. `datadome` + `preRegisteredQueryId`) from a real logged-in browser (DevTools Copy-as-cURL / `/browse` handoff), since automated browsers (httpx, headless, headed+stealth) are 403-walled by DataDome from a datacenter/home IP. Ships as repo runbook (`data/tripadvisor/README` operator-gate section + a `scripts/ta_bootstrap` helper).
+- **TA-10** — `POST /api/v1/tripadvisor/session` endpoint: `require_steward_or_bearer` auth; Pydantic body (`cookies`, `query_ids`, `user_agent`, `client_hints`, `locale`, `acquisition_ip`, `acquired_at`; `extra="forbid"`; 64 KB size limit; 422 on malformed); writes Redis `BRAVE_TA_SESSION_KEY` with `BRAVE_TA_SESSION_TTL`; never logs cookie values (audit-log keys/counts only).
+- **TA-11** — Canary validation gate: on inject, synchronously run ONE real `graphql/ids` request through the production `httpx` path (15 s hard timeout) → `ready` (200 + non-empty data) or `invalid_session` (403/captcha/empty-payload/timeout → delete the Redis key, return 422). `GET /api/v1/tripadvisor/session/status` → `{present, expires_in, query_ids}` for dashboard session health.
+- **TA-12** — Client refactor: `_get_session()` reads Redis only, raises `SessionMissingError` on miss/expiry; **fix the persisted-query payload to `{"variables": {...}, "extensions": {"preRegisteredQueryId": "<id>"}}`** (batch-array shape); remove the Playwright `_bootstrap_session` + thread-offload + the `scraper` optional dependency; verify real attraction `geoId`s (seed ES 303516 redirected to MG 303380).
+- **TA-13** — Sweep fail-fast + visibility: `sweep_tripadvisor` catches `SessionMissingError` and the FIRST mid-sweep 403/captcha/empty-payload/stale-`queryId` → stop, mark `needs_bootstrap`, no retry-storm; surface session state (`needs_bootstrap`/`ready`/`invalid`/`expired`) to the operator dashboard instead of silent 0-records. Sweeps capped by record count + wall-clock budget under the session TTL. Operator-gated; NOT on the autonomous beat.
 
 **Coverage:**
 - v1 requirements: 48 total (CORE 12 · SCORE 3 · OBS 4 · CNTR 2 · DEST 5 · ATR 6 · DASH 6 · COMP 3 · TEST 3 · ORCH 4)
