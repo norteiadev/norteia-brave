@@ -68,14 +68,39 @@ The canary's empty-result guard correctly rejected the telemetry queryId
 (`invalid_session`), so no bad session persisted — but the lane cannot actually
 collect destination/attraction records until the real listing query is characterized.
 
-**Next action (follow-up phase / investigation):**
-1. Determine HOW TripAdvisor serves the destinations/attractions LIST for a UF:
-   - capture a graphql/ids POST during **pagination** on the dedicated Attractions
-     page (`/Attractions-g<geoId>-Activities-<State>.html` → scroll / "ver mais"),
-     inspecting the Response tab for an actual `locations`/`attractions` array; OR
-   - if listings are SSR-only, switch the lane to HTML parsing or the correct
-     data endpoint instead of the assumed graphql/ids persisted query.
-2. Correct `client.py` queryId source + variable shape + response-path parsing to
-   match the real contract; update `ta_bootstrap` to extract the LISTING queryId
-   (reject telemetry queryIds) and the TA-09 runbook to point at the right request.
+**Capture 3 (Attractions page `/Attractions-g303380-Activities-Minas_Gerais.html`):**
+`qid=343a07f958a70310`, variables `{request:[{numberOfContents:12,
+randomContentWithGeoInput:{locationIds:[303380,303370]}}]}`. Verbatim replay →
+**200 OK, 12 KB**, `data.response[0].randomContentList[12]` — but every item is
+`contentType:"BRANDED"` SPONSORED content (campaignId/sponsorId, e.g. "Universal
+Orlando Resort", geoId 24971875 in Florida), NOT organic Minas Gerais attractions.
+
+**Key technical finding — cookie portability is XHR-only:**
+- `graphql/ids` XHR POST with the injected cookies → **200 OK** (telemetry, GTM,
+  and sponsored-ad queries all return data).
+- A plain **GET of the listing HTML document** (`/Attractions-g...html`) with the
+  same cookies → **403** (DataDome challenge page, 775 bytes).
+
+So httpx can replay TripAdvisor's XHR APIs but NOT the HTML document navigation,
+and across 3 operator captures the only graphql/ids XHR queries surfaced were
+telemetry + GTM + sponsored ads. The organic per-UF attraction/destination listing
+appears to be SSR-rendered in the (DataDome-403'd) HTML — meaning neither the
+assumed `{locationId,offset,limit}` persisted query NOR httpx HTML scraping reaches
+it. The session-injection seam is sound; the data-source assumption (Phase 11) is not.
+
+**Next action (follow-up phase — scoped investigation, NOT a quick fix):**
+1. Determine the real organic-listing data path:
+   - hunt for an organic-listing graphql/ids XHR query (try filtering/sorting/"see
+     all" interactions on the Attractions page that may fire an XHR list fetch with
+     `offset`/`limit` and return organic `attractions`); OR
+   - confirm listings are SSR-only → then httpx cannot reach them under DataDome,
+     and the lane needs a managed-browser/residential-proxy fetch (which the office-
+     hours design explicitly deferred as out-of-scope), or a different TA surface.
+2. Once the real contract is known: fix `client.py` (queryId + variable shape +
+   response path), make `ta_bootstrap` reject telemetry/ad queryIds, fix the TA-09
+   runbook to point operators at the correct request.
 3. Re-run Level 3 to confirm Nascente records > 0.
+
+This likely intersects the deferred "autonomous 24/7 TA needs paid/licensed source
+or managed browser+proxy" decision — the data-fetch half may be harder than the
+session seam assumed.
