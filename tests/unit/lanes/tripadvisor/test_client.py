@@ -1,16 +1,21 @@
-"""Offline unit tests for TripAdvisorClient and FakeTripAdvisorClient (TA-01).
+"""Offline unit tests for TripAdvisorClient and FakeTripAdvisorClient.
 
 All tests run without Playwright or network I/O:
-- test_fake_records_calls: FakeTripAdvisorClient records destinations + attractions calls
-- test_fake_returns_fixture: FakeTripAdvisorClient returns configured fixture data
-- test_session_expired_on_403: httpx 403 from GraphQL endpoint raises SessionExpiredError
-- test_protocol_compliance_fake: FakeTripAdvisorClient satisfies TripAdvisorClientProtocol
-- test_no_playwright_at_module_level: playwright not imported at module top-level
-- test_session_key_constant: BRAVE_TA_SESSION_KEY = "brave:ta:session"
+- TestFakeTripAdvisorClient: FakeTripAdvisorClient records calls and returns fixture data
+- TestTripAdvisorClientOffline: offline tests that don't require Playwright
+- TestTripAdvisorClientSessionInjection: SessionMissingError + _get_session Redis-only
+  behaviour introduced by Phase 12 session-injection model (TA-12)
+- TestTripAdvisorClientPayloadShape: fetch_* send the correct extensions.preRegisteredQueryId
+  batch-array payload shape (TA-12 core fix)
 
-Tests touching _bootstrap_session are gated with @pytest.mark.real_browser
-and are never run in CI.
+Notes (Phase 12 changes):
+- _bootstrap_session is removed — operator injects session via POST /api/v1/tripadvisor/session
+- _get_session() reads Redis only; raises SessionMissingError on miss
+- Correct payload shape: [{"variables": {...}, "extensions": {"preRegisteredQueryId": qid}}]
+- TestTripAdvisorClientRealBrowser (and real_browser marker) removed — no bootstrap path exists
 """
+
+import json
 
 import httpx
 import pytest
@@ -101,7 +106,7 @@ class TestTripAdvisorClientOffline:
     """Tests that do NOT require Playwright or live TripAdvisor access."""
 
     def test_playwright_not_at_module_top_level(self):
-        """Playwright must not appear in the module-level imports of client.py."""
+        """Playwright must not appear anywhere in client.py (top-level or function-level)."""
         import ast
         from pathlib import Path
 
@@ -113,21 +118,17 @@ class TestTripAdvisorClientOffline:
             / "client.py"
         )
         tree = ast.parse(client_path.read_text())
-        # Collect top-level import nodes (not inside function defs)
+        # Check ALL import nodes (top-level AND function-level) for playwright references
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
-                # Check if this import is inside a function definition
-                # ast.walk doesn't give parents, so we check by col_offset heuristic:
-                # top-level imports have col_offset == 0
-                if node.col_offset == 0:
-                    for alias in getattr(node, "names", []):
-                        assert "playwright" not in alias.name.lower(), (
-                            f"playwright found in top-level import: {alias.name}"
-                        )
-                    module = getattr(node, "module", "") or ""
-                    assert "playwright" not in module.lower(), (
-                        f"playwright found in top-level from import: {module}"
+                for alias in getattr(node, "names", []):
+                    assert "playwright" not in alias.name.lower(), (
+                        f"playwright found in import: {alias.name}"
                     )
+                module = getattr(node, "module", "") or ""
+                assert "playwright" not in module.lower(), (
+                    f"playwright found in from import: {module}"
+                )
 
     def test_session_key_constant(self):
         from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
@@ -153,10 +154,12 @@ class TestTripAdvisorClientOffline:
 
         client = TripAdvisorClient(config=config, redis=redis)
 
-        # Stub _get_session so no Playwright is needed
+        # Stub _get_session to return a flat-dict session (Phase 12 shape)
         stub_session = {
-            "cookies": [{"name": "__ddg1_", "value": "stub", "domain": ".tripadvisor.com"}],
+            "cookies": {"__ddg1_": "stub"},
             "query_ids": {"destinations": "stub_qid_dest", "attractions": "stub_qid_attr"},
+            "user_agent": "Mozilla/5.0 test",
+            "acquired_at": "2026-06-24T12:00:00Z",
         }
         monkeypatch.setattr(client, "_get_session", lambda: stub_session)
 
@@ -181,8 +184,10 @@ class TestTripAdvisorClientOffline:
         client = TripAdvisorClient(config=config, redis=redis)
 
         stub_session = {
-            "cookies": [{"name": "__ddg1_", "value": "stub", "domain": ".tripadvisor.com"}],
+            "cookies": {"__ddg1_": "stub"},
             "query_ids": {"destinations": "stub_qid_dest", "attractions": "stub_qid_attr"},
+            "user_agent": "Mozilla/5.0 test",
+            "acquired_at": "2026-06-24T12:00:00Z",
         }
         monkeypatch.setattr(client, "_get_session", lambda: stub_session)
 
@@ -201,19 +206,86 @@ class TestTripAdvisorClientOffline:
 
 
 # ---------------------------------------------------------------------------
-# Marker gate: real_browser tests (skipped in CI — opt-in only)
+# Session-injection model tests (TA-12)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.real_browser
-class TestTripAdvisorClientRealBrowser:
-    """Tests that require a live browser and real TripAdvisor access.
 
-    These are NEVER run in CI. Gate with: pytest -m real_browser
+class TestTripAdvisorClientSessionInjection:
+    """Tests for the Phase 12 session-injection model.
+
+    _get_session() reads Redis only. No Playwright, no _bootstrap_session.
     """
 
-    @pytest.mark.asyncio
-    async def test_bootstrap_session_returns_cookies(self):
-        """Live Playwright bootstrap must produce a non-empty cookie jar."""
+    def test_get_session_raises_on_redis_miss(self):
+        """_get_session() with empty FakeRedis must raise SessionMissingError."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import SessionMissingError, TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        client = TripAdvisorClient(config=config, redis=redis)
+
+        with pytest.raises(SessionMissingError):
+            client._get_session()
+
+    def test_get_session_returns_injected_session(self):
+        """FakeRedis with a valid JSON session → _get_session() returns that dict."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+
+        session_data = {
+            "cookies": {"datadome": "abc123", "TASession": "xyz456"},
+            "query_ids": {"destinations": "a1b2c3d4e5f6a7b8", "attractions": "b2c3d4e5f6a7b8c9"},
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ...",
+            "acquired_at": "2026-06-24T12:00:00Z",
+        }
+        redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session_data))
+
+        client = TripAdvisorClient(config=config, redis=redis)
+        result = client._get_session()
+
+        assert result["query_ids"]["destinations"] == "a1b2c3d4e5f6a7b8"
+        assert result["cookies"]["datadome"] == "abc123"
+        assert result["acquired_at"] == "2026-06-24T12:00:00Z"
+
+    def test_get_session_handles_list_cookies(self):
+        """Phase 11 legacy cookies-as-list shape is converted to flat dict."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+
+        # Phase 11 shape: cookies as list of {name, value, domain}
+        session_data = {
+            "cookies": [
+                {"name": "datadome", "value": "abc123", "domain": ".tripadvisor.com"},
+                {"name": "TASession", "value": "xyz456", "domain": ".tripadvisor.com"},
+            ],
+            "query_ids": {"destinations": "a1b2c3d4e5f6a7b8"},
+            "acquired_at": "2026-06-24T12:00:00Z",
+        }
+        redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session_data))
+
+        client = TripAdvisorClient(config=config, redis=redis)
+        result = client._get_session()
+
+        # Must be normalised to flat dict
+        assert isinstance(result["cookies"], dict)
+        assert result["cookies"]["datadome"] == "abc123"
+        assert result["cookies"]["TASession"] == "xyz456"
+
+    def test_no_bootstrap_session_method(self):
+        """TripAdvisorClient instance must NOT have a _bootstrap_session attribute."""
         import fakeredis
 
         from brave.config.settings import AppConfig
@@ -222,6 +294,196 @@ class TestTripAdvisorClientRealBrowser:
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
         client = TripAdvisorClient(config=config, redis=redis)
-        session = client._bootstrap_session()
-        assert session["cookies"], "Expected at least one DataDome cookie"
-        assert "query_ids" in session
+
+        assert not hasattr(client, "_bootstrap_session"), (
+            "_bootstrap_session must be removed in Phase 12 refactor"
+        )
+
+    def test_no_playwright_at_module_level(self):
+        """AST parse of client.py: no playwright import AND no _bootstrap_session function."""
+        import ast
+        from pathlib import Path
+
+        client_path = (
+            Path(__file__).parent.parent.parent.parent.parent
+            / "brave"
+            / "lanes"
+            / "tripadvisor"
+            / "client.py"
+        )
+        source = client_path.read_text()
+        tree = ast.parse(source)
+
+        # Check ALL import nodes for playwright
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in getattr(node, "names", []):
+                    assert "playwright" not in alias.name.lower(), (
+                        f"playwright found in import: {alias.name}"
+                    )
+                module = getattr(node, "module", "") or ""
+                assert "playwright" not in module.lower(), (
+                    f"playwright found in from-import: {module}"
+                )
+
+        # Check no _bootstrap_session function definition
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                assert node.name != "_bootstrap_session", (
+                    "_bootstrap_session function must be removed in Phase 12 refactor"
+                )
+
+    def test_session_missing_error_is_exception(self):
+        """SessionMissingError must be an Exception subclass."""
+        from brave.lanes.tripadvisor.client import SessionMissingError
+
+        err = SessionMissingError("test")
+        assert isinstance(err, Exception)
+
+
+# ---------------------------------------------------------------------------
+# Payload shape tests (TA-12 core fix)
+# ---------------------------------------------------------------------------
+
+
+class TestTripAdvisorClientPayloadShape:
+    """Assert that fetch_* use the correct extensions.preRegisteredQueryId shape."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_destinations_payload_shape(self):
+        """fetch_destinations POSTs payload[0]["extensions"]["preRegisteredQueryId"]."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+
+        session_data = {
+            "cookies": {"datadome": "abc", "TASession": "xyz"},
+            "query_ids": {"destinations": "stub_qid_dest", "attractions": "stub_qid_attr"},
+            "user_agent": "Mozilla/5.0 test",
+            "acquired_at": "2026-06-24T12:00:00Z",
+        }
+        redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session_data))
+
+        client = TripAdvisorClient(config=config, redis=redis)
+
+        captured_body = None
+
+        with respx.mock:
+            def capture_request(request):
+                nonlocal captured_body
+                captured_body = json.loads(request.content)
+                return httpx.Response(200, json=[{"data": {"locations": []}}])
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=capture_request
+            )
+            await client.fetch_destinations(uf="BA")
+
+        assert captured_body is not None, "No request was captured"
+        assert isinstance(captured_body, list), "Payload must be a list (batch array)"
+        item = captured_body[0]
+        assert "extensions" in item, f"Missing 'extensions' key in payload item: {item}"
+        assert item["extensions"]["preRegisteredQueryId"] == "stub_qid_dest"
+        assert "query" not in item, f"Old 'query' key must NOT be in payload item: {item}"
+
+    @pytest.mark.asyncio
+    async def test_fetch_attractions_payload_shape(self):
+        """fetch_attractions POSTs payload[0]["extensions"]["preRegisteredQueryId"]."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+
+        session_data = {
+            "cookies": {"datadome": "abc", "TASession": "xyz"},
+            "query_ids": {"destinations": "stub_qid_dest", "attractions": "stub_qid_attr"},
+            "user_agent": "Mozilla/5.0 test",
+            "acquired_at": "2026-06-24T12:00:00Z",
+        }
+        redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session_data))
+
+        client = TripAdvisorClient(config=config, redis=redis)
+
+        captured_body = None
+
+        with respx.mock:
+            def capture_request(request):
+                nonlocal captured_body
+                captured_body = json.loads(request.content)
+                return httpx.Response(200, json=[{"data": {"attractions": []}}])
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=capture_request
+            )
+            await client.fetch_attractions(geo_id=303513, offset=0)
+
+        assert captured_body is not None, "No request was captured"
+        assert isinstance(captured_body, list), "Payload must be a list (batch array)"
+        item = captured_body[0]
+        assert "extensions" in item, f"Missing 'extensions' key in payload item: {item}"
+        assert item["extensions"]["preRegisteredQueryId"] == "stub_qid_attr"
+        assert "query" not in item, f"Old 'query' key must NOT be in payload item: {item}"
+
+    @pytest.mark.asyncio
+    async def test_fetch_destinations_uses_flat_cookie_dict(self):
+        """fetch_destinations passes cookies as a flat dict (not list-of-dicts)."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+
+        session_data = {
+            "cookies": {"datadome": "abc", "TASession": "xyz"},
+            "query_ids": {"destinations": "stub_qid_dest", "attractions": "stub_qid_attr"},
+            "user_agent": "Mozilla/5.0 test",
+            "acquired_at": "2026-06-24T12:00:00Z",
+        }
+        redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session_data))
+
+        client = TripAdvisorClient(config=config, redis=redis)
+
+        captured_headers = None
+
+        with respx.mock:
+            def capture_request(request):
+                nonlocal captured_headers
+                captured_headers = dict(request.headers)
+                return httpx.Response(200, json=[{"data": {"locations": []}}])
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=capture_request
+            )
+            await client.fetch_destinations(uf="BA")
+
+        assert captured_headers is not None
+        # httpx sets the Cookie header from the cookies dict
+        cookie_header = captured_headers.get("cookie", "")
+        assert "datadome=abc" in cookie_header, (
+            f"Expected 'datadome=abc' in Cookie header, got: {cookie_header}"
+        )
+
+    def test_no_scraper_dep_in_pyproject(self):
+        """pyproject.toml must not contain a 'scraper' optional dep group or playwright."""
+        from pathlib import Path
+
+        pyproject_path = (
+            Path(__file__).parent.parent.parent.parent.parent / "pyproject.toml"
+        )
+        content = pyproject_path.read_text()
+
+        assert "scraper" not in content, (
+            "scraper optional dep group must be removed from pyproject.toml"
+        )
+        assert "playwright" not in content, (
+            "playwright must be removed from pyproject.toml"
+        )
