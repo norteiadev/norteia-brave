@@ -258,42 +258,58 @@ async def inject_session(
     await _run_canary(session, ta_config, redis)
 
     # Audit log (T-12-02-01: only metadata, NEVER cookie values)
+    #
+    # WR-04: get_db() is called directly here rather than via Depends, so the
+    # `RuntimeError("BRAVE_DB_URL not set")` it raises when no DB is configured
+    # must be distinguished from a genuine audit WRITE failure — otherwise a
+    # missing-DB environment (e.g. staging without BRAVE_DB_URL) silently drops
+    # the ta_session_injected compliance record looking identical to a DB hiccup.
+    # We log the two cases under distinct event names, both at WARNING (never
+    # swallowed), so a dropped audit is always observable. (No get_optional_db
+    # dependency exists in brave/api/deps.py, so the override-respecting variant
+    # the reviewer preferred isn't available without inventing a new dep.)
     try:
         from brave.api.deps import get_db
         from brave.observability.audit import write_audit
 
-        # get_db may be overridden to None in tests — skip audit in that case
+        # get_db is a generator function — the RuntimeError for an unconfigured
+        # DB surfaces lazily on next(db_gen), not on the call itself.
         db_gen = get_db()
         try:
             db = next(db_gen)
-            write_audit(
-                session=db,
-                action="ta_session_injected",
-                entity_type=None,
-                actor="operator",
-                after_state={
-                    "cookie_count": len(body.cookies),
-                    "query_ids": list(body.query_ids.keys()),
-                    "acquired_at": body.acquired_at,
-                    "canary_result": "ready",
-                    # T-13-01-01: session_id presence as boolean only — NEVER the value
-                    "session_id_present": bool(derived_session_id),
-                },
-            )
         except StopIteration:
-            pass
-        except Exception as audit_exc:
-            # Audit failure must not block the successful inject
-            logger.warning("ta_session_audit_failed", error=str(audit_exc))
-            try:
-                db_gen.close()
-            except Exception:
-                pass
+            # Generator yielded nothing (e.g. test override of get_db) — no DB.
+            logger.warning("ta_session_audit_no_db", reason="get_db_yielded_nothing")
+        except RuntimeError as no_db_exc:
+            # No DB configured (BRAVE_DB_URL unset) — audit cannot be written.
+            # This is a configuration gap, NOT a write failure; surface it as such
+            # at WARNING rather than silently swallowing it.
+            logger.warning("ta_session_audit_no_db", reason=str(no_db_exc))
         else:
             try:
-                db_gen.close()
-            except Exception:
-                pass
+                write_audit(
+                    session=db,
+                    action="ta_session_injected",
+                    entity_type=None,
+                    actor="operator",
+                    after_state={
+                        "cookie_count": len(body.cookies),
+                        "query_ids": list(body.query_ids.keys()),
+                        "acquired_at": body.acquired_at,
+                        "canary_result": "ready",
+                        # T-13-01-01: session_id presence as boolean only — NEVER the value
+                        "session_id_present": bool(derived_session_id),
+                    },
+                )
+            except Exception as audit_exc:
+                # Audit WRITE failed (DB error mid-write) — must not block the
+                # successful inject, but is distinct from "no DB configured".
+                logger.warning("ta_session_audit_write_failed", error=str(audit_exc))
+            finally:
+                try:
+                    db_gen.close()
+                except Exception:
+                    pass
     except Exception as audit_exc:
         logger.warning("ta_session_audit_skip", error=str(audit_exc))
 
