@@ -302,87 +302,89 @@ class TripAdvisorClient:
         proxy = self._config.proxy_url or None
 
         # PAGINATION GAP (Phase 13): AttractionsFusion variables carry no confirmed
-        # page/offset param — single page only. Multi-page (oa30 via
-        # PaginationLinksList) is a follow-up; do NOT loop with an identical payload
-        # (would duplicate page 1).
-        page_limit = 1 if max_pages is None else min(max_pages, _MAX_PAGES)
+        # page/offset param. The payload (routeParameters, no offset) is identical
+        # across iterations, so looping would re-POST page 1 and duplicate its cards
+        # into the result set. Until real pagination (oa30 via PaginationLinksList)
+        # lands, fetch_attractions is a STRICT single-page contract.
+        #
+        # WR-02: enforce the contract instead of relying on the max_pages=None→1
+        # default. A caller passing max_pages>1 would otherwise silently duplicate
+        # page-1 cards — fail loud rather than corrupt ingest.
+        if max_pages is not None and max_pages > 1:
+            raise NotImplementedError(
+                "fetch_attractions is single-page only — AttractionsFusion carries "
+                "no page/offset param, so max_pages>1 would re-POST page 1 and "
+                "duplicate cards. Multi-page pagination is a follow-up (PAGINATION GAP)."
+            )
 
-        results: list[dict[str, Any]] = []
-        for _page_num in range(page_limit):
-            pageview_uid = str(uuid.uuid4())
-            payload = [
-                {
-                    "variables": {
-                        "request": {
-                            "tracking": {
-                                "screenName": "AttractionsFusion",
-                                "pageviewUid": pageview_uid,
-                            },
-                            "routeParameters": {
-                                "geoId": geo_id,
-                                "contentType": "attraction",
-                                "webVariant": "AttractionsFusion",
-                                "filters": [{"id": "allAttractions", "value": ["true"]}],
-                            },
-                            "updateToken": None,
-                        },
-                        "commerce": {
-                            "attractionCommerce": {
-                                "pax": [{"ageBand": "ADULT", "count": 2}]
-                            }
-                        },
+        pageview_uid = str(uuid.uuid4())
+        payload = [
+            {
+                "variables": {
+                    "request": {
                         "tracking": {
                             "screenName": "AttractionsFusion",
                             "pageviewUid": pageview_uid,
                         },
-                        "sessionId": session_id,
-                        "unitLength": "MILES",
-                        "currency": "USD",
-                        "currentGeoPoint": None,
-                        "mapSurface": False,
-                        "debug": False,
-                        "polling": False,
+                        "routeParameters": {
+                            "geoId": geo_id,
+                            "contentType": "attraction",
+                            "webVariant": "AttractionsFusion",
+                            "filters": [{"id": "allAttractions", "value": ["true"]}],
+                        },
+                        "updateToken": None,
                     },
-                    "extensions": {"preRegisteredQueryId": _LISTING_QID},
-                }
-            ]
-            async with httpx.AsyncClient(
-                cookies=cookies, follow_redirects=True, proxy=proxy
-            ) as hc:
-                resp = await hc.post(
-                    _TA_GRAPHQL_URL,
-                    json=payload,
-                    headers=headers,
-                )
+                    "commerce": {
+                        "attractionCommerce": {
+                            "pax": [{"ageBand": "ADULT", "count": 2}]
+                        }
+                    },
+                    "tracking": {
+                        "screenName": "AttractionsFusion",
+                        "pageviewUid": pageview_uid,
+                    },
+                    "sessionId": session_id,
+                    "unitLength": "MILES",
+                    "currency": "USD",
+                    "currentGeoPoint": None,
+                    "mapSurface": False,
+                    "debug": False,
+                    "polling": False,
+                },
+                "extensions": {"preRegisteredQueryId": _LISTING_QID},
+            }
+        ]
+        async with httpx.AsyncClient(
+            cookies=cookies, follow_redirects=True, proxy=proxy
+        ) as hc:
+            resp = await hc.post(
+                _TA_GRAPHQL_URL,
+                json=payload,
+                headers=headers,
+            )
 
-            if resp.status_code in (403, 429):
-                raise SessionExpiredError(
-                    f"TripAdvisor GraphQL returned {resp.status_code} — "
-                    "DataDome session expired or queryId rotated. Re-inject required."
-                )
+        if resp.status_code in (403, 429):
+            raise SessionExpiredError(
+                f"TripAdvisor GraphQL returned {resp.status_code} — "
+                "DataDome session expired or queryId rotated. Re-inject required."
+            )
 
-            resp.raise_for_status()
-            data = resp.json()
+        resp.raise_for_status()
+        data = resp.json()
 
-            # Safe extraction of sections list from the real response path
-            sections: list = []
-            try:
-                sections = data[0]["data"]["Result"][0]["sections"]
-            except (IndexError, KeyError, TypeError):
-                sections = []
+        # Safe extraction of sections list from the real response path
+        sections: list = []
+        try:
+            sections = data[0]["data"]["Result"][0]["sections"]
+        except (IndexError, KeyError, TypeError):
+            sections = []
 
-            if not sections:
-                break  # Empty sections → no more data
+        if not sections:
+            return []  # Empty sections → no attractions for this geo
 
-            cards = self._parse_attractions_page(sections)
-            if not cards:
-                break  # Zero FlexCard sections → end of pages
-
-            results.extend(cards)
-            if len(cards) < 30:
-                break  # Partial page → last page
-
-        return results
+        # Single page only — no partial-page break (the meaningless `< 30` guard is
+        # removed: there is no second page to gate, so card count never terminates a loop).
+        return self._parse_attractions_page(sections)
 
     async def resolve_geo_id(self, uf: str) -> int:
         """Resolve a Brazilian UF code to its TripAdvisor integer geoId.
