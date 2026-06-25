@@ -15,13 +15,15 @@ Plans:
 
 ### Phase 13: TripAdvisor real listing query — identify + wire data-fetch contract (GAP-12-A)
 
-**Goal:** Close GAP-12-A (12-HUMAN-UAT.md): the TripAdvisor lane still does not collect real data because the **organic per-UF destinations/attractions listing persisted-query was never identified**. Phase 12's session-injection seam works end-to-end (cookie portability + canary + fail-fast verified live) and the corrected payload envelope (`extensions.preRegisteredQueryId`, batch array) is right — but `client.py`'s `{locationId, offset, limit}` variables match NO real query. Live probing (2026-06-24) proved the two queryIds the Phase-11 spike recorded are mislabeled: `46dcf3e69ea8ba5a` = `ad_mission_control.GetPageSlotSettings` (ad-slot config), `25f9ddb1ce629144` = `Trips_ReferenceInput` (saves/trips) — both return HTTP 200 (cookies valid) but neither is a listing. Across the spike + 3 operator captures only telemetry/GTM/sponsored-ad/ad-config/trips queries surfaced. This phase must: (1) identify the REAL listing query — capture the specific `graphql/ids` XHR whose Response carries attraction names + integer locationIds + pagination, recording its real `preRegisteredQueryId` + full `variables` verbatim; OR confirm listings are SSR-only (a plain httpx GET of the listing HTML returns 403 DataDome, so SSR ⇒ httpx cannot reach them ⇒ the deferred managed-browser/residential-proxy decision reopens); (2) rebuild `fetch_destinations`/`fetch_attractions` around the real query (qid source, variable shape, response-path parsing); (3) make `ta_bootstrap` extract the LISTING queryId specifically (reject ad/telemetry/trips qids) and fix the TA-09 runbook; (4) re-run Level 3 to confirm Nascente records > 0.
+**Goal:** Close GAP-12-A (12-HUMAN-UAT.md): the TripAdvisor lane does not yet collect real data because `client.py`'s Phase-11 `{locationId, offset, limit}` variables match NO real query. The REAL listing query was **identified + live-validated 2026-06-24** (4th operator capture, see `GAP-12-A-FINDINGS.md`): qid **`a5cb7fa004b5e4b5`** (AttractionsFusion) with `request.routeParameters{geoId,contentType:"attraction",webVariant,filters}` + `sessionId`; response parsed from `data.Result[0].sections[]` → `WebPresentation_SingleFlexCardSection` (30 cards/page, mapping name/locationId/rating/reviewCount/category). Phase 12's session-injection seam is DONE (do not rebuild). This phase wires the lane to that query: (1) rebuild `fetch_attractions` around the real qid + variables + `sections[]` parse, threading `sessionId`; (2) fix `_run_canary` to probe the real query; (3) extend `ta_bootstrap` to capture TASID `sessionId` + the listing qid and REJECT ad/telemetry/trips qids; (4) update the TA-09 runbook; (5) re-run Level 3 to confirm Nascente records > 0. (Destinos contentType + multi-page `oa30` pagination are documented follow-ups.)
 **Requirements**: TA-12 (data-fetch correctness — extends Phase 12)
 **Depends on:** Phase 12
-**Plans:** 0 plans
+**Plans:** 3 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 13 to break down)
+- [ ] 13-01-PLAN.md — Rewire fetch_attractions to AttractionsFusion query (qid a5cb7fa004b5e4b5 + sections[] parse) + session_id model + ta_bootstrap TASID/qid-reject (TA-12)
+- [ ] 13-02-PLAN.md — _run_canary probes real listing query + atrativos._ingest_one card-field mapping (most_recent_review_at=None) (TA-12)
+- [ ] 13-03-PLAN.md — Update README + RUNBOOK-NIVEL3 capture instructions + operator Level-3 checkpoint (TA-12)
 
 ---
 
