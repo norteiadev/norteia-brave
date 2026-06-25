@@ -155,7 +155,19 @@ class TripAdvisorAtrativosIngest:
         # Compute §7.6 criterion values
         corroboracao_value = corroboracao_from_reviews(review_count, rating)
         atualidade_value = atualidade_from_recency(most_recent_dt)
-        completude_value = completude_from_fields(entity, cap=100)  # atrativo cap=100
+        # WR-01: the normalized AttractionsFusion card uses camelCase `locationId`
+        # and carries no `uf`/`location_id`/`lat`/`lng`, so feeding the raw card to
+        # completude_from_fields (which checks snake_case keys) would only ever match
+        # 4/10 fields and silently cap completude at 40. Build a completude entity
+        # that maps the card onto the keys _TA_COMPLETUDE_FIELDS expects.
+        completude_entity = {
+            **entity,
+            "uf": uf,
+            "location_id": location_id,
+            "lat": lat,
+            "lng": lng,
+        }
+        completude_value = completude_from_fields(completude_entity, cap=100)  # atrativo cap=100
 
         # Resolve IBGE municipality
         ibge_match = resolve_municipio(

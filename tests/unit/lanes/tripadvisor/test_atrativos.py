@@ -215,3 +215,94 @@ class TestAtrativosIngestCardFields:
         assert payload["category"] == "Waterfalls", (
             f"category must be 'Waterfalls'; got {payload.get('category')!r}"
         )
+
+    @pytest.mark.asyncio
+    async def test_ingest_one_completude_not_capped_for_listing_card(self) -> None:
+        """WR-01: a typical listing card must NOT be silently capped at completude 40.
+
+        Regression guard for the field-name mismatch: _ingest_one must map the
+        camelCase card onto the snake_case keys _TA_COMPLETUDE_FIELDS expects
+        (uf, location_id) before scoring. A minimal listing card carries
+        name + locationId + rating + review_count + category, and _ingest_one
+        adds uf + location_id — so 6/10 completude fields match → 60.0, never 40.0.
+        """
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        card = _make_card(review_count=200, rating=4.5)
+        # lat/lng/address/description are absent from a listing card
+        fake_client = _make_fake_client(card)
+        mock_session = MagicMock()
+        config = _make_config()
+
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_nascente = MagicMock()
+            mock_nascente.id = uuid.uuid4()
+            mock_store_raw.return_value = mock_nascente
+
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=fake_client,
+                session=mock_session,
+                config=config,
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=_DESTINO_RIO_MAP,
+            )
+            await ingest.produce("MG", run_rio=False)
+
+        assert mock_store_raw.called, "store_raw must be called"
+        payload = mock_store_raw.call_args.kwargs["payload"]
+        # name, uf, location_id, rating, review_count, category present → 6/10 → 60.0
+        assert payload["completude_value"] == 60.0, (
+            f"completude_value must be 60.0 for a typical listing card (6/10 fields), "
+            f"got {payload.get('completude_value')}. A value of 40.0 means the "
+            "camelCase->snake_case mapping regressed and uf/location_id no longer match."
+        )
+
+    @pytest.mark.asyncio
+    async def test_ingest_one_completude_reaches_100_for_full_card(self) -> None:
+        """WR-01: a fully-populated card (all 10 completude fields) scores 100.0.
+
+        Adds lat, lng, address, description on top of the listing-card fields so
+        all 10 _TA_COMPLETUDE_FIELDS are present. Confirms the cap=100 ceiling is
+        actually reachable once the card is complete — proving the prior 40-cap
+        was a field-name mismatch, not an intentional ceiling.
+        """
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        card = _make_card(
+            review_count=200,
+            rating=4.5,
+            lat=-18.9186,
+            lng=-48.2772,
+            address="Uberlândia, MG",
+            description="A complete attraction record",
+        )
+        fake_client = _make_fake_client(card)
+        mock_session = MagicMock()
+        config = _make_config()
+
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_nascente = MagicMock()
+            mock_nascente.id = uuid.uuid4()
+            mock_store_raw.return_value = mock_nascente
+
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=fake_client,
+                session=mock_session,
+                config=config,
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=_DESTINO_RIO_MAP,
+            )
+            await ingest.produce("MG", run_rio=False)
+
+        assert mock_store_raw.called, "store_raw must be called"
+        payload = mock_store_raw.call_args.kwargs["payload"]
+        assert payload["completude_value"] == 100.0, (
+            f"completude_value must reach 100.0 when all 10 fields are present; "
+            f"got {payload.get('completude_value')}"
+        )
