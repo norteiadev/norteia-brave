@@ -392,6 +392,16 @@ class TestAtrativosGeoEnrichment:
         assert payload["municipio_id"] == "3117900"
         assert len(fake_geo.geocode_calls) == 1
         assert fake_geo.geocode_calls[0]["location_id"] == "312332"
+        # WR-01 regression guard: geocoded coordinates must be promoted into the
+        # persisted payload — they must NOT remain None after a successful geocode.
+        assert payload["lat"] == -19.047, (
+            f"Geocoded lat must be persisted; expected -19.047, got {payload.get('lat')!r}. "
+            "If None, geo-enrichment resolved IBGE but discarded the coordinates (WR-01)."
+        )
+        assert payload["lng"] == -43.426, (
+            f"Geocoded lng must be persisted; expected -43.426, got {payload.get('lng')!r}. "
+            "If None, geo-enrichment resolved IBGE but discarded the coordinates (WR-01)."
+        )
 
     @pytest.mark.asyncio
     async def test_quarantine_after_both_fail(self) -> None:

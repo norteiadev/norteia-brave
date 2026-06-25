@@ -157,21 +157,8 @@ class TripAdvisorAtrativosIngest:
         # Compute §7.6 criterion values
         corroboracao_value = corroboracao_from_reviews(review_count, rating)
         atualidade_value = atualidade_from_recency(most_recent_dt)
-        # WR-01: the normalized AttractionsFusion card uses camelCase `locationId`
-        # and carries no `uf`/`location_id`/`lat`/`lng`, so feeding the raw card to
-        # completude_from_fields (which checks snake_case keys) would only ever match
-        # 4/10 fields and silently cap completude at 40. Build a completude entity
-        # that maps the card onto the keys _TA_COMPLETUDE_FIELDS expects.
-        completude_entity = {
-            **entity,
-            "uf": uf,
-            "location_id": location_id,
-            "lat": lat,
-            "lng": lng,
-        }
-        completude_value = completude_from_fields(completude_entity, cap=100)  # atrativo cap=100
 
-        # Resolve IBGE municipality
+        # Resolve IBGE municipality (first attempt: card lat/lng, may be None for coordless cards)
         ibge_match = resolve_municipio(
             name,
             uf,
@@ -180,18 +167,38 @@ class TripAdvisorAtrativosIngest:
             candidate_lng=lng,
         )
 
-        # TA-15: geo-enrichment via Nominatim — only when first attempt missed
+        # TA-15: geo-enrichment via Nominatim — only when first attempt missed.
+        # Promote geocoded lat/lng into working variables so completude and the
+        # persisted payload carry real coordinates (WR-01 fix: previously these
+        # were discarded and lat/lng remained None even after a successful geocode).
         if ibge_match is None and self._geocoder is not None:
             geo = await self._geocoder.geocode(location_id, name, uf)
             if geo is not None:
+                lat = geo["lat"]
+                lng = geo["lon"]
                 ibge_match = resolve_municipio(
                     geo.get("municipio_name") or name,
                     uf,
                     self._ibge_records,
-                    candidate_lat=geo["lat"],
-                    candidate_lng=geo["lon"],
+                    candidate_lat=lat,
+                    candidate_lng=lng,
                     max_distance_km=50.0,
                 )
+
+        # WR-01: the normalized AttractionsFusion card uses camelCase `locationId`
+        # and carries no `uf`/`location_id`/`lat`/`lng`, so feeding the raw card to
+        # completude_from_fields (which checks snake_case keys) would only ever match
+        # 4/10 fields and silently cap completude at 40. Build a completude entity
+        # that maps the card onto the keys _TA_COMPLETUDE_FIELDS expects.
+        # Note: lat/lng here reflect geo-enriched coordinates when geocoding resolved.
+        completude_entity = {
+            **entity,
+            "uf": uf,
+            "location_id": location_id,
+            "lat": lat,
+            "lng": lng,
+        }
+        completude_value = completude_from_fields(completude_entity, cap=100)  # atrativo cap=100
 
         if ibge_match is None:
             quarantine_poison(
