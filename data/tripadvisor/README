@@ -31,6 +31,8 @@ uf_geoids.json
     Source: manually compiled from TripAdvisor location pages (one-time lookup).
     Updated only when TripAdvisor changes their internal geoId assignments
     (very rare; requires manual verification).
+    Also used as routeParameters.geoId in the AttractionsFusion listing query
+    (qid a5cb7fa004b5e4b5, Phase 13).
 
     KNOWN CAVEAT — ES (Espírito Santo):
     During the 2026-06-24 spike, ES geoId 303516 was observed to redirect to
@@ -131,12 +133,22 @@ ACQUISITION (human step — runs on operator's browser):
 
   3. Open DevTools (F12) → Network tab.
 
-  4. Navigate to a TripAdvisor destination page for a Brazilian state, for example:
-       https://www.tripadvisor.com/Tourism-g303380-Minas_Gerais_State.html
-     (ES page may redirect to MG 303380 — see geoId note below)
+  4. Navigate to the Attractions listing page for a Brazilian state, for example:
+       https://www.tripadvisor.com/Attractions-g303380-Activities-Minas_Gerais_State_Brazil.html
+     Use the geoId from data/tripadvisor/uf_geoids.json for the target UF.
+     (Do NOT use the Tourism-g... page — it only fires telemetry/ad qids, not the
+      AttractionsFusion listing query. ES page may redirect to MG 303380 — see
+      geoId note below.)
 
   5. In the Network tab, filter for "graphql/ids".
-     Right-click any POST request to that URL → "Copy as cURL (bash)".
+     Right-click a POST request → Preview or Response tab. The correct listing
+     request's response contains "WebPresentation_SingleFlexCardSection" and
+     "listType": "POI". Telemetry/ad/trips requests contain user_navigated,
+     GetPageSlotSettings, or Trips_ReferenceInput — skip these. Copy as cURL
+     (bash) from the listing POST only.
+     Ensure you are logged in to TripAdvisor before capturing — the TASID session
+     cookie is required by the listing query variables. ta_bootstrap will warn
+     "session_id: NOT FOUND" if TASID is absent.
 
   6. Save the copied cURL string to a local file:
        /tmp/ta_session.curl
@@ -157,7 +169,9 @@ INJECTION (script step — runs on the server):
 
   8. ta_bootstrap will print:
        Parsed: N cookies, query_ids={...}
+       session_id: found
        Session injected — canary result: ready
+     If session_id shows NOT FOUND: re-capture while logged in to TripAdvisor.
      On failure it will print a validation error or raise SystemExit with the HTTP status.
 
   9. (Optional) Verify session status:
