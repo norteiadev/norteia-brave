@@ -155,7 +155,16 @@ def parse_curl(curl_str: str) -> dict:
                         )
                         continue  # Do NOT include rejected qid in query_ids
 
-                    # Heuristic: check variables for entity type hint
+                    # WR-05: classify POSITIVELY on the known listing qid constant
+                    # first — this is ground truth, not a heuristic guess. Only fall
+                    # back to the "ATTRACTION" substring heuristic when the captured
+                    # qid is NOT the confirmed listing qid (e.g. a future variant or
+                    # a trimmed/localized variables payload that drops the substring).
+                    if qid == LISTING_QID:
+                        attractions_qid = qid
+                        continue
+
+                    # Heuristic fallback: check variables for entity type hint
                     variables_str = json.dumps(item.get("variables", {})).upper()
                     if "ATTRACTION" in variables_str and attractions_qid is None:
                         attractions_qid = qid
@@ -292,6 +301,17 @@ def main() -> None:
     cookie_count = len(payload.get("cookies", {}))
     query_ids = payload.get("query_ids", {})
     print(f"Parsed: {cookie_count} cookies, query_ids={query_ids}")
+    # WR-05: show the operator ground truth, not a heuristic guess — did the
+    # capture actually contain the confirmed AttractionsFusion listing qid?
+    if LISTING_QID in query_ids.values():
+        print(f"listing qid confirmed: {LISTING_QID} present in capture")
+    else:
+        print(
+            f"listing qid NOT confirmed: known listing qid {LISTING_QID} was NOT "
+            "captured — you likely captured a non-listing request. Re-capture a "
+            "POST from the Attractions listing page.",
+            file=sys.stderr,
+        )
     print(
         "session_id: "
         + (
