@@ -194,7 +194,7 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | TA-11 | Phase 12 | Complete |
 | TA-12 | Phase 12 | Complete |
 | TA-13 | Phase 12 | Complete |
-| TA-14 | Phase 14 | Pending |
+| TA-14 | Phase 14 | Complete |
 | TA-15 | Phase 14 | Complete |
 
 **Phase 11 — TripAdvisor source lane (TA-01 … TA-08):**
