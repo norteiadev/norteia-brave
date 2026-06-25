@@ -15,13 +15,32 @@ import sys
 import urllib.request
 from datetime import datetime, timezone
 
+# ---------------------------------------------------------------------------
+# Query-ID classification constants (Phase 13)
+# ---------------------------------------------------------------------------
+
+# Known non-listing qids that must be rejected with an operator warning.
+# These are telemetry, ad, and session-management queries, NOT the attractions listing.
+KNOWN_NON_LISTING_QIDS: frozenset = frozenset(
+    {
+        "636d0b9184b2fc29",  # telemetry: user_navigated / page_viewed
+        "986742f2dd8b0ec8",  # pixel metrics
+        "42bec0ee6ec0bfd1",  # aux locationId-keyed query
+        "46dcf3e69ea8ba5a",  # ad_mission_control.GetPageSlotSettings
+        "25f9ddb1ce629144",  # Trips_ReferenceInput (saves)
+    }
+)
+
+# The confirmed AttractionsFusion listing query ID (live-validated 2026-06-24)
+LISTING_QID = "a5cb7fa004b5e4b5"
+
 
 def parse_curl(curl_str: str) -> dict:
     """Parse a DevTools Copy-as-cURL string into a session payload dict.
 
     The cURL string has the shape:
         curl 'https://www.tripadvisor.com/data/graphql/ids' \
-          -H 'Cookie: datadome=...; TASession=...' \
+          -H 'Cookie: datadome=...; TASession=...; TASID=...' \
           -H 'User-Agent: ...' \
           --data-raw '[{"variables":{...},"extensions":{"preRegisteredQueryId":"<hex>"}}]'
 
@@ -31,7 +50,13 @@ def parse_curl(curl_str: str) -> dict:
             "query_ids": {"destinations": "...", "attractions": "..."},
             "user_agent": "...",
             "acquired_at": "...",
+            "session_id": "<TASID cookie value or empty string>",
         }
+
+    Phase 13 additions:
+    - session_id: extracted from cookies["TASID"] (required for variables.sessionId).
+    - Known non-listing qids (telemetry/ad/trips) are rejected with a warning to stderr.
+      Operators must capture a POST from the Attractions listing page, not telemetry.
     """
     # --- Extract cookies ---
     cookies: dict[str, str] = {}
@@ -120,6 +145,16 @@ def parse_curl(curl_str: str) -> dict:
                         qid = extensions.get("preRegisteredQueryId")
 
                 if qid:
+                    # Phase 13: reject known non-listing qids before classifying
+                    if qid in KNOWN_NON_LISTING_QIDS:
+                        print(
+                            f"Warning: captured qid {qid} is a telemetry/ad/trips query, "
+                            "not a listing — skip this request and capture a POST from "
+                            "the Attractions listing page.",
+                            file=sys.stderr,
+                        )
+                        continue  # Do NOT include rejected qid in query_ids
+
                     # Heuristic: check variables for entity type hint
                     variables_str = json.dumps(item.get("variables", {})).upper()
                     if "ATTRACTION" in variables_str and attractions_qid is None:
@@ -148,11 +183,15 @@ def parse_curl(curl_str: str) -> dict:
 
     acquired_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    # Phase 13: extract TASID as session_id for variables.sessionId in the listing query
+    session_id: str = cookies.get("TASID", "")
+
     return {
         "cookies": cookies,
         "query_ids": query_ids,
         "user_agent": user_agent,
         "acquired_at": acquired_at,
+        "session_id": session_id,
     }
 
 
@@ -253,6 +292,14 @@ def main() -> None:
     cookie_count = len(payload.get("cookies", {}))
     query_ids = payload.get("query_ids", {})
     print(f"Parsed: {cookie_count} cookies, query_ids={query_ids}")
+    print(
+        "session_id: "
+        + (
+            "found"
+            if payload.get("session_id")
+            else "NOT FOUND — TASID cookie missing from cURL; ensure you captured while logged in"
+        )
+    )
 
     if not payload["cookies"]:
         print(

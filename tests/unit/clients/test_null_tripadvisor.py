@@ -24,7 +24,7 @@ class TestNullTripAdvisorClient:
         from brave.clients.null_tripadvisor import NullTripAdvisorClient
 
         client = NullTripAdvisorClient()
-        result = await client.fetch_attractions(geo_id=303513, offset=0)
+        result = await client.fetch_attractions(geo_id=303513)
         assert result == []
 
     @pytest.mark.asyncio

@@ -67,18 +67,18 @@ class FakeTripAdvisorClient:
         return self._fixture_destinations.get(uf, [])
 
     async def fetch_attractions(
-        self, geo_id: int, offset: int = 0
+        self, geo_id: int, max_pages: int | None = None
     ) -> list[dict[str, Any]]:
         """Return fixture attractions for the given geoId.
 
         Args:
             geo_id: TripAdvisor geoId.
-            offset: Pagination offset (recorded but ignored by stub).
+            max_pages: Page cap (recorded but ignored by stub).
 
         Returns:
             Fixture attractions if geoId matches, empty list otherwise.
         """
-        self.attractions_calls.append({"geo_id": geo_id, "offset": offset})
+        self.attractions_calls.append({"geo_id": geo_id, "max_pages": max_pages})
         return self._fixture_attractions.get(geo_id, [])
 
     async def resolve_geo_id(self, uf: str) -> int:

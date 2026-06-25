@@ -257,17 +257,22 @@ class TripAdvisorClientProtocol(Protocol):
         ...
 
     async def fetch_attractions(
-        self, geo_id: int, offset: int = 0
+        self, geo_id: int, max_pages: int | None = None
     ) -> list[dict[str, Any]]:
         """Fetch TripAdvisor attractions (ATTRACTION entities) for a geoId.
 
+        Phase 13: uses the AttractionsFusion listing query (qid a5cb7fa004b5e4b5)
+        with the real request.routeParameters variables shape. Returns normalized
+        dicts with keys: name, locationId, rating, review_count, category.
+
         Args:
             geo_id: TripAdvisor integer geoId for the state/city.
-            offset: Pagination offset (0, 20, 40, ...). Max 20 results per call.
+            max_pages: Cap on pages to fetch. None (default) fetches a single page
+                (pagination gap: AttractionsFusion page/offset param unconfirmed).
 
         Returns:
-            List of attraction dicts from the GraphQL response
-            (at minimum: locationId, name, reviewSummary.count, reviewSummary.rating).
+            List of attraction dicts with keys: name, locationId, rating,
+            review_count, category.
         """
         ...
 

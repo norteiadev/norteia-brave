@@ -42,11 +42,11 @@ class TestFakeTripAdvisorClient:
         from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
 
         fake = FakeTripAdvisorClient()
-        await fake.fetch_attractions(geo_id=303513, offset=0)
-        await fake.fetch_attractions(geo_id=303513, offset=20)
+        await fake.fetch_attractions(geo_id=303513)
+        await fake.fetch_attractions(geo_id=303513, max_pages=2)
         assert fake.attractions_calls == [
-            {"geo_id": 303513, "offset": 0},
-            {"geo_id": 303513, "offset": 20},
+            {"geo_id": 303513, "max_pages": None},
+            {"geo_id": 303513, "max_pages": 2},
         ]
 
     @pytest.mark.asyncio
@@ -64,7 +64,7 @@ class TestFakeTripAdvisorClient:
 
         fixture = [{"locationId": 99999, "name": "Elevador Lacerda"}]
         fake = FakeTripAdvisorClient(fixture_attractions={303513: fixture})
-        result = await fake.fetch_attractions(geo_id=303513, offset=0)
+        result = await fake.fetch_attractions(geo_id=303513)
         assert result == fixture
 
     @pytest.mark.asyncio
@@ -392,7 +392,7 @@ class TestTripAdvisorClientPayloadShape:
 
     @pytest.mark.asyncio
     async def test_fetch_attractions_payload_shape(self):
-        """fetch_attractions POSTs payload[0]["extensions"]["preRegisteredQueryId"]."""
+        """fetch_attractions POSTs the AttractionsFusion qid + variables shape."""
         import fakeredis
 
         from brave.config.settings import AppConfig
@@ -406,6 +406,7 @@ class TestTripAdvisorClientPayloadShape:
             "query_ids": {"destinations": "stub_qid_dest", "attractions": "stub_qid_attr"},
             "user_agent": "Mozilla/5.0 test",
             "acquired_at": "2026-06-24T12:00:00Z",
+            "session_id": "TASID_VALUE",
         }
         redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session_data))
 
@@ -417,19 +418,27 @@ class TestTripAdvisorClientPayloadShape:
             def capture_request(request):
                 nonlocal captured_body
                 captured_body = json.loads(request.content)
-                return httpx.Response(200, json=[{"data": {"attractions": []}}])
+                return httpx.Response(
+                    200,
+                    json=[{"data": {"Result": [{"sections": []}]}}],
+                )
 
             respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
                 side_effect=capture_request
             )
-            await client.fetch_attractions(geo_id=303513, offset=0)
+            await client.fetch_attractions(geo_id=303513)
 
         assert captured_body is not None, "No request was captured"
         assert isinstance(captured_body, list), "Payload must be a list (batch array)"
         item = captured_body[0]
         assert "extensions" in item, f"Missing 'extensions' key in payload item: {item}"
-        assert item["extensions"]["preRegisteredQueryId"] == "stub_qid_attr"
+        # Phase 13: hardcoded AttractionsFusion qid — NOT the session attractions qid
+        assert item["extensions"]["preRegisteredQueryId"] == "a5cb7fa004b5e4b5"
         assert "query" not in item, f"Old 'query' key must NOT be in payload item: {item}"
+        # Real variables shape (NOT the old {locationId, offset, limit})
+        assert "locationId" not in item["variables"], "Old locationId variable must be gone"
+        assert item["variables"]["request"]["routeParameters"]["contentType"] == "attraction"
+        assert item["variables"]["sessionId"] == "TASID_VALUE"
 
     @pytest.mark.asyncio
     async def test_fetch_destinations_uses_flat_cookie_dict(self):
@@ -623,3 +632,285 @@ class TestTripAdvisorClientProxyAndPaging:
 
         assert call_count == 1, f"max_pages=1 should issue exactly one request, got {call_count}"
         assert len(results) == 20
+
+
+# ---------------------------------------------------------------------------
+# AttractionsFusion contract tests (Phase 13, plan 13-01)
+# ---------------------------------------------------------------------------
+
+# Fixture helpers
+_IGUAZU_FLEX_CARD = {
+    "__typename": "WebPresentation_SingleFlexCardSection",
+    "singleFlexCardContent": {
+        "cardTitle": {"text": "Iguazu Falls"},
+        "cardLink": {"webRoute": {"typedParams": {"detailId": 312332}}},
+        "bubbleRating": {"rating": 4.9, "reviewCount": 45811},
+        "primaryInfo": {"text": "Waterfalls"},
+    },
+}
+_AD_PLACEHOLDER = {"__typename": "WebPresentation_AdPlaceholder"}
+_PAGINATION_LINKS = {"__typename": "WebPresentation_PaginationLinksList"}
+
+
+def _make_ta_response(sections: list) -> list:
+    """Build a full TripAdvisor response envelope with the given sections list."""
+    return [{"data": {"Result": [{"sections": sections}]}}]
+
+
+def _make_session_redis(redis, session_id: str = "TASID_VALUE") -> None:
+    """Seed fakeredis with a valid Phase 13 session."""
+    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+
+    redis.set(
+        BRAVE_TA_SESSION_KEY,
+        json.dumps(
+            {
+                "cookies": {"datadome": "abc", "TASID": session_id},
+                "query_ids": {"destinations": "stub_d", "attractions": "stub_a"},
+                "user_agent": "Mozilla/5.0",
+                "acquired_at": "2026-06-24T12:00:00Z",
+                "session_id": session_id,
+            }
+        ),
+    )
+
+
+class TestTripAdvisorAttractionsFusionContract:
+    """Verify the rewired fetch_attractions uses the AttractionsFusion qid + variables."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_attractions_uses_attractions_fusion_qid(self):
+        """fetch_attractions POSTs preRegisteredQueryId==a5cb7fa004b5e4b5."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        _make_session_redis(redis)
+
+        captured_body = None
+
+        with respx.mock:
+            def capture(request):
+                nonlocal captured_body
+                captured_body = json.loads(request.content)
+                return httpx.Response(200, json=_make_ta_response([]))
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=capture
+            )
+            await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
+                geo_id=294280
+            )
+
+        assert captured_body is not None, "No request captured"
+        assert captured_body[0]["extensions"]["preRegisteredQueryId"] == "a5cb7fa004b5e4b5"
+        assert "locationId" not in captured_body[0]["variables"], (
+            "Old locationId variable must be gone"
+        )
+        assert (
+            captured_body[0]["variables"]["request"]["routeParameters"]["contentType"]
+            == "attraction"
+        )
+        assert captured_body[0]["variables"]["sessionId"] == "TASID_VALUE"
+
+    @pytest.mark.asyncio
+    async def test_fetch_attractions_parses_single_flex_card_sections(self):
+        """Iguazu Falls fixture parses to expected normalized card dict."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        _make_session_redis(redis)
+
+        sections = [_IGUAZU_FLEX_CARD, _AD_PLACEHOLDER, _PAGINATION_LINKS]
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                return_value=httpx.Response(200, json=_make_ta_response(sections))
+            )
+            result = await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
+                geo_id=294280
+            )
+
+        assert len(result) == 1, f"Expected exactly 1 card, got {len(result)}: {result}"
+        card = result[0]
+        assert card["name"] == "Iguazu Falls"
+        assert card["locationId"] == 312332
+        assert card["rating"] == 4.9
+        assert card["review_count"] == 45811
+        assert card["category"] == "Waterfalls"
+
+    @pytest.mark.asyncio
+    async def test_fetch_attractions_empty_sections_stops_pagination(self):
+        """Empty sections list on first page → result == [] and exactly 1 HTTP call."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        _make_session_redis(redis)
+
+        call_count = 0
+
+        with respx.mock:
+            def handler(request):
+                nonlocal call_count
+                call_count += 1
+                return httpx.Response(200, json=_make_ta_response([]))
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=handler
+            )
+            result = await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
+                geo_id=294280
+            )
+
+        assert result == [], f"Expected empty result, got: {result}"
+        assert call_count == 1, f"Expected exactly 1 HTTP call, got {call_count}"
+
+    @pytest.mark.asyncio
+    async def test_fetch_attractions_partial_page_stops_pagination(self):
+        """15 FlexCard sections (< 30) → exactly 1 HTTP call and 15 cards returned."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        _make_session_redis(redis)
+
+        # Build 15 SingleFlexCardSection items
+        sections = [
+            {
+                "__typename": "WebPresentation_SingleFlexCardSection",
+                "singleFlexCardContent": {
+                    "cardTitle": {"text": f"Attraction {i}"},
+                    "cardLink": {"webRoute": {"typedParams": {"detailId": 100000 + i}}},
+                    "bubbleRating": {"rating": 4.0, "reviewCount": 100 + i},
+                    "primaryInfo": {"text": "Beach"},
+                },
+            }
+            for i in range(15)
+        ]
+
+        call_count = 0
+
+        with respx.mock:
+            def handler(request):
+                nonlocal call_count
+                call_count += 1
+                return httpx.Response(200, json=_make_ta_response(sections))
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=handler
+            )
+            result = await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
+                geo_id=294280
+            )
+
+        assert call_count == 1, f"Expected exactly 1 HTTP call, got {call_count}"
+        assert len(result) == 15, f"Expected 15 cards, got {len(result)}"
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap qid reject-list tests (Phase 13, plan 13-01)
+# ---------------------------------------------------------------------------
+
+
+class TestBootstrapQueryIdRejectList:
+    """Verify ta_bootstrap rejects known non-listing qids and extracts TASID."""
+
+    def test_parse_curl_rejects_known_non_listing_qids(self, capsys):
+        """A cURL with the ad qid 46dcf3e69ea8ba5a → query_ids == {} + warning to stderr."""
+        import sys
+
+        # Import parse_curl from scripts (stdlib-only)
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "ta_bootstrap",
+            Path(__file__).parent.parent.parent.parent.parent
+            / "scripts"
+            / "ta_bootstrap.py",
+        )
+        ta_bootstrap = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ta_bootstrap)
+
+        curl_str = (
+            "curl 'https://www.tripadvisor.com/data/graphql/ids' "
+            "-H 'Cookie: datadome=abc; TASID=E75FBE95' "
+            "-H 'User-Agent: Mozilla/5.0' "
+            "--data-raw '[{\"variables\":{},\"extensions\":{\"preRegisteredQueryId\":\"46dcf3e69ea8ba5a\"}}]'"
+        )
+
+        result = ta_bootstrap.parse_curl(curl_str)
+        captured = capsys.readouterr()
+
+        assert result["query_ids"] == {}, (
+            f"Rejected qid must not be in query_ids; got: {result['query_ids']}"
+        )
+        assert "46dcf3e69ea8ba5a" in captured.err, (
+            f"Warning about rejected qid expected in stderr; got: {captured.err!r}"
+        )
+
+    def test_parse_curl_extracts_tasid_as_session_id(self):
+        """cURL with Cookie: TASID=E75FBE95 → parse_curl returns session_id == 'E75FBE95'."""
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "ta_bootstrap",
+            Path(__file__).parent.parent.parent.parent.parent
+            / "scripts"
+            / "ta_bootstrap.py",
+        )
+        ta_bootstrap = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ta_bootstrap)
+
+        curl_str = (
+            "curl 'https://www.tripadvisor.com/data/graphql/ids' "
+            "-H 'Cookie: datadome=abc; TASID=E75FBE95; TASession=xyz' "
+            "-H 'User-Agent: Mozilla/5.0' "
+            "--data-raw '[{\"variables\":{},\"extensions\":{\"preRegisteredQueryId\":\"a5cb7fa004b5e4b5\"}}]'"
+        )
+
+        result = ta_bootstrap.parse_curl(curl_str)
+        assert result["session_id"] == "E75FBE95", (
+            f"Expected session_id='E75FBE95', got: {result['session_id']!r}"
+        )
+
+    def test_parse_curl_session_id_empty_when_no_tasid(self):
+        """cURL with no TASID cookie → parse_curl returns session_id == ''."""
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "ta_bootstrap",
+            Path(__file__).parent.parent.parent.parent.parent
+            / "scripts"
+            / "ta_bootstrap.py",
+        )
+        ta_bootstrap = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ta_bootstrap)
+
+        curl_str = (
+            "curl 'https://www.tripadvisor.com/data/graphql/ids' "
+            "-H 'Cookie: datadome=abc' "
+            "-H 'User-Agent: Mozilla/5.0' "
+            "--data-raw '[{\"variables\":{},\"extensions\":{\"preRegisteredQueryId\":\"a5cb7fa004b5e4b5\"}}]'"
+        )
+
+        result = ta_bootstrap.parse_curl(curl_str)
+        assert result["session_id"] == "", (
+            f"Expected empty session_id when TASID absent, got: {result['session_id']!r}"
+        )

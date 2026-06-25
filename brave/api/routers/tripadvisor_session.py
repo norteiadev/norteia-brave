@@ -72,6 +72,14 @@ class SessionInjectBody(BaseModel):
     )
     user_agent: str = Field(..., description="Browser User-Agent string from the capture session.")
     acquired_at: str = Field(..., description="ISO8601 timestamp when the session was captured.")
+    session_id: str | None = Field(
+        default=None,
+        description=(
+            "TASID cookie value threaded into listing query variables.sessionId. "
+            "Derived from cookies['TASID'] if absent. "
+            "T-13-01-01: treated as a cookie value — NEVER logged."
+        ),
+    )
     client_hints: dict[str, str] | None = Field(
         default=None,
         description="Optional Sec-CH-UA client hint headers captured from the browser.",
@@ -206,11 +214,15 @@ async def inject_session(
             pass  # Non-integer content-length — let FastAPI handle
 
     # Build the session dict to store in Redis
+    # T-13-01-01: session_id is a TASID cookie value — derived from explicit field
+    # or auto-extracted from cookies["TASID"]. NEVER logged (only presence as bool).
+    derived_session_id: str = body.session_id or body.cookies.get("TASID") or ""
     session: dict[str, Any] = {
         "cookies": body.cookies,
         "query_ids": body.query_ids,
         "user_agent": body.user_agent,
         "acquired_at": body.acquired_at,
+        "session_id": derived_session_id,
     }
 
     # Load TripAdvisor config for TTL
@@ -249,6 +261,8 @@ async def inject_session(
                     "query_ids": list(body.query_ids.keys()),
                     "acquired_at": body.acquired_at,
                     "canary_result": "ready",
+                    # T-13-01-01: session_id presence as boolean only — NEVER the value
+                    "session_id_present": bool(derived_session_id),
                 },
             )
         except StopIteration:
