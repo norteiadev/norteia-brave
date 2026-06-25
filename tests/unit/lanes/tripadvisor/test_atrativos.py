@@ -19,6 +19,7 @@ import pytest
 
 from brave.config.settings import ScoreConfig
 from brave.lanes.tripadvisor.ibge import IbgeMunicipio
+from tests.fakes.fake_nominatim import FakeGeocoderClient
 from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
 
 
@@ -83,6 +84,22 @@ def _make_config() -> ScoreConfig:
         mar_ready_atualidade_bar=70.0,
         mar_ready_corrob_bar=60.0,
     )
+
+
+def _make_coordless_card(name: str = "Cachoeira do Tabuleiro") -> dict[str, Any]:
+    """Build a coordless card whose name does NOT match any IBGE município name.
+
+    Used for TA-15 regression tests: this card quarantines without geo-enrichment
+    and resolves via Nominatim when a FakeGeocoderClient is injected.
+    """
+    return {
+        "locationId": 312332,
+        "name": name,
+        "review_count": 100,
+        "rating": 4.0,
+        "category": "Waterfalls",
+        # lat/lng deliberately absent — mirrors real AttractionsFusion listing card
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -306,3 +323,133 @@ class TestAtrativosIngestCardFields:
             f"completude_value must reach 100.0 when all 10 fields are present; "
             f"got {payload.get('completude_value')}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestAtrativosGeoEnrichment (TA-15)
+# ---------------------------------------------------------------------------
+
+
+class TestAtrativosGeoEnrichment:
+    """Regression tests for TA-15: coordless card geo-enrichment via Nominatim."""
+
+    @pytest.mark.asyncio
+    async def test_coordless_resolves_via_geo(self) -> None:
+        """Coordless card that previously quarantined now resolves to correct município.
+
+        Fixtures: "Cachoeira do Tabuleiro" (locationId=312332, MG) → Nominatim returns
+        Conceição do Mato Dentro coords → resolve_municipio haversine 50km matches.
+        """
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        # IBGE record for Conceição do Mato Dentro (MG, spike-verified coords)
+        ibge_records = [
+            IbgeMunicipio("3117900", "Conceição do Mato Dentro", "MG", -19.047, -43.426),
+        ]
+        destino_rio_map: dict[str, tuple[uuid.UUID, str]] = {
+            "3117900": (_PARENT_RIO_ID, "tripadvisor:destination:303380"),
+        }
+        card = _make_coordless_card()
+        fake_ta = FakeTripAdvisorClient(
+            fixture_attractions={_GEO_ID_MG: [card]},
+            geo_ids={"MG": _GEO_ID_MG},
+        )
+        # FakeGeocoderClient returns the Nominatim geocode result for this locationId
+        fake_geo = FakeGeocoderClient(
+            fixture_results={
+                "312332": {
+                    "lat": -19.047,
+                    "lon": -43.426,
+                    "osm_id": 123,
+                    "municipio_name": "Conceição do Mato Dentro",
+                }
+            }
+        )
+
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_nascente = MagicMock()
+            mock_nascente.id = uuid.uuid4()
+            mock_store_raw.return_value = mock_nascente
+
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=fake_ta,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=ibge_records,
+                destino_rio_map=destino_rio_map,
+                geocoder=fake_geo,
+            )
+            await ingest.produce("MG", run_rio=False)
+
+        assert mock_store_raw.called, (
+            "store_raw must be called — coordless card must resolve via geo-enrichment "
+            "instead of quarantining as ibge_unmatched"
+        )
+        payload = mock_store_raw.call_args.kwargs["payload"]
+        assert payload["municipio_id"] == "3117900"
+        assert len(fake_geo.geocode_calls) == 1
+        assert fake_geo.geocode_calls[0]["location_id"] == "312332"
+
+    @pytest.mark.asyncio
+    async def test_quarantine_after_both_fail(self) -> None:
+        """ibge_unmatched quarantine fires only after both name-match AND geo-enrichment fail."""
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        ibge_records = [IbgeMunicipio("3550308", "São Paulo", "SP", -23.55, -46.63)]
+        card = _make_coordless_card()
+        fake_ta = FakeTripAdvisorClient(
+            fixture_attractions={_GEO_ID_MG: [card]},
+            geo_ids={"MG": _GEO_ID_MG},
+        )
+        # Geocoder returns no match (all misses — both strategies fail)
+        fake_geo = FakeGeocoderClient(fixture_results={})
+
+        with patch("brave.lanes.tripadvisor.atrativos.quarantine_poison") as mock_q:
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=fake_ta,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=ibge_records,
+                destino_rio_map={},
+                geocoder=fake_geo,
+            )
+            await ingest.produce("MG", run_rio=False)
+
+        # quarantine_poison called with ibge_unmatched (not some other task_name)
+        quarantine_calls = [
+            c for c in mock_q.call_args_list
+            if c.kwargs.get("task_name") == "brave.ta.atrativos.ibge_unmatched"
+        ]
+        assert len(quarantine_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_geocoder_unchanged(self) -> None:
+        """geocoder=None → existing behavior unchanged (no Phase-11/13 regression)."""
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        # Use the existing _IBGE_RECORDS fixture (Uberlândia matches the card name)
+        card = _make_card(name="Uberlândia")
+        fake_ta = _make_fake_client(card)
+
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_nascente = MagicMock()
+            mock_nascente.id = uuid.uuid4()
+            mock_store_raw.return_value = mock_nascente
+
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=fake_ta,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=_DESTINO_RIO_MAP,
+                # geocoder NOT passed — defaults to None
+            )
+            await ingest.produce("MG", run_rio=False)
+
+        assert mock_store_raw.called

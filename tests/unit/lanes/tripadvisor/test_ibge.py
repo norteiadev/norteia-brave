@@ -163,3 +163,27 @@ class TestResolveMunicipio:
         records = _make_records()
         result = resolve_municipio("Inexistente Cidade", "SP", records)
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: resolve_municipio — default parameter invariant (TA-15)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_municipio_default_max_distance_km_is_15() -> None:
+    """resolve_municipio default max_distance_km must remain 15.0 (TA-15 invariant).
+
+    This assertion guards against accidental modification of the default, which
+    would break Phase-11/13 destinos behavior. The geo-enrichment block in
+    atrativos._ingest_one passes max_distance_km=50.0 explicitly — the default
+    must NOT change.
+    """
+    import inspect
+
+    sig = inspect.signature(resolve_municipio)
+    default = sig.parameters["max_distance_km"].default
+    assert default == 15.0, (
+        f"resolve_municipio default max_distance_km must be 15.0 (TA-15 invariant), "
+        f"got {default!r}. Changing this default would break Phase-11/13 destinos "
+        f"behavior. Pass max_distance_km=50.0 explicitly at the geo-enrichment call site."
+    )
