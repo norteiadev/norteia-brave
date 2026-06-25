@@ -967,6 +967,16 @@ def sweep_tripadvisor(self, uf: str, depth: str | None = None) -> None:
             from brave.clients.null_tripadvisor import NullTripAdvisorClient
             ta_client = NullTripAdvisorClient()
 
+        if app_config.run_real_externals:
+            from brave.clients.nominatim import NominatimGeocoderClient
+            geocoder = NominatimGeocoderClient(
+                config=app_config.nominatim,
+                redis=_redis_lib.from_url(_ta_redis_url),
+            )
+        else:
+            from brave.clients.null_nominatim import NullGeocoderClient
+            geocoder = NullGeocoderClient()
+
         # Load IBGE records (static CSV) — used by both destinos + atrativos
         import os as _os
         _project_root = _os.path.dirname(
@@ -1013,6 +1023,7 @@ def sweep_tripadvisor(self, uf: str, depth: str | None = None) -> None:
             config=config,
             ibge_records=ibge_records,
             destino_rio_map=destino_rio_map,
+            geocoder=geocoder,
         )
         _asyncio.run(atrativos_ingest.produce(uf, run_rio=run_rio))
 

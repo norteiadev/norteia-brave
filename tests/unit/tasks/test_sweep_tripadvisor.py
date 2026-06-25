@@ -157,6 +157,14 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
         lambda **kw: mock_atrativos_ingest,
     )
 
+    # Patch NominatimGeocoderClient (TA-15 wiring) so the guard doesn't fire
+    # in unit tests where RUN_REAL_EXTERNALS is not set in the environment.
+    from brave.clients.null_nominatim import NullGeocoderClient  # noqa: PLC0415
+    monkeypatch.setattr(
+        "brave.clients.nominatim.NominatimGeocoderClient",
+        lambda config, redis: NullGeocoderClient(),
+    )
+
     # Build mock Celery task self
     mock_self = MagicMock()
     mock_self.MaxRetriesExceededError = type("MaxRetriesExceededError", (Exception,), {})
