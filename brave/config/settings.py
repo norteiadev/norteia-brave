@@ -287,6 +287,57 @@ class TripAdvisorConfig(BaseSettings):
     # CR-02: NO Field(alias=...) anywhere in this class.
 
 
+class NominatimConfig(BaseSettings):
+    """OpenStreetMap Nominatim geocoder configuration (TA-14).
+
+    No env-var aliases (CR-02): each field resolves from its exact BRAVE_NOMINATIM_
+    prefixed name only.
+
+    Env prefix: BRAVE_NOMINATIM_
+      BRAVE_NOMINATIM_BASE_URL             — Nominatim search endpoint (default public OSM)
+      BRAVE_NOMINATIM_USER_AGENT           — identifiable UA string (required by policy)
+      BRAVE_NOMINATIM_MIN_REQUEST_INTERVAL — seconds between requests (default 1.1)
+      BRAVE_NOMINATIM_CACHE_TTL            — geocode Redis TTL seconds (default 2592000 = 30d)
+      BRAVE_NOMINATIM_TIMEOUT_SECONDS      — httpx timeout (default 15)
+    """
+
+    base_url: str = Field(
+        default="https://nominatim.openstreetmap.org/search",
+        description=(
+            "Nominatim search endpoint (BRAVE_NOMINATIM_BASE_URL). "
+            "Override for a self-hosted instance."
+        ),
+    )
+    user_agent: str = Field(
+        default="norteia-brave/1.0 (leandro.freire08@gmail.com)",
+        description=(
+            "HTTP User-Agent sent to Nominatim (BRAVE_NOMINATIM_USER_AGENT). "
+            "Required by Nominatim usage policy — must be identifiable."
+        ),
+    )
+    min_request_interval: float = Field(
+        default=1.1,
+        description=(
+            "Minimum seconds between consecutive Nominatim requests "
+            "(BRAVE_NOMINATIM_MIN_REQUEST_INTERVAL). Policy: ≤1 req/s; 1.1 adds margin."
+        ),
+    )
+    cache_ttl: int = Field(
+        default=86_400 * 30,
+        description=(
+            "Redis TTL for cached geocode results in seconds "
+            "(BRAVE_NOMINATIM_CACHE_TTL). Default 30 days — geocodes are stable."
+        ),
+    )
+    timeout_seconds: float = Field(
+        default=15.0,
+        description="httpx request timeout in seconds (BRAVE_NOMINATIM_TIMEOUT_SECONDS).",
+    )
+
+    model_config = SettingsConfigDict(env_prefix="BRAVE_NOMINATIM_")
+    # CR-02: NO Field(alias=...) anywhere in this class.
+
+
 class AppConfig(BaseSettings):
     """Composite application configuration.
 
@@ -299,6 +350,7 @@ class AppConfig(BaseSettings):
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     ramp: RampConfig = Field(default_factory=RampConfig)
     tripadvisor: TripAdvisorConfig = Field(default_factory=TripAdvisorConfig)
+    nominatim: NominatimConfig = Field(default_factory=NominatimConfig)
 
     # run_real_externals=True enables real API calls (tests and CI default to False)
     run_real_externals: bool = False
