@@ -49,7 +49,11 @@ def _make_card(
     """Build a minimal normalized AttractionsFusion card dict."""
     card: dict[str, Any] = {
         "locationId": 312332,
-        "name": "Uberlândia Waterfall",
+        # Name must fuzzy-resolve to an IBGE municipality (resolve_municipio,
+        # threshold 88) because AttractionsFusion listing cards carry no lat/lng
+        # for the haversine fallback. "Uberlândia" matches the MG fixture record
+        # exactly; the field-mapping assertions below don't depend on the name.
+        "name": "Uberlândia",
         "review_count": review_count,
         "rating": rating,
         "category": category,
