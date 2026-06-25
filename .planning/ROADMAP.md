@@ -66,6 +66,10 @@ Plans:
 
 **Requirements**: TA-14, TA-15 (extends Phase 13 — atrativos geo-resolution correctness)
 **Depends on:** Phase 13
-**Plans:** TBD (run `/gsd:plan-phase 14`)
+**Plans:** 2 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — GeocoderClientProtocol + NominatimGeocoderClient (real, httpx, tenacity, cache) + NullGeocoderClient + NominatimConfig (BRAVE_NOMINATIM_*) + FakeGeocoderClient + TA-14 unit tests (TA-14)
+- [ ] 14-02-PLAN.md — atrativos.py async _ingest_one + geo-enrichment before ibge_unmatched quarantine + regression/both-fail/no-geocoder tests + Level-3 operator checkpoint (TA-15)
 
 **Locked decisions (see 14-CONTEXT.md — spike-validated 2026-06-25):** geocoder = **OpenStreetMap Nominatim public API** (free, no key, HTTP not browser-scraping) — NOT Google Places (avoids per-request billing) and NOT Google-Maps browser scraping (fragile + ToS); primary resolution = `addressdetails=1` → `address.municipality|city|town|village|county` → exact/fuzzy name-match to IBGE within the UF; secondary = haversine on returned lat/lon with relaxed radius (~50 km, calibrated from spike: naturals 15–25 km from seat); `ibge_unmatched` quarantine only after BOTH name-match and geo-enrichment fail; cache geocode results by `locationId` (Redis); rate-limit ≥1 req/s with a custom User-Agent per Nominatim policy; new typed client behind the network boundary (Null + Fake, respx in tests, `RUN_REAL_EXTERNALS` opt-in, never in CI); LGPD = persist only lat/lon + OSM place id, never address PII. Out of scope: self-hosted Nominatim for all-BR bulk scale (documented future op — public instance OK for operator-gated sweeps); destinos geo-resolution (destinos already carry município context); reverse-geocoding a pre-known coordinate (cards have none); the `oa30` multi-page pagination follow-up (separate phase).
