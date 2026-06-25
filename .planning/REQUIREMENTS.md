@@ -195,7 +195,7 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | TA-12 | Phase 12 | Complete |
 | TA-13 | Phase 12 | Complete |
 | TA-14 | Phase 14 | Pending |
-| TA-15 | Phase 14 | Pending |
+| TA-15 | Phase 14 | Complete |
 
 **Phase 11 — TripAdvisor source lane (TA-01 … TA-08):**
 - **TA-01** — `brave/lanes/tripadvisor/` GraphQL hybrid client: Playwright bootstraps a DataDome session, captures the rotating `queryId` live (never hardcoded), injects cookies into `httpx` for persisted-query POSTs; residential-proxy seam; Playwright lazy-imported (never in CI); Null/Fake clients + `TripAdvisorConfig` (`BRAVE_TA_*`). UF→`geoId` resolution cached (Redis + 27-UF seed JSON).
