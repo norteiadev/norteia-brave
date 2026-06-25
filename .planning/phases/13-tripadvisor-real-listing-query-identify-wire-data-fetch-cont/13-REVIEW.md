@@ -15,8 +15,22 @@ findings:
   warning: 5
   info: 4
   total: 9
-status: issues_found
+warnings_fixed: 5
+status: fixed
+fixed: 2026-06-25T00:00:00Z
+fix_commits:
+  - 150fbed  # WR-01
+  - 2ad1e8f  # WR-02
+  - ede99dc  # WR-03
+  - 4527e07  # WR-04
+  - 949f6cd  # WR-05
 ---
+
+> **Fix pass 2026-06-25 (`/gsd:code-review 13 --fix`):** all 5 WARNING findings
+> fixed and committed atomically (WR-01 150fbed, WR-02 2ad1e8f, WR-03 ede99dc,
+> WR-04 4527e07, WR-05 949f6cd). Offline suite after fixes: **420 passed, 5
+> skipped, 0 failures** (+2 WR-01 completude regression tests). Info findings
+> IN-01..IN-04 left as documented follow-ups (out of `--fix` default scope).
 
 # Phase 13: Code Review Report
 
