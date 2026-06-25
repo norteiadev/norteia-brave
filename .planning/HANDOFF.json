@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-06-25T00:19:31.061Z",
+  "phase": "13",
+  "phase_name": "tripadvisor-real-listing-query-identify-wire-data-fetch-cont",
+  "phase_dir": ".planning/phases/13-tripadvisor-real-listing-query-identify-wire-data-fetch-cont",
+  "plan": null,
+  "task": null,
+  "total_tasks": null,
+  "status": "paused",
+  "stage": "planning-done-unverified",
+  "completed_tasks": [
+    {"id": "phase-12", "name": "Execute Phase 12 (session-injection seam): 4 plans, 2 waves, code review + blockers fixed, verified 22/22, marked COMPLETE", "status": "done"},
+    {"id": "level-3-uat", "name": "Level 3 live UAT — cookie portability confirmed; GAP-12-A found+root-caused; real listing query a5cb7fa004b5e4b5 identified + validated live (HTTP 200, 314KB, real attractions)", "status": "done"},
+    {"id": "phase-13-created", "name": "Phase 13 created in ROADMAP + GAP-12-A-FINDINGS.md + 13-CONTEXT.md written", "status": "done"},
+    {"id": "phase-13-plans", "name": "gsd-planner wrote 13-01/13-02/13-03 PLAN.md (complete, valid frontmatter, not truncated)", "status": "done-unverified"}
+  ],
+  "remaining_tasks": [
+    {"id": "verify-plans", "name": "Run gsd-plan-checker on Phase 13 plans (planner died on API socket error before the verification loop ran)", "status": "not_started"},
+    {"id": "commit-plans", "name": "Plans committed as WIP in this handoff; re-commit cleanly after verification if revised", "status": "partial"},
+    {"id": "execute-13", "name": "/gsd:execute-phase 13 — wire client.py to real query, extend ta_bootstrap (sessionId + listing qid), fix canary, runbook; re-run Level 3 (Nascente > 0)", "status": "not_started"}
+  ],
+  "blockers": [
+    {"description": "gsd-planner returned an API socket error (closed unexpectedly) after ~30 tool-uses, but had already written all 3 PLAN.md files to disk. Plans are valid but UNVERIFIED by gsd-plan-checker.", "type": "technical", "workaround": "Spot-checked plans on disk: valid frontmatter, must_haves present, proper <output> footer (not truncated). Safe to verify-then-execute."}
+  ],
+  "human_actions_pending": [
+    {"action": "Capture a fresh real-browser TripAdvisor session (DataDome cookie ~30min TTL) when executing Phase 13's Level-3 re-test", "context": "Operator-gated; automated browsers are DataDome-walled. ta.curl/cookies from the prior session were deleted from /tmp.", "blocking": false}
+  ],
+  "decisions": [
+    {"decision": "Phase 12 marked COMPLETE (seam scope delivered+verified); real data-fetch routed to NEW Phase 13", "rationale": "Seam was the phase scope; the data-fetch contract was a wrong Phase-11 assumption = new scope", "phase": "12"},
+    {"decision": "Real listing query is qid a5cb7fa004b5e4b5 with request.routeParameters{geoId,contentType:'attraction',webVariant:'AttractionsFusion',filters} + sessionId; parse data.Result[0].sections[] SingleFlexCardSection", "rationale": "Live-validated 2026-06-24 (HTTP 200, 314KB, real attractions). The {locationId,offset,limit} shape and the spike-recorded qids (ads/trips/telemetry) were all wrong.", "phase": "13"},
+    {"decision": "Wire attractions first; destinos contentType confirm-then-wire; most_recent_review_at prefer null-at-Nascente", "rationale": "attraction path is the validated one; don't block on unconfirmed variants", "phase": "13"}
+  ],
+  "uncommitted_files": [
+    ".planning/phases/13-.../13-01-PLAN.md",
+    ".planning/phases/13-.../13-02-PLAN.md",
+    ".planning/phases/13-.../13-03-PLAN.md",
+    ".planning/phases/13-.../13-CONTEXT.md",
+    ".planning/phases/13-.../GAP-12-A-FINDINGS.md"
+  ],
+  "next_action": "Verify Phase 13 plans: spawn gsd-plan-checker (or re-run /gsd:plan-phase 13 which resumes at the verification loop). Then /gsd:execute-phase 13. NOTE: Wave 1 has 13-01 + 13-02 both modifying brave/api/routers/tripadvisor_session.py — the execute-phase intra-wave overlap check will (correctly) serialize them; consider re-waving or accept serial.",
+  "context_notes": "Long session: executed Phase 12 fully, then drove Level-3 UAT live with the user's real browser captures. The big discovery: the lane never actually collected data — the Phase-11/spike queryIds were telemetry/ads/trips, mislabeled. Found the REAL AttractionsFusion query (a5cb7fa004b5e4b5) and validated it returns real attraction cards. Phase 13 is now a low-risk wiring job with a fully-characterized contract in GAP-12-A-FINDINGS.md. Memory 'tripadvisor-graphql-real-shape' updated with the correction + real qid."
+}
