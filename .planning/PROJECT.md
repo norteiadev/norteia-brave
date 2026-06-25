@@ -117,4 +117,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-16 after Phase 4 (Dashboard — Territorial CMS) completion — final phase of this milestone*
+*Last updated: 2026-06-25 after Phase 13 (TripAdvisor real listing query — wire data-fetch contract, GAP-12-A) completion. TA lane now fetches the live-validated AttractionsFusion query (qid a5cb7fa004b5e4b5) and writes to Nascente; §7.6 completude scoring on TA cards (WR-01) and attraction→municipality geo-resolution for coordless cards are documented follow-ups.*
