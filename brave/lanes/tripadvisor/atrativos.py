@@ -53,7 +53,7 @@ from brave.lanes.tripadvisor.scoring import (
 )
 
 if TYPE_CHECKING:
-    from brave.clients.base import TripAdvisorClientProtocol
+    from brave.clients.base import GeocoderClientProtocol, TripAdvisorClientProtocol
 
 
 # ---------------------------------------------------------------------------
@@ -96,12 +96,14 @@ class TripAdvisorAtrativosIngest:
         config: ScoreConfig,
         ibge_records: list[IbgeMunicipio],
         destino_rio_map: dict[str, tuple[uuid.UUID, str]] | None = None,
+        geocoder: "GeocoderClientProtocol | None" = None,
     ) -> None:
         self._client = ta_client
         self._session = session
         self._config = config
         self._ibge_records = ibge_records
         self._destino_rio_map: dict[str, tuple[uuid.UUID, str]] = destino_rio_map or {}
+        self._geocoder = geocoder
 
     async def produce(self, uf: str, *, run_rio: bool = True) -> None:
         """Ingest one full UF sweep for TripAdvisor attractions.
@@ -121,7 +123,7 @@ class TripAdvisorAtrativosIngest:
 
         for entity in attractions:
             try:
-                self._ingest_one(uf, entity, run_rio=run_rio)
+                await self._ingest_one(uf, entity, run_rio=run_rio)
             except Exception as exc:  # noqa: BLE001
                 location_id = str(entity.get("locationId", "unknown"))
                 quarantine_poison(
@@ -132,7 +134,7 @@ class TripAdvisorAtrativosIngest:
                     payload={"uf": uf, "locationId": location_id, "error": str(exc)},
                 )
 
-    def _ingest_one(self, uf: str, entity: dict[str, Any], *, run_rio: bool) -> None:
+    async def _ingest_one(self, uf: str, entity: dict[str, Any], *, run_rio: bool) -> None:
         """Ingest a single TripAdvisor attraction entity."""
         location_id = str(entity.get("locationId", ""))
         name = str(entity.get("name", ""))
@@ -177,6 +179,20 @@ class TripAdvisorAtrativosIngest:
             candidate_lat=lat,
             candidate_lng=lng,
         )
+
+        # TA-15: geo-enrichment via Nominatim — only when first attempt missed
+        if ibge_match is None and self._geocoder is not None:
+            geo = await self._geocoder.geocode(location_id, name, uf)
+            if geo is not None:
+                ibge_match = resolve_municipio(
+                    geo.get("municipio_name") or name,
+                    uf,
+                    self._ibge_records,
+                    candidate_lat=geo["lat"],
+                    candidate_lng=geo["lon"],
+                    max_distance_km=50.0,
+                )
+
         if ibge_match is None:
             quarantine_poison(
                 session=self._session,
