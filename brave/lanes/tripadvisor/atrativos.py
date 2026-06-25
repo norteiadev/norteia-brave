@@ -35,7 +35,7 @@ and brave.lanes.tripadvisor.*. It does NOT import from other lane modules.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.orm import Session
@@ -136,23 +136,15 @@ class TripAdvisorAtrativosIngest:
         """Ingest a single TripAdvisor attraction entity."""
         location_id = str(entity.get("locationId", ""))
         name = str(entity.get("name", ""))
+        category = str(entity.get("category", ""))
         lat = entity.get("lat")
         lng = entity.get("lng")
 
         # Build review signals (LGPD boundary)
-        review_count = int(entity.get("reviewCount", 0))
+        review_count = int(entity.get("review_count", 0))
         rating = float(entity.get("rating", 0.0))
-        most_recent_str = entity.get("mostRecentReviewDate")
         most_recent_dt: datetime | None = None
-        if most_recent_str:
-            try:
-                if "T" not in most_recent_str:
-                    most_recent_str = most_recent_str + "T00:00:00"
-                most_recent_dt = datetime.fromisoformat(most_recent_str).replace(
-                    tzinfo=timezone.utc
-                )
-            except (ValueError, AttributeError):
-                pass
+        # most_recent_review_at: not in AttractionsFusion listing card — None at Nascente (Phase 13 decision)
 
         review_signals = TripAdvisorReviewSignals(
             review_count=review_count,
@@ -244,6 +236,8 @@ class TripAdvisorAtrativosIngest:
             # Review signals (LGPD-aggregate only)
             "review_count": review_count,
             "rating": rating,
+            # Category from AttractionsFusion listing card (primaryInfo.text)
+            "category": category,
             # Canonical sub-dict for norteia-api contract
             "canonical": {
                 "name": payload_model.name,

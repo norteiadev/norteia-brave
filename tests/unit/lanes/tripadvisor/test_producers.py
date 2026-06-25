@@ -44,9 +44,9 @@ _FIXTURE_ATRATIVO: dict[str, Any] = {
     "name": "Elevador Lacerda",
     "lat": -12.9714,
     "lng": -38.5142,
-    "reviewCount": 200,
+    "review_count": 200,  # normalized card key (Phase 13-02: was reviewCount)
     "rating": 4.5,
-    "mostRecentReviewDate": "2025-11-01",
+    # mostRecentReviewDate omitted — not in AttractionsFusion listing card (Phase 13 decision)
     "address": "Praça Cairu, Salvador, BA",
     "category": "attraction",
     "description": "Historic elevator in Salvador",
