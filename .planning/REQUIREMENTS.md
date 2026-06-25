@@ -194,6 +194,8 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | TA-11 | Phase 12 | Complete |
 | TA-12 | Phase 12 | Complete |
 | TA-13 | Phase 12 | Complete |
+| TA-14 | Phase 14 | Pending |
+| TA-15 | Phase 14 | Pending |
 
 **Phase 11 — TripAdvisor source lane (TA-01 … TA-08):**
 - **TA-01** — `brave/lanes/tripadvisor/` GraphQL hybrid client: Playwright bootstraps a DataDome session, captures the rotating `queryId` live (never hardcoded), injects cookies into `httpx` for persisted-query POSTs; residential-proxy seam; Playwright lazy-imported (never in CI); Null/Fake clients + `TripAdvisorConfig` (`BRAVE_TA_*`). UF→`geoId` resolution cached (Redis + 27-UF seed JSON).
@@ -213,6 +215,11 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 - **TA-12** — Client refactor: `_get_session()` reads Redis only, raises `SessionMissingError` on miss/expiry; **fix the persisted-query payload to `{"variables": {...}, "extensions": {"preRegisteredQueryId": "<id>"}}`** (batch-array shape); remove the Playwright `_bootstrap_session` + thread-offload + the `scraper` optional dependency; verify real attraction `geoId`s (seed ES 303516 redirected to MG 303380).
 - **TA-13** — Sweep fail-fast + visibility: `sweep_tripadvisor` catches `SessionMissingError` and the FIRST mid-sweep 403/captcha/empty-payload/stale-`queryId` → stop, mark `needs_bootstrap`, no retry-storm; surface session state (`needs_bootstrap`/`ready`/`invalid`/`expired`) to the operator dashboard instead of silent 0-records. Sweeps capped by record count + wall-clock budget under the session TTL. Operator-gated; NOT on the autonomous beat.
 
+**Phase 14 — Coordless attraction geo-resolution via Nominatim (TA-14 … TA-15):**
+> Spike-validated 2026-06-25 (`scripts/spike_nominatim_geo.py`, 10 real BR attractions): forward-geocoding `name + UF` through OpenStreetMap Nominatim geocoded 10/10; `addressdetails=1` → `address.municipality|city|town|village|county` name-matched to IBGE gave the exact município 9–10/10 (lone miss = multi-município national park). IBGE coords are the município *seat*, so haversine needs a relaxed (~50 km) radius for natural attractions (15–25 km from seat). Free, no API key, HTTP (not browser-scraping). Closes the Phase-13 `ibge_unmatched` quarantine gap.
+- **TA-14** — Typed, mockable Nominatim geocoding client behind the network boundary (Null + Fake, respx in tests, `RUN_REAL_EXTERNALS` opt-in, never in CI): forward-geocode `name + UF` via the public Nominatim `search` API with `addressdetails=1`, a custom User-Agent, and ≥1 req/s rate limiting; results cached by `locationId` (Redis). LGPD-safe: persist only lat/lon + OSM place id, never address PII.
+- **TA-15** — Atrativos geo-enrichment integration: in `_ingest_one`/`resolve_municipio`, before quarantining `ibge_unmatched`, geocode the card → extract the município name (primary) → exact/fuzzy IBGE name-match within the UF; fall back to haversine on the returned lat/lon with a relaxed radius (~50 km). Quarantine `ibge_unmatched` only after BOTH name-match and geo-enrichment fail. Offline tests (respx-mocked Nominatim) + Level-3 re-validation: a real MG sweep yields Nascente `entity_type='attraction'` > 0 with municípios resolved (not mass-quarantined).
+
 **Coverage:**
 - v1 requirements: 48 total (CORE 12 · SCORE 3 · OBS 4 · CNTR 2 · DEST 5 · ATR 6 · DASH 6 · COMP 3 · TEST 3 · ORCH 4)
 - Mapped to phases: 44 ✓
@@ -222,4 +229,4 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 
 ---
 *Requirements defined: 2026-06-11*
-*Last updated: 2026-06-11 after roadmap creation (traceability populated, coverage 44/44)*
+*Last updated: 2026-06-25 — added TA-14/TA-15 (Phase 14: coordless attraction geo-resolution via Nominatim, follow-up to Phase 13)*
