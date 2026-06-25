@@ -12,6 +12,7 @@ Session dict shape (written by injection endpoint, read by _get_session):
     "query_ids": {"destinations": "<16-hex>", "attractions": "<16-hex>"},
     "user_agent": "Mozilla/5.0 ...",
     "acquired_at": "2026-06-24T12:00:00Z",
+    "session_id": "<TASID cookie value>",  # Phase 13: threaded into variables.sessionId
   }
 
 Backwards compatibility: Phase 11 stored cookies as a list of
@@ -21,6 +22,8 @@ _get_session() normalises both shapes to a flat dict.
 Security notes:
   - T-11-01-01: config.proxy_url never emitted in structlog calls.
   - T-11-01-02: Session cookie jar cached in Redis with TTL; never logged.
+  - T-13-01-01: session_id (TASID) is a cookie value — NEVER logged; audit records
+    only cookie_count + query_ids keys, session_id presence as boolean only.
 
 Offline usage: inject NullTripAdvisorClient or FakeTripAdvisorClient instead.
 """
@@ -28,6 +31,7 @@ Offline usage: inject NullTripAdvisorClient or FakeTripAdvisorClient instead.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -116,6 +120,65 @@ class TripAdvisorClient:
         return session
 
     # ------------------------------------------------------------------
+    # Response parsers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_attractions_page(raw_sections: list) -> list[dict]:
+        """Parse a raw sections list from the AttractionsFusion response.
+
+        Keeps only WebPresentation_SingleFlexCardSection items and extracts
+        the TripAdvisorReviewSignals fields from each FlexCard.
+
+        Args:
+            raw_sections: The sections list from data.Result[0].sections.
+
+        Returns:
+            List of normalized attraction dicts with keys:
+              name, locationId, rating, review_count, category.
+            Malformed cards are skipped with a debug log (never raises).
+        """
+        cards: list[dict] = []
+        for section in raw_sections:
+            if not isinstance(section, dict):
+                continue
+            if section.get("__typename") != "WebPresentation_SingleFlexCardSection":
+                continue
+            card = section.get("singleFlexCardContent")
+            if not isinstance(card, dict):
+                logger.debug("ta_parse_skip_missing_flex_content", section_type=section.get("__typename"))
+                continue
+            try:
+                name: str = card.get("cardTitle", {}).get("text", "")
+                location_id_raw = (
+                    card.get("cardLink", {})
+                    .get("webRoute", {})
+                    .get("typedParams", {})
+                    .get("detailId")
+                )
+                rating_raw = card.get("bubbleRating", {}).get("rating")
+                review_count_raw = card.get("bubbleRating", {}).get("reviewCount")
+                category: str = card.get("primaryInfo", {}).get("text", "")
+
+                if location_id_raw is None:
+                    logger.debug("ta_parse_skip_missing_detail_id", name=name)
+                    continue
+
+                cards.append(
+                    {
+                        "name": name,
+                        "locationId": int(location_id_raw),
+                        "rating": float(rating_raw) if rating_raw is not None else 0.0,
+                        "review_count": int(review_count_raw) if review_count_raw is not None else 0,
+                        "category": category,
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("ta_parse_skip_malformed_card", error=type(exc).__name__)
+                continue
+        return cards
+
+    # ------------------------------------------------------------------
     # Public protocol methods
     # ------------------------------------------------------------------
 
@@ -201,23 +264,34 @@ class TripAdvisorClient:
         return results
 
     async def fetch_attractions(
-        self, geo_id: int, offset: int = 0
+        self, geo_id: int, max_pages: int | None = None
     ) -> list[dict[str, Any]]:
         """Fetch TripAdvisor attractions (ATTRACTION entities) for a geoId.
 
+        Uses the live-validated AttractionsFusion listing query (qid a5cb7fa004b5e4b5)
+        with the real request.routeParameters variables shape (Phase 13).
+
         Args:
             geo_id: TripAdvisor integer geoId.
-            offset: Pagination offset (0, 20, 40, ...).
+            max_pages: Cap on pages to fetch. None (default) fetches a single page
+                (see pagination gap comment below). The canary passes max_pages=1.
 
         Returns:
-            List of attraction dicts from the GraphQL response.
+            List of attraction dicts with keys: name, locationId, rating,
+            review_count, category.
 
         Raises:
             SessionMissingError: When no session is in Redis (operator gate).
             SessionExpiredError: On 403 or 429 HTTP status.
         """
         session = self._get_session()
-        query_id = session.get("query_ids", {}).get("attractions", "")
+        # T-13-01-02: qid is hardcoded — NOT read from session["query_ids"]["attractions"].
+        # The real listing qid is fixed (a5cb7fa004b5e4b5); reading it from session
+        # would allow injection of a stale/wrong qid (e.g. a telemetry or ad qid).
+        _LISTING_QID = "a5cb7fa004b5e4b5"
+
+        # T-13-01-01: session_id is a TASID cookie value — NEVER logged.
+        session_id: str = session.get("session_id", "")
         cookies = session.get("cookies", {})
         user_agent = session.get("user_agent", "")
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -227,34 +301,88 @@ class TripAdvisorClient:
         # CR-02: route through the configured residential proxy (BRAVE_TA_PROXY_URL).
         proxy = self._config.proxy_url or None
 
-        payload = [
-            {
-                "variables": {"locationId": geo_id, "offset": offset, "limit": 20},
-                "extensions": {"preRegisteredQueryId": query_id},
-            }
-        ]
-        async with httpx.AsyncClient(
-            cookies=cookies, follow_redirects=True, proxy=proxy
-        ) as hc:
-            resp = await hc.post(
-                _TA_GRAPHQL_URL,
-                json=payload,
-                headers=headers,
-            )
+        # PAGINATION GAP (Phase 13): AttractionsFusion variables carry no confirmed
+        # page/offset param — single page only. Multi-page (oa30 via
+        # PaginationLinksList) is a follow-up; do NOT loop with an identical payload
+        # (would duplicate page 1).
+        page_limit = 1 if max_pages is None else min(max_pages, _MAX_PAGES)
 
-        if resp.status_code in (403, 429):
-            raise SessionExpiredError(
-                f"TripAdvisor GraphQL returned {resp.status_code} — "
-                "DataDome session expired or queryId rotated. Re-inject required."
-            )
+        results: list[dict[str, Any]] = []
+        for _page_num in range(page_limit):
+            pageview_uid = str(uuid.uuid4())
+            payload = [
+                {
+                    "variables": {
+                        "request": {
+                            "tracking": {
+                                "screenName": "AttractionsFusion",
+                                "pageviewUid": pageview_uid,
+                            },
+                            "routeParameters": {
+                                "geoId": geo_id,
+                                "contentType": "attraction",
+                                "webVariant": "AttractionsFusion",
+                                "filters": [{"id": "allAttractions", "value": ["true"]}],
+                            },
+                            "updateToken": None,
+                        },
+                        "commerce": {
+                            "attractionCommerce": {
+                                "pax": [{"ageBand": "ADULT", "count": 2}]
+                            }
+                        },
+                        "tracking": {
+                            "screenName": "AttractionsFusion",
+                            "pageviewUid": pageview_uid,
+                        },
+                        "sessionId": session_id,
+                        "unitLength": "MILES",
+                        "currency": "USD",
+                        "currentGeoPoint": None,
+                        "mapSurface": False,
+                        "debug": False,
+                        "polling": False,
+                    },
+                    "extensions": {"preRegisteredQueryId": _LISTING_QID},
+                }
+            ]
+            async with httpx.AsyncClient(
+                cookies=cookies, follow_redirects=True, proxy=proxy
+            ) as hc:
+                resp = await hc.post(
+                    _TA_GRAPHQL_URL,
+                    json=payload,
+                    headers=headers,
+                )
 
-        resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, list) and data:
-            return data[0].get("data", {}).get("attractions", []) or []
-        elif isinstance(data, dict):
-            return data.get("data", {}).get("attractions", []) or []
-        return []
+            if resp.status_code in (403, 429):
+                raise SessionExpiredError(
+                    f"TripAdvisor GraphQL returned {resp.status_code} — "
+                    "DataDome session expired or queryId rotated. Re-inject required."
+                )
+
+            resp.raise_for_status()
+            data = resp.json()
+
+            # Safe extraction of sections list from the real response path
+            sections: list = []
+            try:
+                sections = data[0]["data"]["Result"][0]["sections"]
+            except (IndexError, KeyError, TypeError):
+                sections = []
+
+            if not sections:
+                break  # Empty sections → no more data
+
+            cards = self._parse_attractions_page(sections)
+            if not cards:
+                break  # Zero FlexCard sections → end of pages
+
+            results.extend(cards)
+            if len(cards) < 30:
+                break  # Partial page → last page
+
+        return results
 
     async def resolve_geo_id(self, uf: str) -> int:
         """Resolve a Brazilian UF code to its TripAdvisor integer geoId.

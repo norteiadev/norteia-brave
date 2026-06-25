@@ -42,11 +42,11 @@ class TestFakeTripAdvisorClient:
         from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
 
         fake = FakeTripAdvisorClient()
-        await fake.fetch_attractions(geo_id=303513, offset=0)
-        await fake.fetch_attractions(geo_id=303513, offset=20)
+        await fake.fetch_attractions(geo_id=303513)
+        await fake.fetch_attractions(geo_id=303513, max_pages=2)
         assert fake.attractions_calls == [
-            {"geo_id": 303513, "offset": 0},
-            {"geo_id": 303513, "offset": 20},
+            {"geo_id": 303513, "max_pages": None},
+            {"geo_id": 303513, "max_pages": 2},
         ]
 
     @pytest.mark.asyncio
@@ -64,7 +64,7 @@ class TestFakeTripAdvisorClient:
 
         fixture = [{"locationId": 99999, "name": "Elevador Lacerda"}]
         fake = FakeTripAdvisorClient(fixture_attractions={303513: fixture})
-        result = await fake.fetch_attractions(geo_id=303513, offset=0)
+        result = await fake.fetch_attractions(geo_id=303513)
         assert result == fixture
 
     @pytest.mark.asyncio
@@ -392,7 +392,7 @@ class TestTripAdvisorClientPayloadShape:
 
     @pytest.mark.asyncio
     async def test_fetch_attractions_payload_shape(self):
-        """fetch_attractions POSTs payload[0]["extensions"]["preRegisteredQueryId"]."""
+        """fetch_attractions POSTs the AttractionsFusion qid + variables shape."""
         import fakeredis
 
         from brave.config.settings import AppConfig
@@ -406,6 +406,7 @@ class TestTripAdvisorClientPayloadShape:
             "query_ids": {"destinations": "stub_qid_dest", "attractions": "stub_qid_attr"},
             "user_agent": "Mozilla/5.0 test",
             "acquired_at": "2026-06-24T12:00:00Z",
+            "session_id": "TASID_VALUE",
         }
         redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session_data))
 
@@ -417,19 +418,27 @@ class TestTripAdvisorClientPayloadShape:
             def capture_request(request):
                 nonlocal captured_body
                 captured_body = json.loads(request.content)
-                return httpx.Response(200, json=[{"data": {"attractions": []}}])
+                return httpx.Response(
+                    200,
+                    json=[{"data": {"Result": [{"sections": []}]}}],
+                )
 
             respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
                 side_effect=capture_request
             )
-            await client.fetch_attractions(geo_id=303513, offset=0)
+            await client.fetch_attractions(geo_id=303513)
 
         assert captured_body is not None, "No request was captured"
         assert isinstance(captured_body, list), "Payload must be a list (batch array)"
         item = captured_body[0]
         assert "extensions" in item, f"Missing 'extensions' key in payload item: {item}"
-        assert item["extensions"]["preRegisteredQueryId"] == "stub_qid_attr"
+        # Phase 13: hardcoded AttractionsFusion qid — NOT the session attractions qid
+        assert item["extensions"]["preRegisteredQueryId"] == "a5cb7fa004b5e4b5"
         assert "query" not in item, f"Old 'query' key must NOT be in payload item: {item}"
+        # Real variables shape (NOT the old {locationId, offset, limit})
+        assert "locationId" not in item["variables"], "Old locationId variable must be gone"
+        assert item["variables"]["request"]["routeParameters"]["contentType"] == "attraction"
+        assert item["variables"]["sessionId"] == "TASID_VALUE"
 
     @pytest.mark.asyncio
     async def test_fetch_destinations_uses_flat_cookie_dict(self):

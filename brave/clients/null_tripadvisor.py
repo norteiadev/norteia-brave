@@ -37,13 +37,13 @@ class NullTripAdvisorClient:
         return []
 
     async def fetch_attractions(
-        self, geo_id: int, offset: int = 0
+        self, geo_id: int, max_pages: int | None = None
     ) -> list[dict[str, Any]]:
         """Return empty list — offline stub performs no scraping.
 
         Args:
             geo_id: TripAdvisor geoId (ignored).
-            offset: Pagination offset (ignored).
+            max_pages: Page cap (ignored).
 
         Returns:
             Empty list.

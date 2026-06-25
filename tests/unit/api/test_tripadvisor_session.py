@@ -285,6 +285,69 @@ def test_status_absent(authed_client, fake_redis):
 
 
 # ---------------------------------------------------------------------------
+# Phase 13: session_id derivation tests (BLOCKER-2 fix)
+# ---------------------------------------------------------------------------
+
+
+def test_inject_session_stores_session_id(authed_client, fake_redis, monkeypatch):
+    """POST without session_id field but with TASID cookie → session_id auto-derived."""
+    import json
+    import brave.api.routers.tripadvisor_session as ts_module
+    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+
+    async def _noop_canary(session, ta_config, redis):
+        pass
+
+    monkeypatch.setattr(ts_module, "_run_canary", _noop_canary)
+
+    body = {
+        "cookies": {"datadome": "x", "TASID": "E75FBE95"},
+        "query_ids": {"destinations": "abc123def456abcd"},
+        "user_agent": "Mozilla/5.0",
+        "acquired_at": "2026-06-24T12:00:00Z",
+        # NOTE: no session_id field — must be auto-derived from cookies["TASID"]
+    }
+    resp = authed_client.post("/api/v1/tripadvisor/session", json=body)
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+    raw = fake_redis.get(BRAVE_TA_SESSION_KEY)
+    assert raw is not None, "Redis key must be set"
+    stored = json.loads(raw)
+    assert stored["session_id"] == "E75FBE95", (
+        f"session_id must be auto-derived from TASID cookie; got: {stored.get('session_id')!r}"
+    )
+
+
+def test_inject_session_explicit_session_id_wins(authed_client, fake_redis, monkeypatch):
+    """POST with explicit session_id wins over TASID cookie value."""
+    import json
+    import brave.api.routers.tripadvisor_session as ts_module
+    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+
+    async def _noop_canary(session, ta_config, redis):
+        pass
+
+    monkeypatch.setattr(ts_module, "_run_canary", _noop_canary)
+
+    body = {
+        "cookies": {"datadome": "x", "TASID": "COOKIE_VALUE"},
+        "query_ids": {"destinations": "abc123def456abcd"},
+        "user_agent": "Mozilla/5.0",
+        "acquired_at": "2026-06-24T12:00:00Z",
+        "session_id": "EXPLICIT",  # explicit field must take precedence
+    }
+    resp = authed_client.post("/api/v1/tripadvisor/session", json=body)
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+    raw = fake_redis.get(BRAVE_TA_SESSION_KEY)
+    assert raw is not None, "Redis key must be set"
+    stored = json.loads(raw)
+    assert stored["session_id"] == "EXPLICIT", (
+        f"Explicit session_id must take precedence over TASID cookie; got: {stored.get('session_id')!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Auth guard — unauthenticated requests get 401
 # ---------------------------------------------------------------------------
 
