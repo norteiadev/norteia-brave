@@ -386,6 +386,81 @@ async def test_negative_result_cached(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
+# CR-01: Cache TTL from config test
+# ---------------------------------------------------------------------------
+
+
+async def test_cache_ttl_from_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """setex uses config.cache_ttl — BRAVE_NOMINATIM_CACHE_TTL env knob is honoured.
+
+    Overrides cache_ttl to a non-default value (300) and asserts BOTH setex calls
+    (negative sentinel and positive result) use that TTL rather than the module
+    constant NOMINATIM_CACHE_TTL.
+
+    Mirrors how test_request_params asserts query params on config.base_url / user_agent.
+    """
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+
+    from unittest.mock import MagicMock, call
+
+    from brave.clients.nominatim import NOMINATIM_CACHE_KEY_PREFIX, NominatimGeocoderClient
+
+    custom_ttl = 300  # deliberately different from the 30-day module default
+
+    # --- Positive result path: setex must use custom_ttl ---
+    redis_pos = fakeredis.FakeRedis()
+    redis_pos_spy = MagicMock(wraps=redis_pos)
+    config_pos = NominatimConfig(cache_ttl=custom_ttl)
+
+    with respx.mock:
+        respx.get("https://nominatim.openstreetmap.org/search").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "lat": "-19.0469",
+                        "lon": "-43.4256",
+                        "osm_id": 123,
+                        "address": {"municipality": "Conceição do Mato Dentro"},
+                    }
+                ],
+            )
+        )
+        client_pos = NominatimGeocoderClient(config=config_pos, redis=redis_pos_spy)
+        await client_pos.geocode("312332", "Cachoeira do Tabuleiro", "MG")
+
+    # Find the setex call and assert TTL is custom_ttl
+    setex_calls = [c for c in redis_pos_spy.method_calls if c[0] == "setex"]
+    assert len(setex_calls) == 1, f"Expected 1 setex call, got {len(setex_calls)}"
+    _name, args, _kwargs = setex_calls[0]
+    assert args[1] == custom_ttl, (
+        f"Positive cache: setex TTL must be config.cache_ttl={custom_ttl}, "
+        f"got {args[1]} (if {86_400 * 30}, NOMINATIM_CACHE_TTL module constant is still used)"
+    )
+
+    # --- Negative result path: setex must also use custom_ttl ---
+    redis_neg = fakeredis.FakeRedis()
+    redis_neg_spy = MagicMock(wraps=redis_neg)
+    config_neg = NominatimConfig(cache_ttl=custom_ttl)
+
+    with respx.mock:
+        respx.get("https://nominatim.openstreetmap.org/search").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        client_neg = NominatimGeocoderClient(config=config_neg, redis=redis_neg_spy)
+        result = await client_neg.geocode("99999", "Unknown Place", "MG")
+
+    assert result is None
+    neg_setex_calls = [c for c in redis_neg_spy.method_calls if c[0] == "setex"]
+    assert len(neg_setex_calls) == 1, f"Expected 1 setex call, got {len(neg_setex_calls)}"
+    _name, args, _kwargs = neg_setex_calls[0]
+    assert args[1] == custom_ttl, (
+        f"Negative cache: setex TTL must be config.cache_ttl={custom_ttl}, "
+        f"got {args[1]} (if {86_400 * 30}, NOMINATIM_CACHE_TTL module constant is still used)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # NullGeocoderClient protocol compliance
 # ---------------------------------------------------------------------------
 

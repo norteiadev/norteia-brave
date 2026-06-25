@@ -40,9 +40,7 @@ logger = structlog.get_logger(__name__)
 # Redis key prefix — full key: f"brave:geo:{location_id}"
 # Analog: geo.py lines 32-36 (REDIS_GEO_KEY_PREFIX / REDIS_GEO_TTL pattern)
 NOMINATIM_CACHE_KEY_PREFIX: str = "brave:geo:"
-NOMINATIM_CACHE_TTL: int = 86_400 * 30  # geocodes are stable — 30 days
-
-_NOMINATIM_SEARCH_URL: str = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_CACHE_TTL: int = 86_400 * 30  # geocodes are stable — 30 days (module default)
 
 # All 27 Brazilian state codes mapped to full names (Nominatim query parameter)
 UF_NAME: dict[str, str] = {
@@ -129,6 +127,7 @@ class NominatimGeocoderClient:
         self._redis = redis
         self._min_interval: float = config.min_request_interval
         self._last_request_ts: float = 0.0
+        self._cache_ttl: int = config.cache_ttl
 
     @retry(
         # Analog: brave/clients/places.py lines 223-228
@@ -195,7 +194,7 @@ class NominatimGeocoderClient:
         # 4. Empty data → cache negative sentinel + return None
         if not data:
             self._redis.setex(
-                key, NOMINATIM_CACHE_TTL, json.dumps({"__no_match": True})
+                key, self._cache_ttl, json.dumps({"__no_match": True})
             )
             logger.debug(
                 "nominatim_no_result",
@@ -223,7 +222,7 @@ class NominatimGeocoderClient:
             "osm_id": hit.get("osm_id"),
             "municipio_name": municipio_name,
         }
-        self._redis.setex(key, NOMINATIM_CACHE_TTL, json.dumps(result))
+        self._redis.setex(key, self._cache_ttl, json.dumps(result))
         logger.info(
             "nominatim_geocoded",
             location_id=location_id,
