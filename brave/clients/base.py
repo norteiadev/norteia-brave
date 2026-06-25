@@ -1,4 +1,4 @@
-"""Client Protocol boundary definitions for all 9 external systems (D-09, D-18).
+"""Client Protocol boundary definitions for all 10 external systems (D-09, D-18).
 
 Every external system sits behind a typed typing.Protocol interface.
 Production code accepts these protocol types; tests inject fakes from tests/fakes/.
@@ -7,7 +7,7 @@ Protocols use structural typing — no isinstance() checks anywhere.
 Runtime-checkable is intentionally False: Protocol is the static boundary,
 not a runtime check.
 
-Nine protocols (CORE-11 + TA-01):
+Ten protocols (CORE-11 + TA-01 + TA-14):
   1. LLMClientProtocol          — LLM extraction (OpenRouter/DeepSeek + Anthropic)
   2. NorteiaApiClientProtocol   — Mar push to norteia-api
   3. PlacesClientProtocol       — Google Places (New API) search/details
@@ -17,6 +17,7 @@ Nine protocols (CORE-11 + TA-01):
   7. MturClientProtocol         — Mtur municipality catalog
   8. NotebookLMClientProtocol   — NotebookLM structured reports
   9. TripAdvisorClientProtocol  — TripAdvisor GraphQL hybrid scraper (Phase 11)
+ 10. GeocoderClientProtocol     — OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14)
 """
 
 from typing import Any, Protocol
@@ -289,5 +290,27 @@ class TripAdvisorClientProtocol(Protocol):
 
         Raises:
             ValueError: When UF is unknown and no cache/seed entry exists (real client).
+        """
+        ...
+
+
+class GeocoderClientProtocol(Protocol):
+    """OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14).
+
+    LGPD: returns ONLY lat/lon + OSM place id + the município-level
+    address sub-field needed for IBGE matching. No address PII is returned
+    or stored (decision #8, 14-CONTEXT.md).
+    """
+
+    async def geocode(
+        self, location_id: str, name: str, uf: str
+    ) -> dict[str, Any] | None:
+        """Forward-geocode `name + UF + Brazil` → geo dict or None.
+
+        Returns on hit: {"lat": float, "lon": float, "osm_id": int | None,
+            "municipio_name": str | None}  # first of address.municipality
+            |city|town|village|county precedence chain.
+        Returns None when Nominatim returns no results.
+        Caches by location_id in Redis (one Nominatim call per attraction per 30d).
         """
         ...
