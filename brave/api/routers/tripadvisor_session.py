@@ -143,7 +143,14 @@ async def _run_canary(session: dict[str, Any], ta_config: Any, redis: Redis) -> 
     except (SessionExpiredError, asyncio.TimeoutError) as exc:
         # Session is provably bad (DataDome 403/429) or unresponsive within the
         # bounded single-page window → delete the key and fail closed.
-        redis.delete(BRAVE_TA_SESSION_KEY)
+        # WR-03: a Redis blip during this cleanup delete must NOT propagate as a
+        # raw 500 (it would not be caught by the sibling `except Exception` 503
+        # branch — exceptions raised inside an except block escape the try).
+        # Guard the delete and still raise the intended 422.
+        try:
+            redis.delete(BRAVE_TA_SESSION_KEY)
+        except Exception:
+            logger.warning("ta_session_canary_delete_failed", reason=type(exc).__name__)
         logger.warning(
             "ta_session_canary_failed",
             reason=type(exc).__name__,
@@ -168,7 +175,12 @@ async def _run_canary(session: dict[str, Any], ta_config: Any, redis: Redis) -> 
 
     # Empty-result guard: a valid 200 response with empty data means stale queryId
     if not results:
-        redis.delete(BRAVE_TA_SESSION_KEY)
+        # WR-03: guard the cleanup delete so a Redis blip can't turn this
+        # classified 422 into an unhandled 500.
+        try:
+            redis.delete(BRAVE_TA_SESSION_KEY)
+        except Exception:
+            logger.warning("ta_session_canary_delete_failed", reason="empty_result")
         logger.warning(
             "ta_session_canary_empty_result",
             cookie_count=len(session.get("cookies", {})),
