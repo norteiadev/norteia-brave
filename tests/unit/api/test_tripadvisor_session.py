@@ -373,7 +373,7 @@ def test_status_unauthenticated_gets_401(client):
 
 @pytest.mark.asyncio
 async def test_canary_infra_error_returns_503_and_keeps_key(fake_redis, monkeypatch):
-    """WR-02: an infra fault (e.g. unknown-UF ValueError) → 503 canary_unverified,
+    """WR-02: an infra fault (e.g. unknown geoId ValueError) → 503 canary_unverified,
     and the freshly-injected session key is NOT deleted."""
     import json
 
@@ -386,10 +386,10 @@ async def test_canary_infra_error_returns_503_and_keeps_key(fake_redis, monkeypa
     session = {"cookies": {"datadome": "x"}, "query_ids": {"destinations": "qid"}}
     fake_redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session))
 
-    async def _raise_infra(self, uf, max_pages=None):
-        raise ValueError("unknown UF / missing seed")
+    async def _raise_infra(self, geo_id, max_pages=None):
+        raise ValueError("unknown geoId / infra fault")
 
-    monkeypatch.setattr(TripAdvisorClient, "fetch_destinations", _raise_infra)
+    monkeypatch.setattr(TripAdvisorClient, "fetch_attractions", _raise_infra)
 
     with pytest.raises(HTTPException) as ei:
         await ts_module._run_canary(session, TripAdvisorConfig(), fake_redis)
@@ -420,10 +420,10 @@ async def test_canary_session_expired_returns_422_and_deletes_key(fake_redis, mo
     session = {"cookies": {"datadome": "x"}, "query_ids": {"destinations": "qid"}}
     fake_redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session))
 
-    async def _raise_expired(self, uf, max_pages=None):
+    async def _raise_expired(self, geo_id, max_pages=None):
         raise SessionExpiredError("403 DataDome block")
 
-    monkeypatch.setattr(TripAdvisorClient, "fetch_destinations", _raise_expired)
+    monkeypatch.setattr(TripAdvisorClient, "fetch_attractions", _raise_expired)
 
     with pytest.raises(HTTPException) as ei:
         await ts_module._run_canary(session, TripAdvisorConfig(), fake_redis)
@@ -432,4 +432,61 @@ async def test_canary_session_expired_returns_422_and_deletes_key(fake_redis, mo
     assert ei.value.detail == "invalid_session"
     assert not fake_redis.exists(BRAVE_TA_SESSION_KEY), (
         "provably-bad session key must be deleted (fail closed)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 13-02: canary probes fetch_attractions (not fetch_destinations)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_canary_probes_fetch_attractions(fake_redis, monkeypatch):
+    """Canary must call fetch_attractions (qid a5cb7fa004b5e4b5), never fetch_destinations.
+
+    Monkeypatches fetch_destinations to raise AssertionError — if canary accidentally
+    calls it the test fails immediately. fetch_attractions returns a non-empty list
+    to simulate a valid session response.
+    """
+    import json
+
+    import brave.api.routers.tripadvisor_session as ts_module
+    from brave.config.settings import TripAdvisorConfig
+    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+
+    session = {
+        "cookies": {"datadome": "x", "TASID": "E75FBE95"},
+        "query_ids": {"attractions": "a5cb7fa004b5e4b5"},
+    }
+    fake_redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session))
+
+    fetch_attractions_called_with: list[dict] = []
+
+    async def _record_and_return(self, geo_id, max_pages=None):
+        fetch_attractions_called_with.append({"geo_id": geo_id, "max_pages": max_pages})
+        return [
+            {
+                "name": "Iguazu Falls",
+                "locationId": 312332,
+                "rating": 4.9,
+                "review_count": 45811,
+                "category": "Waterfalls",
+            }
+        ]
+
+    async def _raise_if_called(self, uf, max_pages=None):
+        raise AssertionError("canary must not call fetch_destinations — use fetch_attractions")
+
+    monkeypatch.setattr(TripAdvisorClient, "fetch_attractions", _record_and_return)
+    monkeypatch.setattr(TripAdvisorClient, "fetch_destinations", _raise_if_called)
+
+    # Should complete without raising (valid non-empty session)
+    await ts_module._run_canary(session, TripAdvisorConfig(), fake_redis)
+
+    assert len(fetch_attractions_called_with) == 1, "fetch_attractions must be called exactly once"
+    assert fetch_attractions_called_with[0]["geo_id"] == 303380, (
+        f"Canary must probe geo_id=303380 (Minas Gerais); got: {fetch_attractions_called_with[0]['geo_id']}"
+    )
+    assert fetch_attractions_called_with[0]["max_pages"] == 1, (
+        f"Canary must use max_pages=1; got: {fetch_attractions_called_with[0]['max_pages']}"
     )
