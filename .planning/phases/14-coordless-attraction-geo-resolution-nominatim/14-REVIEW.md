@@ -16,11 +16,16 @@ files_reviewed_list:
   - tests/unit/lanes/tripadvisor/test_ibge.py
   - tests/unit/tasks/test_sweep_tripadvisor.py
 findings:
-  critical: 1
-  warning: 6
+  critical: 0
+  warning: 5
   info: 4
-  total: 11
-status: issues_found
+  total: 9
+status: issues_resolved
+resolved:
+  - CR-01 (fix 2761625): cache TTL now resolved from config.cache_ttl; dead _NOMINATIM_SEARCH_URL removed; test_cache_ttl_from_config added
+  - WR-01 (fix 59f22d6): geocoded lat/lng promoted into persisted payload; enrichment re-ordered before completude; test asserts coords
+deferred:
+  - WR-02..WR-06, IN-01..IN-04 — tracked for follow-up gap pass
 ---
 
 # Phase 14: Code Review Report
