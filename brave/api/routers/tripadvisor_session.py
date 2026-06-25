@@ -133,8 +133,11 @@ async def _run_canary(session: dict[str, Any], ta_config: Any, redis: Redis) -> 
         # WR-06: a canary only needs to prove the session returns *any* data.
         # Bound it to a single page so a slow large-UF paginate can't exceed the
         # timeout and destroy a valid session.
+        # geo_id=303380 = Minas Gerais (any valid UF geoId works; NOT national 294280).
+        # fetch_attractions uses qid a5cb7fa004b5e4b5 — validating it confirms the
+        # real AttractionsFusion listing query works for this session.
         results = await asyncio.wait_for(
-            client.fetch_destinations("RJ", max_pages=1),
+            client.fetch_attractions(geo_id=303380, max_pages=1),
             timeout=_CANARY_TIMEOUT_SECONDS,
         )
     except (SessionExpiredError, asyncio.TimeoutError) as exc:
