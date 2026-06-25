@@ -2,8 +2,9 @@ TripAdvisor — Nível 3 Runbook (coleta real, operator-gated)
 ============================================================
 
 Validação end-to-end da coleta real do lane TripAdvisor (Fase 12,
-session-injection seam). NÃO roda em CI — DataDome barra browser
-automatizado, então a captura da sessão é sempre humana.
+session-injection seam; Fase 13, data-fetch contract — listing query real
+AttractionsFusion qid a5cb7fa004b5e4b5). NÃO roda em CI — DataDome barra
+browser automatizado, então a captura da sessão é sempre humana.
 
 Os 4 componentes da stack + a captura humana. A captura (Passo 1) é o
 ÚNICO passo que exige um browser humano real logado num IP residencial;
@@ -44,18 +45,29 @@ PASSO 1 — Capturar sessão (browser HUMANO real, IP residencial)
 
 DataDome barra automação → tem que ser humano logado.
 
-  1. Chrome/Firefox logado em tripadvisor.com
+  1. Chrome/Firefox LOGADO em tripadvisor.com (login obrigatório — sem login
+     o cookie TASID não é emitido e o session_id fica ausente).
   2. F12 → aba Network
-  3. Abrir página de estado BR, ex:
-       https://www.tripadvisor.com/Tourism-g303380-Minas_Gerais_State.html
+  3. Abrir a página de ATRATIVOS (listing) do estado BR — NÃO a página Tourism.
+     A página Tourism dispara apenas qids de telemetria/anúncio; a listing real
+     (AttractionsFusion) só aparece na página Attractions-g<geoId>. Exemplos:
+       https://www.tripadvisor.com/Attractions-g294280-Activities-Brazil.html                    (geoId nacional 294280)
+       https://www.tripadvisor.com/Attractions-g303380-Activities-Minas_Gerais_State_Brazil.html  (MG 303380)
      ATENÇÃO: ES (303516) redireciona pra MG (303380) — verifique o geoId
      em data/tripadvisor/uf_geoids.json antes de varrer ES.
-  4. No Network, filtrar "graphql/ids"
-  5. Botão direito num POST → "Copy as cURL (bash)"
+  4. No Network, filtrar "graphql/ids". Vão aparecer vários POSTs.
+     IDENTIFICAR O POST CORRETO: botão direito num POST → aba Preview/Response.
+     O POST CORRETO tem no Response "WebPresentation_SingleFlexCardSection".
+     Ignore requests com user_navigated, GetPageSlotSettings, Trips_ReferenceInput
+     — são telemetria/anúncios.
+  5. Botão direito SÓ no POST com SingleFlexCardSection → "Copy as cURL (bash)"
   6. Salvar em arquivo local:
        pbpaste > /tmp/ta.curl          # macOS
 
   O cURL contém cookie DataDome vivo = credencial curta (~30 min).
+  Certifique-se de estar logado no TripAdvisor para que o cookie TASID apareça.
+  O ta_bootstrap extrai o TASID automaticamente; se não encontrar, avisa
+  "session_id: NOT FOUND".
   NÃO commitar, NÃO colar em chat/log.
 
 
@@ -66,7 +78,11 @@ PASSO 2 — Injetar (servidor)
 
   Esperado:
     Parsed: N cookies, query_ids={'destinations': '...', 'attractions': '...'}
+    session_id: found  ← TASID capturado
     Session injected — canary result: ready
+
+  Se session_id mostrar "NOT FOUND":
+    → recapture estando LOGADO no TripAdvisor (cookie TASID ausente).
 
   Resultados do canary:
     ready                       → sessão válida, gravada no Redis
@@ -118,7 +134,11 @@ CRITÉRIOS DE ACEITE (= 12-HUMAN-UAT.md)
 
   1. ta_bootstrap parseia cURL real e injeta (Passo 2)
   2. canary: válida→ready, expirada→invalid_session, infra→canary_unverified (Passo 2)
-  3. sweep 1 UF ingere Nascente > 0, pill transiciona (Passos 4-5)
+  3. sweep 1 UF ingere Nascente > 0 com entity_type='attraction' — verificar com:
+       docker compose exec -T postgres psql -U brave -d norteia_brave -c \
+         "select source, entity_type, count(*) from nascente where source='tripadvisor' group by source, entity_type;"
+     Esperado: pelo menos uma linha com entity_type='attraction' e count > 0.
+     A pill transiciona (Passos 4-5).
 
 
 TROUBLESHOOTING
@@ -130,3 +150,9 @@ TROUBLESHOOTING
                                           reiniciar worker com a flag.
   sweep para com needs_bootstrap       → sessão expirou (TTL 30min); recapturar + reinjetar.
   status present:false após inject     → canary 422 deletou a chave; sessão ruim, recapturar.
+  ta_bootstrap avisa "qid is a telemetry/ad/trips query"
+                                       → capturou o POST errado; use a página
+                                          Attractions-g<geoId> e filtre por
+                                          SingleFlexCardSection no Response.
+  ta_bootstrap session_id: NOT FOUND   → cookie TASID ausente; fazer login no
+                                          TripAdvisor antes de capturar.
