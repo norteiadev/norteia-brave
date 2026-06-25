@@ -449,17 +449,17 @@ with respx.mock:
 | A5 | Rate limiter can be per-process (single worker) rather than Redis-distributed | Pattern 3 | Medium — sweep is single-machine/operator-gated (CONTEXT scope), so per-process is sufficient; revisit if sweeps fan out across workers |
 | A6 | No new package needed (all deps pinned) | Standard Stack | Low — verify `pyproject.toml` during planning |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Exact `address` key for a few BR municípios under `addressdetails=1`**
    - What we know: spike's name-match hit 4/5 sampled; precedence municipality→city→town→village→county is the locked order.
    - What's unclear: which sub-key actually populates for each município class (capital vs interior) — OSM tagging varies.
-   - Recommendation: capture one real response per município class during the build (operator/Level-3) and assert the precedence chain handles all; the fallback haversine covers any name-match miss.
+   - **RESOLVED:** the locked precedence chain municipality→city→town→village→county (CONTEXT D-2) is the answer; the haversine fallback (~50 km) covers any name-match miss. Capture one real response per município class at Level-3 to confirm coverage — non-blocking for planning.
 
 2. **Rate-limit scope (per-process vs distributed) if sweeps ever parallelize**
    - What we know: current sweeps are operator-gated, single-machine, ~30 attractions/UF.
    - What's unclear: whether a future multi-worker fan-out would exceed 1 req/s across processes.
-   - Recommendation: ship per-process now (sufficient for scope); document a Redis token-bucket as the upgrade if/when sweeps parallelize.
+   - **RESOLVED:** ship per-process now (sufficient for the operator-gated single-machine scope, CONTEXT D-6); a Redis token-bucket is the documented upgrade path if/when sweeps parallelize — out of scope for this phase.
 
 ## Environment Availability
 
