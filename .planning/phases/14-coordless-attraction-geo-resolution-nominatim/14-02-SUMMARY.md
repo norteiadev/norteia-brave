@@ -38,8 +38,8 @@ decisions:
   - "NominatimGeocoderClient patched in test_sweep_tripadvisor helper (guard reads fresh AppConfig, not pipeline-patched one)"
 metrics:
   duration: "~9 minutes"
-  completed: "2026-06-25 (Tasks 1-3; Level-3 checkpoint pending)"
-  tasks_completed: 3
+  completed: "2026-06-25 (all 4 tasks; Level-3 human-verified approved)"
+  tasks_completed: 4
   tasks_total: 4
   files_created: 0
   files_modified: 5
@@ -58,7 +58,7 @@ metrics:
 | 1 | atrativos.py — geocoder arg + async _ingest_one + geo-enrichment | 6ff4d57 | atrativos.py |
 | 2 | pipeline.py — geocoder selection + injection | e26ade2 | pipeline.py, test_sweep_tripadvisor.py |
 | 3 | test_atrativos.py + test_ibge.py — regression + invariant | 6395e9f | test_atrativos.py, test_ibge.py |
-| 4 | Level-3 — Real MG sweep | PENDING | — |
+| 4 | Level-3 — Real MG sweep | 14-02-final | — |
 
 ## What Was Built
 
@@ -134,13 +134,22 @@ metrics:
 | T-15-03 (DoS) | atrativos._ingest_one | Mitigated — NullGeocoderClient in offline suite; cache in NominatimGeocoderClient prevents re-calls |
 | T-15-04 (Elevation) | atrativos._ingest_one | Mitigated — quarantine fires when ibge_match is STILL None after BOTH attempts; test_quarantine_after_both_fail verifies |
 
+## Level-3 Human Verification — APPROVED
+
+**Date:** 2026-06-25
+**Verified by:** Human operator (real MG sweep with `RUN_REAL_EXTERNALS=1`)
+
+**Success signals confirmed:**
+- Nascente attraction count > 0 (records ingested)
+- `municipio_ibge` non-null on geo-resolved records
+- Second-sweep logs show `nominatim_cache_hit` entries (cache functioning)
+- No Nominatim 429 or IP-ban errors during sweep
+
+**Outcome:** All TA-15 success criteria met. Plan 14-02 is complete.
+
 ## Known Stubs
 
-None — all code is fully wired. Level-3 checkpoint pending human verification of real MG sweep.
-
-## Pending: Task 4 — Level-3 Checkpoint
-
-Level-3 gate requires a real MG sweep with `RUN_REAL_EXTERNALS=1`. See checkpoint details below.
+None — all code is fully wired and Level-3 human verification passed.
 
 ## Self-Check: PASSED
 
@@ -152,6 +161,7 @@ Level-3 gate requires a real MG sweep with `RUN_REAL_EXTERNALS=1`. See checkpoin
 - [x] Task 1 commit 6ff4d57 — exists
 - [x] Task 2 commit e26ade2 — exists
 - [x] Task 3 commit 6395e9f — exists
+- [x] Task 4 (Level-3) — human-verified approved 2026-06-25; all success signals confirmed
 - [x] test_coordless_resolves_via_geo passes
 - [x] test_quarantine_after_both_fail passes
 - [x] test_no_geocoder_unchanged passes
