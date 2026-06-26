@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, model_validator
 from redis import Redis
 
 from brave.api.deps import get_redis, require_steward_or_bearer
+from brave.lanes.tripadvisor import sweep_progress as sweep_progress_state
 from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, SessionExpiredError
 
 logger = structlog.get_logger(__name__)
@@ -107,6 +108,26 @@ class TASessionStatusResponse(BaseModel):
     expires_in: int | None = None
     query_ids: list[str] | None = None
     reason: Literal["needs_bootstrap"] | None = None
+
+
+class TASweepProgressResponse(BaseModel):
+    """Response model for GET /api/v1/tripadvisor/sweep/progress.
+
+    Serializes the brave:ta:sweep:progress hash verbatim. extra="forbid" prevents
+    field drift so a future hash field can never silently leak through the read
+    surface (T-15-03-02). The hash holds ONLY offsets/counts/state/timestamps —
+    never cookie/session/datadome values.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    state: Literal["running", "done", "stopped_needs_bootstrap", "idle"]
+    pages_done: int
+    pages_total: int
+    attractions_ingested: int
+    current_offset: int
+    error_count: int
+    started_at: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -367,3 +388,31 @@ def session_status(redis: Redis = Depends(get_redis)) -> TASessionStatusResponse
         present=False,
         reason="needs_bootstrap" if has_marker else None,
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/tripadvisor/sweep/progress
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/api/v1/tripadvisor/sweep/progress",
+    dependencies=[Depends(require_steward_or_bearer)],
+    response_model=TASweepProgressResponse,
+)
+def sweep_progress_status(redis: Redis = Depends(get_redis)) -> TASweepProgressResponse:
+    """Return the live TripAdvisor bulk-sweep progress snapshot.
+
+    Read-only — the writer is the Celery sweep worker (15-07); this endpoint only
+    serializes the brave:ta:sweep:progress hash for the dashboard panel (15-08).
+    Same auth as the sibling TA endpoints (require_steward_or_bearer — constant-time,
+    fail-closed: an unauthenticated request is rejected with 401).
+
+    Shapes:
+      - No run started:  {state: "idle", pages_done: 0, ...zeros, started_at: null}
+      - Running/terminal: the live counters + state.
+
+    T-15-03-02: the response carries NO cookie/session/datadome value — the source
+    hash is secret-free and extra="forbid" blocks any field drift.
+    """
+    return TASweepProgressResponse(**sweep_progress_state.get_progress(redis))
