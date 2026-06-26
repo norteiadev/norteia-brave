@@ -234,6 +234,107 @@ class NominatimGeocoderClient:
         # 7. Return 4-key LGPD-safe dict
         return result
 
+    @retry(
+        # Same retryable-error policy as geocode (analog: places.py 223-228)
+        retry=retry_if_exception(_is_retryable),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    async def geocode_national(
+        self, location_id: str, name: str
+    ) -> dict[str, Any] | None:
+        """Forward-geocode `name + Brazil` (no UF) → 4-key geo dict or None (Phase 15).
+
+        The all-Brazil bulk attractions lane (geoId 294280) has no per-UF context —
+        UF is derived downstream from the geocoded município/IBGE code, not supplied
+        as input. This national variant queries ``"{name}, Brazil"`` instead of
+        ``"{name}, {uf}, Brazil"`` and otherwise honours the same Redis cache,
+        rate-limit, retry, and LGPD-safe return contract as ``geocode``.
+
+        The cache key is namespaced (``brave:geo:natl:{location_id}``) so a national
+        result never collides with a per-UF ``geocode`` result for the same id.
+
+        Args:
+            location_id: TripAdvisor attraction locationId (Redis cache key).
+            name:        Attraction name for the national search query.
+
+        Returns:
+            {"lat": float, "lon": float, "osm_id": int | None, "municipio_name": str | None}
+            or None when Nominatim returns no results.
+        """
+        # 1. Redis cache hit (national namespace — never collides with per-UF key)
+        key = f"{NOMINATIM_CACHE_KEY_PREFIX}natl:{location_id}"
+        raw = _decode(self._redis.get(key))
+        if raw:
+            logger.debug("nominatim_natl_cache_hit", location_id=location_id)
+            cached = json.loads(raw)
+            return None if cached.get("__no_match") else cached
+
+        # 2. Rate limit — ≥1 req/s per Nominatim policy (Pattern 3)
+        elapsed = time.monotonic() - self._last_request_ts
+        if elapsed < self._min_interval:
+            await asyncio.sleep(self._min_interval - elapsed)
+        self._last_request_ts = time.monotonic()
+
+        # 3. Nominatim HTTP call — national query (no UF segment)
+        params = {
+            "q": f"{name}, Brazil",
+            "format": "json",
+            "limit": 1,
+            "countrycodes": "br",
+            "addressdetails": 1,
+        }
+        headers = {"User-Agent": self._config.user_agent}
+
+        async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as hc:
+            resp = await hc.get(
+                self._config.base_url, params=params, headers=headers
+            )
+        resp.raise_for_status()
+        data = resp.json()
+
+        # 4. Empty data → cache negative sentinel + return None
+        if not data:
+            self._redis.setex(
+                key, self._cache_ttl, json.dumps({"__no_match": True})
+            )
+            logger.debug(
+                "nominatim_natl_no_result",
+                location_id=location_id,
+                # LGPD: log only location_id — never name or raw address
+            )
+            return None
+
+        # 5. Parse address precedence chain (LGPD decision #8)
+        hit = data[0]
+        addr = hit.get("address", {})
+        municipio_name = (
+            addr.get("municipality")
+            or addr.get("city")
+            or addr.get("town")
+            or addr.get("village")
+            or addr.get("county")
+        )
+
+        # 6. LGPD: persist only lat/lon/osm_id/municipio_name — never display_name or street
+        result: dict[str, Any] = {
+            "lat": float(hit["lat"]),
+            "lon": float(hit["lon"]),
+            "osm_id": hit.get("osm_id"),
+            "municipio_name": municipio_name,
+        }
+        self._redis.setex(key, self._cache_ttl, json.dumps(result))
+        logger.info(
+            "nominatim_natl_geocoded",
+            location_id=location_id,
+            municipio_name=municipio_name,
+            # LGPD: log location_id + resolved municipio only; never name/address payload
+        )
+
+        # 7. Return 4-key LGPD-safe dict
+        return result
+
 
 # ---------------------------------------------------------------------------
 # Structural type check
