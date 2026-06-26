@@ -170,3 +170,52 @@ def resolve_municipio(
 
     # Step 4: unresolved → caller quarantines as "ibge_unmatched"
     return None
+
+
+# ---------------------------------------------------------------------------
+# National municipality resolver (Phase 15, TA-12)
+# ---------------------------------------------------------------------------
+
+
+def resolve_municipio_national(
+    candidate_lat: float | None,
+    candidate_lng: float | None,
+    records: list[IbgeMunicipio],
+    *,
+    max_distance_km: float = 50.0,
+) -> IbgeMunicipio | None:
+    """Resolve geocoded coordinates to the nearest IBGE municipality across ALL states.
+
+    The all-Brazil bulk attractions lane (geoId 294280) has no per-UF context and no
+    parent destino — the only signal is the attraction's geocoded lat/lng. This
+    resolver runs a pure haversine over EVERY IBGE seat (no UF filter), picks the
+    minimum-distance record, and returns it only if within ``max_distance_km``. The
+    returned record carries ``.uf`` (the derived state) and ``.ibge_code`` (município),
+    so the bulk lane derives UF from coordinates with no per-UF input.
+
+    Args:
+        candidate_lat:  Latitude of the geocoded attraction (decimal degrees).
+        candidate_lng:  Longitude of the geocoded attraction (decimal degrees).
+        records:        Full list of IbgeMunicipio records (from load_ibge_csv).
+        max_distance_km: Relaxed match radius in km (default 50.0 — IBGE coords are
+            the município seat; natural attractions sit ~15-25 km out, per Phase 14).
+
+    Returns:
+        The nearest IbgeMunicipio within ``max_distance_km``, or None when the
+        coordinates are None or nothing falls within the radius.
+    """
+    # None coords → no derivation possible.
+    if candidate_lat is None or candidate_lng is None:
+        return None
+
+    nearest: IbgeMunicipio | None = None
+    nearest_km = float("inf")
+    for r in records:
+        dist = haversine_km(candidate_lat, candidate_lng, r.lat, r.lng)
+        if dist < nearest_km:
+            nearest_km = dist
+            nearest = r
+
+    if nearest is not None and nearest_km <= max_distance_km:
+        return nearest
+    return None
