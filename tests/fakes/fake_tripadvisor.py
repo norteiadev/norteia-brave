@@ -16,6 +16,7 @@ Usage:
     assert fake.destinations_calls == [{"uf": "BA"}]
 """
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 from brave.clients.base import TripAdvisorClientProtocol
@@ -34,6 +35,8 @@ class FakeTripAdvisorClient:
         fixture_destinations: dict[str, list[dict[str, Any]]] | None = None,
         fixture_attractions: dict[int, list[dict[str, Any]]] | None = None,
         geo_ids: dict[str, int] | None = None,
+        fixture_pages: dict[int, list[tuple[int, list[dict[str, Any]]]]]
+        | None = None,
     ) -> None:
         """Initialize with optional fixture data.
 
@@ -44,14 +47,19 @@ class FakeTripAdvisorClient:
                                   Returned by fetch_attractions().
             geo_ids:              Dict mapping UF → geoId integer.
                                   Returned by resolve_geo_id().
+            fixture_pages:        Dict mapping geoId → list of (offset, cards) tuples.
+                                  Yielded one tuple at a time by
+                                  fetch_attractions_paginated().
         """
         self._fixture_destinations = fixture_destinations or {}
         self._fixture_attractions = fixture_attractions or {}
         self._geo_ids = geo_ids or {}
+        self._fixture_pages = fixture_pages or {}
 
         # Call recording lists for test assertions
         self.destinations_calls: list[dict[str, Any]] = []
         self.attractions_calls: list[dict[str, Any]] = []
+        self.paginated_calls: list[dict[str, Any]] = []
         self.resolve_calls: list[str] = []
 
     async def fetch_destinations(self, uf: str) -> list[dict[str, Any]]:
@@ -80,6 +88,29 @@ class FakeTripAdvisorClient:
         """
         self.attractions_calls.append({"geo_id": geo_id, "max_pages": max_pages})
         return self._fixture_attractions.get(geo_id, [])
+
+    async def fetch_attractions_paginated(
+        self, geo_id: int, start_page: int = 1, max_pages: int = 334
+    ) -> AsyncIterator[tuple[int, list[dict[str, Any]]]]:
+        """Record the call and yield configured fixture pages for the given geoId.
+
+        Mirrors fetch_attractions's call-recording posture, but streams one
+        (offset, cards) tuple per configured page so tests can assert per-page
+        ingest + commit + progress behaviour.
+
+        Args:
+            geo_id: TripAdvisor geoId.
+            start_page: Resume page (recorded but does not slice the fixture).
+            max_pages: Page cap (recorded but does not slice the fixture).
+
+        Yields:
+            (offset, cards) tuples from fixture_pages[geo_id]; nothing if absent.
+        """
+        self.paginated_calls.append(
+            {"geo_id": geo_id, "start_page": start_page, "max_pages": max_pages}
+        )
+        for offset, cards in self._fixture_pages.get(geo_id, []):
+            yield offset, cards
 
     async def resolve_geo_id(self, uf: str) -> int:
         """Return configured geoId or 0 (offline default).

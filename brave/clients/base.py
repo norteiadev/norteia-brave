@@ -20,6 +20,7 @@ Ten protocols (CORE-11 + TA-01 + TA-14):
  10. GeocoderClientProtocol     — OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14)
 """
 
+from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 
@@ -274,6 +275,38 @@ class TripAdvisorClientProtocol(Protocol):
         Returns:
             List of attraction dicts with keys: name, locationId, rating,
             review_count, category.
+        """
+        ...
+
+    def fetch_attractions_paginated(
+        self, geo_id: int, start_page: int = 1, max_pages: int = 334
+    ) -> AsyncIterator[tuple[int, list[dict[str, Any]]]]:
+        """Stream TripAdvisor attractions page-by-page over the HTML SSR transport.
+
+        Phase 15: paginates the all-Brazil AttractionsFusion listing (geoId 294280)
+        across its 334 pages. The GraphQL listing query (qid a5cb7fa004b5e4b5) cannot
+        paginate — the persisted query rejects any offset/oa field — so each page is
+        fetched as the HTML SSR variant
+        ``Attractions-g{geo_id}-...-oa{offset}-Brazil.html`` (offset = (page-1)*30) and
+        the embedded card JSON island is recovered and fed to the existing
+        ``_parse_attractions_page`` (no new parser, no DOM walker).
+
+        Yields one ``(offset, parsed_cards)`` tuple per HTML SSR page, where ``offset``
+        is the ``-oa{N}-`` path offset and ``parsed_cards`` is the same normalized
+        attraction-dict list shape ``fetch_attractions`` returns. Async-iterator so the
+        caller can commit + record progress per page (resume-from-offset) rather than
+        buffering the whole sweep.
+
+        Args:
+            geo_id: TripAdvisor integer geoId (294280 = all Brazil).
+            start_page: 1-based page to start from (resume-from-offset support;
+                page 1 = offset 0, page 2 = offset 30, ...).
+            max_pages: Cap on pages to fetch (default 334 = the full TA display cap).
+
+        Yields:
+            ``(offset, cards)`` tuples — one per page; ``offset`` is ``(page-1)*30``,
+            ``cards`` is a list of attraction dicts with keys: name, locationId,
+            rating, review_count, category.
         """
         ...
 

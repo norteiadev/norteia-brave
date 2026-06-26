@@ -13,6 +13,7 @@ the scraper dep group is optional and never reachable from the API path.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 
@@ -49,6 +50,26 @@ class NullTripAdvisorClient:
             Empty list.
         """
         return []
+
+    async def fetch_attractions_paginated(
+        self, geo_id: int, start_page: int = 1, max_pages: int = 334
+    ) -> AsyncIterator[tuple[int, list[dict[str, Any]]]]:
+        """Yield nothing — offline stub performs no scraping (T-11-01-03).
+
+        Implemented as an async generator (the unreachable ``yield`` after ``return``
+        makes this a generator function) so it structurally matches the protocol's
+        async-iterator contract while launching no Playwright and crossing no network.
+
+        Args:
+            geo_id: TripAdvisor geoId (ignored).
+            start_page: Resume page (ignored).
+            max_pages: Page cap (ignored).
+
+        Yields:
+            Nothing — the iterator is empty.
+        """
+        return
+        yield  # pragma: no cover  (unreachable; marks this an async generator)
 
     async def resolve_geo_id(self, uf: str) -> int:
         """Return 0 — offline stub does not resolve geoIds.
