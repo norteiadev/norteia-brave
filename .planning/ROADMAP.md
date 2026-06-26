@@ -72,12 +72,12 @@ Plans:
 **Requirements**: extends TA-12 (data-fetch correctness — Phases 12/13)
 **Depends on:** Phase 13 (real listing query wired), Phase 14
 **Out of scope:** per-UF pagination (this is whole-Brazil g294280); destinos-lane pagination; autonomous 24/7 TA beat (stays operator-gated); residential-proxy automation.
-**Plans:** 8 plans
+**Plans:** 3/8 plans executed
 
 Plans:
-- [ ] 15-01-PLAN.md — Capture + scrub the real -oa30- AttractionsFusion HTML fixture (Wave-0 extractor blocker)
-- [ ] 15-02-PLAN.md — Interface contracts: fetch_attractions_paginated + geocode_national (protocol/null/fake)
-- [ ] 15-03-PLAN.md — Live progress backend: sweep_progress Redis module + GET /sweep/progress endpoint
+- [x] 15-01-PLAN.md — Capture + scrub the real -oa30- AttractionsFusion HTML fixture (Wave-0 extractor blocker)
+- [x] 15-02-PLAN.md — Interface contracts: fetch_attractions_paginated + geocode_national (protocol/null/fake)
+- [x] 15-03-PLAN.md — Live progress backend: sweep_progress Redis module + GET /sweep/progress endpoint
 - [ ] 15-04-PLAN.md — Real HTML-SSR transport: _extract_sections_from_html + fetch_attractions_paginated + throttle config
 - [ ] 15-05-PLAN.md — National geo-resolution: geocode_national + resolve_municipio_national (A1 blocker)
 - [ ] 15-06-PLAN.md — Bulk Nascente ingest: _ingest_one_bulk (no parent gate) + produce_paginated (per-page commit + progress)
