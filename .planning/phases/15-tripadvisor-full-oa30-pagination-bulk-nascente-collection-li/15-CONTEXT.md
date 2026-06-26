@@ -90,6 +90,28 @@ Out of scope:
 - Testing stays 100% offline by default: no test hits TripAdvisor unless `RUN_REAL_EXTERNALS=1`;
   the HTML transport must be mockable (respx / fake client), like the existing client.
 
+### Blocker resolutions (operator-decided 2026-06-26, after research)
+- **National-UF / parent-destino gate (BLOCKING, resolved):** `_ingest_one` today requires a
+  `uf` + a parent destino in `destino_rio_map` and quarantines BEFORE `store_raw` — a whole-Brazil
+  attraction-only run would write 0 Nascente + ~10k quarantine. **Resolution: add a bulk-lane
+  ingest path that BYPASSES the parent-destino requirement and derives `uf` + município from the
+  attraction's geocoded IBGE code** (reuse the existing Nominatim + IBGE resolver). Attractions
+  land in Nascente fully município-resolved, no parent destino required. The existing per-UF
+  `_ingest_one` parent-linkage path must remain intact for the destinos-driven lane — the bulk
+  lane is a distinct path, not a mutation of the old contract.
+- **Full-run geocoding cost (resolved): slice-first.** Build + validate the ~5–10 page slice
+  end-to-end NOW (geocoding 150–300 attractions = minutes). **Defer the full 334-page run AND its
+  ~3h geocode-resilience strategy (batching/caching/parallelism) to a follow-up after the slice
+  proves out.** Do not over-engineer full-run geocoding before the slice validates the transport,
+  session endurance, resume, and dashboard. The fetch/ingest code path must still be the same for
+  slice and full run (parameterized by page range), but the full national run is a later trigger.
+
+### Resume / TTL note (from research)
+- The sweep currently commits once at the end (`pipeline.py`) — a mid-run 403 would roll back
+  everything. Bulk lane MUST commit per-page (or per small batch) and persist the last completed
+  offset so a re-run resumes. Session TTL (30 min) < full run (3h+), so resume across operator
+  re-injections is the happy path for the full run; the slice fits within one session.
+
 ### Claude's Discretion
 - Exact Redis progress key name + schema, throttle delay default, batch/commit cadence to
   Nascente, the embedded-JSON extraction technique from the HTML (regex vs script-tag parse),
