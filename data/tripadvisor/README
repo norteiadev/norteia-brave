@@ -209,3 +209,24 @@ The sweep does NOT run automatically. It is NOT scheduled on the Celery beat.
 CI and offline tests never set RUN_REAL_EXTERNALS — all TripAdvisor client
 calls are handled by NullTripAdvisorClient (brave/clients/null_tripadvisor.py);
 unit tests use FakeTripAdvisorClient (tests/fakes/fake_tripadvisor.py).
+
+---
+
+## Phase 15 — Wave-0 fixture capture (oa30 pagination)
+
+The embedded-JSON extractor (`_extract_sections_from_html`, plan 15-04) is unit-tested
+against a real captured listing page committed at `tests/fixtures/tripadvisor/attractions_oa30.html`.
+
+IMPORTANT (RESEARCH Pitfall 2 / A3): the capture MUST be a real **HTML attractions-page
+navigation** (page 2 of the all-Brazil listing):
+
+    https://www.tripadvisor.com/Attractions-g294280-Activities-a_allAttractions.true-oa30-Brazil.html
+
+NOT only a GraphQL `/data/graphql/ids` XHR — the HTML DataDome surface can differ from the
+GraphQL one. Capture with the full datadome+session cookie jar (same session used for
+`POST /api/v1/tripadvisor/session`); a plain GET without that jar can 403.
+
+Before committing the fixture, SCRUB every secret: `datadome=` values, `Set-Cookie`
+artifacts, `__Secure-*`/`sessionid=` tokens, and any operator IP/email. The fixture must
+contain only the public listing markup + embedded card JSON. A grep gate in 15-01's
+`<verify>` blocks commit of any secret-bearing fixture.
