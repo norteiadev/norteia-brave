@@ -555,7 +555,15 @@ class TripAdvisorClient:
         session = self._get_session()
         cookies = session.get("cookies", {})
         user_agent = session.get("user_agent", "")
-        headers: dict[str, str] = {}
+        # Browser-like Accept headers are REQUIRED for the HTML navigation surface:
+        # DataDome 403s a User-Agent-only GET of the listing page (verified live
+        # 2026-06-26). The XHR/GraphQL surface tolerates a bare UA; the SSR page does not.
+        headers: dict[str, str] = {
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            ),
+            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        }
         if user_agent:
             headers["User-Agent"] = user_agent
         # CR-02 / T-11-01-01: proxy_url routed but NEVER logged.
