@@ -244,6 +244,7 @@ class TripAdvisorConfig(BaseSettings):
       BRAVE_TA_QUERY_ID_OVERRIDE     — JSON dict of queryId overrides (e.g. {"destinations": "abc"})
       BRAVE_TA_IBGE_MATCH_THRESHOLD  — rapidfuzz token_sort_ratio cutoff (default 88)
       BRAVE_TA_IBGE_MAX_DISTANCE_KM  — haversine fallback radius in km (default 15.0)
+      BRAVE_TA_PAGE_THROTTLE_SECONDS — sleep between sequential -oa{N}- page GETs (default 2.0)
     """
 
     proxy_url: str = Field(
@@ -280,6 +281,14 @@ class TripAdvisorConfig(BaseSettings):
         description=(
             "Haversine distance threshold in km for the IBGE coordinate fallback "
             "(BRAVE_TA_IBGE_MAX_DISTANCE_KM). Used when name fuzzy-match falls below threshold."
+        ),
+    )
+    page_throttle_seconds: float = Field(
+        default=2.0,
+        description=(
+            "Seconds to sleep between sequential -oa{N}- attractions page GETs "
+            "(BRAVE_TA_PAGE_THROTTLE_SECONDS). DataDome endurance + politeness on "
+            "the 334-page full-Brazil sweep. 0 disables throttling (tests)."
         ),
     )
 

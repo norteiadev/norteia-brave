@@ -510,6 +510,101 @@ class TripAdvisorClient:
         # removed: there is no second page to gate, so card count never terminates a loop).
         return self._parse_attractions_page(sections)
 
+    async def fetch_attractions_paginated(
+        self, geo_id: int, start_page: int = 1, max_pages: int = _TA_MAX_PAGE
+    ):
+        """Stream attractions page-by-page over the HTML SSR transport (Phase 15).
+
+        Separate transport from the single-page GraphQL ``fetch_attractions`` (which
+        cannot paginate): each page is the server-rendered ``-oa{offset}-`` HTML
+        variant. The embedded FlexCard JSON island is recovered by
+        ``_extract_sections_from_html`` and fed to the UNCHANGED
+        ``_parse_attractions_page`` (LGPD aggregate-only). Reuses the exact
+        cookie/proxy/UA wiring and the 403/429 ``SessionExpiredError`` fail-fast
+        from ``fetch_attractions``.
+
+        The loop is CLAMPED to the 334-page / oa9990 hard cap (TA's 10000-result
+        display ceiling) regardless of ``start_page + max_pages`` — a resumed full
+        run never issues over-cap GETs (LOW-3 / T-15-04-04). Sleeps
+        ``page_throttle_seconds`` between pages (never after the last).
+
+        Args:
+            geo_id: TripAdvisor integer geoId (294280 = all Brazil). MUST be an int
+                — the URL builder is int-only (SSRF guard, T-15-04-02).
+            start_page: 1-based page to start from (resume-from-offset support;
+                page 1 = offset 0, page 2 = offset 30, ...).
+            max_pages: Number of pages to attempt from start_page (clamped to cap).
+
+        Yields:
+            ``(offset, cards)`` tuples — one per page; ``offset = (page-1)*30``,
+            ``cards`` is the normalized attraction-dict list.
+
+        Raises:
+            SessionMissingError: When no session is in Redis (operator gate).
+            SessionExpiredError: On 403 or 429 HTTP status (no retry, stops).
+            TypeError: When ``geo_id`` is not an int (raised before any GET).
+        """
+        # SSRF guard (T-15-04-02): the URL is built from a fixed template + int
+        # geo_id + computed int offset. Reject a non-int geo_id BEFORE any GET so a
+        # tampered value can never inject host/path. bool is an int subclass — reject it.
+        if not isinstance(geo_id, int) or isinstance(geo_id, bool):
+            raise TypeError(
+                f"geo_id must be an int (SSRF guard); got {type(geo_id).__name__}"
+            )
+
+        session = self._get_session()
+        cookies = session.get("cookies", {})
+        user_agent = session.get("user_agent", "")
+        headers: dict[str, str] = {}
+        if user_agent:
+            headers["User-Agent"] = user_agent
+        # CR-02 / T-11-01-01: proxy_url routed but NEVER logged.
+        proxy = self._config.proxy_url or None
+        throttle = self._config.page_throttle_seconds
+
+        # Clamp to the 334-page / oa9990 cap regardless of start_page + max_pages.
+        start = max(1, start_page)
+        last_page = min(start + max_pages, _TA_MAX_PAGE + 1)
+
+        for page in range(start, last_page):
+            offset = (page - 1) * 30
+            if offset > _TA_MAX_OFFSET:
+                break  # defensive — clamp already guarantees this
+            url = _TA_HTML_URL.format(geo_id=geo_id, offset=offset)
+
+            async with httpx.AsyncClient(
+                cookies=cookies, follow_redirects=True, proxy=proxy
+            ) as hc:
+                resp = await hc.get(url, headers=headers)
+
+            if resp.status_code in (403, 429):
+                # T-15-04-01: log offset/status only — never cookies/UA/session/proxy.
+                logger.warning(
+                    "ta_paginated_session_expired",
+                    offset=offset,
+                    page=page,
+                    status=resp.status_code,
+                )
+                raise SessionExpiredError(
+                    f"TripAdvisor HTML returned {resp.status_code} — "
+                    "DataDome session expired or blocked. Re-inject required."
+                )
+
+            resp.raise_for_status()
+            sections = self._extract_sections_from_html(resp.text)
+            cards = self._parse_attractions_page(sections)
+            logger.info(
+                "ta_paginated_page",
+                offset=offset,
+                page=page,
+                card_count=len(cards),
+            )
+            yield offset, cards
+
+            # Throttle between pages only — not after the final page.
+            if throttle > 0 and page < last_page - 1:
+                await asyncio.sleep(throttle)
+
     async def resolve_geo_id(self, uf: str) -> int:
         """Resolve a Brazilian UF code to its TripAdvisor integer geoId.
 
