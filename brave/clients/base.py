@@ -347,3 +347,30 @@ class GeocoderClientProtocol(Protocol):
         Caches by location_id in Redis (one Nominatim call per attraction per 30d).
         """
         ...
+
+    async def geocode_national(
+        self, location_id: str, name: str
+    ) -> dict[str, Any] | None:
+        """Forward-geocode `name + Brazil` (no UF) → geo dict or None (Phase 15).
+
+        The all-Brazil bulk attractions lane (geoId 294280) has no per-UF context —
+        UF is derived downstream from the geocoded município/IBGE code, not supplied
+        as input. This national variant queries ``"{name}, Brazil"`` instead of
+        ``"{name}, {uf}, Brazil"`` and otherwise honours the same Redis cache and
+        LGPD-safe return contract as ``geocode``.
+
+        LGPD (decision #8, 14-CONTEXT.md): returns ONLY the same 4 keys —
+        ``{"lat": float, "lon": float, "osm_id": int | None, "municipio_name": str | None}``.
+        Never ``display_name``, street, or any address PII.
+
+        Args:
+            location_id: TripAdvisor location id (Redis cache key).
+            name: Attraction name (national query is ``"{name}, Brazil"``).
+
+        Returns:
+            On hit: ``{"lat": float, "lon": float, "osm_id": int | None,
+            "municipio_name": str | None}`` (município from the
+            municipality|city|town|village|county precedence chain).
+            ``None`` when Nominatim returns no results.
+        """
+        ...

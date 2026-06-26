@@ -31,16 +31,21 @@ class FakeGeocoderClient:
     def __init__(
         self,
         fixture_results: dict[str, dict[str, Any] | None] | None = None,
+        fixture_national_results: dict[str, dict[str, Any] | None] | None = None,
     ) -> None:
         """Initialize with optional fixture data.
 
         Args:
             fixture_results: Dict mapping location_id → geo dict or None.
                              Returned by geocode().
+            fixture_national_results: Dict mapping location_id → geo dict or None.
+                             Returned by geocode_national() (the no-UF bulk variant).
         """
         self._fixture_results = fixture_results or {}
-        # Call recording list for test assertions (analog: fake_tripadvisor.py line 53-55)
+        self._fixture_national_results = fixture_national_results or {}
+        # Call recording lists for test assertions (analog: fake_tripadvisor.py line 53-55)
         self.geocode_calls: list[dict[str, Any]] = []
+        self.geocode_national_calls: list[dict[str, Any]] = []
 
     async def geocode(
         self, location_id: str, name: str, uf: str
@@ -57,6 +62,26 @@ class FakeGeocoderClient:
         """
         self.geocode_calls.append({"location_id": location_id, "name": name, "uf": uf})
         return self._fixture_results.get(location_id)
+
+    async def geocode_national(
+        self, location_id: str, name: str
+    ) -> dict[str, Any] | None:
+        """Return national fixture result for the given location_id (no UF).
+
+        Mirrors geocode's call-recording posture for the all-Brazil bulk lane,
+        which has no per-UF context (UF is derived downstream from the geocoded
+        município/IBGE code).
+
+        Args:
+            location_id: TripAdvisor attraction location id.
+            name:        Attraction name (recorded, not used for lookup).
+
+        Returns:
+            Fixture geo dict if location_id present in fixture_national_results,
+            None otherwise.
+        """
+        self.geocode_national_calls.append({"location_id": location_id, "name": name})
+        return self._fixture_national_results.get(location_id)
 
 
 # Structural type check (analog: fake_tripadvisor.py lines 97-100)

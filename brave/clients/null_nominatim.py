@@ -37,6 +37,20 @@ class NullGeocoderClient:
         """
         return None
 
+    async def geocode_national(
+        self, location_id: str, name: str
+    ) -> dict[str, Any] | None:
+        """Return None — offline stub performs no national geocoding (T-14-05).
+
+        Args:
+            location_id: TripAdvisor location id (ignored).
+            name:        Attraction name (ignored).
+
+        Returns:
+            None (no match sentinel — no httpx call, no network).
+        """
+        return None
+
 
 # Structural type check (analog: null_tripadvisor.py lines 65-70)
 def _check_protocol_compliance() -> None:
