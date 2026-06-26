@@ -365,6 +365,66 @@ def test_status_unauthenticated_gets_401(client):
 
 
 # ---------------------------------------------------------------------------
+# Plan 15-03: GET /api/v1/tripadvisor/sweep/progress
+# ---------------------------------------------------------------------------
+
+
+def test_sweep_progress_idle_when_no_run(authed_client, fake_redis):
+    """GET /sweep/progress with no run → state=idle + zeroed counters."""
+    resp = authed_client.get("/api/v1/tripadvisor/sweep/progress")
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    body = resp.json()
+    assert body["state"] == "idle"
+    assert body["pages_done"] == 0
+    assert body["pages_total"] == 0
+    assert body["attractions_ingested"] == 0
+    assert body["current_offset"] == 0
+    assert body["error_count"] == 0
+    assert body["started_at"] is None
+
+
+def test_sweep_progress_running_snapshot(authed_client, fake_redis):
+    """GET /sweep/progress after a seeded running sweep → live counters."""
+    from brave.lanes.tripadvisor import sweep_progress
+
+    sweep_progress.start(fake_redis, pages_total=334)
+    sweep_progress.record_page(fake_redis, offset=30, ingested_delta=30)
+
+    resp = authed_client.get("/api/v1/tripadvisor/sweep/progress")
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    body = resp.json()
+    assert body["state"] == "running"
+    assert body["pages_done"] == 1
+    assert body["pages_total"] == 334
+    assert body["attractions_ingested"] == 30
+    assert body["current_offset"] == 30
+    assert body["error_count"] == 0
+    assert body["started_at"] is not None
+
+
+def test_sweep_progress_no_secret_fields(authed_client, fake_redis):
+    """The progress response must carry no cookie/session/datadome field (T-15-03-02)."""
+    from brave.lanes.tripadvisor import sweep_progress
+
+    sweep_progress.start(fake_redis, pages_total=334)
+    sweep_progress.record_page(fake_redis, offset=30, ingested_delta=30)
+
+    resp = authed_client.get("/api/v1/tripadvisor/sweep/progress")
+    assert resp.status_code == 200
+    body = resp.json()
+    forbidden = {"cookies", "cookie", "session", "session_id", "datadome", "proxy", "user_agent", "query_ids"}
+    assert set(body).isdisjoint(forbidden), (
+        f"secret-bearing fields leaked into progress response: {set(body) & forbidden}"
+    )
+
+
+def test_sweep_progress_unauthenticated_gets_401(client):
+    """GET /sweep/progress without auth → 401 (fail-closed, mirrors session_status)."""
+    resp = client.get("/api/v1/tripadvisor/sweep/progress")
+    assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
 # WR-02: canary distinguishes a provably-bad session from an infra fault.
 # These exercise the REAL _run_canary (not the monkeypatched stub) by forcing
 # the internally-constructed TripAdvisorClient.fetch_destinations to raise.
