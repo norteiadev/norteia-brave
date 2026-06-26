@@ -112,13 +112,29 @@ class TestExtractSectionsFromHtml:
         assert TripAdvisorClient._extract_sections_from_html(garbage) == []
 
     def test_no_dom_scraper_dependency_in_client(self):
-        """client.py must use stdlib re + json only — no DOM/scraper dependency."""
+        """client.py must use stdlib re + json only — no DOM/scraper import.
+
+        Checks actual import nodes (not comments/docstrings, which legitimately
+        mention "does NOT import Playwright"). Mirrors the import-AST assertion
+        convention in test_client.py.
+        """
+        import ast
+
         import brave.lanes.tripadvisor.client as client_mod
 
         source = Path(client_mod.__file__).read_text(encoding="utf-8")
-        assert not re.search(
-            r"lxml|beautifulsoup|selectolax|playwright", source, re.IGNORECASE
-        ), "no HTML/DOM parser dependency may be added to client.py"
+        tree = ast.parse(source)
+        forbidden = ("lxml", "beautifulsoup", "bs4", "selectolax", "playwright")
+        imported: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.extend(alias.name.lower() for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module.lower())
+        for name in imported:
+            assert not any(bad in name for bad in forbidden), (
+                f"no DOM/scraper dependency may be imported in client.py: {name}"
+            )
 
 
 # ---------------------------------------------------------------------------

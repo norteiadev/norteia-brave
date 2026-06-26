@@ -30,9 +30,12 @@ Offline usage: inject NullTripAdvisorClient or FakeTripAdvisorClient instead.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 import uuid
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote
 
 import httpx
 import structlog
@@ -48,6 +51,23 @@ BRAVE_TA_SESSION_KEY: str = "brave:ta:session"
 
 # GraphQL endpoint — all persisted-query POSTs target this URL
 _TA_GRAPHQL_URL: str = "https://www.tripadvisor.com/data/graphql/ids"
+
+# HTML SSR listing page (Phase 15 pagination transport). The GraphQL listing query
+# cannot paginate, so each page is fetched as the server-rendered -oa{offset}- HTML
+# variant. URL = fixed template + int geo_id + computed int offset (SSRF-safe,
+# T-15-04-02). offset = (page-1)*30.
+_TA_HTML_URL: str = (
+    "https://www.tripadvisor.com/Attractions-g{geo_id}-Activities-"
+    "a_allAttractions.true-oa{offset}-Brazil.html"
+)
+
+# TripAdvisor caps its paginated listing at 10000 results (offset 9990 == page 334).
+# The page loop is clamped to this regardless of start_page + max_pages (LOW-3 fix).
+_TA_MAX_PAGE: int = 334
+_TA_MAX_OFFSET: int = 9990
+
+# Marker identifying a FlexCard attraction section inside the embedded JSON island.
+_TA_FLEXCARD_TYPENAME: str = "WebPresentation_SingleFlexCardSection"
 
 # Safety guard: max pagination pages before stopping (prevents infinite loops, Risk A5)
 _MAX_PAGES: int = 50
@@ -177,6 +197,110 @@ class TripAdvisorClient:
                 logger.debug("ta_parse_skip_malformed_card", error=type(exc).__name__)
                 continue
         return cards
+
+    @staticmethod
+    def _find_flexcard_sections(node: Any, acc: list[dict], depth: int = 0) -> None:
+        """Recursively collect FlexCard section dicts from a decoded JSON tree.
+
+        The SSR page embeds the listing as a chunked, multiply-escaped flight
+        payload: dict/list values whose string leaves are themselves JSON. This
+        walker descends dicts and lists, and — when a *string* leaf still carries
+        the FlexCard marker — re-parses it as JSON and recurses. Bounded depth
+        guards against pathological nesting. Never raises.
+
+        Args:
+            node: A decoded JSON value (dict, list, str, or scalar).
+            acc: Accumulator list; matching section dicts are appended in place.
+            depth: Current recursion depth (internal; capped at 40).
+        """
+        if depth > 40:
+            return
+        if isinstance(node, dict):
+            if node.get("__typename") == _TA_FLEXCARD_TYPENAME:
+                acc.append(node)
+            for value in node.values():
+                TripAdvisorClient._find_flexcard_sections(value, acc, depth + 1)
+        elif isinstance(node, list):
+            for value in node:
+                TripAdvisorClient._find_flexcard_sections(value, acc, depth + 1)
+        elif isinstance(node, str):
+            # A string leaf that still contains the marker is an inner JSON chunk.
+            if _TA_FLEXCARD_TYPENAME in node:
+                try:
+                    parsed = json.loads(node)
+                except (ValueError, TypeError):
+                    return
+                TripAdvisorClient._find_flexcard_sections(parsed, acc, depth + 1)
+
+    @staticmethod
+    def _extract_sections_from_html(html: str) -> list[dict]:
+        """Recover the embedded FlexCard ``sections[]`` JSON island from an SSR page.
+
+        The all-Brazil ``-oa{N}-`` HTML page renders the listing both as DOM and as
+        a chunked JSON flight payload embedded in a ``<script src="data:text/...">``
+        island (percent-encoded JS, with the card JSON nested several escape levels
+        deep). This recovers that island using ONLY stdlib ``re`` + ``json`` (no
+        lxml/beautifulsoup/selectolax/playwright — RESEARCH Don't-Hand-Roll): it
+        locates the script blob carrying the FlexCard marker, URL-decodes the
+        ``data:`` URI, ``json.loads`` the longest JS string literal that still
+        carries the marker (peeling one escape level), then recursively walks the
+        result (re-parsing inner JSON-string chunks) to collect the section dicts.
+
+        The output is the SAME ``raw_sections`` shape ``_parse_attractions_page``
+        consumes — a list of dicts carrying ``__typename ==
+        'WebPresentation_SingleFlexCardSection'`` and ``singleFlexCardContent``.
+        It is fed to that parser UNCHANGED (LGPD aggregate-only posture preserved).
+
+        Mirrors ``_parse_attractions_page``'s never-raises posture: returns ``[]``
+        on any miss (empty input, no island, decode/parse failure).
+
+        Args:
+            html: Raw HTML body of a captured ``-oa{N}-`` attractions page.
+
+        Returns:
+            List of FlexCard section dicts (possibly empty). Never raises.
+        """
+        if not html or _TA_FLEXCARD_TYPENAME not in html:
+            return []
+
+        # Locate the <script> blob that carries the FlexCard marker. The marker
+        # letters are not percent-encoded, so they appear literally even inside the
+        # data: URI src attribute.
+        marker_idx = html.find(_TA_FLEXCARD_TYPENAME)
+        script_start = html.rfind("<script", 0, marker_idx)
+        script_end = html.find("</script>", marker_idx)
+        if script_start == -1 or script_end == -1:
+            return []
+        blob = html[script_start:script_end]
+
+        # The JSON lives in the data: URI src attribute (or, defensively, the body).
+        src_pos = blob.find('src="')
+        payload = blob[src_pos + 5:] if src_pos != -1 else blob
+
+        try:
+            decoded = unquote(payload)
+        except Exception:  # noqa: BLE001 — never raise from a parser
+            return []
+
+        # Peel one escape level: json.loads the longest JS string literal that still
+        # carries the marker. That yields a JSON string the recursive walker finishes.
+        string_literal = re.compile(r'"((?:[^"\\]|\\.)*)"', re.DOTALL)
+        candidates = [
+            m.group(0)
+            for m in string_literal.finditer(decoded)
+            if _TA_FLEXCARD_TYPENAME in m.group(0)
+        ]
+        if not candidates:
+            return []
+        best = max(candidates, key=len)
+        try:
+            peeled = json.loads(best)
+        except (ValueError, TypeError):
+            return []
+
+        sections: list[dict] = []
+        TripAdvisorClient._find_flexcard_sections(peeled, sections)
+        return sections
 
     # ------------------------------------------------------------------
     # Public protocol methods
