@@ -38,13 +38,19 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
 from brave.core.rio.routing import process_nascente_record
-from brave.lanes.tripadvisor.ibge import IbgeMunicipio, resolve_municipio
+from brave.lanes.tripadvisor import sweep_progress
+from brave.lanes.tripadvisor.ibge import (
+    IbgeMunicipio,
+    resolve_municipio,
+    resolve_municipio_national,
+)
 from brave.lanes.tripadvisor.schemas import TripAdvisorAtrativoPayload, TripAdvisorReviewSignals
 from brave.lanes.tripadvisor.scoring import (
     atualidade_from_recency,
@@ -63,6 +69,11 @@ if TYPE_CHECKING:
 TA_ATRATIVO_ORIGEM_VALUE = 65.0
 # origem=65 (>Places 60, <gov 100 — firewall: TA never crosses 85 on origem alone).
 # Source: CONTEXT.md TA-04.
+
+logger = structlog.get_logger(__name__)
+# Logging discipline (T-15-06-02 / T-12-04-01): the bulk methods log ONLY
+# offset / counts / locationId / error-class — never name, address, cookies,
+# user_agent, session_id, or proxy values.
 
 
 # ---------------------------------------------------------------------------
@@ -297,4 +308,238 @@ class TripAdvisorAtrativosIngest:
                 session=self._session,
                 nascente=nascente,
                 config=self._config,
+            )
+
+    # -----------------------------------------------------------------------
+    # Bulk national ingest path (Phase 15, TA-12) — DISTINCT from _ingest_one.
+    # -----------------------------------------------------------------------
+
+    async def _ingest_one_bulk(self, entity: dict[str, Any], *, run_rio: bool) -> bool:
+        """Ingest a single attraction WITHOUT a parent destino (bulk national path).
+
+        Resolves the operator-locked A1 blocker: the all-Brazil bulk lane
+        (geoId 294280) has no per-UF context and no parent destino. ``uf`` +
+        município are DERIVED from the attraction's national geocode
+        (``geocode_national``) + nearest-IBGE-seat resolution
+        (``resolve_municipio_national``). The parent-destino gate of
+        ``_ingest_one`` (the ``parent_destino_absent`` quarantine) is intentionally
+        DROPPED here — bulk records land in Nascente parent-less and still pass
+        §7.6 + DLQ (the canonical gate; CONTEXT A1). ``_ingest_one`` is left
+        byte-for-byte unchanged.
+
+        A card that cannot be geocoded OR has no IBGE seat within radius is
+        quarantined as ``ibge_unmatched`` (no Nascente row) — never silently
+        dropped. LGPD: only ``review_count`` / ``rating`` (+ ``most_recent_review_at``
+        = None) reach review_signals (``TripAdvisorReviewSignals`` ``extra="forbid"``).
+
+        Args:
+            entity:  Normalized AttractionsFusion card dict (camelCase ``locationId``).
+            run_rio: When True, trigger process_nascente_record after store_raw.
+
+        Returns:
+            True when a Nascente row was written; False when the card was
+            quarantined as ``ibge_unmatched`` (so the caller can count it as a
+            live error — the panel error counter must reflect unmatched cards).
+        """
+        location_id = str(entity.get("locationId", ""))
+        name = str(entity.get("name", ""))
+        category = str(entity.get("category", ""))
+
+        # Build review signals (LGPD boundary — aggregate only)
+        review_count = int(entity.get("review_count", 0))
+        rating = float(entity.get("rating", 0.0))
+        most_recent_dt: datetime | None = None
+        # most_recent_review_at: not in AttractionsFusion listing card — None at Nascente.
+
+        review_signals = TripAdvisorReviewSignals(
+            review_count=review_count,
+            rating=rating,
+            most_recent_review_at=most_recent_dt,
+        )
+
+        # Compute §7.6 criterion values
+        corroboracao_value = corroboracao_from_reviews(review_count, rating)
+        atualidade_value = atualidade_from_recency(most_recent_dt)
+
+        # Derive coordinates + município nationally (no UF input). The bulk lane
+        # has no per-UF context — the only signal is the geocoded lat/lng, which
+        # resolve_municipio_national maps to the nearest IBGE seat across ALL states.
+        lat: float | None = None
+        lng: float | None = None
+        ibge_match: IbgeMunicipio | None = None
+        if self._geocoder is not None:
+            geo = await self._geocoder.geocode_national(location_id, name)
+            if geo is not None:
+                lat = geo["lat"]
+                lng = geo["lon"]
+                ibge_match = resolve_municipio_national(
+                    lat,
+                    lng,
+                    self._ibge_records,
+                    max_distance_km=50.0,
+                )
+
+        if ibge_match is None:
+            # No geocode OR no IBGE seat within radius → quarantine (never dropped).
+            # NO parent_destino_absent path exists in the bulk lane (gate dropped).
+            quarantine_poison(
+                session=self._session,
+                nascente_id=None,
+                task_name="brave.ta.atrativos.ibge_unmatched",
+                error=f"ibge_unmatched: could not geo-resolve attraction locationId={location_id}",
+                # LGPD: locationId only — never name/address.
+                payload={"locationId": location_id},
+            )
+            return False
+
+        # Derive UF from the matched IBGE record — NOT from any input arg.
+        uf = ibge_match.uf
+
+        # WR-01: map the camelCase card onto the snake_case keys completude expects
+        # (uf, location_id, lat, lng) — lat/lng reflect the geocoded coordinates.
+        completude_entity = {
+            **entity,
+            "uf": uf,
+            "location_id": location_id,
+            "lat": lat,
+            "lng": lng,
+        }
+        completude_value = completude_from_fields(completude_entity, cap=100)
+
+        # Validate through Pydantic payload model (LGPD enforcement at parse time).
+        # Bulk path: parent linkage is deferred — parents are None (schema default).
+        payload_model = TripAdvisorAtrativoPayload(
+            name=name,
+            uf=uf,
+            location_id=location_id,
+            lat=lat,
+            lng=lng,
+            review_signals=review_signals,
+            origem_value=TA_ATRATIVO_ORIGEM_VALUE,
+            completude_value=completude_value,
+            corroboracao_value=corroboracao_value,
+            atualidade_value=atualidade_value,
+            validacao_humana_value=0.0,
+            parent_rio_id=None,
+            parent_source_ref=None,
+        )
+
+        source_ref = f"tripadvisor:attraction:{location_id}"
+
+        payload: dict[str, Any] = {
+            "name": payload_model.name,
+            "uf": payload_model.uf,
+            "locationId": location_id,
+            "lat": payload_model.lat,
+            "lng": payload_model.lng,
+            "municipio_id": ibge_match.ibge_code,
+            # §7.6 criterion *_value fields
+            "origem_value": payload_model.origem_value,
+            "completude_value": payload_model.completude_value,
+            "corroboracao_value": payload_model.corroboracao_value,
+            "atualidade_value": payload_model.atualidade_value,
+            "validacao_humana_value": payload_model.validacao_humana_value,
+            # Parent destino linkage deferred in the bulk lane (None).
+            "parent_rio_id": payload_model.parent_rio_id,
+            "parent_source_ref": payload_model.parent_source_ref,
+            # Review signals (LGPD-aggregate only)
+            "review_count": review_count,
+            "rating": rating,
+            # Category from AttractionsFusion listing card (primaryInfo.text)
+            "category": category,
+            # Canonical sub-dict for norteia-api contract
+            "canonical": {
+                "name": payload_model.name,
+                "uf": uf,
+                "municipio": ibge_match.nome,
+                "ibge_code": ibge_match.ibge_code,
+                "source": "tripadvisor",
+            },
+        }
+
+        nascente = store_raw(
+            session=self._session,
+            source="tripadvisor",
+            source_ref=source_ref,
+            entity_type="attraction",
+            uf=uf,
+            payload=payload,
+        )
+
+        if run_rio:
+            process_nascente_record(
+                session=self._session,
+                nascente=nascente,
+                config=self._config,
+            )
+        return True
+
+    async def produce_paginated(
+        self,
+        geo_id: int,
+        start_page: int,
+        max_pages: int,
+        redis: Any,
+        *,
+        run_rio: bool = True,
+    ) -> None:
+        """Drive the paginated HTML-SSR client and bulk-ingest each page (Phase 15).
+
+        Streams ``(offset, cards)`` tuples from ``fetch_attractions_paginated``,
+        ingests every card via ``_ingest_one_bulk`` (parent-less national path),
+        COMMITS once PER PAGE (Pitfall 3 — a mid-run 403 leaves durable records +
+        an accurate resume point), then records progress + the live error counter.
+
+        Ordering: the per-page ``commit()`` happens BEFORE ``record_page`` so
+        ``last_completed_offset`` only ever advances past durable records.
+
+        Error counter: per-card ingest failures — both raised exceptions AND
+        ``ibge_unmatched`` quarantines (the common case: cards carry no lat/lng) —
+        increment the live panel ``error_count`` via ``sweep_progress.record_error``.
+
+        ``SessionExpiredError`` raised by the client iterator propagates OUT (the
+        task layer, 15-07, handles fail-fast + needs_bootstrap) — it is NOT
+        swallowed here.
+
+        Args:
+            geo_id:     TripAdvisor integer geoId (294280 = all Brazil).
+            start_page: 1-based resume page (page 1 = offset 0, page 2 = offset 30).
+            max_pages:  Cap on pages to fetch this run.
+            redis:      Sync Redis client for the live progress hash (fakeredis-safe).
+            run_rio:    When True, trigger the Rio pipeline per ingested card.
+        """
+        async for offset, cards in self._client.fetch_attractions_paginated(
+            geo_id, start_page, max_pages
+        ):
+            ingested = 0
+            errors = 0
+            for card in cards:
+                try:
+                    wrote_row = await self._ingest_one_bulk(card, run_rio=run_rio)
+                except Exception as exc:  # noqa: BLE001
+                    wrote_row = False
+                    location_id = str(card.get("locationId", "unknown"))
+                    quarantine_poison(
+                        session=self._session,
+                        nascente_id=None,
+                        task_name="brave.ta.atrativos.produce_paginated",
+                        error=str(exc),
+                        # LGPD: offset + locationId + error-class only — never name/address.
+                        payload={"offset": offset, "locationId": location_id, "error": str(exc)},
+                    )
+                if wrote_row:
+                    ingested += 1
+                else:
+                    # ibge_unmatched (returned False) OR a raised failure → live error.
+                    errors += 1
+                    sweep_progress.record_error(redis)
+            # Commit BEFORE record_page so last_completed_offset never points at
+            # rolled-back data (Pitfall 3 resume integrity).
+            self._session.commit()
+            sweep_progress.record_page(redis, offset, ingested)
+            logger.info(
+                "ta_bulk_page_ingested",
+                offset=offset,
+                ingested=ingested,
+                errors=errors,
             )
