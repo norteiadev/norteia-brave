@@ -921,7 +921,16 @@ def sweep_uf(self, uf: str, depth: str | None = None) -> None:
     reject_on_worker_lost=True,
     time_limit=600,
 )
-def sweep_tripadvisor(self, uf: str, depth: str | None = None) -> None:
+def sweep_tripadvisor(
+    self,
+    uf: str,
+    depth: str | None = None,
+    *,
+    bulk_national: bool = False,
+    start_page: int = 1,
+    max_pages: int | None = None,
+    geo_id: int = 294280,
+) -> None:
     """TripAdvisor sweep for one UF — destinos then atrativos (plan 11-03, TA-05/TA-06).
 
     Mirrors sweep_uf but uses the TripAdvisor ingest lane instead of Mtur/Desmembramento.
@@ -935,12 +944,30 @@ def sweep_tripadvisor(self, uf: str, depth: str | None = None) -> None:
 
     Idempotency: store_raw dedups by (source, source_ref, content_hash).
 
+    Bulk national branch (Phase 15, TA-12): when bulk_national=True the task takes a
+    DISTINCT path that paginates the all-Brazil AttractionsFusion listing (geoId 294280)
+    via TripAdvisorAtrativosIngest.produce_paginated — NO destinos producer, NO
+    destino_rio_map (parent-less bulk ingest). It reads the resume offset from
+    sweep_progress so a re-run continues from the page after the last completed offset
+    (NOT page 1), seeds the live progress hash, commits per-page (inside produce_paginated),
+    marks the run done on completion, and on a mid-run 403/429 SessionExpiredError reuses
+    the SHARED fail-fast block plus a GUARDED sweep_progress.stop_needs_bootstrap. The
+    slice (small max_pages) and the full 334-page run share this ONE page-range-parameterized
+    code path. The per-UF (bulk_national=False) path is left byte-for-byte unchanged.
+
     Args:
-        uf:    Two-letter Brazilian state code (e.g. "BA", "RJ").
-        depth: Pipeline depth (nascente|nascente_rio|nascente_rio_mar|None).
+        uf:            Two-letter Brazilian state code (e.g. "BA", "RJ").
+        depth:         Pipeline depth (nascente|nascente_rio|nascente_rio_mar|None).
+        bulk_national: When True, run the national bulk pagination branch (geoId 294280)
+                       instead of the per-UF destinos+atrativos path.
+        start_page:    1-based page to start a FRESH bulk run at (offset = (start_page-1)*30).
+                       Ignored when a prior run recorded progress (resume takes precedence).
+        max_pages:     Cap on pages to fetch this bulk run (slice-first). None → full 334.
+        geo_id:        TripAdvisor integer geoId for the bulk run (294280 = all Brazil).
     """
     from brave.core import engine as collection_engine
     from brave.core.quarantine import quarantine_poison as _quarantine
+    from brave.lanes.tripadvisor import sweep_progress
     from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
     from brave.lanes.tripadvisor.client import SessionExpiredError, SessionMissingError
     from brave.lanes.tripadvisor.destinos import TripAdvisorDestinosIngest
@@ -949,6 +976,12 @@ def sweep_tripadvisor(self, uf: str, depth: str | None = None) -> None:
     run_rio = depth != collection_engine.NASCENTE
 
     session, engine = _get_session()
+    # rc is the sync Redis client for the live progress hash. It MUST be initialized
+    # before the try so the SHARED fail-fast except can reference it safely: the per-UF
+    # path (which can ALSO raise SessionExpiredError) reaches that except with rc still
+    # None, and the guarded `if rc is not None` keeps it from raising UnboundLocalError
+    # (T-15-07-04). Only the bulk_national branch assigns rc.
+    rc = None
     try:
         config = ScoreConfig()
         app_config = AppConfig()
@@ -984,6 +1017,53 @@ def sweep_tripadvisor(self, uf: str, depth: str | None = None) -> None:
         )
         ibge_csv_path = _os.path.join(_project_root, "data", "ibge", "ibge_municipios.csv")
         ibge_records = load_ibge_csv(ibge_csv_path)
+
+        if bulk_national:
+            # ---- Bulk national branch (Phase 15, TA-12) -----------------------
+            # DISTINCT path: paginate geoId 294280 via produce_paginated. No destinos
+            # producer / destino_rio_map (parent-less bulk ingest). Per-page commits
+            # happen inside produce_paginated; this branch only seeds/finishes progress
+            # and reuses the SHARED fail-fast except below on a mid-run 403/429.
+            import redis as _redis_lib  # noqa: PLC0415
+
+            rc = _redis_lib.from_url(
+                os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+            )
+
+            # Resume: when a prior run recorded progress, continue from the page AFTER
+            # the last completed offset (offset//30 + 2). Otherwise start a fresh run at
+            # the operator-supplied start_page (default page 1 / offset 0).
+            _progress = sweep_progress.get_progress(rc)
+            if _progress["pages_done"] > 0:
+                _resume_offset = sweep_progress.get_resume_offset(rc)
+                _effective_start_page = (_resume_offset // 30) + 2
+            else:
+                _effective_start_page = start_page
+                _resume_offset = (start_page - 1) * 30
+
+            sweep_progress.start(rc, pages_total=334, resume_from_offset=_resume_offset)
+
+            bulk_ingest = TripAdvisorAtrativosIngest(
+                ta_client=ta_client,
+                session=session,
+                config=config,
+                ibge_records=ibge_records,
+                destino_rio_map=None,
+                geocoder=geocoder,
+            )
+            asyncio.run(
+                bulk_ingest.produce_paginated(
+                    geo_id,
+                    _effective_start_page,
+                    max_pages or 334,
+                    rc,
+                    run_rio=run_rio,
+                )
+            )
+            sweep_progress.mark_done(rc)
+            # Terminal commit (produce_paginated already commits per page).
+            session.commit()
+            return
 
         # Step 1: Run destinos producer — builds the destino_rio_map for atrativos
         destinos_ingest = TripAdvisorDestinosIngest(
@@ -1036,6 +1116,12 @@ def sweep_tripadvisor(self, uf: str, depth: str | None = None) -> None:
         # Set the needs_bootstrap marker so EngineControl shows the operator signal.
         session.rollback()
         _mark_needs_bootstrap()
+        # Bulk branch only: flip the live progress panel to its terminal
+        # stopped_needs_bootstrap state. GUARDED — the per-UF path reaches this
+        # same except with rc still None, so an unguarded call would raise
+        # UnboundLocalError (T-15-07-04). No retry, no quarantine (unchanged).
+        if rc is not None:
+            sweep_progress.stop_needs_bootstrap(rc)
         logger.warning(
             "sweep_tripadvisor_session_fail_fast",
             uf=uf,
