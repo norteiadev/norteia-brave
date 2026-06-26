@@ -12,6 +12,7 @@ import {
 
 import { JourneyStepper } from "@/components/cms/JourneyStepper";
 import { EngineControl } from "@/components/engine/EngineControl";
+import { TASweepProgress } from "@/components/engine/TASweepProgress";
 import { FailuresPanel } from "@/components/processo/FailuresPanel";
 import { WorkerBoard } from "@/components/processo/WorkerBoard";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -94,6 +95,9 @@ export default function ProcessoPage() {
 
       {/* Engine control — operator start/stop of the sweep */}
       <EngineControl />
+
+      {/* Live TripAdvisor national-sweep progress (TA-12) */}
+      <TASweepProgress />
 
       {/* WorkerBoard */}
       <section>
