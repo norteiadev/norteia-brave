@@ -30,9 +30,12 @@ Offline usage: inject NullTripAdvisorClient or FakeTripAdvisorClient instead.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 import uuid
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote
 
 import httpx
 import structlog
@@ -48,6 +51,23 @@ BRAVE_TA_SESSION_KEY: str = "brave:ta:session"
 
 # GraphQL endpoint — all persisted-query POSTs target this URL
 _TA_GRAPHQL_URL: str = "https://www.tripadvisor.com/data/graphql/ids"
+
+# HTML SSR listing page (Phase 15 pagination transport). The GraphQL listing query
+# cannot paginate, so each page is fetched as the server-rendered -oa{offset}- HTML
+# variant. URL = fixed template + int geo_id + computed int offset (SSRF-safe,
+# T-15-04-02). offset = (page-1)*30.
+_TA_HTML_URL: str = (
+    "https://www.tripadvisor.com/Attractions-g{geo_id}-Activities-"
+    "a_allAttractions.true-oa{offset}-Brazil.html"
+)
+
+# TripAdvisor caps its paginated listing at 10000 results (offset 9990 == page 334).
+# The page loop is clamped to this regardless of start_page + max_pages (LOW-3 fix).
+_TA_MAX_PAGE: int = 334
+_TA_MAX_OFFSET: int = 9990
+
+# Marker identifying a FlexCard attraction section inside the embedded JSON island.
+_TA_FLEXCARD_TYPENAME: str = "WebPresentation_SingleFlexCardSection"
 
 # Safety guard: max pagination pages before stopping (prevents infinite loops, Risk A5)
 _MAX_PAGES: int = 50
@@ -177,6 +197,110 @@ class TripAdvisorClient:
                 logger.debug("ta_parse_skip_malformed_card", error=type(exc).__name__)
                 continue
         return cards
+
+    @staticmethod
+    def _find_flexcard_sections(node: Any, acc: list[dict], depth: int = 0) -> None:
+        """Recursively collect FlexCard section dicts from a decoded JSON tree.
+
+        The SSR page embeds the listing as a chunked, multiply-escaped flight
+        payload: dict/list values whose string leaves are themselves JSON. This
+        walker descends dicts and lists, and — when a *string* leaf still carries
+        the FlexCard marker — re-parses it as JSON and recurses. Bounded depth
+        guards against pathological nesting. Never raises.
+
+        Args:
+            node: A decoded JSON value (dict, list, str, or scalar).
+            acc: Accumulator list; matching section dicts are appended in place.
+            depth: Current recursion depth (internal; capped at 40).
+        """
+        if depth > 40:
+            return
+        if isinstance(node, dict):
+            if node.get("__typename") == _TA_FLEXCARD_TYPENAME:
+                acc.append(node)
+            for value in node.values():
+                TripAdvisorClient._find_flexcard_sections(value, acc, depth + 1)
+        elif isinstance(node, list):
+            for value in node:
+                TripAdvisorClient._find_flexcard_sections(value, acc, depth + 1)
+        elif isinstance(node, str):
+            # A string leaf that still contains the marker is an inner JSON chunk.
+            if _TA_FLEXCARD_TYPENAME in node:
+                try:
+                    parsed = json.loads(node)
+                except (ValueError, TypeError):
+                    return
+                TripAdvisorClient._find_flexcard_sections(parsed, acc, depth + 1)
+
+    @staticmethod
+    def _extract_sections_from_html(html: str) -> list[dict]:
+        """Recover the embedded FlexCard ``sections[]`` JSON island from an SSR page.
+
+        The all-Brazil ``-oa{N}-`` HTML page renders the listing both as DOM and as
+        a chunked JSON flight payload embedded in a ``<script src="data:text/...">``
+        island (percent-encoded JS, with the card JSON nested several escape levels
+        deep). This recovers that island using ONLY stdlib ``re`` + ``json`` (no
+        lxml/beautifulsoup/selectolax/playwright — RESEARCH Don't-Hand-Roll): it
+        locates the script blob carrying the FlexCard marker, URL-decodes the
+        ``data:`` URI, ``json.loads`` the longest JS string literal that still
+        carries the marker (peeling one escape level), then recursively walks the
+        result (re-parsing inner JSON-string chunks) to collect the section dicts.
+
+        The output is the SAME ``raw_sections`` shape ``_parse_attractions_page``
+        consumes — a list of dicts carrying ``__typename ==
+        'WebPresentation_SingleFlexCardSection'`` and ``singleFlexCardContent``.
+        It is fed to that parser UNCHANGED (LGPD aggregate-only posture preserved).
+
+        Mirrors ``_parse_attractions_page``'s never-raises posture: returns ``[]``
+        on any miss (empty input, no island, decode/parse failure).
+
+        Args:
+            html: Raw HTML body of a captured ``-oa{N}-`` attractions page.
+
+        Returns:
+            List of FlexCard section dicts (possibly empty). Never raises.
+        """
+        if not html or _TA_FLEXCARD_TYPENAME not in html:
+            return []
+
+        # Locate the <script> blob that carries the FlexCard marker. The marker
+        # letters are not percent-encoded, so they appear literally even inside the
+        # data: URI src attribute.
+        marker_idx = html.find(_TA_FLEXCARD_TYPENAME)
+        script_start = html.rfind("<script", 0, marker_idx)
+        script_end = html.find("</script>", marker_idx)
+        if script_start == -1 or script_end == -1:
+            return []
+        blob = html[script_start:script_end]
+
+        # The JSON lives in the data: URI src attribute (or, defensively, the body).
+        src_pos = blob.find('src="')
+        payload = blob[src_pos + 5:] if src_pos != -1 else blob
+
+        try:
+            decoded = unquote(payload)
+        except Exception:  # noqa: BLE001 — never raise from a parser
+            return []
+
+        # Peel one escape level: json.loads the longest JS string literal that still
+        # carries the marker. That yields a JSON string the recursive walker finishes.
+        string_literal = re.compile(r'"((?:[^"\\]|\\.)*)"', re.DOTALL)
+        candidates = [
+            m.group(0)
+            for m in string_literal.finditer(decoded)
+            if _TA_FLEXCARD_TYPENAME in m.group(0)
+        ]
+        if not candidates:
+            return []
+        best = max(candidates, key=len)
+        try:
+            peeled = json.loads(best)
+        except (ValueError, TypeError):
+            return []
+
+        sections: list[dict] = []
+        TripAdvisorClient._find_flexcard_sections(peeled, sections)
+        return sections
 
     # ------------------------------------------------------------------
     # Public protocol methods
@@ -385,6 +509,101 @@ class TripAdvisorClient:
         # Single page only — no partial-page break (the meaningless `< 30` guard is
         # removed: there is no second page to gate, so card count never terminates a loop).
         return self._parse_attractions_page(sections)
+
+    async def fetch_attractions_paginated(
+        self, geo_id: int, start_page: int = 1, max_pages: int = _TA_MAX_PAGE
+    ):
+        """Stream attractions page-by-page over the HTML SSR transport (Phase 15).
+
+        Separate transport from the single-page GraphQL ``fetch_attractions`` (which
+        cannot paginate): each page is the server-rendered ``-oa{offset}-`` HTML
+        variant. The embedded FlexCard JSON island is recovered by
+        ``_extract_sections_from_html`` and fed to the UNCHANGED
+        ``_parse_attractions_page`` (LGPD aggregate-only). Reuses the exact
+        cookie/proxy/UA wiring and the 403/429 ``SessionExpiredError`` fail-fast
+        from ``fetch_attractions``.
+
+        The loop is CLAMPED to the 334-page / oa9990 hard cap (TA's 10000-result
+        display ceiling) regardless of ``start_page + max_pages`` — a resumed full
+        run never issues over-cap GETs (LOW-3 / T-15-04-04). Sleeps
+        ``page_throttle_seconds`` between pages (never after the last).
+
+        Args:
+            geo_id: TripAdvisor integer geoId (294280 = all Brazil). MUST be an int
+                — the URL builder is int-only (SSRF guard, T-15-04-02).
+            start_page: 1-based page to start from (resume-from-offset support;
+                page 1 = offset 0, page 2 = offset 30, ...).
+            max_pages: Number of pages to attempt from start_page (clamped to cap).
+
+        Yields:
+            ``(offset, cards)`` tuples — one per page; ``offset = (page-1)*30``,
+            ``cards`` is the normalized attraction-dict list.
+
+        Raises:
+            SessionMissingError: When no session is in Redis (operator gate).
+            SessionExpiredError: On 403 or 429 HTTP status (no retry, stops).
+            TypeError: When ``geo_id`` is not an int (raised before any GET).
+        """
+        # SSRF guard (T-15-04-02): the URL is built from a fixed template + int
+        # geo_id + computed int offset. Reject a non-int geo_id BEFORE any GET so a
+        # tampered value can never inject host/path. bool is an int subclass — reject it.
+        if not isinstance(geo_id, int) or isinstance(geo_id, bool):
+            raise TypeError(
+                f"geo_id must be an int (SSRF guard); got {type(geo_id).__name__}"
+            )
+
+        session = self._get_session()
+        cookies = session.get("cookies", {})
+        user_agent = session.get("user_agent", "")
+        headers: dict[str, str] = {}
+        if user_agent:
+            headers["User-Agent"] = user_agent
+        # CR-02 / T-11-01-01: proxy_url routed but NEVER logged.
+        proxy = self._config.proxy_url or None
+        throttle = self._config.page_throttle_seconds
+
+        # Clamp to the 334-page / oa9990 cap regardless of start_page + max_pages.
+        start = max(1, start_page)
+        last_page = min(start + max_pages, _TA_MAX_PAGE + 1)
+
+        for page in range(start, last_page):
+            offset = (page - 1) * 30
+            if offset > _TA_MAX_OFFSET:
+                break  # defensive — clamp already guarantees this
+            url = _TA_HTML_URL.format(geo_id=geo_id, offset=offset)
+
+            async with httpx.AsyncClient(
+                cookies=cookies, follow_redirects=True, proxy=proxy
+            ) as hc:
+                resp = await hc.get(url, headers=headers)
+
+            if resp.status_code in (403, 429):
+                # T-15-04-01: log offset/status only — never cookies/UA/session/proxy.
+                logger.warning(
+                    "ta_paginated_session_expired",
+                    offset=offset,
+                    page=page,
+                    status=resp.status_code,
+                )
+                raise SessionExpiredError(
+                    f"TripAdvisor HTML returned {resp.status_code} — "
+                    "DataDome session expired or blocked. Re-inject required."
+                )
+
+            resp.raise_for_status()
+            sections = self._extract_sections_from_html(resp.text)
+            cards = self._parse_attractions_page(sections)
+            logger.info(
+                "ta_paginated_page",
+                offset=offset,
+                page=page,
+                card_count=len(cards),
+            )
+            yield offset, cards
+
+            # Throttle between pages only — not after the final page.
+            if throttle > 0 and page < last_page - 1:
+                await asyncio.sleep(throttle)
 
     async def resolve_geo_id(self, uf: str) -> int:
         """Resolve a Brazilian UF code to its TripAdvisor integer geoId.
