@@ -58,6 +58,25 @@ Plans:
 
 **Locked decisions (design doc `~/.gstack/projects/norteia-brave/leandro-main-design-20260624-121942.md`, office-hours stress-tested 9/10, spike-validated):** split acquisition from fetch (Approach A, spike confirmed cookie portability → no need for browser-side fetch); session acquired by a real human browser (DevTools Copy-as-cURL / `/browse` handoff) — automated browsers are DataDome-walled from this IP; injection via `POST /tripadvisor/session` → Redis (reuse `BRAVE_TA_SESSION_KEY`); mandatory canary gate (sync httpx, 15 s timeout, delete key on fail); client reads Redis only, no auto-bootstrap, Playwright removed; fix payload to `extensions.preRegisteredQueryId`; fail-fast sweep with explicit operator state; runbook + `scripts/ta_bootstrap` helper. Out of scope: residential-proxy automation; sweep-level checkpointing (deferred — sweeps sized under TTL); autonomous 24/7 TA (would need a paid/licensed source or managed browser+proxy stack); the `5-attraction cap` test (handled separately later). Known follow-up: characterize real DataDome token lifetime; verify real attraction geoIds.
 
+### Phase 15: TripAdvisor full oa30 pagination + bulk Nascente collection + live sweep dashboard panel
+
+**Goal:** Collect ALL ~10,000 Brazil attractions from TripAdvisor (geoId 294280) into Nascente by paginating the AttractionsFusion listing, with a live visual progress panel on the dashboard while the sweep runs. Phase 13 wired the single-page real listing query (qid `a5cb7fa004b5e4b5`) but explicitly deferred multi-page `oa30` pagination; this phase closes that gap end-to-end.
+
+**Pagination mechanism (discovered + live-validated 2026-06-26, see memory `tripadvisor-graphql-real-shape`):** offset is **path-based, NOT a GraphQL variable**. `totalResults:10000` (TA hard cap), `limit:30`/page → **334 pages**. Offset lives in the URL path segment `-oa{N}-` where N=page×30 (`oa0`,`oa30`…`oa9990`), sourced from the response's `WebPresentation_PaginationLinksList`. The `a5cb7fa004b5e4b5` persisted query **rejects** any offset/oa/page/skip field in `request.routeParameters` (`"Variable $request got invalid value"` — fixed input schema). Working transport = **HTML SSR page** `GET /Attractions-g{geoId}-Activities-a_allAttractions.true-oa{N}-Brazil.html` **with the full operator cookie jar → HTTP 200 ~1.5 MB**, embedding the same 30 FlexCards/page; reuse the existing `_parse_attractions_page` on the embedded `sections[]`. (Contradicts the older "HTML navigation → 403" note: that was a plain GET; with the captured datadome+session jar the HTML page is NOT walled.)
+
+**Locked scope decisions (operator-chosen this session):**
+1. **Transport:** HTML SSR extract — GET the `-oa{N}-` page, pull the embedded `sections[]`, reuse `_parse_attractions_page`. One transport for all pages.
+2. **Run scope — slice-first:** validate a small slice (~5–10 pages / 150–300 attractions) end-to-end into Nascente FIRST to prove DataDome endurance over sequential requests + throttle + the dashboard panel, THEN scale to the full 334. Requires resume-from-offset to recover from mid-run session expiry.
+3. **Dashboard — NEW live progress panel:** polls a Redis progress key (pages done/334, attractions ingested, current offset, errors, rate) via a FastAPI status endpoint + a Next.js page. Real-time visual of the running sweep.
+
+**Requirements**: extends TA-12 (data-fetch correctness — Phases 12/13)
+**Depends on:** Phase 13 (real listing query wired), Phase 14
+**Out of scope:** per-UF pagination (this is whole-Brazil g294280); destinos-lane pagination; autonomous 24/7 TA beat (stays operator-gated); residential-proxy automation.
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 15 to break down)
+
 ---
 
 ### Phase 14: Coordless attraction geo-resolution via OpenStreetMap Nominatim (close Phase-13 quarantine gap)
