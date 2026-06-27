@@ -93,13 +93,13 @@ Plans:
 **Requirements**: UI redesign (Painel Brave CMS) — slice 1
 **Depends on:** Phase 8 (ops CMS), Phase 10 (engine depth/source/UF), Phase 15 (TA sweep + panel)
 **Out of scope (later slices):** full replace of the 10 dark routes; Duplicados, Mapeamento, Conversas, Custo, Varreduras views; the record-edit drawer (Dados/Conversa tabs); the source/depth modal beyond the topbar trigger; new backend endpoints (dedup-pairs, data-mapper); dark/light theme toggle.
-**Plans:** 2/5 plans executed
+**Plans:** 4/5 plans executed
 
 Plans:
 - [x] 17-01-PLAN.md — Scoped light tokens + single-shell (sidebar/topbar/view-switcher) at /painel; topbar wired to engine-api (motor switch, TA pill, source) [wave 1]
 - [x] 17-02-PLAN.md — Painel data layer: unified PainelCard model + pure selectors (columns/metrics/filter) + usePainelBoard hook over destinos/atrativos lists [wave 1]
-- [ ] 17-03-PLAN.md — Metric cards (Destinos/Atrativos) + type segmented control + UF-scope multi-select dropdown [wave 2]
-- [ ] 17-04-PLAN.md — Kanban: 5 stage columns + draggable record cards reusing StageBadge score bands [wave 2]
+- [x] 17-03-PLAN.md — Metric cards (Destinos/Atrativos) + type segmented control + UF-scope multi-select dropdown [wave 2]
+- [x] 17-04-PLAN.md — Kanban: 5 stage columns + draggable record cards reusing StageBadge score bands [wave 2]
 - [ ] 17-05-PLAN.md — Wire drag-drop + ↺ Reprocessar to REAL mutations (promote/descarte/reprocess); unmapped drops revert+toast; optimistic + invalidate [wave 3]
 
 ---
