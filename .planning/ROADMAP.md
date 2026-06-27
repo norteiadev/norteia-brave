@@ -84,6 +84,20 @@ Plans:
 - [x] 15-07-PLAN.md — sweep_tripadvisor bulk national branch + resume + fail-fast progress + operator slice trigger
 - [x] 15-08-PLAN.md — Dashboard live sweep progress panel (mirror EngineControl; MSW + Vitest)
 
+### Phase 17: Painel Brave redesign — light-theme single-shell + Painel Kanban view (slice 1)
+
+**Goal:** Implement the first slice of the "Painel Brave" CMS redesign (Claude Design import `Painel Brave.dc.html`, saved at `design/Painel-Brave.dc.html`): a **light-theme single-shell** (232px white sidebar with 6 nav items + Geist logo + operator footer; 58px topbar with page title, TripAdvisor session pill, source modal trigger, and the motor on/off switch) hosting a **view-switcher**, and the first real view — **Painel (Kanban)**: two metric cards (Destinos / Atrativos: total no escopo, sincronizados, falhas, progresso %), a type-filter segmented control (Tudo / Destinos / Atrativos), a UF-scope dropdown, and horizontal-scroll **stage columns** of draggable record cards (chip, score band, name, UF, município, source label, "possível duplicado" flag, and ⚠ falha + ↺ reprocessar on failed cards). Wired to the EXISTING API clients/endpoints (engine status, destinos, atrativos) — NOT a static mock. Lands at a NEW route `/painel` ALONGSIDE the existing 10 dark routes (incremental, non-breaking).
+
+**Approach (operator-decided 2026-06-27):** incremental new shell at `/painel` side-by-side with the current routes (do not replace them this slice); first slice = shell + Painel/Kanban wired to real data; the two view s with no backend (Duplicados dedup-pairs, Mapeamento data-mapper) are MSW-mocked in LATER slices, not now; the remaining views (Conversas, Custo, Varreduras) are later slices reusing `conversations-api`/`cost-api`. Design language: Geist + Geist Mono (already loaded), light cream bg `oklch(0.98 0.01 90)`, brand navy `#15315e`, borders `#e6e4e0`/`#f0eee9`, status green `oklch(0.55 0.15 150)` / red `oklch(0.55 0.20 27)` / yellow `oklch(0.72 0.15 75)`.
+
+**Requirements**: UI redesign (Painel Brave CMS) — slice 1
+**Depends on:** Phase 8 (ops CMS), Phase 10 (engine depth/source/UF), Phase 15 (TA sweep + panel)
+**Out of scope (later slices):** full replace of the 10 dark routes; Duplicados, Mapeamento, Conversas, Custo, Varreduras views; the record-edit drawer (Dados/Conversa tabs); the source/depth modal beyond the topbar trigger; new backend endpoints (dedup-pairs, data-mapper); dark/light theme toggle.
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 17 to break down)
+
 ---
 
 ### Phase 14: Coordless attraction geo-resolution via OpenStreetMap Nominatim (close Phase-13 quarantine gap)
