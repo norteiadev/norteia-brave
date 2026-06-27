@@ -1,13 +1,32 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PainelShell } from "@/components/painel/PainelShell";
 import { PainelView } from "@/components/painel/PainelView";
+import { atrativosListSuccess } from "@/mocks/handlers/atrativos";
+import { destinosListSuccess } from "@/mocks/handlers/destinos";
+import { engineStatus } from "@/mocks/handlers/engine";
+import { server } from "@/mocks/server";
+
+// PainelView (17-05) now loads real board data + metrics, so it must mount
+// inside a QueryClient with the destinos/atrativos/engine handlers registered.
+function renderShell(ui: ReactNode) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
+
+beforeEach(() => {
+  server.use(destinosListSuccess(), atrativosListSuccess(), engineStatus());
+});
 
 describe("PainelShell", () => {
   it("renders all 6 nav items, both group headers and the operator footer", () => {
-    render(
+    renderShell(
       <PainelShell
         active="painel"
         onSelect={() => {}}
@@ -39,7 +58,7 @@ describe("PainelShell", () => {
   });
 
   it("marks the active nav item with aria-current/data-active", () => {
-    render(
+    renderShell(
       <PainelShell active="painel" onSelect={() => {}} topbar={null}>
         <PainelView />
       </PainelShell>,
@@ -56,7 +75,7 @@ describe("PainelShell", () => {
   it("fires onSelect with the clicked view key", async () => {
     const onSelect = vi.fn();
     const user = userEvent.setup();
-    render(
+    renderShell(
       <PainelShell active="painel" onSelect={onSelect} topbar={null}>
         <PainelView />
       </PainelShell>,

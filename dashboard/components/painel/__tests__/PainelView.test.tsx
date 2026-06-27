@@ -87,11 +87,11 @@ describe("PainelView", () => {
 
   it("mapped drop (destino → Descarte) fires the real descarte PATCH and optimistically moves the card", async () => {
     useDefaultHandlers();
-    const { container, findByTestId, getByTestId } = renderWithClient(
+    const { container, findAllByTestId, getByTestId } = renderWithClient(
       <PainelView />,
     );
 
-    await findByTestId("record-card"); // wait for load
+    await findAllByTestId("record-card"); // wait for load
     const card = container.querySelector(`[data-id="${DESTINO_MAR_ID}"]`);
     expect(card).not.toBeNull();
 
@@ -110,11 +110,11 @@ describe("PainelView", () => {
 
   it("unmapped drop (atrativo → Revisão) fires NO request and toasts the unavailable message", async () => {
     useDefaultHandlers();
-    const { container, findByTestId, getByTestId } = renderWithClient(
+    const { container, findAllByTestId, getByTestId } = renderWithClient(
       <PainelView />,
     );
 
-    await findByTestId("record-card");
+    await findAllByTestId("record-card");
     const card = container.querySelector(`[data-id="${ATRATIVO_ID}"]`);
     expect(card).not.toBeNull();
 
