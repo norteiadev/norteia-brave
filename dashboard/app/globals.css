@@ -124,3 +124,56 @@
     color: var(--foreground);
   }
 }
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Painel Brave — SCOPED LIGHT THEME (phase 17, slice 1).
+
+   APPEND-ONLY. This block re-declares the shadcn CSS vars (plus painel-only
+   literal tokens) on a `.painel-light` wrapper so the `/painel` subtree renders
+   on a cream/white light surface — WITHOUT flipping the global dark theme.
+
+   The app sets `<html class="dark">` (next-themes, dark-by-default). Because
+   `.painel-light` is a class on a DESCENDANT of `<html class="dark">`, these
+   declarations win for that subtree only via normal CSS cascade specificity —
+   exactly how `.dark` re-declares the `:root` defaults. Reused components
+   (StageBadge `bg-[var(--status-mar)]`, Badge, etc.) therefore resolve to the
+   light values automatically inside `/painel`.
+
+   DO NOT edit `:root`, `.dark`, `@theme inline`, or `@layer base` above — those
+   back the 10 dark routes and their Vitest snapshots. NEVER let these tokens
+   leak to the global theme. Painel components reference these vars (no scattered
+   hardcoded hex). Token values are LOCKED by 17-CONTEXT.md.
+   ─────────────────────────────────────────────────────────────────────────── */
+.painel-light {
+  /* shadcn base vars consumed by reused components (StageBadge, Badge) */
+  --background: oklch(0.98 0.01 90);
+  --foreground: #18181b;
+  --card: #fff;
+  --card-foreground: #18181b;
+  --popover: #fff;
+  --popover-foreground: #18181b;
+  --border: #e6e4e0;
+  --input: #e6e4e0;
+  --muted: #f0eee9;
+  --muted-foreground: #6b7280;
+  --primary: #15315e;
+  --primary-foreground: #fff;
+  --ring: #15315e;
+  --status-mar: oklch(0.55 0.15 150);
+  --status-dlq: oklch(0.72 0.15 75);
+  --status-descarte: oklch(0.55 0.20 27);
+
+  /* painel-only literal tokens (from 17-CONTEXT decisions) */
+  --painel-navy: #15315e;
+  --painel-cream: oklch(0.98 0.01 90);
+  --painel-border-outer: #e6e4e0;
+  --painel-border-inner: #f0eee9;
+  --painel-chip: #f0eee9;
+  --painel-text: #18181b;
+  --painel-muted: #6b7280;
+  --painel-muted-2: #9ca3af;
+  --painel-hint: #94a3b8;
+
+  color: var(--painel-text);
+  background: var(--painel-cream);
+}
