@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import {
@@ -229,12 +229,9 @@ export function PainelConversas() {
   const conversations: ConversationListItem[] = data?.conversations ?? [];
   const [selectedRioId, setSelectedRioId] = useState<string | null>(null);
 
-  // Auto-select the first conversation once the list arrives.
-  useEffect(() => {
-    if (selectedRioId == null && conversations.length > 0) {
-      setSelectedRioId(conversations[0].rio_id);
-    }
-  }, [selectedRioId, conversations]);
+  // Default to the first conversation until the operator clicks one — derived,
+  // not stored, so no setState-in-effect (the list can arrive after mount).
+  const effectiveRioId = selectedRioId ?? conversations[0]?.rio_id ?? null;
 
   return (
     <div className="flex h-full">
@@ -250,7 +247,7 @@ export function PainelConversas() {
             <MasterRow
               key={c.rio_id}
               c={c}
-              selected={c.rio_id === selectedRioId}
+              selected={c.rio_id === effectiveRioId}
               onSelect={setSelectedRioId}
             />
           ))}
@@ -258,8 +255,8 @@ export function PainelConversas() {
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {selectedRioId ? (
-          <DetailPane rioId={selectedRioId} />
+        {effectiveRioId ? (
+          <DetailPane rioId={effectiveRioId} />
         ) : (
           <div
             data-testid="convo-empty"

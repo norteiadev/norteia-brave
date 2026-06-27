@@ -35,6 +35,8 @@ export default function Home() {
       router.replace("/login");
       return;
     }
+    // One-shot mount auth gate: read the stored token, then flip to authed.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAuthed(true);
   }, [router]);
 

@@ -20,7 +20,7 @@
  * LGPD (R3): the Conversa tab shows ONLY the masked phone — never a raw E.164.
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import {
@@ -44,11 +44,14 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
   const [tab, setTab] = useState<DrawerTab>("dados");
   const { drop, retry } = usePainelMutations();
 
-  // Reset to the Dados tab whenever a different card opens.
+  // Reset to the Dados tab whenever a different card opens — adjusted during
+  // render (the React-recommended prev-prop pattern), not in an effect.
   const cardId = card?.id ?? "";
-  useEffect(() => {
+  const [prevCardId, setPrevCardId] = useState(cardId);
+  if (cardId !== prevCardId) {
+    setPrevCardId(cardId);
     setTab("dados");
-  }, [cardId]);
+  }
 
   const isOpen = card != null;
   const accent =
