@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 
 import { PainelBoard } from "@/components/painel/PainelBoard";
+import { PainelDrawer } from "@/components/painel/PainelDrawer";
 import { PainelFilters } from "@/components/painel/PainelFilters";
 import { PainelMetrics } from "@/components/painel/PainelMetrics";
 import { usePainelMutations } from "@/lib/painel-actions";
@@ -36,6 +37,7 @@ export function PainelView() {
   const [overrides, setOverrides] = useState<Record<string, PainelColumnKey>>(
     {},
   );
+  const [selected, setSelected] = useState<PainelCard | null>(null);
   const dragged = useRef<PainelCard | null>(null);
 
   const { cards, isPending } = usePainelBoard();
@@ -79,7 +81,10 @@ export function PainelView() {
           }
         }}
         onCardRetry={(c) => actions.retry(c)}
+        onCardClick={setSelected}
       />
+
+      <PainelDrawer card={selected} onClose={() => setSelected(null)} />
     </div>
   );
 }

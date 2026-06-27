@@ -130,6 +130,57 @@ describe("PainelView", () => {
     expect(requests.some((r) => r.method === "PATCH")).toBe(false);
   });
 
+  it("clicking a record-card body opens the drawer with the card's id", async () => {
+    useDefaultHandlers();
+    const { container, findAllByTestId, getByTestId } = renderWithClient(
+      <PainelView />,
+    );
+
+    await findAllByTestId("record-card"); // wait for load
+    // Drawer starts closed: the id field shows the empty placeholder.
+    expect(getByTestId("drawer-field-id")).toHaveTextContent("—");
+
+    const card = container.querySelector(`[data-id="${DESTINO_MAR_ID}"]`);
+    expect(card).not.toBeNull();
+    fireEvent.click(card as Element);
+
+    await waitFor(() =>
+      expect(getByTestId("drawer-field-id")).toHaveTextContent(DESTINO_MAR_ID),
+    );
+  });
+
+  it("↺ Reprocessar does NOT open the drawer (stopPropagation)", async () => {
+    const seed: DestinoListItem = {
+      id: "33333333-3333-3333-3333-333333333333",
+      entity_type: "destination",
+      uf: "MG",
+      routing: "descarte",
+      score: 21.0,
+      name: "Falha X",
+      canonical_key: "mg:x:falha",
+      validation_pending: false,
+      mar_id: null,
+      published_at: null,
+    };
+    server.use(
+      destinosListSuccess([seed]),
+      atrativosListSuccess([]),
+      engineStatus(),
+      destinoReprocessSuccess(),
+    );
+
+    const { findByTestId, getByTestId } = renderWithClient(<PainelView />);
+
+    const retry = await findByTestId("record-card-retry");
+    fireEvent.click(retry);
+
+    await waitFor(() =>
+      expect(patchesTo(`/destinos/${seed.id}/reprocess`)).toBe(true),
+    );
+    // The drawer must stay closed — the retry click stopped propagation.
+    expect(getByTestId("drawer-field-id")).toHaveTextContent("—");
+  });
+
   it("↺ Reprocessar on a seeded descarte destino fires the reprocess PATCH", async () => {
     const seed: DestinoListItem = {
       id: "33333333-3333-3333-3333-333333333333",

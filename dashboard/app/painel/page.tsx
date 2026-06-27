@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 
+import { PainelConversas } from "@/components/painel/PainelConversas";
+import { PainelCusto } from "@/components/painel/PainelCusto";
+import { PainelMapeamento } from "@/components/painel/PainelMapeamento";
 import { PainelShell } from "@/components/painel/PainelShell";
 import { PainelTopbar } from "@/components/painel/PainelTopbar";
 import { PainelView } from "@/components/painel/PainelView";
@@ -17,12 +20,40 @@ import { NAV_ITEMS, type PainelViewKey } from "@/components/painel/nav";
  * views render a centered "Em breve" placeholder.
  */
 
-/** Static title/subtitle per active view. */
+/** Static title/subtitle per active view (design NAV copy, lines 502-509). */
+const VIEW_HEADERS: Record<
+  PainelViewKey,
+  { title: string; subtitle: string }
+> = {
+  painel: {
+    title: "Painel de Processamento",
+    subtitle: "Fluxo Nascente → Rio → Mar em quadro Kanban",
+  },
+  duplicados: {
+    title: "Revisão de Duplicados",
+    subtitle: "Camada de validação · candidatos vs. registros no Mar",
+  },
+  mapeamento: {
+    title: "Mapeamento da Origem",
+    subtitle: "Camada data-mapper · campo bruto → estrutura canônica",
+  },
+  varreduras: {
+    title: "Histórico de Varreduras",
+    subtitle: "Runs do motor por UF, fonte e profundidade",
+  },
+  conversas: {
+    title: "Conversas WhatsApp",
+    subtitle:
+      "Transcrições do gate de atrativos · telefones minimizados (LGPD)",
+  },
+  custo: {
+    title: "Custo & LLM",
+    subtitle: "Gasto agregado por lane e por modelo",
+  },
+};
+
 function viewHeader(view: PainelViewKey): { title: string; subtitle: string } {
-  if (view === "painel") {
-    return { title: "Painel", subtitle: "Quadro de processamento" };
-  }
-  return { title: NAV_ITEMS[view].label, subtitle: "Em breve" };
+  return VIEW_HEADERS[view];
 }
 
 /** Centered placeholder for the not-yet-built views. */
@@ -60,6 +91,12 @@ export default function PainelPage() {
       >
         {view === "painel" ? (
           <PainelView />
+        ) : view === "mapeamento" ? (
+          <PainelMapeamento />
+        ) : view === "conversas" ? (
+          <PainelConversas />
+        ) : view === "custo" ? (
+          <PainelCusto />
         ) : (
           <EmBreve label={NAV_ITEMS[view].label} />
         )}
