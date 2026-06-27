@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-06-27T22:46:03.356Z",
+  "phase": "17.1",
+  "phase_name": "Painel Brave — remaining pages + real backend (slice 2)",
+  "phase_dir": ".planning/phases/17.1-painel-brave-remaining-pages-real-backend-slice-2",
+  "plan": null,
+  "task": null,
+  "total_tasks": null,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": 1, "name": "Add Phase 17.1 to ROADMAP + write CONTEXT.md", "status": "done", "commit": "see roadmap commit"},
+    {"id": 2, "name": "Research (gsd-phase-researcher) → 17.1-RESEARCH.md", "status": "done"},
+    {"id": 3, "name": "Record research resolutions in CONTEXT (A1/A2/A5/A6 + transition + TA inject)", "status": "done"},
+    {"id": 4, "name": "Pattern map (gsd-pattern-mapper) → 17.1-PATTERNS.md", "status": "done"},
+    {"id": 5, "name": "Validation strategy → 17.1-VALIDATION.md", "status": "done", "commit": "874dc4f"}
+  ],
+  "remaining_tasks": [
+    {"id": 6, "name": "Spawn gsd-planner → write PLAN.md files (6 plans / 3 waves)", "status": "in_progress", "progress": "planner was re-spawned but STOPPED by pause before writing any PLAN.md; 0 plans on disk"},
+    {"id": 7, "name": "Verify plans (gsd-plan-checker, iterate ≤3)", "status": "not_started"},
+    {"id": 8, "name": "Execute phase 17.1 (gsd-execute-phase, wave-by-wave)", "status": "not_started"}
+  ],
+  "blockers": [],
+  "human_actions_pending": [],
+  "decisions": [
+    {"decision": "New continuation phase 17.1 instead of --force replan of CLOSED phase 17", "rationale": "Phase 17 VERIFICATION passed; closeout was correct; new scope is genuinely new work", "phase": "17.1"},
+    {"decision": "Full backend for Duplicados + Varreduras; full-pipeline kanban drag", "rationale": "operator chose maximum scope", "phase": "17.1"},
+    {"decision": "Duplicados similarity = compute-on-read field/token (Python), NOT pgvector cosine", "rationale": "compute_embedding is a ZERO-STUB ([0.0]*1536) so cosine is degenerate; real embeddings deferred", "phase": "17.1"},
+    {"decision": "Merge resolve = union candidate source_refs into existing Mar + discard candidate Rio, audited, NO 409 on differing sources", "rationale": "operator A2 resolution; OVERRIDES research Pitfall 4", "phase": "17.1"},
+    {"decision": "Contract = typed Pydantic + mirrored MSW handler, NOT pact-js", "rationale": "no dashboard↔collector Pact exists; pact-js disproportionate; matches project offline pattern", "phase": "17.1"},
+    {"decision": "6-col board: whatsapp from atrativos sub_state aguardando_consulta_whatsapp; falha from GET /api/v1/failures; nascente count from engine status", "rationale": "design COLS + backend reality", "phase": "17.1"},
+    {"decision": "ONE generic audited per-entity transition endpoint with server-side allow-list mirroring client mapDrop; mar→* stays 409-blocked; mapDrop extended not bypassed", "rationale": "full-pipeline drag safely", "phase": "17.1"}
+  ],
+  "uncommitted_files": [],
+  "next_action": "Re-run /gsd:plan-phase 17.1 (standard mode) — all inputs (CONTEXT/RESEARCH/PATTERNS/VALIDATION) exist and are committed; the planner just needs to WRITE the 6 PLAN.md files. The intended wave structure is captured in .continue-here.md.",
+  "context_notes": "Design 'Painel Brave.dc.html' imported via DesignSync and fully reviewed (markup + support.js data model). Backend reality verified by Explore. Phase 17 (slice 1: shell + 5-col Kanban + Mapeamento/Conversas/Custo/Drawer) is shipped+closed. 17.1 finishes the CMS: 6-col board + full-pipeline sync + Duplicados + Varreduras + Origem/TA modal + Motor. NOTE: the rtk shell proxy makes `ls` return empty intermittently — use the Read tool with explicit paths, not `ls`, when resuming (this tripped the planner once)."
+}
