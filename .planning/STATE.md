@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: milestone_complete
-stopped_at: Milestone complete (Phase 14 was final phase)
-last_updated: 2026-06-25T19:51:54.795Z
-last_activity: 2026-06-25 -- Phase 14 plan 14-02 complete (Level-3 approved)
+status: executing
+stopped_at: Completed 14-02-PLAN.md (phase 14 all 2 plans done; Level-3 human-verified)
+last_updated: "2026-06-28T13:01:11.097Z"
+last_activity: 2026-06-28
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 18
-  completed_plans: 66
-  percent: 100
+  total_phases: 8
+  completed_phases: 7
+  total_plans: 38
+  completed_plans: 32
+  percent: 84
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Only validated, reliability-scored canonical records ("Mar", ≥85%) reach the platform — the Nascente→Rio→Mar pipeline with §7.6 scoring and a DLQ gate is the single thing that must work.
-**Current focus:** Milestone complete
+**Current focus:** Phase 17.1 — Painel Brave — remaining pages + real backend (slice 2)
 
 ## Current Position
 
-Phase: 14
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-06-25
+Phase: 17.1 (Painel Brave — remaining pages + real backend (slice 2)) — EXECUTING
+Plan: 2 of 7
+Status: Ready to execute
+Last activity: 2026-06-28
 
-Progress: [██████████] 100%
+Progress: [████████░░] 84%
 
 ## Performance Metrics
 
@@ -93,6 +93,7 @@ Progress: [██████████] 100%
 | Phase 10 P02 | 25min | 2 tasks | 3 files |
 | Phase 10 P03 | 9min | 2 tasks | 4 files |
 | Phase 10 P4 | 6min | 1 tasks | 2 files |
+| Phase 17.1 P01 | ~25min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -138,6 +139,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 10 P02]: ENG-03/04/05/07 — engine depth threaded orchestrator->producers; nascente forces Mtur-only (run_rio=False, no Desmembramento, no atrativos); nascente_rio gates the entire find_contacts fan-out (delay + inline .run) so the WhatsApp chain is never kicked; no automated Mar push added under any depth (stays on human DLQ gate + WhatsApp finalize); lanes never read Redis depth
 - [Phase 10 P03]: ENG-01/02 client half — /processo depth selector (3 PT-BR opts via DEPTH_LABELS); Ligar motor disabled until a depth is chosen (no default spend); chosen depth sent in POST /start body; active depth read back from /status on engine-active-depth testid; native radiogroup (no new npm pkg); Vitest+MSW offline 140/140
 - [Phase 10 P04]: ENG-06/07 — StageBadge nascente variant: prop-driven `nascente?: boolean` chip (PT-BR "Nascente", `--color-primary` CSS-var token, no hex), rendered stage-first; stage stays implicit by table membership (D-01), no backend/schema/endpoint change; Vitest +2 offline, full dashboard suite 142/142
+- [Phase 17.1 P01]: UI-PAINEL-2 Duplicados backend — GET /api/v1/dedup/pairs is compute-on-read (territorial-key blocked candidate↔Mar pairs; matched/diverged + Jaccard token similarity computed in Python, similarity_source="embedding_stub", NO pgvector operator in the read path — real embeddings deferred A1). PATCH /api/v1/dedup/pairs/{candidate_rio_id}/resolve does merge|keep|discard, audited. merge (LOCKED A2, overrides stale RESEARCH Pitfall 4) unions the candidate source_ref into the EXISTING Mar's provenance["merged_source_refs"] + routes the candidate Rio→descarte: no new MarRecord, mar.source_ref untouched, no 409, no promote_to_mar. Candidate source_ref derived as canonical_key or str(id) (RioRecord has no source_ref column). 12 offline unit tests green (RUN_REAL_EXTERNALS unset).
 
 ### Pending Todos
 
@@ -173,6 +175,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-25T20:00:00.000Z
+Last session: 2026-06-28T13:01:11.085Z
 Stopped at: Completed 14-02-PLAN.md (phase 14 all 2 plans done; Level-3 human-verified)
 Resume file: None
