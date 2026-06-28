@@ -13,6 +13,22 @@ Phase 3 additions:
 
 from fastapi import FastAPI
 
+# Bind the configured Celery app as the process GLOBAL-DEFAULT app at startup. Without
+# this, the API process never instantiates the Redis-configured Celery() as the *default*
+# app, so every `@shared_task` (engine_sweep_run, sweep_uf, …) resolves to Celery's stock
+# DEFAULT app — whose broker is amqp://localhost:5672 (RabbitMQ). Real dispatch (`.delay()`
+# under RUN_REAL_EXTERNALS) then fails with "[Errno 61] Connection refused" → engine/start
+# 503 "broker unavailable", even though the configured broker is Redis and is up.
+#
+# `set_as_current=True` (Celery's default) only pushes the app onto a THREAD-LOCAL stack —
+# which the import thread has, but FastAPI's sync request handlers run in a threadpool
+# worker thread where that stack is empty, so `current_app` falls back to the (unset)
+# global default → the amqp app. `set_default()` sets the GLOBAL default app, so shared
+# tasks resolve to Redis from any thread. The call is connection-free (Kombu connects
+# lazily), so it adds no broker I/O at startup.
+from brave.tasks.celery_app import app as _celery_app
+
+_celery_app.set_default()
 from brave.api.routers.atrativos_gate import router as atrativos_gate_router
 from brave.api.routers.audit import router as audit_router
 from brave.api.routers.dashboard import router as dashboard_router
