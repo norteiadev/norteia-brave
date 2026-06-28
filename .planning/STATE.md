@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 17.1-05-PLAN.md (Varreduras frontend — runs client + MSW + PainelVarreduras table)
-last_updated: "2026-06-28T14:05:00.000Z"
+stopped_at: Completed 17.1-07-PLAN.md (Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher — Painel Brave shell finished)
+last_updated: "2026-06-28T15:00:00.000Z"
 last_activity: 2026-06-28
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 38
-  completed_plans: 34
-  percent: 89
+  completed_plans: 35
+  percent: 92
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 17.1 (Painel Brave — remaining pages + real backend (slice 2)) — EXECUTING
-Plan: 7 of 7 (17.1-01/03 wave-1 + 17.1-02 backend + 17.1-04 Duplicados + 17.1-06 board 6-col + 17.1-05 Varreduras complete; 17.1-07 remains)
-Status: Ready to execute
+Plan: 7 of 7 COMPLETE (17.1-01/03 wave-1 + 17.1-02 backend + 17.1-04 Duplicados + 17.1-06 board 6-col + 17.1-05 Varreduras + 17.1-07 shell integration — all 7 plans done)
+Status: Phase complete — ready to verify/close
 Last activity: 2026-06-28
 
-Progress: [█████████░] 89%
+Progress: [█████████░] 92%
 
 ## Performance Metrics
 
@@ -99,6 +99,7 @@ Progress: [█████████░] 89%
 | Phase 17.1 P04 | ~20min | 2 tasks | 4 files |
 | Phase 17.1 P06 | ~45min | 3 tasks | 13 files |
 | Phase 17.1 P05 | ~20min | 2 tasks | 4 files |
+| Phase 17.1 P07 | ~30min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -152,6 +153,8 @@ Recent decisions affecting current work:
 
 - [Phase 17.1 P02]: UI-PAINEL-2 Varreduras backend — durable runs_history trail (engine runs lived only in Redis). RunHistory model + Alembic 0007 (down_revision 0006, non-CONCURRENTLY ix_runs_history_started_at). engine_start INSERTs a row ONLY after depth/source 422 + start_run() success (Pitfall 3 — no phantom rows on rejected starts), persists run_id to Redis (brave:engine:run_id) + threads it into engine_sweep_run.delay; INSERT best-effort (never aborts a valid start). engine_sweep_run finalize (_finalize_run_history) UPDATEs ended_at/ufs_dispatched/status (concluido|parcial via STOPPING state read) in a swallow-all finally — a finalize write failure can NEVER abort the sweep (T-17.1-02-02). GET /api/v1/runs: source/depth SQL-filtered, uf filtered in Python over the JSON ufs array (no JSONB operator → portable+offline); synced/failed/total computed ON-READ over [started_at, ended_at] (Mar published + Rio dlq/descarte + PoisonQuarantine; A4 time-window approximation — producers never return counts). PATCH /runs/{id}/reprocess re-runs the SCOPE (ufs×source×lane) via the sweep.py prod-vs-offline broker fallback, audited run_reprocessed (per-record replay DEFERRED). 16 offline tests green (RUN_REAL_EXTERNALS unset) + migration DB up/down skip-safe without BRAVE_DB_URL. Deviation: added get_db override to test_engine_source client fixture (engine_start now needs db).
 
+- [Phase 17.1 P07]: UI-PAINEL-2 shell integration — finishes the Painel Brave CMS. PainelOrigem.tsx modal: source radios (mtur/tripadvisor/google_places); selecting TripAdvisor reveals a cURL textarea whose in-modal parseTACurl() extracts cookie jar (-H 'cookie'/-b) + user-agent + preRegisteredQueryId ids into the strict SessionInjectBody (acquired_at stamped at submit) and posts via injectTASession. ApiError.status 422 (invalid_session, stale paste) vs 503 (canary_unverified, infra) surfaced as DISTINCT toasts AND inline origem-error-422/503 states (never a silent accept); live TTL badge from fetchTASessionStatus().expires_in (amber ≤5 min). PainelTopbar: "Origem {source}" button opens the modal (preselect from live engine source); motor START opens a depth menu (DEPTH_LABELS) → startEngine({depth}) — a depthless start is impossible (backend 422 twin); TA pill label/color + one-shot expiry toast driven by the real expires_in (sessionWarning ≤5 min), not a hardcoded clock. page.tsx view-switcher (PainelBody switch) renders PainelDuplicados + PainelVarreduras alongside Painel/Mapeamento/Conversas/Custo — drops "Em breve"; record-edit Drawer still reachable from a board card. Two-group nav (Processamento/Operação) was already centralized in nav.ts since slice 1; added stable per-group + per-item data-testids. Non-TA sources have no engine endpoint → Salvar just confirms + closes. Full dashboard suite 276/276 green (was 269). Deviation: updated PainelTopbar.test.tsx for the depth-menu start flow (test-only, matches the intended behavior change).
+
 - [Phase 17.1 P04]: UI-PAINEL-2 Duplicados frontend — dashboard/lib/dedup-api.ts typed client (DedupPairItem/DedupPairsResponse mirroring brave/api/routers/dedup.py field-for-field; fetchDedupPairs(uf) + resolveDedupPair(id, {action, mar_id}); dedupKeys ['dedup'] prefix) + dashboard/mocks/handlers/dedup.ts at the double-prefixed /api/api/v1/dedup/... path (payloads typed against the lib interfaces = the A5 contract mirror; success/empty/error/resolve factories). Handler is NOT registered in mocks/handlers/index.ts — follows the established empty-barrel + per-suite server.use() pattern (cost.ts is also unregistered; keeps the harness booting with zero global mocks). PainelDuplicados.tsx renders candidate≈Mar pair cards with coincide/diverge chips + labeled similarity (similarity_source surfaced because embeddings are an A1 zero-stub), resolves via useMutation(resolveDedupPair)+toast+invalidateQueries(['dedup']); validation banner + ✓ empty state; pure --painel-* tokens. 3 offline Vitest tests green (renders pairs+chips+similarity, Descartar fires real resolve PATCH, empty state). Shell wiring into app/painel/page.tsx is plan 17.1-07.
 
 - [Phase 17.1 P01]: UI-PAINEL-2 Duplicados backend — GET /api/v1/dedup/pairs is compute-on-read (territorial-key blocked candidate↔Mar pairs; matched/diverged + Jaccard token similarity computed in Python, similarity_source="embedding_stub", NO pgvector operator in the read path — real embeddings deferred A1). PATCH /api/v1/dedup/pairs/{candidate_rio_id}/resolve does merge|keep|discard, audited. merge (LOCKED A2, overrides stale RESEARCH Pitfall 4) unions the candidate source_ref into the EXISTING Mar's provenance["merged_source_refs"] + routes the candidate Rio→descarte: no new MarRecord, mar.source_ref untouched, no 409, no promote_to_mar. Candidate source_ref derived as canonical_key or str(id) (RioRecord has no source_ref column). 12 offline unit tests green (RUN_REAL_EXTERNALS unset).
@@ -191,5 +194,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-06-28
-Stopped at: Completed 17.1-05-PLAN.md (Varreduras frontend — runs client + MSW handler + PainelVarreduras table view)
+Stopped at: Completed 17.1-07-PLAN.md (Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher — all 6 views reachable; Painel Brave shell finished). Phase 17.1 all 7 plans complete.
 Resume file: None
