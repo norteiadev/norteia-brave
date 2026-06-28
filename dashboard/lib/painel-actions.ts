@@ -1,35 +1,42 @@
 "use client";
 
 /**
- * Painel drag-drop / retry → real-mutation mapping (17-05, UI-PAINEL-1).
+ * Painel drag-drop / retry → real-mutation mapping (17.1-06, UI-PAINEL-2).
  *
  * The closed allow-list that turns a Kanban drop (or a falha card's ↺ retry)
  * into the ONE real backend mutation it maps to — or into nothing. This module
- * is the security boundary for the riskiest slice (T-17-05-01): a drop may only
- * ever fire a real, mapped transition. Anything not in the table below returns
+ * is the CLIENT security boundary (T-17.1-06-01): a board drop may only ever
+ * fire a real, mapped stage transition. Anything not in the table below returns
  * `null` and the hook reverts + toasts — NO endpoint is invented or called.
  *
- * Allowed real actions (the ONLY ones):
- *   target column          | destino card    | atrativo card
- *   mar (Sincronizado)     | promoteDestino  | promoteAtrativo (mar-ready, audited)
- *   descarte (Descarte)    | descarteDestino | descartarAtrativo
- *   dlq (Revisão/reprocess)| reprocessDestino| (none → null)
- *   nascente / in_progress | (none → null)   | (none → null)
- *   same column            | (none → null)   | (none → null)
- * Retry button (falha):    destino → reprocessDestino ; atrativo → null.
+ * Full-pipeline drag: every allowed edge routes through the ONE generic, audited
+ * per-entity transition endpoint (engine-api `transition`). The allow-list below
+ * is the EXACT twin of the server _ALLOWED_EDGES (brave/api/routers/cms.py) and
+ * _ATRATIVO_ALLOWED_EDGES (atrativos.py) — the documented paired contract:
+ *
+ *   destino : (rio→mar) (rio→descarte) (rio→dlq) (dlq→rio) (dlq→mar) (dlq→descarte)
+ *   atrativo: (rio→dlq) (dlq→rio) (rio→mar) (rio→descarte)  [+ whatsapp gate_approve*]
+ *
+ * Deliberately ABSENT (always null → revert + toast, never a call):
+ *   - mar → *           (T-17.1-06-02: a live Mar record can never be depublished;
+ *                        the server also 409s every ("mar", *) edge)
+ *   - into-nascente     (no transition lands a record back in Nascente)
+ *   - same-column drops (no-op)
+ *   - falha → *         (quarantine records reprocess via ↺ retry, not a drag)
+ *   - any other pair absent from the server allow-list
+ *
+ * (*) The atrativo (whatsapp→whatsapp) gate_approve edge is a same-column drop,
+ *     so mapDrop returns null for it by design — the WhatsApp gate is driven by a
+ *     dedicated gate UI, not a board drag. Keeping the same-column null guard is
+ *     the documented exception; it is NOT a missing edge.
  */
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { ApiError } from "@/lib/api-client";
-import { descartarAtrativo } from "@/lib/atrativos-api";
-import {
-  descarteDestino,
-  promoteDestino,
-  reprocessDestino,
-} from "@/lib/destinos-api";
-import { promoteAtrativo } from "@/lib/mar-ready-api";
+import { reprocessDestino } from "@/lib/destinos-api";
+import { transition } from "@/lib/engine-api";
 import type {
   PainelCard,
   PainelColumnKey,
@@ -37,19 +44,43 @@ import type {
 } from "@/lib/painel-data";
 
 /** A resolved, dispatchable real mutation (never an invented one). */
-export type DropAction = {
-  kind: "promote" | "descarte" | "reprocess";
-  entity: PainelEntityType;
-  id: string;
-};
+export type DropAction =
+  | {
+      kind: "transition";
+      entity: PainelEntityType;
+      id: string;
+      to: PainelColumnKey;
+      expected: PainelColumnKey;
+    }
+  | { kind: "reprocess"; entity: PainelEntityType; id: string };
 
 /** Copy shown when a drop/retry maps to no real action (per 17-CONTEXT). */
 const UNAVAILABLE = "Ação não disponível neste estágio";
 
 /**
- * Map a drop of `card` onto `target` to its real action, or null when no real
- * transition exists for that (entity, target) pair. A drop onto the card's own
- * column is always a null no-op.
+ * Per-entity client allow-list — the EXACT twin of the server allow-lists,
+ * keyed by `${expected}>${to}`. A pair present here is the ONLY way mapDrop
+ * emits a transition; everything else is null.
+ */
+const DESTINO_EDGES: ReadonlySet<string> = new Set([
+  "rio>mar",
+  "rio>descarte",
+  "rio>dlq",
+  "dlq>rio",
+  "dlq>mar",
+  "dlq>descarte",
+]);
+const ATRATIVO_EDGES: ReadonlySet<string> = new Set([
+  "rio>dlq",
+  "dlq>rio",
+  "rio>mar",
+  "rio>descarte",
+]);
+
+/**
+ * Map a drop of `card` onto `target` to its real transition action, or null when
+ * the (expected, to) pair is absent from the server allow-list for that entity.
+ * A drop onto the card's own column is always a null no-op.
  */
 export function mapDrop(
   card: PainelCard,
@@ -57,23 +88,16 @@ export function mapDrop(
 ): DropAction | null {
   if (card.column === target) return null;
 
-  switch (target) {
-    case "mar":
-      // Sincronizado: promote (destino) or audited mar-ready promote (atrativo).
-      return { kind: "promote", entity: card.type, id: card.id };
-    case "descarte":
-      return { kind: "descarte", entity: card.type, id: card.id };
-    case "dlq":
-      // Revisão/reprocess exists for destinos only; atrativos have no reprocess.
-      return card.type === "destino"
-        ? { kind: "reprocess", entity: "destino", id: card.id }
-        : null;
-    case "nascente":
-    case "in_progress":
-    default:
-      // No real transition INTO nascente / em-processamento this slice.
-      return null;
-  }
+  const edges = card.type === "destino" ? DESTINO_EDGES : ATRATIVO_EDGES;
+  if (!edges.has(`${card.column}>${target}`)) return null;
+
+  return {
+    kind: "transition",
+    entity: card.type,
+    id: card.id,
+    to: target,
+    expected: card.column,
+  };
 }
 
 /** Map a falha card's ↺ Reprocessar to reprocess (destino only) or null. */
@@ -84,20 +108,15 @@ export function mapRetry(card: PainelCard): DropAction | null {
 }
 
 /**
- * Dispatch a resolved DropAction to its existing API client fn. Reprocess is
- * destino-only; a reprocess+atrativo action must never be constructed (mapDrop/
- * mapRetry never produce one) — runAction throws if it ever is.
+ * Dispatch a resolved DropAction. Transitions go through the ONE generic, audited
+ * per-entity transition endpoint; reprocess is destino-only (a reprocess+atrativo
+ * action must never be constructed — mapRetry never produces one, runAction throws
+ * if it ever is).
  */
 export function runAction(a: DropAction): Promise<unknown> {
   switch (a.kind) {
-    case "promote":
-      return a.entity === "destino"
-        ? promoteDestino(a.id)
-        : promoteAtrativo(a.id);
-    case "descarte":
-      return a.entity === "destino"
-        ? descarteDestino(a.id)
-        : descartarAtrativo(a.id);
+    case "transition":
+      return transition(a.entity, a.id, { to: a.to, expected: a.expected });
     case "reprocess":
       if (a.entity === "atrativo") {
         throw new Error("reprocess is not supported for atrativos");

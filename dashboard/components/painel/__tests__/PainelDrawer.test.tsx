@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PainelDrawer } from "@/components/painel/PainelDrawer";
 import type { PainelCard } from "@/lib/painel-data";
-import { destinoDescarteSuccess } from "@/mocks/handlers/destinos";
+import { destinoTransitionSuccess } from "@/mocks/handlers/destinos";
 import {
   conversationDetailSuccess,
   conversationDetailNotFound,
@@ -32,6 +32,14 @@ const destinoCard: PainelCard = {
   source: null,
   duplicate: false,
   error: null,
+};
+
+// A rio-stage destino: (rio → descarte) IS an allowed server edge, so the
+// drawer "Descartar" button resolves to a real generic transition call.
+const destinoRioCard: PainelCard = {
+  ...destinoCard,
+  routing: "in_progress",
+  column: "rio",
 };
 
 /** Every request the suite observes (method + url), for PATCH assertions. */
@@ -65,7 +73,7 @@ describe("PainelDrawer", () => {
     expect(getByTestId("drawer-field-uf")).toHaveTextContent("RJ");
     expect(getByTestId("drawer-field-score")).toHaveTextContent("91.2");
     expect(getByTestId("drawer-field-stage")).toHaveTextContent(
-      "Sincronizado",
+      "Mar · publicado",
     );
     expect(getByTestId("drawer-field-type")).toHaveTextContent("Destino");
 
@@ -83,17 +91,17 @@ describe("PainelDrawer", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("Descartar fires the descarte PATCH and calls onClose", async () => {
-    server.use(destinoDescarteSuccess());
+  it("Descartar fires the generic transition PATCH and calls onClose", async () => {
+    server.use(destinoTransitionSuccess());
     const onClose = vi.fn();
     const { getByTestId } = renderWithClient(
-      <PainelDrawer card={destinoCard} onClose={onClose} />,
+      <PainelDrawer card={destinoRioCard} onClose={onClose} />,
     );
 
     fireEvent.click(getByTestId("drawer-descartar"));
 
     await waitFor(() =>
-      expect(patchesTo(`/destinos/${DESTINO_ID}/descarte`)).toBe(true),
+      expect(patchesTo(`/destinos/${DESTINO_ID}/transition`)).toBe(true),
     );
     expect(onClose).toHaveBeenCalled();
   });

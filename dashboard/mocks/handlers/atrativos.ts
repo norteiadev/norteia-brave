@@ -180,6 +180,13 @@ export function atrativoEditSuccess() {
   );
 }
 
+/** PATCH transition — success (generic audited stage transition, UI-PAINEL-2). */
+export function atrativoTransitionSuccess() {
+  return http.patch(`${BASE}/:id/transition`, () =>
+    HttpResponse.json({ status: "ok", routing: "dlq" }),
+  );
+}
+
 /** Catch-all 401 for any atrativos route (session-expired path). */
 export function atrativosUnauthorized() {
   const unauth = () =>

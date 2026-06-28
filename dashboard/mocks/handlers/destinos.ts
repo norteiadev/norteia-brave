@@ -178,6 +178,13 @@ export function destinoEditSuccess() {
   );
 }
 
+/** PATCH transition — success (generic audited stage transition, UI-PAINEL-2). */
+export function destinoTransitionSuccess() {
+  return http.patch(`${BASE}/:id/transition`, () =>
+    HttpResponse.json({ status: "ok", routing: "mar" }),
+  );
+}
+
 /** Catch-all 401 for any destinos route (session-expired path). */
 export function destinosUnauthorized() {
   const unauth = () =>

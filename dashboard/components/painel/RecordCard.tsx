@@ -33,7 +33,8 @@ export function RecordCard({
   onRetry,
   onClick,
 }: RecordCardProps) {
-  const isFalha = card.column === "descarte";
+  // The error/quarantine column is "falha" in the 6-column model (17.1-06).
+  const isFalha = card.column === "falha";
 
   return (
     <div

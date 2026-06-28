@@ -81,12 +81,12 @@ describe("RecordCard", () => {
     expect(screen.getByText("places_discovery")).toBeInTheDocument();
   });
 
-  it("renders ⚠ falha + a working ↺ Reprocessar on a descarte card", async () => {
+  it("renders ⚠ falha + a working ↺ Reprocessar on a falha card", async () => {
     const user = userEvent.setup();
     const onRetry = vi.fn();
     const card = makeCard({
-      column: "descarte",
-      routing: "descarte",
+      column: "falha",
+      routing: "falha",
       error: "Falha na geocodificação",
     });
     render(<RecordCard card={card} onDragStart={noop} onRetry={onRetry} />);
@@ -100,7 +100,7 @@ describe("RecordCard", () => {
   it("falls back to a generic falha label when error is null", () => {
     render(
       <RecordCard
-        card={makeCard({ column: "descarte", routing: "descarte", error: null })}
+        card={makeCard({ column: "falha", routing: "falha", error: null })}
         onDragStart={noop}
         onRetry={noop}
       />,
