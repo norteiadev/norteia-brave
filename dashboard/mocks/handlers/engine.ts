@@ -23,6 +23,7 @@ export function engineStatus(overrides: Partial<EngineStatus> = {}) {
     current_uf: null,
     ufs_done: 0,
     ufs_total: 0,
+    enabled: false,
     counts: {
       nascente: 0,
       rio: { in_progress: 0, mar: 0, dlq: 0, descarte: 0 },

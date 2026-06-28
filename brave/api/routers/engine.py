@@ -230,8 +230,14 @@ def engine_start(
     dependencies=[Depends(require_steward_or_bearer)],
 )
 def engine_stop(redis: Redis = Depends(get_redis)) -> dict:
-    """Request a graceful stop. The orchestrator drains the in-flight UF then idles."""
-    if not collection_engine.request_stop(redis):
+    """Request a graceful stop. The orchestrator drains the in-flight UF then idles.
+
+    Always clears the operator-intent enabled latch regardless of whether the engine
+    was running — so the dashboard toggle stays OFF even when state is idle.
+    """
+    was_running = collection_engine.request_stop(redis)
+    collection_engine.set_enabled(redis, False)
+    if not was_running:
         return {"status": "noop", "detail": "engine is not running"}
     logger.info("engine_stop_requested")
     return {"status": "stopping"}

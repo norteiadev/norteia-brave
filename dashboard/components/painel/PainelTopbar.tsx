@@ -150,7 +150,10 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   const state: EngineState = data?.state ?? "idle";
   const source: EngineSource = data?.source ?? "default";
   const pending = start.isPending || stop.isPending;
-  const motorOn = state !== "idle";
+  // motorOn is driven by the operator-intent latch (enabled), not the transient
+  // dispatch state. This keeps the switch ON when state returns to "idle" mid-run
+  // (workers still processing) and only clears it when /stop is explicitly called.
+  const motorOn = data?.enabled ?? (state !== "idle");
 
   // One-shot expiry toast driven by the real expires_in (warn at 5 min). The
   // ref guards against re-toasting on every 10s poll while inside the band.
@@ -170,10 +173,12 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
 
   const onToggleMotor = () => {
     if (pending) return;
-    if (state === "idle") {
-      setDepthMenuOpen((v) => !v);
-    } else {
+    if (motorOn) {
+      // Engine is on (operator intent) — stop it.
       stop.mutate();
+    } else {
+      // Engine is off — open the depth picker to start.
+      setDepthMenuOpen((v) => !v);
     }
   };
 
@@ -250,7 +255,9 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
             className="text-[12px] font-medium text-[var(--painel-muted)]"
             data-testid="painel-motor-state"
           >
-            Motor · {STATE_LABEL[state]}
+            {/* motorLabel is driven by motorOn (enabled latch), not state, so that
+                enabled=true + state=idle still renders "Ligado" rather than "Desligado". */}
+            Motor · {motorOn ? (state === "stopping" ? "Parando…" : "Ligado") : "Desligado"}
           </span>
           <div className="relative">
             <button
@@ -275,8 +282,9 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
               />
             </button>
 
-            {/* Depth picker — START requires a depth (backend 422s without one) */}
-            {depthMenuOpen && state === "idle" && (
+            {/* Depth picker — START requires a depth (backend 422s without one).
+                Only shown when the engine is off (motorOn=false). */}
+            {depthMenuOpen && !motorOn && (
               <div
                 role="menu"
                 data-testid="painel-depth-menu"

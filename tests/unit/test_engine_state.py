@@ -113,3 +113,45 @@ def test_get_status_carries_depth(redis):
     assert status["depth"] is None
     engine.set_depth(redis, engine.NASCENTE_RIO)
     assert engine.get_status(redis)["depth"] == engine.NASCENTE_RIO
+
+
+# --- Enabled latch (operator intent) ---
+
+
+def test_is_enabled_returns_false_on_fresh_redis(redis):
+    assert engine.is_enabled(redis) is False
+
+
+def test_set_enabled_true_then_is_enabled_returns_true(redis):
+    engine.set_enabled(redis, True)
+    assert engine.is_enabled(redis) is True
+
+
+def test_set_enabled_false_then_is_enabled_returns_false(redis):
+    engine.set_enabled(redis, True)
+    engine.set_enabled(redis, False)
+    assert engine.is_enabled(redis) is False
+
+
+def test_start_run_sets_enabled(redis):
+    engine.start_run(redis, ufs_total=1)
+    assert engine.is_enabled(redis) is True
+
+
+def test_mark_idle_does_not_clear_enabled(redis):
+    engine.start_run(redis, ufs_total=1)
+    assert engine.is_enabled(redis) is True
+    engine.mark_idle(redis)
+    assert engine.is_enabled(redis) is True  # latch survives idle transition
+
+
+def test_get_status_includes_enabled_field(redis):
+    status = engine.get_status(redis)
+    assert "enabled" in status
+    assert status["enabled"] is False
+
+
+def test_get_status_enabled_true_after_start_run(redis):
+    engine.start_run(redis, ufs_total=1)
+    status = engine.get_status(redis)
+    assert status["enabled"] is True

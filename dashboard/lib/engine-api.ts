@@ -67,6 +67,13 @@ export interface EngineStatus {
   depth: EngineDepth | null;
   /** Active run's collection source, echoed by /status. null when unset/not running. */
   source?: EngineSource | null;
+  /**
+   * Operator-intent latch: True when an operator has started the engine and has
+   * not yet explicitly stopped it. Unlike `state`, this does NOT flip to false
+   * when `state` returns to `idle` after the dispatch loop finishes — workers
+   * may still be processing. Only cleared when an operator POSTs /stop.
+   */
+  enabled: boolean;
 }
 
 export interface EngineActionResult {
