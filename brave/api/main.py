@@ -65,3 +65,8 @@ app.include_router(atrativos_router)
 from brave.api.routers import tripadvisor_session
 
 app.include_router(tripadvisor_session.router)
+
+# Phase 17.1: Duplicados — dedup candidate↔Mar pairs + resolve (UI-PAINEL-2)
+from brave.api.routers.dedup import router as dedup_router
+
+app.include_router(dedup_router)
