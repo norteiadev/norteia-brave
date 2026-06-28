@@ -45,6 +45,7 @@ _UFS_DONE_KEY = "brave:engine:ufs_done"
 _UFS_TOTAL_KEY = "brave:engine:ufs_total"
 _DEPTH_KEY = "brave:engine:depth"
 _SOURCE_KEY = "brave:engine:source"
+_ENABLED_KEY = "brave:engine:enabled"
 
 # Source selects which ingest lane the orchestrator dispatches:
 #   default      — existing Mtur/Discovery lane (sweep_uf + discover_atrativo_task)
@@ -58,6 +59,16 @@ def _decode(value: Any) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8")
     return str(value)
+
+
+def set_enabled(redis: Any, enabled: bool) -> None:
+    """Set the operator-intent latch. True = engine should be running; False = stopped."""
+    redis.set(_ENABLED_KEY, "1" if enabled else "0")
+
+
+def is_enabled(redis: Any) -> bool:
+    """Return the operator-intent latch. Absent or any non-'1' value → False."""
+    return _decode(redis.get(_ENABLED_KEY)) == "1"
 
 
 def get_state(redis: Any) -> str:
@@ -79,6 +90,7 @@ def start_run(redis: Any, ufs_total: int) -> bool:
     if get_state(redis) in (RUNNING, STOPPING):
         return False
     redis.set(_STATE_KEY, RUNNING)
+    redis.set(_ENABLED_KEY, "1")
     redis.set(_UFS_TOTAL_KEY, int(ufs_total))
     redis.set(_UFS_DONE_KEY, 0)
     redis.delete(_CURRENT_UF_KEY)
@@ -155,4 +167,5 @@ def get_status(redis: Any) -> dict[str, Any]:
         "ufs_total": int(_decode(redis.get(_UFS_TOTAL_KEY)) or 0),
         "depth": get_depth(redis),
         "source": get_source(redis),
+        "enabled": is_enabled(redis),
     }
