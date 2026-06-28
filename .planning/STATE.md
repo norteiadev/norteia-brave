@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 Phase: 17.1 (Painel Brave — remaining pages + real backend (slice 2)) — EXECUTING
 Plan: 7 of 7 COMPLETE (17.1-01/03 wave-1 + 17.1-02 backend + 17.1-04 Duplicados + 17.1-06 board 6-col + 17.1-05 Varreduras + 17.1-07 shell integration — all 7 plans done)
 Status: Phase complete — ready to verify/close
-Last activity: 2026-06-28
+Last activity: 2026-06-28 - Completed quick task 260628-jvk: engine toggle persistence latch
 
 Progress: [█████████░] 92%
 
@@ -182,6 +182,7 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 260623-j78 | Fix Celery worker registering zero tasks (autodiscover related_name="pipeline") | 2026-06-23 | 22f9c25 | [260623-j78-fix-celery-worker-registering-zero-tasks](./quick/260623-j78-fix-celery-worker-registering-zero-tasks/) |
 | 260623-jw3 | Desmembramento None-result guard (offline NullLLMClient crash + Mtur-seed rollback) | 2026-06-23 | a49ebbd | [260623-jw3-desmembramento-none-result-guard-offline](./quick/260623-jw3-desmembramento-none-result-guard-offline/) |
+| 260628-jvk | Engine toggle persistence — operator-intent latch (brave:engine:enabled) so motor stays on across refresh + can be turned off | 2026-06-28 | 0362a5c | [260628-jvk-fix-engine-toggle-persistence-add-operat](./quick/260628-jvk-fix-engine-toggle-persistence-add-operat/) |
 
 ## Deferred Items
 
