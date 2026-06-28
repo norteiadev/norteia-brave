@@ -241,3 +241,69 @@ def list_dedup_pairs(
     return DedupPairsResponse(
         items=items, total=total, offset=offset, limit=limit
     ).model_dump()
+
+
+@router.patch(
+    "/api/v1/dedup/pairs/{candidate_rio_id}/resolve",
+    status_code=200,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def resolve_pair(
+    candidate_rio_id: uuid.UUID,
+    body: ResolveBody,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Resolve a dedup pair: merge | keep | discard (audited) (LOCKED A2).
+
+    merge   — UNION the candidate's source_ref into the EXISTING Mar's
+              provenance["merged_source_refs"] and route the candidate Rio →
+              descarte. NO new MarRecord, NO supersession/Mar-promotion path, NO
+              409 on differing sources (this OVERRIDES RESEARCH Pitfall 4, which
+              is stale). The existing Mar's own source_ref is never mutated, so
+              the partial unique index uq_mar_active_source_ref stays satisfied.
+    discard — candidate Rio → descarte, dlq_reason="dedup_discarded".
+    keep    — no row change; the "dedup_kept" audit row IS the suppression marker
+              (A3 — no schema change).
+    """
+    rio = db.get(RioRecord, candidate_rio_id)
+    if rio is None:
+        raise HTTPException(status_code=404, detail="RioRecord not found")
+
+    before = {"routing": rio.routing}
+
+    if body.action == "discard":
+        rio.routing = "descarte"
+        rio.dlq_reason = "dedup_discarded"
+        action = "dedup_discarded"
+    elif body.action == "merge":
+        mar = db.get(MarRecord, body.mar_id)
+        if mar is None:
+            raise HTTPException(status_code=404, detail="MarRecord not found")
+        # UNION the candidate's source_ref into the existing Mar provenance.
+        # RioRecord has no source_ref column, so derive it the same way the Mar
+        # promotion service does (mar/service.py:41): canonical_key or the row id.
+        candidate_source_ref = rio.canonical_key or str(rio.id)
+        provenance = dict(mar.provenance or {})
+        merged = list(provenance.get("merged_source_refs", []))
+        merged.append(candidate_source_ref)
+        # Reassign a fresh dict so SQLAlchemy detects the JSON change.
+        mar.provenance = {**provenance, "merged_source_refs": merged}
+        # Discard the candidate Rio from the pending dedup pool — do NOT create a
+        # 2nd active Mar, do NOT touch mar.source_ref, do NOT run the Mar
+        # promotion/supersession path.
+        rio.routing = "descarte"
+        action = "dedup_merged"
+    else:  # keep
+        action = "dedup_kept"
+
+    write_audit(
+        session=db,
+        action=action,
+        entity_type=rio.entity_type,
+        record_id=rio.id,
+        before_state=before,
+        after_state={"routing": rio.routing},
+        actor="steward",
+    )
+    db.commit()
+    return {"status": "ok", "action": body.action}
