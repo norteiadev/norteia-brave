@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 17.1-06-PLAN.md (Painel board 6-column model + client transition allow-list)
-last_updated: "2026-06-28T14:30:00.000Z"
+stopped_at: Completed 17.1-05-PLAN.md (Varreduras frontend — runs client + MSW + PainelVarreduras table)
+last_updated: "2026-06-28T14:05:00.000Z"
 last_activity: 2026-06-28
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 38
-  completed_plans: 33
-  percent: 87
+  completed_plans: 34
+  percent: 89
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 17.1 (Painel Brave — remaining pages + real backend (slice 2)) — EXECUTING
-Plan: 6 of 7 (17.1-01/03 wave-1 + 17.1-02 backend + 17.1-04 Duplicados + 17.1-06 board 6-col complete; 17.1-05 + 17.1-07 remain)
+Plan: 7 of 7 (17.1-01/03 wave-1 + 17.1-02 backend + 17.1-04 Duplicados + 17.1-06 board 6-col + 17.1-05 Varreduras complete; 17.1-07 remains)
 Status: Ready to execute
 Last activity: 2026-06-28
 
-Progress: [█████████░] 87%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
@@ -98,6 +98,7 @@ Progress: [█████████░] 87%
 | Phase 17.1 P02 | ~30min | 3 tasks | 10 files |
 | Phase 17.1 P04 | ~20min | 2 tasks | 4 files |
 | Phase 17.1 P06 | ~45min | 3 tasks | 13 files |
+| Phase 17.1 P05 | ~20min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -145,6 +146,8 @@ Recent decisions affecting current work:
 - [Phase 10 P04]: ENG-06/07 — StageBadge nascente variant: prop-driven `nascente?: boolean` chip (PT-BR "Nascente", `--color-primary` CSS-var token, no hex), rendered stage-first; stage stays implicit by table membership (D-01), no backend/schema/endpoint change; Vitest +2 offline, full dashboard suite 142/142
 - [Phase 17.1 P03]: UI-PAINEL-2 stage transitions — ONE generic audited `transition` endpoint per entity, gated by a SERVER-SIDE edge allow-list (the twin of client mapDrop), keyed by (expected_column, to_column)→handler tag. cms.py `_ALLOWED_EDGES` (destino): rio→mar/descarte/dlq, dlq→rio/mar/descarte. atrativos.py `_ATRATIVO_ALLOWED_EDGES`: rio→dlq/mar/descarte, dlq→rio reopen (NEW), whatsapp→whatsapp. mar→* is ABSENT from both → 409 "transição não suportada" (no depublish; existing cms descarte_destino Mar guard intact). Endpoints REUSE existing helpers (validate_and_promote_rio / reprocess_record / promote_override) — no new pipeline machinery; into-whatsapp delegates fully to the audited approve_whatsapp_gate (sub_state aguardando_consulta_whatsapp guard), never duplicating outreach. TransitionBody (extra=forbid) + _ROUTING_TO_COLUMN optimistic-concurrency 409 shared via import (atrativos imports from cms — paired contract). 20 offline edge-table unit tests (RUN_REAL_EXTERNALS unset). Client mapDrop (plan 17.1-06) must mirror these allow-lists edge-for-edge.
 
+- [Phase 17.1 P05]: UI-PAINEL-2 Varreduras frontend — dashboard/lib/runs-api.ts typed client (RunItem/RunsResponse/RunReprocessResult mirroring brave/api/routers/runs.py field-for-field; fetchRuns({uf,source,depth}) + reprocessRun(id); runsKeys ['runs'] prefix; 7-day window helpers recentRuns/totalSynced/totalFailed/formatCount mirroring the cost-api total/format idiom — `lane` deliberately OMITTED from RunItem because it is reprocess-only server state, not in the response model). dashboard/mocks/handlers/runs.ts at the double-prefixed /api/api/v1/runs/... (runsListSuccess/Empty/Error + runsReprocessSuccess; payloads typed against the lib interfaces = the A5 contract mirror; NOT registered in the empty index.ts barrel — per-suite server.use() pattern, mirrors cost.ts/dedup.ts). PainelVarreduras.tsx renders the runs table (Início/UF/Fonte/Profundidade/Total/Sincr./Falhas/Status) with colored status pills (concluido/parcial/falha/running); Fonte+Profundidade Seg filters go server-side, UF Seg derived from the loaded set filters client-side over each run's ufs array; ↺ Falhas → useMutation(reprocessRun)+toast+invalidateQueries(['runs']), disabled when failed==0; 7-day SummaryCards; empty state; pure --painel-* tokens. 4 offline Vitest green; full dashboard suite 269/269 (was 265, +4). Shell wiring into app/painel/page.tsx is plan 17.1-07.
+
 - [Phase 17.1 P06]: UI-PAINEL-2 Painel board 6-column model + client transition allow-list. dashboard board moves 5→6 columns (nascente/rio/whatsapp/mar/dlq/falha); routingToColumn in_progress→rio (server twin _ROUTING_TO_COLUMN); atrativo sub_state aguardando_consulta_whatsapp buckets into whatsapp; falha cards from GET /api/v1/failures (real PoisonQuarantine, draggable for reprocess); metrics still read the envelope total. lib/painel-actions.ts mapDrop EXTENDED into the full-pipeline security boundary: emits ONE generic audited transition() call (engine-api transition → PATCH /api/v1/{destinos|atrativos}/{id}/transition) for EXACTLY the (expected→to) edges in the server _ALLOWED_EDGES/_ATRATIVO_ALLOWED_EDGES, and null (revert+toast) for every other pair (mar→* never depublishes, into-nascente, same-column, falha→*); exhaustive unit test proves no unmapped board pair is callable. engine-api adds transition()+injectTASession() (422/503 surfaced); fetchFailures/FailureItem re-exported from lib/workers-api.ts (no duplicate type). PainelColumnKey keeps descarte as a NON-rendered key so the drawer Descartar path + routingToColumn('descarte') stay valid (COLUMN_DEFS = 6 rendered). RecordCard falha affordance re-keyed descarte→falha [Rule 1]. 265/265 dashboard tests green. injectTASession consumed by the Origem modal in 17.1-07.
 
 - [Phase 17.1 P02]: UI-PAINEL-2 Varreduras backend — durable runs_history trail (engine runs lived only in Redis). RunHistory model + Alembic 0007 (down_revision 0006, non-CONCURRENTLY ix_runs_history_started_at). engine_start INSERTs a row ONLY after depth/source 422 + start_run() success (Pitfall 3 — no phantom rows on rejected starts), persists run_id to Redis (brave:engine:run_id) + threads it into engine_sweep_run.delay; INSERT best-effort (never aborts a valid start). engine_sweep_run finalize (_finalize_run_history) UPDATEs ended_at/ufs_dispatched/status (concluido|parcial via STOPPING state read) in a swallow-all finally — a finalize write failure can NEVER abort the sweep (T-17.1-02-02). GET /api/v1/runs: source/depth SQL-filtered, uf filtered in Python over the JSON ufs array (no JSONB operator → portable+offline); synced/failed/total computed ON-READ over [started_at, ended_at] (Mar published + Rio dlq/descarte + PoisonQuarantine; A4 time-window approximation — producers never return counts). PATCH /runs/{id}/reprocess re-runs the SCOPE (ufs×source×lane) via the sweep.py prod-vs-offline broker fallback, audited run_reprocessed (per-record replay DEFERRED). 16 offline tests green (RUN_REAL_EXTERNALS unset) + migration DB up/down skip-safe without BRAVE_DB_URL. Deviation: added get_db override to test_engine_source client fixture (engine_start now needs db).
@@ -188,5 +191,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-06-28
-Stopped at: Completed 17.1-06-PLAN.md (Painel board 6-column model + whatsapp/falha sourcing + client transition allow-list)
+Stopped at: Completed 17.1-05-PLAN.md (Varreduras frontend — runs client + MSW handler + PainelVarreduras table view)
 Resume file: None

@@ -121,7 +121,7 @@ Plans:
 - [x] 17.1-02-PLAN.md — Varreduras backend: RunHistory model + migration 0007 + engine/sweep write points + runs list/reprocess + offline write-path test [wave 2]
 - [x] 17.1-04-PLAN.md — Duplicados frontend: dedup client + MSW + PainelDuplicados view [wave 2]
 - [x] 17.1-06-PLAN.md — Board 6-column model (whatsapp/falha sourcing) + client transition allow-list mirroring server [wave 2]
-- [ ] 17.1-05-PLAN.md — Varreduras frontend: runs client + MSW + PainelVarreduras table [wave 3]
+- [x] 17.1-05-PLAN.md — Varreduras frontend: runs client + MSW + PainelVarreduras table [wave 3]
 - [ ] 17.1-07-PLAN.md — Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher wiring [wave 4]
 
 **Plans:** 7 plans
@@ -132,7 +132,7 @@ Plans:
 - [x] 17.1-02-PLAN.md — Varreduras backend: RunHistory model + 0007 migration + engine/sweep write points + runs list/reprocess [wave 2]
 - [x] 17.1-04-PLAN.md — Duplicados frontend: dedup client + MSW handler + PainelDuplicados view [wave 2]
 - [x] 17.1-06-PLAN.md — Board 6-column model + whatsapp/falha sourcing + full-pipeline transition allow-list (client) [wave 2]
-- [ ] 17.1-05-PLAN.md — Varreduras frontend: runs client + MSW handler + PainelVarreduras table view [wave 3]
+- [x] 17.1-05-PLAN.md — Varreduras frontend: runs client + MSW handler + PainelVarreduras table view [wave 3]
 - [ ] 17.1-07-PLAN.md — Origem modal + Motor depth toggle + TA TTL pill + two-group nav + view-switcher (all 6 views) [wave 4]
 
 ---
