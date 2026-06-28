@@ -1,10 +1,12 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { ApiError } from "@/lib/api-client";
 import {
+  DEPTH_LABELS,
   ENGINE_REFETCH_INTERVAL_MS,
   SOURCE_LABELS,
   engineKeys,
@@ -13,10 +15,12 @@ import {
   startEngine,
   stopEngine,
   taSessionKeys,
+  type EngineDepth,
   type EngineSource,
   type EngineState,
   type TASessionStatus,
 } from "@/lib/engine-api";
+import { PainelOrigem, type OrigemSource } from "@/components/painel/PainelOrigem";
 
 /**
  * PainelTopbar — 58px chrome row of the Painel Brave shell.
@@ -25,8 +29,11 @@ import {
  * TripAdvisor session pill · read-only "Origem {source}" · divider · motor
  * label + on/off switch. The motor switch + TA pill are wired to the REAL
  * engine-api through the BFF (mirrors EngineControl's mutation pattern). The
- * source switch modal is deferred (read-only this slice, per 17-CONTEXT). All
- * colors resolve from the scoped `.painel-light` CSS vars.
+ * "Origem {source}" button opens the PainelOrigem modal (source pick + TA cURL
+ * (re)inject); the motor switch collects a pipeline DEPTH before starting (the
+ * backend 422s a depthless start); the TA pill + expiry toast are driven by the
+ * real session `expires_in` (warn at 5 min). All colors resolve from the scoped
+ * `.painel-light` CSS vars.
  */
 
 interface PainelTopbarProps {
@@ -40,6 +47,27 @@ const STATE_LABEL: Record<EngineState, string> = {
   stopping: "Parando…",
 };
 
+/** Depth options offered when starting the motor (order = least → most spend). */
+const DEPTH_ORDER: EngineDepth[] = [
+  "nascente",
+  "nascente_rio",
+  "nascente_rio_mar",
+];
+
+/** TA session expiry warn band (seconds) — mirrors the design's 5-min warn. */
+const TA_WARN_SECONDS = 5 * 60;
+
+/** Map the engine source enum onto the Origem modal's source preselect. */
+function origemSourceFor(source: EngineSource): OrigemSource {
+  return source === "tripadvisor" ? "tripadvisor" : "mtur";
+}
+
+/** Format a seconds count as m:ss. */
+function fmtMMSS(seconds: number): string {
+  const t = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+}
+
 /** PT-BR error explainer — ported from EngineControl (not exported there). */
 function explainError(err: unknown): string {
   if (err instanceof ApiError) {
@@ -50,22 +78,41 @@ function explainError(err: unknown): string {
   return "Falha ao controlar o motor.";
 }
 
-/** TA session display label — ported from EngineControl. */
+/** True when a present session is inside the 5-min expiry warn band. */
+function sessionWarning(s: TASessionStatus): boolean {
+  return (
+    s.present &&
+    s.expires_in != null &&
+    s.expires_in > 0 &&
+    s.expires_in <= TA_WARN_SECONDS
+  );
+}
+
+/**
+ * TA session display label — driven by the REAL `expires_in` (warn at 5 min),
+ * not a hardcoded clock. A present session inside the warn band shows the live
+ * remaining mm:ss so the operator can recreate it before it lapses.
+ */
 function sessionLabel(s: TASessionStatus): string {
-  if (s.present) return "Pronta";
+  if (s.present) {
+    if (sessionWarning(s)) return `Expira em ${fmtMMSS(s.expires_in as number)}`;
+    return "Pronta";
+  }
   if (s.reason === "needs_bootstrap") return "Precisa bootstrap";
   return "Expirada";
 }
 
-/** TA session dot/text color (scoped status var) — ported intent from EngineControl. */
+/** TA session dot/text color (scoped status var) — amber in the warn band. */
 function sessionColor(s: TASessionStatus): string {
-  if (s.present) return "var(--status-mar)";
+  if (s.present) return sessionWarning(s) ? "var(--status-dlq)" : "var(--status-mar)";
   if (s.reason === "needs_bootstrap") return "var(--status-dlq)";
   return "var(--status-descarte)";
 }
 
 export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   const qc = useQueryClient();
+  const [origemOpen, setOrigemOpen] = useState(false);
+  const [depthMenuOpen, setDepthMenuOpen] = useState(false);
 
   const { data } = useQuery({
     queryKey: engineKeys.status,
@@ -84,8 +131,10 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   const invalidate = () =>
     void qc.invalidateQueries({ queryKey: engineKeys.status });
 
+  // START requires a pipeline depth (backend 422s a depthless start) — the
+  // operator picks one from the depth menu, which is threaded into startEngine.
   const start = useMutation({
-    mutationFn: () => startEngine(),
+    mutationFn: (depth: EngineDepth) => startEngine({ depth }),
     onError: (err) => toast.error(explainError(err)),
     onSuccess: () => toast.success("Motor ligado — varredura iniciada"),
     onSettled: invalidate,
@@ -103,13 +152,34 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   const pending = start.isPending || stop.isPending;
   const motorOn = state !== "idle";
 
+  // One-shot expiry toast driven by the real expires_in (warn at 5 min). The
+  // ref guards against re-toasting on every 10s poll while inside the band.
+  const warnedRef = useRef(false);
+  useEffect(() => {
+    if (sessionStatus && sessionWarning(sessionStatus)) {
+      if (!warnedRef.current) {
+        warnedRef.current = true;
+        toast.warning(
+          `Sessão TripAdvisor expira em ${fmtMMSS(sessionStatus.expires_in as number)} — recrie pelo modal Origem.`,
+        );
+      }
+    } else {
+      warnedRef.current = false;
+    }
+  }, [sessionStatus]);
+
   const onToggleMotor = () => {
     if (pending) return;
     if (state === "idle") {
-      if (window.confirm("Ligar o motor de coleta?")) start.mutate();
+      setDepthMenuOpen((v) => !v);
     } else {
       stop.mutate();
     }
+  };
+
+  const onPickDepth = (depth: EngineDepth) => {
+    setDepthMenuOpen(false);
+    start.mutate(depth);
   };
 
   return (
@@ -150,11 +220,13 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
           </button>
         )}
 
-        {/* Origem {source} — read-only (switch modal deferred per 17-CONTEXT) */}
+        {/* Origem {source} — opens the source-pick + TA cURL (re)inject modal */}
         <button
           type="button"
           data-testid="painel-source"
-          className="flex h-[34px] items-center gap-[8px] rounded-[8px] border bg-[var(--card)] px-[12px] text-[12.5px] font-medium text-[var(--painel-text)]"
+          aria-haspopup="dialog"
+          onClick={() => setOrigemOpen(true)}
+          className="flex h-[34px] items-center gap-[8px] rounded-[8px] border bg-[var(--card)] px-[12px] text-[12.5px] font-medium text-[var(--painel-text)] hover:bg-[var(--painel-chip)]"
           style={{ borderColor: "var(--painel-border-outer)" }}
         >
           <span
@@ -180,29 +252,65 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
           >
             Motor · {STATE_LABEL[state]}
           </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={motorOn}
-            aria-label="Ligar/desligar motor"
-            data-testid="painel-motor-switch"
-            disabled={pending}
-            onClick={onToggleMotor}
-            className="relative h-[22px] w-[40px] flex-shrink-0 rounded-full transition-colors disabled:opacity-60"
-            style={{
-              background: motorOn
-                ? "var(--painel-navy)"
-                : "var(--painel-border-outer)",
-            }}
-          >
-            <span
-              className="absolute top-[2px] h-[18px] w-[18px] rounded-full bg-white transition-all"
-              style={{ left: motorOn ? "20px" : "2px" }}
-              aria-hidden
-            />
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={motorOn}
+              aria-label="Ligar/desligar motor"
+              data-testid="painel-motor-switch"
+              disabled={pending}
+              onClick={onToggleMotor}
+              className="relative h-[22px] w-[40px] flex-shrink-0 rounded-full transition-colors disabled:opacity-60"
+              style={{
+                background: motorOn
+                  ? "var(--painel-navy)"
+                  : "var(--painel-border-outer)",
+              }}
+            >
+              <span
+                className="absolute top-[2px] h-[18px] w-[18px] rounded-full bg-white transition-all"
+                style={{ left: motorOn ? "20px" : "2px" }}
+                aria-hidden
+              />
+            </button>
+
+            {/* Depth picker — START requires a depth (backend 422s without one) */}
+            {depthMenuOpen && state === "idle" && (
+              <div
+                role="menu"
+                data-testid="painel-depth-menu"
+                className="absolute right-0 top-[30px] z-[20] w-[208px] rounded-[10px] border bg-[var(--card)] p-[6px] shadow-lg"
+                style={{ borderColor: "var(--painel-border-outer)" }}
+              >
+                <div className="px-[8px] py-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
+                  Profundidade da varredura
+                </div>
+                {DEPTH_ORDER.map((depth) => (
+                  <button
+                    key={depth}
+                    type="button"
+                    role="menuitem"
+                    data-testid={`painel-depth-${depth}`}
+                    disabled={pending}
+                    onClick={() => onPickDepth(depth)}
+                    className="block w-full rounded-[7px] px-[8px] py-[7px] text-left text-[12.5px] font-medium text-[var(--painel-text)] hover:bg-[var(--painel-chip)] disabled:opacity-50"
+                  >
+                    {DEPTH_LABELS[depth]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Source-pick + TA cURL (re)inject modal */}
+      <PainelOrigem
+        open={origemOpen}
+        onClose={() => setOrigemOpen(false)}
+        initialSource={origemSourceFor(source)}
+      />
     </div>
   );
 }

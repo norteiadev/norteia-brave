@@ -61,29 +61,33 @@ describe("PainelTopbar", () => {
     await waitFor(() => expect(stopCalled).toBe(true));
   });
 
-  it("idle + confirmed toggle fires POST /start", async () => {
-    let startCalled = false;
+  it("idle toggle opens the depth menu; picking a depth fires POST /start WITH that depth", async () => {
+    let startBody: { depth?: string } | null = null;
     server.use(
       engineStatus({ state: "idle" }),
       taSessionStatus(),
-      http.post("http://localhost:3000/api/api/v1/engine/start", () => {
-        startCalled = true;
+      http.post("http://localhost:3000/api/api/v1/engine/start", async ({ request }) => {
+        startBody = (await request.json()) as { depth?: string };
         return HttpResponse.json({ status: "started", ufs_total: 27 }, { status: 202 });
       }),
       engineStopSuccess(),
     );
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
     const sw = await screen.findByTestId("painel-motor-switch");
     await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "false"));
 
+    // Toggling idle opens the depth menu — it must NOT start without a depth.
     await user.click(sw);
-    await waitFor(() => expect(startCalled).toBe(true));
+    await screen.findByTestId("painel-depth-menu");
+
+    await user.click(screen.getByTestId("painel-depth-nascente_rio"));
+    await waitFor(() => expect(startBody).not.toBeNull());
+    expect(startBody).toEqual({ depth: "nascente_rio" });
   });
 
-  it("idle + cancelled confirm does NOT fire POST /start", async () => {
+  it("opening the depth menu without picking does NOT fire POST /start", async () => {
     let startCalled = false;
     server.use(
       engineStatus({ state: "idle" }),
@@ -93,7 +97,6 @@ describe("PainelTopbar", () => {
         return HttpResponse.json({ status: "started" }, { status: 202 });
       }),
     );
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
@@ -101,9 +104,21 @@ describe("PainelTopbar", () => {
     await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "false"));
 
     await user.click(sw);
-    // give the (non-)mutation a tick; assert it never fired
+    await screen.findByTestId("painel-depth-menu");
+    // No depth picked — assert start never fired.
     await new Promise((r) => setTimeout(r, 50));
     expect(startCalled).toBe(false);
+  });
+
+  it("TA pill warns from the real expires_in (inside the 5-min band)", async () => {
+    server.use(
+      engineStatus(),
+      taSessionStatus({ present: true, reason: null, expires_in: 120 }),
+    );
+    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+    const pill = await screen.findByTestId("painel-ta-pill");
+    await waitFor(() => expect(pill).toHaveTextContent("Expira em"));
   });
 
   it("TA pill renders 'Pronta' when the session is present", async () => {
