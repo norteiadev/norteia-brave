@@ -124,16 +124,7 @@ Plans:
 - [x] 17.1-05-PLAN.md — Varreduras frontend: runs client + MSW + PainelVarreduras table [wave 3]
 - [x] 17.1-07-PLAN.md — Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher wiring [wave 4]
 
-**Plans:** 7 plans
-
-Plans:
-- [x] 17.1-01-PLAN.md — Duplicados backend: compute-on-read dedup-pairs list + merge/keep/discard resolve (audited) [wave 1]
-- [x] 17.1-03-PLAN.md — Generic audited stage-transition endpoint per entity + server-side edge allow-list (mar→* 409) [wave 1]
-- [x] 17.1-02-PLAN.md — Varreduras backend: RunHistory model + 0007 migration + engine/sweep write points + runs list/reprocess [wave 2]
-- [x] 17.1-04-PLAN.md — Duplicados frontend: dedup client + MSW handler + PainelDuplicados view [wave 2]
-- [x] 17.1-06-PLAN.md — Board 6-column model + whatsapp/falha sourcing + full-pipeline transition allow-list (client) [wave 2]
-- [x] 17.1-05-PLAN.md — Varreduras frontend: runs client + MSW handler + PainelVarreduras table view [wave 3]
-- [x] 17.1-07-PLAN.md — Origem modal + Motor depth toggle + TA TTL pill + two-group nav + view-switcher (all 6 views) [wave 4]
+**Verification:** passed (8/8 must-haves) — see 17.1-VERIFICATION.md
 
 ---
 

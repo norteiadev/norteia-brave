@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 17.1-07-PLAN.md (Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher — Painel Brave shell finished)
-last_updated: "2026-06-28T15:00:00.000Z"
+status: verifying
+stopped_at: Completed 17.1-07-PLAN.md (Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher — all 6 views reachable; Painel Brave shell finished). Phase 17.1 all 7 plans complete.
+last_updated: "2026-06-28T14:30:46.695Z"
 last_activity: 2026-06-28
 progress:
   total_phases: 8

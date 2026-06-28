@@ -1,10 +1,10 @@
 /**
- * Painel Brave — navigation config (phase 17, slice 1).
+ * Painel Brave — navigation config (phase 17 shell; all six views wired in 17.1).
  *
  * The single-shell `/painel` route is an SPA-style view-switcher driven by local
  * state (NOT nested Next routes), mirroring the design contract's `setView`.
- * Only the `painel` view is implemented this slice; the other five render an
- * "Em breve" placeholder.
+ * All six views (painel/duplicados/mapeamento/varreduras/conversas/custo) are
+ * implemented and mounted as of phase 17.1 — no "Em breve" placeholders remain.
  *
  * Labels + groups are LOCKED by 17-CONTEXT.md (pt-BR copy from the mockup).
  */
