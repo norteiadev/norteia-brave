@@ -65,13 +65,14 @@ def test_migration_0006_up_down(db_engine) -> None:
     indexes = {idx["name"] for idx in inspector.get_indexes("rio_records")}
     assert "ix_rio_records_mar_ready" in indexes, "ix_rio_records_mar_ready index not found"
 
-    # Downgrade
-    command.downgrade(alembic_cfg, "-1")
+    # Downgrade to 0006's parent (absolute, not relative: the shared DB head may be
+    # ahead of 0006 once later migrations exist, so "-1" is non-deterministic).
+    command.downgrade(alembic_cfg, "0005")
 
     # Verify column removed
     inspector2 = sa_inspect(db_engine)
     columns_after = {col["name"] for col in inspector2.get_columns("rio_records")}
     assert "mar_ready" not in columns_after, "mar_ready column still present after downgrade"
 
-    # Re-apply so DB is back at 0006 for other tests
-    command.upgrade(alembic_cfg, "0006")
+    # Re-apply to HEAD so the shared DB is restored for other tests regardless of order.
+    command.upgrade(alembic_cfg, "head")

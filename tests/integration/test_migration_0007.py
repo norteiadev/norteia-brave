@@ -69,8 +69,9 @@ def test_migration_0007_up_down(db_engine) -> None:
         "ix_runs_history_started_at index not found"
     )
 
-    # Downgrade
-    command.downgrade(alembic_cfg, "-1")
+    # Downgrade to 0007's parent (absolute, not relative: future migrations would make
+    # "-1" non-deterministic on the shared DB head).
+    command.downgrade(alembic_cfg, "0006")
 
     # Verify table removed
     inspector2 = sa_inspect(db_engine)
@@ -78,5 +79,5 @@ def test_migration_0007_up_down(db_engine) -> None:
         "runs_history table still present after downgrade"
     )
 
-    # Re-apply so DB is back at 0007 for other tests
-    command.upgrade(alembic_cfg, "0007")
+    # Re-apply to HEAD so the shared DB is restored for other tests regardless of order.
+    command.upgrade(alembic_cfg, "head")
