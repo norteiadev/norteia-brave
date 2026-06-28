@@ -4,20 +4,24 @@ import { useState } from "react";
 
 import { PainelConversas } from "@/components/painel/PainelConversas";
 import { PainelCusto } from "@/components/painel/PainelCusto";
+import { PainelDuplicados } from "@/components/painel/PainelDuplicados";
 import { PainelMapeamento } from "@/components/painel/PainelMapeamento";
 import { PainelShell } from "@/components/painel/PainelShell";
 import { PainelTopbar } from "@/components/painel/PainelTopbar";
+import { PainelVarreduras } from "@/components/painel/PainelVarreduras";
 import { PainelView } from "@/components/painel/PainelView";
-import { NAV_ITEMS, type PainelViewKey } from "@/components/painel/nav";
+import { type PainelViewKey } from "@/components/painel/nav";
 
 /**
- * /painel — the Painel Brave single-shell (phase 17, slice 1).
+ * /painel — the Painel Brave single-shell (phase 17.1, slice 2).
  *
  * A NEW route ALONGSIDE the existing 10 dark routes (non-breaking). The whole
  * subtree is wrapped in `.painel-light` to apply the scoped light surface
  * WITHOUT flipping the global dark theme. View switching is local state (SPA
- * style), not nested Next routes. Only `painel` is implemented; the other five
- * views render a centered "Em breve" placeholder.
+ * style), not nested Next routes. All six views are now real: the Painel Kanban
+ * (with the record-edit Drawer reachable from a card), Duplicados, Mapeamento,
+ * Varreduras, Conversas and Custo. The Origem modal + depth-required Motor toggle
+ * live in the topbar.
  */
 
 /** Static title/subtitle per active view (design NAV copy, lines 502-509). */
@@ -56,26 +60,22 @@ function viewHeader(view: PainelViewKey): { title: string; subtitle: string } {
   return VIEW_HEADERS[view];
 }
 
-/** Centered placeholder for the not-yet-built views. */
-function EmBreve({ label }: { label: string }) {
-  return (
-    <div
-      className="grid h-full place-items-center"
-      data-testid="painel-em-breve"
-    >
-      <div
-        className="rounded-[13px] border bg-[var(--card)] px-[28px] py-[24px] text-center"
-        style={{ borderColor: "var(--painel-border-outer)" }}
-      >
-        <div className="text-[14px] font-semibold text-[var(--painel-text)]">
-          Em breve
-        </div>
-        <div className="mt-[4px] text-[12px] text-[var(--painel-muted)]">
-          {label}
-        </div>
-      </div>
-    </div>
-  );
+/** Render the active view body — all six are real (no "Em breve" placeholder). */
+function PainelBody({ view }: { view: PainelViewKey }) {
+  switch (view) {
+    case "painel":
+      return <PainelView />;
+    case "duplicados":
+      return <PainelDuplicados />;
+    case "mapeamento":
+      return <PainelMapeamento />;
+    case "varreduras":
+      return <PainelVarreduras />;
+    case "conversas":
+      return <PainelConversas />;
+    case "custo":
+      return <PainelCusto />;
+  }
 }
 
 export default function PainelPage() {
@@ -89,17 +89,7 @@ export default function PainelPage() {
         onSelect={setView}
         topbar={<PainelTopbar title={title} subtitle={subtitle} />}
       >
-        {view === "painel" ? (
-          <PainelView />
-        ) : view === "mapeamento" ? (
-          <PainelMapeamento />
-        ) : view === "conversas" ? (
-          <PainelConversas />
-        ) : view === "custo" ? (
-          <PainelCusto />
-        ) : (
-          <EmBreve label={NAV_ITEMS[view].label} />
-        )}
+        <PainelBody view={view} />
       </PainelShell>
     </div>
   );

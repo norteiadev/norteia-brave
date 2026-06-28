@@ -1,6 +1,6 @@
 "use client";
 
-import { NAV_GROUPS, type PainelViewKey } from "./nav";
+import { NAV_GROUPS, type PainelNavGroup, type PainelViewKey } from "./nav";
 
 /**
  * PainelSidebar — 232px white left column for the Painel Brave shell.
@@ -15,6 +15,12 @@ interface PainelSidebarProps {
   active: PainelViewKey;
   onSelect: (key: PainelViewKey) => void;
 }
+
+/** Stable per-group test ids (also pins the two literal group labels here). */
+const GROUP_TESTID: Record<PainelNavGroup, string> = {
+  "Processamento": "painel-nav-group-processamento",
+  "Operação": "painel-nav-group-operacao",
+};
 
 /** Inline glyphs per view (reuse the design contract's 16px outline SVGs). */
 const NAV_ICONS: Record<PainelViewKey, React.ReactNode> = {
@@ -82,7 +88,11 @@ export function PainelSidebar({ active, onSelect }: PainelSidebarProps) {
       {/* Nav groups */}
       <nav className="flex flex-1 flex-col gap-[3px] p-[14px_12px]">
         {NAV_GROUPS.map(({ group, items }) => (
-          <div key={group} className="flex flex-col gap-[3px]">
+          <div
+            key={group}
+            data-testid={GROUP_TESTID[group]}
+            className="flex flex-col gap-[3px]"
+          >
             <div className="px-[10px] pb-[8px] pt-[4px] text-[10px] font-semibold uppercase tracking-[0.5px] text-[var(--painel-muted-2)]">
               {group}
             </div>
@@ -93,6 +103,7 @@ export function PainelSidebar({ active, onSelect }: PainelSidebarProps) {
                   key={item.key}
                   type="button"
                   data-view={item.key}
+                  data-testid={`painel-nav-item-${item.key}`}
                   data-active={isActive ? "true" : undefined}
                   aria-current={isActive ? "page" : undefined}
                   onClick={() => onSelect(item.key)}
