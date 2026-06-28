@@ -113,6 +113,16 @@ Plans:
 **Requirements**: UI redesign (Painel Brave CMS) — slice 2 (all views + dedup-pairs backend + runs-history backend + full-pipeline kanban sync)
 **Depends on:** Phase 17 (shell + Kanban slice 1), Phase 8 (ops CMS endpoints), Phase 10 (engine depth/source/UF), Phase 11–15 (TripAdvisor lane + session)
 **Out of scope:** replacing the 10 legacy dark routes; dark/light theme toggle; new collection lanes; changing the §7.6 score engine.
+**Plans:** 0/7 plans complete
+
+Plans:
+- [ ] 17.1-01-PLAN.md — Duplicados backend: compute-on-read field-similarity dedup pairs + resolve merge(union provenance)/keep/discard, audited [wave 1]
+- [ ] 17.1-03-PLAN.md — Generic audited per-entity `transition` endpoint + server-side edge allow-list (mar→* stays 409) [wave 1]
+- [ ] 17.1-02-PLAN.md — Varreduras backend: RunHistory model + migration 0007 + engine/sweep write points + runs list/reprocess + offline write-path test [wave 2]
+- [ ] 17.1-04-PLAN.md — Duplicados frontend: dedup client + MSW + PainelDuplicados view [wave 2]
+- [ ] 17.1-06-PLAN.md — Board 6-column model (whatsapp/falha sourcing) + client transition allow-list mirroring server [wave 2]
+- [ ] 17.1-05-PLAN.md — Varreduras frontend: runs client + MSW + PainelVarreduras table [wave 3]
+- [ ] 17.1-07-PLAN.md — Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher wiring [wave 4]
 
 **Plans:** 7 plans
 
