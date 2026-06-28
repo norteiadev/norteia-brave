@@ -23,7 +23,14 @@ function makeCard(overrides: Partial<PainelCard> = {}): PainelCard {
 
 const noop = () => {};
 
-const COLUMN_KEYS = ["nascente", "in_progress", "mar", "dlq", "descarte"] as const;
+const COLUMN_KEYS = [
+  "nascente",
+  "rio",
+  "whatsapp",
+  "mar",
+  "dlq",
+  "falha",
+] as const;
 
 function renderBoard(props: Partial<React.ComponentProps<typeof PainelBoard>> = {}) {
   return render(
@@ -38,7 +45,7 @@ function renderBoard(props: Partial<React.ComponentProps<typeof PainelBoard>> = 
 }
 
 describe("PainelBoard", () => {
-  it("renders all 5 columns and per-column counts from buildColumns", () => {
+  it("renders all 6 columns and per-column counts from buildColumns", () => {
     renderBoard({
       cards: [
         makeCard({ column: "mar", routing: "mar" }),
@@ -52,7 +59,7 @@ describe("PainelBoard", () => {
     }
     expect(screen.getByTestId("painel-col-count-mar")).toHaveTextContent("1");
     expect(screen.getByTestId("painel-col-count-dlq")).toHaveTextContent("2");
-    expect(screen.getByTestId("painel-col-count-descarte")).toHaveTextContent("0");
+    expect(screen.getByTestId("painel-col-count-falha")).toHaveTextContent("0");
   });
 
   it("uses the nascenteCount prop for the Nascente column count", () => {
@@ -77,11 +84,11 @@ describe("PainelBoard", () => {
     const onDropToColumn = vi.fn();
     renderBoard({ onDropToColumn });
 
-    fireEvent.drop(screen.getByTestId("painel-col-descarte"));
-    expect(onDropToColumn).toHaveBeenCalledWith("descarte");
+    fireEvent.drop(screen.getByTestId("painel-col-falha"));
+    expect(onDropToColumn).toHaveBeenCalledWith("falha");
   });
 
-  it("renders 5 columns with an empty cards array without crashing", () => {
+  it("renders 6 columns with an empty cards array without crashing", () => {
     renderBoard({ cards: [] });
     for (const key of COLUMN_KEYS) {
       expect(screen.getByTestId(`painel-col-${key}`)).toBeInTheDocument();

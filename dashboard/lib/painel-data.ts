@@ -28,18 +28,31 @@ import {
   fetchDestinoList,
   type DestinoListItem,
 } from "@/lib/destinos-api";
-import { engineKeys, fetchEngineStatus } from "@/lib/engine-api";
+import {
+  engineKeys,
+  fetchEngineStatus,
+  fetchFailures,
+  type FailureItem,
+} from "@/lib/engine-api";
 
 // --- Types ---
 
 export type PainelEntityType = "destino" | "atrativo";
 
+/**
+ * Board column key. The 6 RENDERED stage columns are the ones in COLUMN_DEFS
+ * (nascente, rio, whatsapp, mar, dlq, falha). `descarte` is kept as a valid,
+ * NON-rendered key: a record with routing="descarte" maps here (so it never
+ * appears as a standing column), and the drawer "Descartar" path targets it.
+ */
 export type PainelColumnKey =
   | "nascente"
-  | "in_progress"
+  | "rio"
+  | "whatsapp"
   | "mar"
   | "dlq"
-  | "descarte";
+  | "descarte"
+  | "falha";
 
 export type TypeFilter = "all" | "destino" | "atrativo";
 
@@ -72,13 +85,14 @@ export interface PainelCard {
 
 // --- Constants ---
 
-/** The 5 ordered stage columns (copy matches the design canvas, pt-BR). */
+/** The 6 ordered stage columns (copy matches the design canvas, pt-BR). */
 export const COLUMN_DEFS: { key: PainelColumnKey; label: string }[] = [
   { key: "nascente", label: "Nascente" },
-  { key: "in_progress", label: "Em processamento" },
-  { key: "mar", label: "Sincronizado" },
-  { key: "dlq", label: "Revisão" },
-  { key: "descarte", label: "Descarte" },
+  { key: "rio", label: "Rio · validação" },
+  { key: "whatsapp", label: "WhatsApp · contato" },
+  { key: "mar", label: "Mar · publicado" },
+  { key: "dlq", label: "DLQ · revisão" },
+  { key: "falha", label: "Falha" },
 ];
 
 /** The 27 BR UF codes (copied from EngineControl so the filters plan imports here). */
@@ -88,20 +102,23 @@ export const BR_UFS: string[] = [
   "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO",
 ];
 
-const KNOWN_COLUMNS: ReadonlySet<string> = new Set([
-  "in_progress",
-  "mar",
-  "dlq",
-  "descarte",
+/** Routing value → board column. The server twin is `_ROUTING_TO_COLUMN`
+ *  (brave/api/routers/cms.py): `in_progress` is the "Rio · validação" column. */
+const ROUTING_TO_COLUMN: ReadonlyMap<string, PainelColumnKey> = new Map([
+  ["in_progress", "rio"],
+  ["mar", "mar"],
+  ["dlq", "dlq"],
+  ["descarte", "descarte"],
 ]);
+
+/** The atrativo FSM sub_state that buckets a record into the WhatsApp column. */
+const WHATSAPP_SUB_STATE = "aguardando_consulta_whatsapp";
 
 // --- Pure selectors (React-free) ---
 
 /** Map a list item's `routing` to a column key; unknown/empty → "nascente". */
 export function routingToColumn(routing: string): PainelColumnKey {
-  return KNOWN_COLUMNS.has(routing)
-    ? (routing as PainelColumnKey)
-    : "nascente";
+  return ROUTING_TO_COLUMN.get(routing) ?? "nascente";
 }
 
 /** Destino município best-effort: last `:`-segment of canonical_key, else null. */
@@ -124,6 +141,7 @@ function municipalityFromCanonicalKey(canonicalKey: string | null): string | nul
 export function toPainelCards(
   destinos: DestinoListItem[],
   atrativos: AtrativoListItem[],
+  failures: FailureItem[] = [],
 ): PainelCard[] {
   const destinoCards: PainelCard[] = destinos.map((d) => ({
     id: d.id,
@@ -146,14 +164,45 @@ export function toPainelCards(
     uf: a.uf,
     municipality: null, // atrativo município is a later detail slice
     routing: a.routing,
-    column: routingToColumn(a.routing),
+    // An atrativo awaiting WhatsApp contact lives in its own column regardless
+    // of routing (the gate sub_state wins over the rio routing value).
+    column:
+      a.sub_state === WHATSAPP_SUB_STATE ? "whatsapp" : routingToColumn(a.routing),
     score: a.score,
     source: null,
     duplicate: a.validation_pending,
     error: null,
   }));
 
-  return [...destinoCards, ...atrativoCards];
+  const falhaCards = failures.map(failureToCard);
+
+  return [...destinoCards, ...atrativoCards, ...falhaCards];
+}
+
+/** Infer the entity type of a quarantined task from its task_name. */
+function failureEntityType(taskName: string): PainelEntityType {
+  return /attraction|atrativo/i.test(taskName) ? "atrativo" : "destino";
+}
+
+/**
+ * Project a PoisonQuarantine FailureItem (GET /api/v1/failures) into a real,
+ * draggable falha card. PII guard (T-17.1-06-03): only the quarantine id, task
+ * name, and truncated error reason are read — no payload, no phone.
+ */
+function failureToCard(f: FailureItem): PainelCard {
+  return {
+    id: f.id,
+    type: failureEntityType(f.task_name),
+    name: f.task_name,
+    uf: null,
+    municipality: null,
+    routing: "falha",
+    column: "falha",
+    score: null,
+    source: null,
+    duplicate: false,
+    error: f.error_message,
+  };
 }
 
 /** Apply the type filter (Tudo/Destinos/Atrativos) and UF scope client-side. */
@@ -168,7 +217,7 @@ export function filterCards(
   });
 }
 
-/** Bucket cards into the 5 ordered stage columns. */
+/** Bucket cards into the 6 ordered stage columns. */
 export function buildColumns(
   cards: PainelCard[],
 ): { key: PainelColumnKey; label: string; cards: PainelCard[] }[] {
@@ -212,10 +261,20 @@ export function usePainelBoard(): {
     queryKey: atrativoKeys.list({ board: true }),
     queryFn: () => fetchAtrativoList({ limit: 500 }),
   });
+  // Falha column: real PoisonQuarantine records (draggable for reprocess). The
+  // board still loads if /failures fails — falha just renders empty (additive).
+  const failuresQuery = useQuery({
+    queryKey: engineKeys.failures,
+    queryFn: () => fetchFailures(),
+  });
 
   const cards =
     destinosQuery.data && atrativosQuery.data
-      ? toPainelCards(destinosQuery.data.items, atrativosQuery.data.items)
+      ? toPainelCards(
+          destinosQuery.data.items,
+          atrativosQuery.data.items,
+          failuresQuery.data?.items ?? [],
+        )
       : [];
 
   return {

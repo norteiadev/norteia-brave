@@ -8,7 +8,7 @@ import {
 } from "@/lib/painel-data";
 
 /**
- * PainelBoard — the 5-column horizontal-scroll Kanban board.
+ * PainelBoard — the 6-column horizontal-scroll Kanban board.
  *
  * Presentational: it buckets the supplied `cards` via buildColumns and renders
  * a RecordCard per card, forwarding native HTML5 drag events to handler props.
@@ -33,10 +33,13 @@ export interface PainelBoardProps {
 
 const COLUMN_DOT: Record<PainelColumnKey, string> = {
   nascente: "bg-[var(--painel-muted-2)]",
-  in_progress: "bg-[var(--painel-navy)]",
+  rio: "bg-[var(--painel-navy)]",
+  whatsapp: "bg-[var(--status-whatsapp,var(--status-mar))]",
   mar: "bg-[var(--status-mar)]",
   dlq: "bg-[var(--status-dlq)]",
+  // descarte is not a rendered column (no COLUMN_DEFS entry) but the key exists.
   descarte: "bg-[var(--status-descarte)]",
+  falha: "bg-[var(--status-descarte)]",
 };
 
 export function PainelBoard({
