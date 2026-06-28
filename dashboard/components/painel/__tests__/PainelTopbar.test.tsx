@@ -44,7 +44,7 @@ describe("PainelTopbar", () => {
   it("motor switch reflects running state (aria-checked=true) and toggling calls stop", async () => {
     let stopCalled = false;
     server.use(
-      engineStatus({ state: "running" }),
+      engineStatus({ state: "running", enabled: true }),
       taSessionStatus(),
       http.post("http://localhost:3000/api/api/v1/engine/stop", () => {
         stopCalled = true;
@@ -153,5 +153,55 @@ describe("PainelTopbar", () => {
 
     const src = await screen.findByTestId("painel-source");
     await waitFor(() => expect(src).toHaveTextContent("TripAdvisor"));
+  });
+
+  it("enabled=true with state=idle keeps switch ON and stop fires", async () => {
+    let stopCalled = false;
+    server.use(
+      engineStatus({ state: "idle", enabled: true }),
+      taSessionStatus(),
+      http.post("http://localhost:3000/api/api/v1/engine/stop", () => {
+        stopCalled = true;
+        return HttpResponse.json({ status: "stopping" }, { status: 202 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+    const sw = await screen.findByTestId("painel-motor-switch");
+    // Switch must be ON (enabled=true overrides state=idle)
+    await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "true"));
+
+    // Motor label should show "Ligado" (not "Desligado") when enabled=true
+    const label = screen.getByTestId("painel-motor-state");
+    expect(label).toHaveTextContent("Ligado");
+
+    // Clicking fires stop (not depth menu)
+    await user.click(sw);
+    await waitFor(() => expect(stopCalled).toBe(true));
+    expect(screen.queryByTestId("painel-depth-menu")).toBeNull();
+  });
+
+  it("enabled=false with state=idle toggle opens depth menu (not stop)", async () => {
+    let stopCalled = false;
+    server.use(
+      engineStatus({ state: "idle", enabled: false }),
+      taSessionStatus(),
+      http.post("http://localhost:3000/api/api/v1/engine/stop", () => {
+        stopCalled = true;
+        return HttpResponse.json({ status: "stopping" }, { status: 202 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+    const sw = await screen.findByTestId("painel-motor-switch");
+    await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "false"));
+
+    // Clicking idle+disabled switch opens depth menu, never calls stop
+    await user.click(sw);
+    await screen.findByTestId("painel-depth-menu");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(stopCalled).toBe(false);
   });
 });

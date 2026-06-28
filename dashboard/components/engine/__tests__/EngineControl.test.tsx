@@ -20,6 +20,7 @@ function buildStatus(overrides: Partial<EngineStatus>): EngineStatus {
     current_uf: null,
     ufs_done: 0,
     ufs_total: 0,
+    enabled: false,
     counts: {
       nascente: 0,
       rio: { in_progress: 0, mar: 0, dlq: 0, descarte: 0 },
@@ -70,6 +71,7 @@ describe("EngineControl", () => {
     server.use(
       engineStatus({
         state: "running",
+        enabled: true,
         current_uf: "BA",
         ufs_done: 5,
         ufs_total: 27,
@@ -99,7 +101,7 @@ describe("EngineControl", () => {
       http.get("http://localhost:3000/api/api/v1/engine/status", () =>
         HttpResponse.json(
           startCalled
-            ? buildStatus({ state: "running", ufs_total: 27 })
+            ? buildStatus({ state: "running", enabled: true, ufs_total: 27 })
             : buildStatus({}),
         ),
       ),
@@ -180,7 +182,7 @@ describe("EngineControl", () => {
       http.get("http://localhost:3000/api/api/v1/engine/status", () =>
         HttpResponse.json(
           startCalled
-            ? buildStatus({ state: "running", depth: "nascente_rio_mar" })
+            ? buildStatus({ state: "running", enabled: true, depth: "nascente_rio_mar" })
             : buildStatus({}),
         ),
       ),
@@ -199,6 +201,7 @@ describe("EngineControl", () => {
     server.use(
       engineStatus({
         state: "running",
+        enabled: true,
         current_uf: "BA",
         ufs_done: 5,
         ufs_total: 27,
@@ -209,6 +212,18 @@ describe("EngineControl", () => {
 
     const readback = await screen.findByTestId("engine-active-depth");
     expect(readback).toHaveTextContent("Nascente → Rio");
+  });
+
+  it("enabled=true state=idle shows stop button (not start controls)", async () => {
+    server.use(
+      engineStatus({ state: "idle", enabled: true }),
+    );
+    renderWithClient(<EngineControl />);
+
+    // Stop button must be visible
+    expect(await screen.findByTestId("engine-stop")).toBeInTheDocument();
+    // Start controls must be absent
+    expect(screen.queryByTestId("engine-start")).toBeNull();
   });
 });
 
