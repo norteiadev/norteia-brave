@@ -16,6 +16,7 @@ caller must not be able to fan out expensive LLM/Places sweeps).
 from __future__ import annotations
 
 import os
+import uuid
 
 import structlog
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -87,6 +88,7 @@ def engine_status(
 def engine_start(
     redis: Redis = Depends(get_redis),
     body: dict = Body(default={}),
+    db: Session = Depends(get_db),
 ) -> dict:
     """Start the full sweep. Idempotent: 409 if a run is already active.
 
@@ -129,10 +131,38 @@ def engine_start(
     collection_engine.set_depth(redis, depth)
     collection_engine.set_source(redis, source)
 
+    # Persist a durable runs_history row (UI-PAINEL-2 Varreduras trail). Pitfall 3:
+    # this is reached ONLY after the depth/source 422 guards AND start_run() success
+    # — a rejected start (422/409 raises above) never creates a phantom row. The id
+    # is generated client-side so run_id is available without a flush. Best-effort:
+    # a runs-history write failure must NEVER abort an otherwise-valid engine start
+    # (T-17.1-02-02). The run will simply have no DB trail (run_id stays None).
+    run_id: str | None = None
+    try:
+        from brave.core.models import RunHistory
+
+        run = RunHistory(
+            id=uuid.uuid4(),
+            ufs=list(ufs),
+            source=source,
+            depth=depth,
+            lane=lane,
+            ufs_total=len(ufs),
+            status="running",
+        )
+        db.add(run)
+        db.commit()
+        run_id = str(run.id)
+        redis.set("brave:engine:run_id", run_id)
+    except Exception as exc:  # best-effort — never abort a valid start
+        logger.warning("engine_start_runs_history_write_failed", error=str(exc))
+
     try:
         from brave.tasks.pipeline import engine_sweep_run
 
-        engine_sweep_run.delay(ufs=ufs, lane=lane, depth=depth, source=source)
+        engine_sweep_run.delay(
+            ufs=ufs, lane=lane, depth=depth, source=source, run_id=run_id
+        )
     except Exception as exc:  # broker-down
         from brave.config.settings import AppConfig
 

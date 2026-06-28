@@ -39,7 +39,7 @@ def dispatched():
 
 @pytest.fixture
 def client(monkeypatch, dispatched):
-    from brave.api.deps import get_redis
+    from brave.api.deps import get_db, get_redis
     get_redis().flushall()
 
     import brave.tasks.pipeline as pipeline
@@ -53,7 +53,15 @@ def client(monkeypatch, dispatched):
 
     from brave.api.main import app
     from fastapi.testclient import TestClient
-    return TestClient(app, raise_server_exceptions=False)
+
+    # engine_start now persists a runs_history row via get_db. The offline suite
+    # has no DB — override get_db with a no-op MagicMock session (the runs-history
+    # write is best-effort and irrelevant to these source-validation assertions).
+    app.dependency_overrides[get_db] = lambda: MagicMock()
+    try:
+        yield TestClient(app, raise_server_exceptions=False)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------

@@ -1867,6 +1867,7 @@ def engine_sweep_run(
     lane: str = "both",
     depth: str | None = None,
     source: str = "default",
+    run_id: str | None = None,
 ) -> dict:
     """Operator-started full sweep orchestrator (engine ON).
 
@@ -1940,7 +1941,51 @@ def engine_sweep_run(
             if per_uf_delay > 0:
                 _time.sleep(per_uf_delay)
     finally:
+        # Read the engine state BEFORE mark_idle to detect a mid-run Stop (the same
+        # signal the loop reads at the top): STOPPING ⇒ the run drained early ⇒ parcial.
+        final_state = collection_engine.get_state(rc)
         collection_engine.mark_idle(rc)
         logger.info("engine_run_complete", dispatched=dispatched, depth=effective_depth)
+        # Finalize the durable runs_history row (UI-PAINEL-2 Varreduras trail).
+        # BEST-EFFORT: a runs-history write failure must NEVER abort the sweep
+        # (T-17.1-02-02) — wrapped so any exception is swallowed. Skipped entirely
+        # when the start never persisted a row (run_id is None).
+        if run_id:
+            _finalize_run_history(run_id, dispatched, final_state)
 
     return {"dispatched": dispatched, "lane": lane, "depth": effective_depth, "source": source}
+
+
+def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> None:
+    """Best-effort finalize of a runs_history row at sweep completion.
+
+    UPDATE the row keyed by run_id: ended_at=now(), ufs_dispatched, and status
+    ("parcial" if a Stop drained the run early, else "concluido"). Any failure —
+    DB unavailable, session error, missing row — is swallowed and logged; this
+    function NEVER raises into the sweep's finally block (T-17.1-02-02).
+    """
+    from datetime import datetime, timezone
+
+    from brave.core import engine as collection_engine
+    from brave.core.models import RunHistory
+
+    try:
+        session, db_engine = _get_session()
+        try:
+            run = session.get(RunHistory, uuid.UUID(run_id))
+            if run is not None:
+                run.ended_at = datetime.now(timezone.utc)
+                run.ufs_dispatched = dispatched
+                run.status = (
+                    "parcial"
+                    if final_state == collection_engine.STOPPING
+                    else "concluido"
+                )
+                session.commit()
+        finally:
+            session.close()
+            db_engine.dispose()
+    except Exception as exc:  # best-effort — never abort the sweep
+        logger.warning(
+            "engine_run_history_finalize_failed", run_id=run_id, error=str(exc)
+        )
