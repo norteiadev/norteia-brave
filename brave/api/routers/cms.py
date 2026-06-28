@@ -17,11 +17,11 @@ Security (T-08-01..05):
 """
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -51,6 +51,52 @@ class EditBody(BaseModel):
     """Body for PATCH /api/v1/destinos/{rio_id}/edit and /api/v1/atrativos/{rio_id}/edit."""
 
     fields: dict[str, Any]
+
+
+class TransitionBody(BaseModel):
+    """Body for the generic per-entity stage-transition endpoint (UI-PAINEL-2).
+
+    `to` is the target board column; `expected` is the caller's view of the
+    record's CURRENT column — an optimistic-concurrency guard (a stale `expected`
+    yields 409 rather than silently mutating). `extra="forbid"` rejects any
+    field a client invents.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    to: Literal["nascente", "rio", "whatsapp", "mar", "dlq", "descarte"]
+    expected: str
+
+
+# ---------------------------------------------------------------------------
+# Stage-transition allow-list (the server twin of the client mapDrop)
+# ---------------------------------------------------------------------------
+
+# Server-side DESTINO edge allow-list — keyed by (expected_column, to_column) →
+# handler tag. This dict IS the security boundary (T-17.1-03-01): any (expected,
+# to) pair absent from it returns 409 "transição não suportada" and NEVER mutates
+# the record. Every ("mar", *) edge is deliberately absent so a live Mar destino
+# can never be depublished/moved (T-17.1-03-03; the cms.py descarte_destino Mar
+# guard stays intact — no new depublish path). Must agree edge-for-edge with the
+# client mapDrop (the documented paired contract).
+_ALLOWED_EDGES: dict[tuple[str, str], str] = {
+    ("rio", "mar"): "promote",
+    ("rio", "descarte"): "descarte",
+    ("rio", "dlq"): "send_to_review",
+    ("dlq", "rio"): "reprocess",
+    ("dlq", "mar"): "promote",
+    ("dlq", "descarte"): "descarte",
+}
+
+# Routing value → board column name. The optimistic-concurrency reference: a
+# record's CURRENT column is derived from its routing so a stale `expected`
+# (e.g. a record already moved out from under the operator) is rejected with 409.
+_ROUTING_TO_COLUMN: dict[str, str] = {
+    "in_progress": "rio",
+    "mar": "mar",
+    "dlq": "dlq",
+    "descarte": "descarte",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +422,79 @@ def descarte_destino(
     )
     db.commit()
     return {"status": "ok", "routing": "descarte", "rio_id": str(rio_id)}
+
+
+@router.patch(
+    "/api/v1/destinos/{rio_id}/transition",
+    status_code=200,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def transition_destino(
+    rio_id: uuid.UUID,
+    body: TransitionBody,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Generic, audited stage transition for a destino (UI-PAINEL-2).
+
+    Server-side `_ALLOWED_EDGES` is the security boundary (the twin of the client
+    mapDrop): only (expected, to) edges present in the table mutate; everything
+    else — notably every mar → * edge — returns 409 and never touches the record.
+    Optimistic concurrency: `body.expected` must still match the record's current
+    column. Each performed edge REUSES an existing helper (no new pipeline logic),
+    writes one audit row (action=`transition_<to>`), then commits.
+    """
+    rio = db.get(RioRecord, rio_id)
+    if rio is None:
+        raise HTTPException(status_code=404, detail="RioRecord not found")
+
+    edge = _ALLOWED_EDGES.get((body.expected, body.to))
+    if edge is None:
+        # Unmapped (incl. every mar → *) — reject BEFORE any mutation (T-17.1-03-01/03).
+        raise HTTPException(status_code=409, detail="transição não suportada")
+
+    # Optimistic concurrency: the caller's `expected` column must still be current.
+    current_column = _ROUTING_TO_COLUMN.get(rio.routing, rio.routing)
+    if current_column != body.expected:
+        raise HTTPException(
+            status_code=409,
+            detail=f"coluna atual é '{current_column}', esperado '{body.expected}'",
+        )
+
+    before_state = {"column": body.expected, "routing": rio.routing}
+
+    if edge == "promote":
+        # Reuse the DLQ validate-and-promote helper (validacao_humana=100 →
+        # re-score → promote_to_mar). No new depublish/retract path is added.
+        from brave.core.dlq.service import validate_and_promote_rio
+
+        validate_and_promote_rio(db, rio)
+        db.refresh(rio)
+    elif edge == "descarte":
+        rio.routing = "descarte"
+        rio.dlq_reason = "steward_rejected"
+    elif edge == "send_to_review":
+        # Force a record back into the DLQ review column.
+        rio.routing = "dlq"
+        rio.dlq_reason = "steward_sent_to_review"
+    elif edge == "reprocess":
+        # Reopen: reset → re-score (§7.6). Reuses the routing helper, no new machinery.
+        from brave.config.settings import ScoreConfig
+        from brave.core.rio.routing import reprocess_record
+
+        reprocess_record(db, rio.id, ScoreConfig())
+        db.refresh(rio)
+
+    write_audit(
+        session=db,
+        action=f"transition_{body.to}",
+        entity_type=rio.entity_type,
+        record_id=rio.id,
+        before_state=before_state,
+        after_state={"column": body.to, "routing": rio.routing},
+        actor="steward",
+    )
+    db.commit()
+    return {"status": "ok", "to": body.to}
 
 
 @router.patch(
