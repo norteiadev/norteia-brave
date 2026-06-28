@@ -118,13 +118,12 @@ def test_merge_404_when_target_mar_missing():
     rio = _rio()
     db = _db_for(rio, mar=None)
 
-    with patch("brave.api.routers.dedup.write_audit"):
-        with pytest.raises(HTTPException) as exc:
-            resolve_pair(
-                candidate_rio_id=rio.id,
-                body=ResolveBody(action="merge", mar_id=uuid.uuid4()),
-                db=db,
-            )
+    with patch("brave.api.routers.dedup.write_audit"), pytest.raises(HTTPException) as exc:
+        resolve_pair(
+            candidate_rio_id=rio.id,
+            body=ResolveBody(action="merge", mar_id=uuid.uuid4()),
+            db=db,
+        )
     assert exc.value.status_code == 404
     assert rio.routing == "dlq"  # unchanged
 
@@ -182,11 +181,10 @@ def test_keep_writes_suppression_audit_and_mutates_no_routing():
 def test_resolve_404_when_candidate_rio_missing():
     db = _db_for(rio=None)
 
-    with patch("brave.api.routers.dedup.write_audit"):
-        with pytest.raises(HTTPException) as exc:
-            resolve_pair(
-                candidate_rio_id=uuid.uuid4(),
-                body=ResolveBody(action="discard", mar_id=uuid.uuid4()),
-                db=db,
-            )
+    with patch("brave.api.routers.dedup.write_audit"), pytest.raises(HTTPException) as exc:
+        resolve_pair(
+            candidate_rio_id=uuid.uuid4(),
+            body=ResolveBody(action="discard", mar_id=uuid.uuid4()),
+            db=db,
+        )
     assert exc.value.status_code == 404
