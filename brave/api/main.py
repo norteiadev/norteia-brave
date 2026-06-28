@@ -70,3 +70,8 @@ app.include_router(tripadvisor_session.router)
 from brave.api.routers.dedup import router as dedup_router
 
 app.include_router(dedup_router)
+
+# Phase 17.1: Varreduras — durable engine-run trail + reprocess (UI-PAINEL-2)
+from brave.api.routers.runs import router as runs_router
+
+app.include_router(runs_router)
