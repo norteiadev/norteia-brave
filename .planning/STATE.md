@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 14-02-PLAN.md (phase 14 all 2 plans done; Level-3 human-verified)
-last_updated: "2026-06-28T13:01:11.097Z"
+stopped_at: Completed 17.1-04-PLAN.md (Duplicados frontend — dedup client + MSW + PainelDuplicados view)
+last_updated: "2026-06-28T13:35:00.000Z"
 last_activity: 2026-06-28
 progress:
   total_phases: 8
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 17.1 (Painel Brave — remaining pages + real backend (slice 2)) — EXECUTING
-Plan: 4 of 7 (17.1-01 + 17.1-03 wave-1 + 17.1-02 wave-2 backend complete)
+Plan: 5 of 7 (17.1-01/03 wave-1 + 17.1-02 backend + 17.1-04 Duplicados frontend complete)
 Status: Ready to execute
 Last activity: 2026-06-28
 
@@ -96,6 +96,7 @@ Progress: [████████░░] 84%
 | Phase 17.1 P01 | ~25min | 2 tasks | 4 files |
 | Phase 17.1 P03 | ~25min | 2 tasks | 3 files |
 | Phase 17.1 P02 | ~30min | 3 tasks | 10 files |
+| Phase 17.1 P04 | ~20min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -145,6 +146,8 @@ Recent decisions affecting current work:
 
 - [Phase 17.1 P02]: UI-PAINEL-2 Varreduras backend — durable runs_history trail (engine runs lived only in Redis). RunHistory model + Alembic 0007 (down_revision 0006, non-CONCURRENTLY ix_runs_history_started_at). engine_start INSERTs a row ONLY after depth/source 422 + start_run() success (Pitfall 3 — no phantom rows on rejected starts), persists run_id to Redis (brave:engine:run_id) + threads it into engine_sweep_run.delay; INSERT best-effort (never aborts a valid start). engine_sweep_run finalize (_finalize_run_history) UPDATEs ended_at/ufs_dispatched/status (concluido|parcial via STOPPING state read) in a swallow-all finally — a finalize write failure can NEVER abort the sweep (T-17.1-02-02). GET /api/v1/runs: source/depth SQL-filtered, uf filtered in Python over the JSON ufs array (no JSONB operator → portable+offline); synced/failed/total computed ON-READ over [started_at, ended_at] (Mar published + Rio dlq/descarte + PoisonQuarantine; A4 time-window approximation — producers never return counts). PATCH /runs/{id}/reprocess re-runs the SCOPE (ufs×source×lane) via the sweep.py prod-vs-offline broker fallback, audited run_reprocessed (per-record replay DEFERRED). 16 offline tests green (RUN_REAL_EXTERNALS unset) + migration DB up/down skip-safe without BRAVE_DB_URL. Deviation: added get_db override to test_engine_source client fixture (engine_start now needs db).
 
+- [Phase 17.1 P04]: UI-PAINEL-2 Duplicados frontend — dashboard/lib/dedup-api.ts typed client (DedupPairItem/DedupPairsResponse mirroring brave/api/routers/dedup.py field-for-field; fetchDedupPairs(uf) + resolveDedupPair(id, {action, mar_id}); dedupKeys ['dedup'] prefix) + dashboard/mocks/handlers/dedup.ts at the double-prefixed /api/api/v1/dedup/... path (payloads typed against the lib interfaces = the A5 contract mirror; success/empty/error/resolve factories). Handler is NOT registered in mocks/handlers/index.ts — follows the established empty-barrel + per-suite server.use() pattern (cost.ts is also unregistered; keeps the harness booting with zero global mocks). PainelDuplicados.tsx renders candidate≈Mar pair cards with coincide/diverge chips + labeled similarity (similarity_source surfaced because embeddings are an A1 zero-stub), resolves via useMutation(resolveDedupPair)+toast+invalidateQueries(['dedup']); validation banner + ✓ empty state; pure --painel-* tokens. 3 offline Vitest tests green (renders pairs+chips+similarity, Descartar fires real resolve PATCH, empty state). Shell wiring into app/painel/page.tsx is plan 17.1-07.
+
 - [Phase 17.1 P01]: UI-PAINEL-2 Duplicados backend — GET /api/v1/dedup/pairs is compute-on-read (territorial-key blocked candidate↔Mar pairs; matched/diverged + Jaccard token similarity computed in Python, similarity_source="embedding_stub", NO pgvector operator in the read path — real embeddings deferred A1). PATCH /api/v1/dedup/pairs/{candidate_rio_id}/resolve does merge|keep|discard, audited. merge (LOCKED A2, overrides stale RESEARCH Pitfall 4) unions the candidate source_ref into the EXISTING Mar's provenance["merged_source_refs"] + routes the candidate Rio→descarte: no new MarRecord, mar.source_ref untouched, no 409, no promote_to_mar. Candidate source_ref derived as canonical_key or str(id) (RioRecord has no source_ref column). 12 offline unit tests green (RUN_REAL_EXTERNALS unset).
 
 ### Pending Todos
@@ -182,5 +185,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-06-28
-Stopped at: Completed 17.1-02-PLAN.md (Varreduras runs-history backend; wave-2 backend of phase 17.1 done)
+Stopped at: Completed 17.1-04-PLAN.md (Duplicados frontend — dedup client + MSW handler + PainelDuplicados view)
 Resume file: None
