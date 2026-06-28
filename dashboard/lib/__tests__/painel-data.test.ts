@@ -24,7 +24,7 @@ import {
   sampleAtrativos,
 } from "@/mocks/handlers/atrativos";
 import { destinosListSuccess, sampleDestinos } from "@/mocks/handlers/destinos";
-import { engineStatus } from "@/mocks/handlers/engine";
+import { nascenteEmpty, nascenteList } from "@/mocks/handlers/engine";
 import { failuresEmpty } from "@/mocks/handlers/workers";
 import { server } from "@/mocks/server";
 
@@ -165,6 +165,42 @@ describe("toPainelCards", () => {
     expect(cards.filter((c) => c.column === "falha")).toHaveLength(1);
   });
 
+  it("projects NascenteListItem[] into read-only nascente-column cards", () => {
+    const nascente = [
+      {
+        id: "n-1",
+        entity_type: "destination",
+        uf: "BA",
+        source: "places",
+        name: "Praia do Forte",
+        ingested_at: "2026-06-28T00:00:00Z",
+      },
+      {
+        id: "n-2",
+        entity_type: "attraction",
+        uf: "RJ",
+        source: "tripadvisor",
+        name: "Pão de Açúcar",
+        ingested_at: "2026-06-28T00:01:00Z",
+      },
+    ];
+    const cards = toPainelCards(destinos, atrativos, [], nascente);
+
+    const n1 = cards.find((c) => c.id === "n-1")!;
+    expect(n1.column).toBe("nascente");
+    expect(n1.type).toBe("destino"); // "destination" → destino
+    expect(n1.name).toBe("Praia do Forte");
+    expect(n1.uf).toBe("BA");
+    expect(n1.source).toBe("places");
+    expect(n1.score).toBeNull();
+    expect(n1.routing).toBe("nascente");
+
+    // entity_type "attraction" → atrativo
+    expect(cards.find((c) => c.id === "n-2")!.type).toBe("atrativo");
+    // Exactly the 2 nascente cards land in the nascente column.
+    expect(cards.filter((c) => c.column === "nascente")).toHaveLength(2);
+  });
+
   it("derives `duplicate` from validation_pending for BOTH entity types", () => {
     const cards = toPainelCards(destinos, atrativos);
     expect(cards.find((c) => c.id === "d-dlq")!.duplicate).toBe(true);
@@ -296,7 +332,12 @@ function hookWrapper() {
 
 describe("usePainelBoard", () => {
   it("loads destinos + atrativos lists and builds a unified card[]", async () => {
-    server.use(destinosListSuccess(), atrativosListSuccess(), failuresEmpty());
+    server.use(
+      destinosListSuccess(),
+      atrativosListSuccess(),
+      failuresEmpty(),
+      nascenteEmpty(),
+    );
     const { result } = renderHook(() => usePainelBoard(), {
       wrapper: hookWrapper(),
     });
@@ -313,18 +354,11 @@ describe("usePainelBoard", () => {
 });
 
 describe("usePainelMetrics", () => {
-  it("derives truthful per-entity metrics from envelope totals + nascente from engine counts", async () => {
+  it("derives truthful per-entity metrics from envelope totals + nascente from the nascente list total", async () => {
     server.use(
       destinosListSuccess(),
       atrativosListSuccess(),
-      engineStatus({
-        counts: {
-          nascente: 9,
-          rio: { in_progress: 0, mar: 0, dlq: 0, descarte: 0 },
-          mar: 0,
-          atrativos_by_sub_state: {},
-        },
-      }),
+      nascenteList([], 9),
     );
     const { result } = renderHook(() => usePainelMetrics(), {
       wrapper: hookWrapper(),
@@ -341,7 +375,7 @@ describe("usePainelMetrics", () => {
     // sampleAtrativos: 2 items (the list envelope total is the server count)
     expect(result.current.atrativo.total).toBe(sampleAtrativos.length);
 
-    // Nascente COLUMN count comes from engine counts, not the lists
+    // Nascente COLUMN count comes from the /nascente envelope total
     expect(result.current.nascenteCount).toBe(9);
   });
 });

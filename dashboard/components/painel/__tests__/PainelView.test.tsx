@@ -11,7 +11,7 @@ import {
   destinoTransitionSuccess,
   destinosListSuccess,
 } from "@/mocks/handlers/destinos";
-import { engineStatus } from "@/mocks/handlers/engine";
+import { engineStatus, nascenteEmpty, nascenteList } from "@/mocks/handlers/engine";
 import { failuresEmpty, failuresSuccess } from "@/mocks/handlers/workers";
 import type { FailuresData } from "@/lib/workers-api";
 import { server } from "@/mocks/server";
@@ -55,14 +55,10 @@ function useDefaultHandlers() {
     destinosListSuccess(),
     atrativosListSuccess(),
     failuresEmpty(),
-    engineStatus({
-      counts: {
-        nascente: 12,
-        rio: { in_progress: 0, mar: 0, dlq: 0, descarte: 0 },
-        mar: 0,
-        atrativos_by_sub_state: {},
-      },
-    }),
+    engineStatus(),
+    // Nascente column count now comes from the /nascente envelope total, not
+    // engine counts — seed total=12 (no cards needed for the count assertion).
+    nascenteList([], 12),
     destinoReprocessSuccess(),
     destinoTransitionSuccess(),
     atrativoTransitionSuccess(),
@@ -84,6 +80,37 @@ describe("PainelView", () => {
 
     const nascente = await findByTestId("painel-col-count-nascente");
     await waitFor(() => expect(nascente).toHaveTextContent("12"));
+  });
+
+  it("renders raw Nascente records as read-only (non-draggable) cards in the Nascente column", async () => {
+    server.use(
+      destinosListSuccess([]),
+      atrativosListSuccess([]),
+      failuresEmpty(),
+      engineStatus(),
+      nascenteList([
+        {
+          id: "n-1",
+          entity_type: "destination",
+          uf: "BA",
+          source: "places",
+          name: "Praia do Forte",
+          ingested_at: "2026-06-28T00:00:00Z",
+        },
+      ]),
+    );
+    const { findByTestId, getByTestId } = renderWithClient(<PainelView />);
+
+    // The card lands inside the Nascente column body…
+    const col = getByTestId("painel-col-nascente");
+    const card = await findByTestId("record-card");
+    expect(col.contains(card)).toBe(true);
+    // …and it is READ-ONLY: not draggable.
+    expect(card.getAttribute("draggable")).toBe("false");
+    // The column header count reflects the one ingested record.
+    await waitFor(() =>
+      expect(getByTestId("painel-col-count-nascente")).toHaveTextContent("1"),
+    );
   });
 
   it("mapped drop (destino dlq → Mar) fires the generic transition PATCH and optimistically moves the card", async () => {
@@ -175,6 +202,7 @@ describe("PainelView", () => {
       atrativosListSuccess([]),
       failuresSuccess(falhaSeed),
       engineStatus(),
+      nascenteEmpty(),
       destinoReprocessSuccess(),
     );
 
@@ -196,6 +224,7 @@ describe("PainelView", () => {
       atrativosListSuccess([]),
       failuresSuccess(falhaSeed),
       engineStatus(),
+      nascenteEmpty(),
       destinoReprocessSuccess(),
     );
 
