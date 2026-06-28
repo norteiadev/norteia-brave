@@ -229,3 +229,154 @@ def test_transition_destino_dlq_to_rio_reuses_reprocess_helper():
 def test_transition_body_rejects_extra_fields():
     with pytest.raises(Exception):
         TransitionBody(to="mar", expected="rio", sneaky="x")
+
+
+# ===========================================================================
+# ATRATIVO edge table (atrativos.py) — backward/force edges + whatsapp delegate
+# ===========================================================================
+
+from brave.api.routers.atrativos import (  # noqa: E402
+    _ATRATIVO_ALLOWED_EDGES,
+    transition_atrativo,
+)
+
+# The ONLY atrativo edges that may mutate (expected → to).
+ATRATIVO_ALLOWED = {
+    ("rio", "dlq"),       # force send-to-review
+    ("dlq", "rio"),       # reprocess / reopen (NEW)
+    ("rio", "mar"),       # mar-ready promote-override
+    ("rio", "descarte"),  # descarte
+    ("whatsapp", "whatsapp"),  # into-whatsapp: delegate to the audited gate approve
+}
+
+
+def _atr(routing="in_progress", sub_state=None, **kw):
+    base = dict(
+        id=uuid.uuid4(),
+        nascente_id=uuid.uuid4(),
+        entity_type="attraction",
+        uf="BA",
+        routing=routing,
+        sub_state=sub_state,
+        canonical_key="tripadvisor:1",
+    )
+    base.update(kw)
+    return RioRecord(**base)
+
+
+def test_atrativo_allow_list_is_exactly_the_paired_contract():
+    assert set(_ATRATIVO_ALLOWED_EDGES.keys()) == ATRATIVO_ALLOWED
+
+
+def test_atrativo_every_unmapped_edge_is_absent():
+    for expected, to in product(COLUMNS, COLUMNS):
+        if (expected, to) in ATRATIVO_ALLOWED:
+            assert (expected, to) in _ATRATIVO_ALLOWED_EDGES
+        else:
+            assert (expected, to) not in _ATRATIVO_ALLOWED_EDGES
+
+
+def test_atrativo_dlq_to_rio_is_allowed():
+    assert ("dlq", "rio") in _ATRATIVO_ALLOWED_EDGES
+
+
+def test_atrativo_no_mar_edge_ever_present():
+    for to in COLUMNS:
+        assert ("mar", to) not in _ATRATIVO_ALLOWED_EDGES
+
+
+def test_transition_atrativo_mar_to_descarte_is_409_and_never_mutates():
+    rio = _atr(routing="mar")
+    db = _db_for(rio)
+
+    with patch("brave.core.promote.service.promote_override") as promote, patch(
+        "brave.api.routers.atrativos.write_audit"
+    ) as audit, pytest.raises(HTTPException) as exc:
+        transition_atrativo(
+            rio_id=rio.id,
+            body=TransitionBody(to="descarte", expected="mar"),
+            db=db,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "transição não suportada"
+    promote.assert_not_called()
+    audit.assert_not_called()
+    db.commit.assert_not_called()
+    assert rio.routing == "mar"
+
+
+def test_transition_atrativo_dlq_to_rio_reuses_reprocess_helper():
+    rio = _atr(routing="dlq")
+    db = _db_for(rio)
+
+    with patch("brave.core.rio.routing.reprocess_record") as reprocess, patch(
+        "brave.api.routers.atrativos.write_audit"
+    ) as audit:
+        result = transition_atrativo(
+            rio_id=rio.id,
+            body=TransitionBody(to="rio", expected="dlq"),
+            db=db,
+        )
+
+    reprocess.assert_called_once()
+    assert audit.call_args.kwargs["action"] == "transition_rio"
+    db.commit.assert_called_once()
+    assert result == {"status": "ok", "to": "rio"}
+
+
+def test_transition_atrativo_rio_to_mar_reuses_promote_override():
+    rio = _atr(routing="in_progress")
+    db = _db_for(rio)
+
+    with patch("brave.api.routers.atrativos.promote_override") as promote, patch(
+        "brave.api.routers.atrativos.write_audit"
+    ) as audit:
+        result = transition_atrativo(
+            rio_id=rio.id,
+            body=TransitionBody(to="mar", expected="rio"),
+            db=db,
+        )
+
+    promote.assert_called_once()
+    assert audit.call_args.kwargs["action"] == "transition_mar"
+    db.commit.assert_called_once()
+    assert result == {"status": "ok", "to": "mar"}
+
+
+def test_transition_atrativo_into_whatsapp_delegates_only_from_aguardando():
+    """The into-whatsapp edge delegates to the audited gate approve — and ONLY
+    when sub_state is aguardando_consulta_whatsapp (else 409, no delegate)."""
+    rio = _atr(routing="in_progress", sub_state="aguardando_consulta_whatsapp")
+    db = _db_for(rio)
+
+    sentinel = {"status": "accepted", "rio_id": str(rio.id)}
+    with patch(
+        "brave.api.routers.atrativos_gate.approve_whatsapp_gate",
+        return_value=sentinel,
+    ) as approve:
+        result = transition_atrativo(
+            rio_id=rio.id,
+            body=TransitionBody(to="whatsapp", expected="whatsapp"),
+            db=db,
+        )
+
+    approve.assert_called_once()
+    assert result is sentinel  # delegated; no duplicate outreach/audit here
+
+
+def test_transition_atrativo_into_whatsapp_409_when_not_aguardando():
+    rio = _atr(routing="in_progress", sub_state="discovered")
+    db = _db_for(rio)
+
+    with patch(
+        "brave.api.routers.atrativos_gate.approve_whatsapp_gate"
+    ) as approve, pytest.raises(HTTPException) as exc:
+        transition_atrativo(
+            rio_id=rio.id,
+            body=TransitionBody(to="whatsapp", expected="whatsapp"),
+            db=db,
+        )
+
+    assert exc.value.status_code == 409
+    approve.assert_not_called()

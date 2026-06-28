@@ -25,12 +25,28 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.api.deps import get_db, require_bearer, require_steward_or_bearer
+from brave.api.routers.cms import _ROUTING_TO_COLUMN, TransitionBody
 from brave.core.models import RioRecord
 from brave.core.promote.service import PromoteNotAllowed, promote_override
 from brave.observability.audit import write_audit
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
+
+
+# Server-side ATRATIVO edge allow-list — the atrativo twin of the client mapDrop
+# (keyed by (expected_column, to_column) → handler tag). Mirrors the destino
+# _ALLOWED_EDGES posture: any (expected, to) pair absent from it returns 409 and
+# NEVER mutates; every ("mar", *) edge is absent (T-17.1-03-03). The into-whatsapp
+# edge is sub_state-guarded and delegates to the audited gate approve — it never
+# duplicates the outreach dispatch.
+_ATRATIVO_ALLOWED_EDGES: dict[tuple[str, str], str] = {
+    ("rio", "dlq"): "send_to_review",      # force send-to-review
+    ("dlq", "rio"): "reprocess",           # reopen / reprocess (NEW backward edge)
+    ("rio", "mar"): "promote_override",    # mar-ready promote-override
+    ("rio", "descarte"): "descarte",       # descarte
+    ("whatsapp", "whatsapp"): "gate_approve",  # delegate to atrativos_gate approve
+}
 
 
 def push_attraction_task_delay(rio_id: str) -> None:
@@ -232,3 +248,96 @@ def promote_batch(
         promoted += 1
 
     return {"status": "accepted", "uf": uf, "promoted": promoted}
+
+
+@router.patch(
+    "/api/v1/atrativos/{rio_id}/transition",
+    status_code=200,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def transition_atrativo(
+    rio_id: uuid.UUID,
+    body: TransitionBody,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Generic, audited stage transition for an atrativo (UI-PAINEL-2).
+
+    Server-side `_ATRATIVO_ALLOWED_EDGES` is the security boundary (the atrativo
+    twin of the client mapDrop): only allow-listed (expected, to) edges mutate;
+    everything else — notably every mar → * edge — returns 409 and never touches
+    the record. The into-whatsapp edge is sub_state-guarded (only from
+    `aguardando_consulta_whatsapp`) and DELEGATES to the audited gate approve —
+    it never duplicates the outreach dispatch. All other edges reuse an existing
+    helper (no new pipeline logic), write one audit row, then commit.
+    """
+    rio = db.get(RioRecord, rio_id)
+    if rio is None:
+        raise HTTPException(status_code=404, detail="RioRecord not found")
+
+    edge = _ATRATIVO_ALLOWED_EDGES.get((body.expected, body.to))
+    if edge is None:
+        # Unmapped (incl. every mar → *) — reject BEFORE any mutation.
+        raise HTTPException(status_code=409, detail="transição não suportada")
+
+    if edge == "gate_approve":
+        # Into-whatsapp is sub_state-guarded (NOT routing-guarded). Only valid from
+        # aguardando_consulta_whatsapp; delegate to the audited gate approve, which
+        # owns the outreach dispatch + audit + commit. Never duplicate it here.
+        if rio.sub_state != "aguardando_consulta_whatsapp":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "into-whatsapp válido apenas a partir de "
+                    "sub_state 'aguardando_consulta_whatsapp'"
+                ),
+            )
+        from brave.api.routers.atrativos_gate import approve_whatsapp_gate
+
+        return approve_whatsapp_gate(rio_id, db)
+
+    # Optimistic concurrency: the caller's `expected` column must still be current.
+    current_column = _ROUTING_TO_COLUMN.get(rio.routing, rio.routing)
+    if current_column != body.expected:
+        raise HTTPException(
+            status_code=409,
+            detail=f"coluna atual é '{current_column}', esperado '{body.expected}'",
+        )
+
+    before_state = {"column": body.expected, "routing": rio.routing, "sub_state": rio.sub_state}
+
+    if edge == "promote_override":
+        try:
+            promote_override(db, rio, reason="steward_override_review_validated")
+        except PromoteNotAllowed as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Record is not mar_ready — promote-override not allowed: {exc}",
+            ) from exc
+        db.refresh(rio)
+    elif edge == "descarte":
+        rio.routing = "descarte"
+        rio.dlq_reason = "steward_rejected"
+        rio.sub_state = None
+    elif edge == "send_to_review":
+        rio.routing = "dlq"
+        rio.dlq_reason = "steward_sent_to_review"
+        rio.sub_state = None
+    elif edge == "reprocess":
+        # Reopen: reset → re-score (§7.6). Reuses the routing helper, no new machinery.
+        from brave.config.settings import ScoreConfig
+        from brave.core.rio.routing import reprocess_record
+
+        reprocess_record(db, rio.id, ScoreConfig())
+        db.refresh(rio)
+
+    write_audit(
+        session=db,
+        action=f"transition_{body.to}",
+        entity_type=rio.entity_type,
+        record_id=rio.id,
+        before_state=before_state,
+        after_state={"column": body.to, "routing": rio.routing},
+        actor="steward",
+    )
+    db.commit()
+    return {"status": "ok", "to": body.to}
