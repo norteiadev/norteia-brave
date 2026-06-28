@@ -2,28 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { PainelCard, PainelColumnKey } from "@/lib/painel-data";
 
-// Mock the four API modules so runAction dispatch can be asserted without the
+// Mock the API modules so runAction dispatch can be asserted without the
 // network. mapDrop/mapRetry are pure and need no mocks, but runAction imports
 // these fns at module load, so the mocks must be in place before the import.
 vi.mock("@/lib/destinos-api", () => ({
-  promoteDestino: vi.fn(() => Promise.resolve({ status: "ok" })),
-  descarteDestino: vi.fn(() => Promise.resolve({ status: "ok" })),
   reprocessDestino: vi.fn(() => Promise.resolve({ status: "ok" })),
 }));
-vi.mock("@/lib/atrativos-api", () => ({
-  descartarAtrativo: vi.fn(() => Promise.resolve({ status: "ok" })),
-}));
-vi.mock("@/lib/mar-ready-api", () => ({
-  promoteAtrativo: vi.fn(() => Promise.resolve({ status: "ok" })),
+vi.mock("@/lib/engine-api", () => ({
+  transition: vi.fn(() => Promise.resolve({ status: "ok" })),
 }));
 
-import { descartarAtrativo } from "@/lib/atrativos-api";
-import {
-  descarteDestino,
-  promoteDestino,
-  reprocessDestino,
-} from "@/lib/destinos-api";
-import { promoteAtrativo } from "@/lib/mar-ready-api";
+import { reprocessDestino } from "@/lib/destinos-api";
+import { transition } from "@/lib/engine-api";
 import { mapDrop, mapRetry, runAction } from "@/lib/painel-actions";
 
 function makeCard(overrides: Partial<PainelCard> = {}): PainelCard {
@@ -33,8 +23,8 @@ function makeCard(overrides: Partial<PainelCard> = {}): PainelCard {
     name: "Pelourinho",
     uf: "BA",
     municipality: "Salvador",
-    routing: "mar",
-    column: "mar",
+    routing: "in_progress",
+    column: "rio",
     score: 91,
     source: null,
     duplicate: false,
@@ -43,90 +33,142 @@ function makeCard(overrides: Partial<PainelCard> = {}): PainelCard {
   };
 }
 
-const ALL_COLUMNS: PainelColumnKey[] = [
+// The 6 RENDERED board columns — the only drag SOURCES/TARGETS a board drop can
+// ever produce. (descarte is a non-rendered key reachable only via the drawer.)
+const BOARD_COLUMNS: PainelColumnKey[] = [
   "nascente",
-  "in_progress",
+  "rio",
+  "whatsapp",
   "mar",
   "dlq",
-  "descarte",
+  "falha",
 ];
 
-describe("mapDrop — closed allow-list (no invented transitions)", () => {
-  it("destino → mar (Sincronizado) = promote/destino", () => {
-    const card = makeCard({ type: "destino", column: "dlq" });
-    expect(mapDrop(card, "mar")).toEqual({
-      kind: "promote",
-      entity: "destino",
-      id: card.id,
-    });
-  });
+// The client allow-list — the EXACT twin of the server _ALLOWED_EDGES
+// (brave/api/routers/cms.py) and _ATRATIVO_ALLOWED_EDGES (atrativos.py),
+// restricted to board-reachable (expected, to) pairs. `${expected}>${to}`.
+const DESTINO_ALLOWED = new Set([
+  "rio>mar",
+  "rio>descarte",
+  "rio>dlq",
+  "dlq>rio",
+  "dlq>mar",
+  "dlq>descarte",
+]);
+const ATRATIVO_ALLOWED = new Set([
+  "rio>dlq",
+  "dlq>rio",
+  "rio>mar",
+  "rio>descarte",
+]);
 
-  it("atrativo → mar (Sincronizado) = promote/atrativo (mar-ready)", () => {
-    const card = makeCard({ type: "atrativo", column: "in_progress" });
-    expect(mapDrop(card, "mar")).toEqual({
-      kind: "promote",
+describe("mapDrop — full-pipeline allow-list (server twin, no invented edges)", () => {
+  it("atrativo dlq → rio (reopen/reprocess) is a transition action", () => {
+    const card = makeCard({ type: "atrativo", column: "dlq" });
+    expect(mapDrop(card, "rio")).toEqual({
+      kind: "transition",
       entity: "atrativo",
       id: card.id,
+      to: "rio",
+      expected: "dlq",
     });
   });
 
-  it("destino → descarte = descarte/destino", () => {
-    const card = makeCard({ type: "destino", column: "dlq" });
-    expect(mapDrop(card, "descarte")).toEqual({
-      kind: "descarte",
-      entity: "destino",
-      id: card.id,
-    });
-  });
-
-  it("atrativo → descarte = descarte/atrativo", () => {
-    const card = makeCard({ type: "atrativo", column: "in_progress" });
-    expect(mapDrop(card, "descarte")).toEqual({
-      kind: "descarte",
-      entity: "atrativo",
-      id: card.id,
-    });
-  });
-
-  it("destino → dlq (Revisão) = reprocess/destino", () => {
-    const card = makeCard({ type: "destino", column: "mar" });
+  it("atrativo rio → dlq (force send-to-review) is a transition action", () => {
+    const card = makeCard({ type: "atrativo", column: "rio" });
     expect(mapDrop(card, "dlq")).toEqual({
-      kind: "reprocess",
-      entity: "destino",
+      kind: "transition",
+      entity: "atrativo",
       id: card.id,
+      to: "dlq",
+      expected: "rio",
     });
   });
 
-  it("atrativo → dlq (Revisão) = null (atrativos have no reprocess)", () => {
-    const card = makeCard({ type: "atrativo", column: "in_progress" });
-    expect(mapDrop(card, "dlq")).toBeNull();
+  it("destino rio → mar (promote) is a transition action", () => {
+    const card = makeCard({ type: "destino", column: "rio" });
+    expect(mapDrop(card, "mar")).toEqual({
+      kind: "transition",
+      entity: "destino",
+      id: card.id,
+      to: "mar",
+      expected: "rio",
+    });
   });
 
-  it("any card → nascente = null", () => {
-    expect(mapDrop(makeCard({ type: "destino", column: "mar" }), "nascente")).toBeNull();
-    expect(
-      mapDrop(makeCard({ type: "atrativo", column: "in_progress" }), "nascente"),
-    ).toBeNull();
+  it("destino dlq → rio (reprocess) is a transition action", () => {
+    const card = makeCard({ type: "destino", column: "dlq" });
+    expect(mapDrop(card, "rio")).toEqual({
+      kind: "transition",
+      entity: "destino",
+      id: card.id,
+      to: "rio",
+      expected: "dlq",
+    });
   });
 
-  it("any card → in_progress = null", () => {
-    expect(mapDrop(makeCard({ type: "destino", column: "mar" }), "in_progress")).toBeNull();
-    expect(
-      mapDrop(makeCard({ type: "atrativo", column: "dlq" }), "in_progress"),
-    ).toBeNull();
+  it("EVERY mar → X board drop returns null (mar can never be depublished)", () => {
+    for (const target of BOARD_COLUMNS) {
+      expect(mapDrop(makeCard({ type: "destino", column: "mar" }), target)).toBeNull();
+      expect(mapDrop(makeCard({ type: "atrativo", column: "mar" }), target)).toBeNull();
+    }
+  });
+
+  it("EXHAUSTIVE: every (source, target) board pair NOT in the server allow-list returns null", () => {
+    for (const source of BOARD_COLUMNS) {
+      for (const target of BOARD_COLUMNS) {
+        for (const type of ["destino", "atrativo"] as const) {
+          const card = makeCard({ type, column: source });
+          const allowed = type === "destino" ? DESTINO_ALLOWED : ATRATIVO_ALLOWED;
+          const action = mapDrop(card, target);
+          if (source !== target && allowed.has(`${source}>${target}`)) {
+            // Allowed edge → exactly one transition action mirroring the server.
+            expect(action).toEqual({
+              kind: "transition",
+              entity: type,
+              id: card.id,
+              to: target,
+              expected: source,
+            });
+          } else {
+            // Same-column, into-nascente/whatsapp/falha, mar→*, falha→* → null.
+            expect(action).toBeNull();
+          }
+        }
+      }
+    }
   });
 
   it("drop on the same column = null (no-op, never a mutation)", () => {
-    for (const col of ALL_COLUMNS) {
+    for (const col of BOARD_COLUMNS) {
       expect(mapDrop(makeCard({ type: "destino", column: col }), col)).toBeNull();
       expect(mapDrop(makeCard({ type: "atrativo", column: col }), col)).toBeNull();
     }
+  });
+
+  it("drawer-reachable descarte edges (rio/dlq → descarte) are transitions; mar → descarte is null", () => {
+    expect(mapDrop(makeCard({ type: "destino", column: "rio" }), "descarte")).toEqual({
+      kind: "transition",
+      entity: "destino",
+      id: "card-1",
+      to: "descarte",
+      expected: "rio",
+    });
+    expect(mapDrop(makeCard({ type: "atrativo", column: "rio" }), "descarte")).toEqual({
+      kind: "transition",
+      entity: "atrativo",
+      id: "card-1",
+      to: "descarte",
+      expected: "rio",
+    });
+    // mar → descarte must stay blocked (no depublish via the discard path).
+    expect(mapDrop(makeCard({ type: "destino", column: "mar" }), "descarte")).toBeNull();
   });
 });
 
 describe("mapRetry — falha-card retry", () => {
   it("destino → reprocess/destino", () => {
-    const card = makeCard({ type: "destino", column: "descarte" });
+    const card = makeCard({ type: "destino", column: "falha" });
     expect(mapRetry(card)).toEqual({
       kind: "reprocess",
       entity: "destino",
@@ -135,30 +177,38 @@ describe("mapRetry — falha-card retry", () => {
   });
 
   it("atrativo → null (no atrativo reprocess)", () => {
-    const card = makeCard({ type: "atrativo", column: "descarte" });
+    const card = makeCard({ type: "atrativo", column: "falha" });
     expect(mapRetry(card)).toBeNull();
   });
 });
 
 describe("runAction — dispatch by entity + kind", () => {
-  it("promote/destino → promoteDestino", async () => {
-    await runAction({ kind: "promote", entity: "destino", id: "d1" });
-    expect(promoteDestino).toHaveBeenCalledWith("d1");
+  it("transition/destino → engine-api transition(entity, id, {to, expected})", async () => {
+    await runAction({
+      kind: "transition",
+      entity: "destino",
+      id: "d1",
+      to: "mar",
+      expected: "rio",
+    });
+    expect(transition).toHaveBeenCalledWith("destino", "d1", {
+      to: "mar",
+      expected: "rio",
+    });
   });
 
-  it("promote/atrativo → promoteAtrativo (mar-ready)", async () => {
-    await runAction({ kind: "promote", entity: "atrativo", id: "a1" });
-    expect(promoteAtrativo).toHaveBeenCalledWith("a1");
-  });
-
-  it("descarte/destino → descarteDestino", async () => {
-    await runAction({ kind: "descarte", entity: "destino", id: "d2" });
-    expect(descarteDestino).toHaveBeenCalledWith("d2");
-  });
-
-  it("descarte/atrativo → descartarAtrativo", async () => {
-    await runAction({ kind: "descarte", entity: "atrativo", id: "a2" });
-    expect(descartarAtrativo).toHaveBeenCalledWith("a2");
+  it("transition/atrativo → engine-api transition(atrativo, …)", async () => {
+    await runAction({
+      kind: "transition",
+      entity: "atrativo",
+      id: "a1",
+      to: "rio",
+      expected: "dlq",
+    });
+    expect(transition).toHaveBeenCalledWith("atrativo", "a1", {
+      to: "rio",
+      expected: "dlq",
+    });
   });
 
   it("reprocess/destino → reprocessDestino", async () => {
