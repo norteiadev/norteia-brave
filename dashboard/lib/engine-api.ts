@@ -13,6 +13,12 @@
 
 import { apiFetch } from "@/lib/api-client";
 
+// Reuse the canonical failures client + types (lib/workers-api.ts) rather than
+// re-declaring a second, drift-prone FailureItem here. Re-exported so the painel
+// data layer + the board's falha sourcing depend on a single engine-api surface
+// (key_link: painel-data → GET /api/v1/failures).
+export { fetchFailures, type FailureItem, type FailuresData } from "@/lib/workers-api";
+
 export type EngineState = "idle" | "running" | "stopping";
 
 /**
@@ -75,10 +81,56 @@ export const ENGINE_REFETCH_INTERVAL_MS = 10_000;
 
 export const engineKeys = {
   status: ["engine", "status"] as const,
+  failures: ["engine", "failures"] as const,
 };
 
 export function fetchEngineStatus(): Promise<EngineStatus> {
   return apiFetch<EngineStatus>("api/v1/engine/status");
+}
+
+// ---------------------------------------------------------------------------
+// Stage transition (UI-PAINEL-2)
+// ---------------------------------------------------------------------------
+
+/** Entity discriminator for the per-entity transition endpoint path. */
+export type TransitionEntity = "destino" | "atrativo";
+
+/**
+ * Body for the generic per-entity stage-transition endpoint. Mirrors the
+ * backend `TransitionBody` (brave/api/routers/cms.py — `extra="forbid"`):
+ *   to       — the target board column
+ *   expected — the caller's view of the record's CURRENT column (optimistic-
+ *              concurrency guard; a stale `expected` yields 409, not a mutation)
+ */
+export interface TransitionBody {
+  to: string;
+  expected: string;
+}
+
+/** Result of a stage transition (audited server-side). */
+export interface TransitionResult {
+  status: string;
+  routing?: string;
+  rio_id?: string;
+  sub_state?: string;
+}
+
+/**
+ * Fire ONE generic, audited stage transition for a destino/atrativo. The client
+ * `mapDrop` allow-list (lib/painel-actions.ts) is the twin of the server-side
+ * `_ALLOWED_EDGES`; this client only ever calls a path mapDrop already approved.
+ * Routes to PATCH /api/v1/{destinos|atrativos}/{rioId}/transition.
+ */
+export function transition(
+  entity: TransitionEntity,
+  rioId: string,
+  body: TransitionBody,
+): Promise<TransitionResult> {
+  return apiFetch<TransitionResult>(`api/v1/${entity}s/${rioId}/transition`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 export function startEngine(
@@ -124,4 +176,45 @@ export const taSessionKeys = {
 /** Fetch TripAdvisor session status from the BFF. */
 export function fetchTASessionStatus(): Promise<TASessionStatus> {
   return apiFetch<TASessionStatus>("api/v1/tripadvisor/session/status");
+}
+
+/**
+ * Body for POST /api/v1/tripadvisor/session — the strict `SessionInjectBody`
+ * shape (brave/api/routers/tripadvisor_session.py, `extra="forbid"`). The four
+ * required fields come from a real browser capture; cookie VALUES are never
+ * logged client-side (they post straight to the BFF). Optional fields mirror the
+ * backend's optional inputs.
+ */
+export interface InjectTASessionBody {
+  cookies: Record<string, string>;
+  query_ids: Record<string, string>;
+  user_agent: string;
+  acquired_at: string;
+  session_id?: string;
+  client_hints?: Record<string, string>;
+  locale?: string;
+  acquisition_ip?: string;
+}
+
+/** Result of injecting a TripAdvisor session (cookie count + canary outcome). */
+export interface InjectTASessionResult {
+  status: string;
+  cookie_count?: number;
+  query_ids?: string[];
+}
+
+/**
+ * (Re)establish the TripAdvisor session from an operator's authenticated cURL
+ * paste (Origem modal). Surfaces `ApiError.status` to callers so the modal can
+ * distinguish 422 (invalid_session — malformed paste) from 503
+ * (canary_unverified — session rejected by the live canary check).
+ */
+export function injectTASession(
+  body: InjectTASessionBody,
+): Promise<InjectTASessionResult> {
+  return apiFetch<InjectTASessionResult>("api/v1/tripadvisor/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
