@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { setOperatorToken } from "@/lib/api-client";
 import type { AtrativoListItem } from "@/lib/atrativos-api";
 import type { DestinoListItem } from "@/lib/destinos-api";
+import type { FailureItem } from "@/lib/engine-api";
 import {
   BR_UFS,
   COLUMN_DEFS,
@@ -24,6 +25,7 @@ import {
 } from "@/mocks/handlers/atrativos";
 import { destinosListSuccess, sampleDestinos } from "@/mocks/handlers/destinos";
 import { engineStatus } from "@/mocks/handlers/engine";
+import { failuresEmpty } from "@/mocks/handlers/workers";
 import { server } from "@/mocks/server";
 
 beforeEach(() => {
@@ -90,11 +92,13 @@ const atrativos: AtrativoListItem[] = [
 // --- Pure selectors (RED-first) ---
 
 describe("routingToColumn", () => {
-  it("maps known routings to their column keys", () => {
+  it("maps known routings to their column keys (in_progress → rio)", () => {
     expect(routingToColumn("mar")).toBe("mar");
     expect(routingToColumn("descarte")).toBe("descarte");
     expect(routingToColumn("dlq")).toBe("dlq");
-    expect(routingToColumn("in_progress")).toBe("in_progress");
+    // 6-column model: the routing value `in_progress` is the "Rio · validação"
+    // column (server twin: _ROUTING_TO_COLUMN in_progress → rio).
+    expect(routingToColumn("in_progress")).toBe("rio");
   });
 
   it("falls back to 'nascente' for unknown/empty routing", () => {
@@ -120,8 +124,45 @@ describe("toPainelCards", () => {
 
     const atr = cards.find((c) => c.id === "a-inprog")!;
     expect(atr.type).toBe("atrativo");
-    expect(atr.column).toBe("in_progress");
+    expect(atr.column).toBe("rio");
     expect(atr.municipality).toBeNull();
+  });
+
+  it("buckets an atrativo in sub_state aguardando_consulta_whatsapp into the whatsapp column", () => {
+    const wa: AtrativoListItem = {
+      id: "a-wa",
+      entity_type: "attraction",
+      uf: "BA",
+      routing: "in_progress", // routing still in_progress, but the gate sub_state wins
+      sub_state: "aguardando_consulta_whatsapp",
+      score: 70,
+      name: "Elevador Lacerda",
+      validation_pending: true,
+      mar_id: null,
+      parent_mar_id: null,
+      contacts_summary: { phone_masked: "**9999", website: null },
+    };
+    const cards = toPainelCards([], [wa]);
+    expect(cards).toHaveLength(1);
+    expect(cards[0].column).toBe("whatsapp");
+  });
+
+  it("projects FailureItem[] into real, draggable falha cards (column=falha, error=reason)", () => {
+    const failures: FailureItem[] = [
+      {
+        id: "f-1",
+        task_name: "brave.process_nascente",
+        error_message: "ValidationError: origem field required",
+        quarantined_at: "2026-06-19T00:00:00Z",
+      },
+    ];
+    const cards = toPainelCards(destinos, atrativos, failures);
+    const falha = cards.find((c) => c.id === "f-1")!;
+    expect(falha).toBeDefined();
+    expect(falha.column).toBe("falha");
+    expect(falha.error).toBe("ValidationError: origem field required");
+    // The falha column adds exactly one card on top of the 4 list cards.
+    expect(cards.filter((c) => c.column === "falha")).toHaveLength(1);
   });
 
   it("derives `duplicate` from validation_pending for BOTH entity types", () => {
@@ -179,31 +220,36 @@ describe("filterCards", () => {
 });
 
 describe("buildColumns", () => {
-  it("returns the 5 ordered stage columns with cards bucketed by column", () => {
+  it("returns the 6 ordered stage columns with cards bucketed by column", () => {
     const cards = toPainelCards(destinos, atrativos);
     const cols = buildColumns(cards);
     expect(cols.map((c) => c.key)).toEqual([
       "nascente",
-      "in_progress",
+      "rio",
+      "whatsapp",
       "mar",
       "dlq",
-      "descarte",
+      "falha",
     ]);
     const byKey = Object.fromEntries(cols.map((c) => [c.key, c.cards.length]));
     expect(byKey.nascente).toBe(0);
-    expect(byKey.in_progress).toBe(1);
+    expect(byKey.rio).toBe(1); // a-inprog (in_progress → rio)
+    expect(byKey.whatsapp).toBe(0);
     expect(byKey.mar).toBe(1);
     expect(byKey.dlq).toBe(1);
-    expect(byKey.descarte).toBe(1);
+    expect(byKey.falha).toBe(0);
+    // a-descarte (routing=descarte) is NOT a standing column — never rendered.
   });
 
-  it("uses COLUMN_DEFS labels in order", () => {
+  it("uses COLUMN_DEFS labels in order (6 columns)", () => {
+    expect(COLUMN_DEFS).toHaveLength(6);
     expect(COLUMN_DEFS.map((c) => c.label)).toEqual([
       "Nascente",
-      "Em processamento",
-      "Sincronizado",
-      "Revisão",
-      "Descarte",
+      "Rio · validação",
+      "WhatsApp · contato",
+      "Mar · publicado",
+      "DLQ · revisão",
+      "Falha",
     ]);
   });
 });
@@ -250,7 +296,7 @@ function hookWrapper() {
 
 describe("usePainelBoard", () => {
   it("loads destinos + atrativos lists and builds a unified card[]", async () => {
-    server.use(destinosListSuccess(), atrativosListSuccess());
+    server.use(destinosListSuccess(), atrativosListSuccess(), failuresEmpty());
     const { result } = renderHook(() => usePainelBoard(), {
       wrapper: hookWrapper(),
     });
