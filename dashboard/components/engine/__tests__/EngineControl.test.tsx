@@ -120,7 +120,7 @@ describe("EngineControl", () => {
   });
 
   it("stopping state disables the button and shows 'Parando…'", async () => {
-    server.use(engineStatus({ state: "stopping" }));
+    server.use(engineStatus({ state: "stopping", enabled: true }));
     renderWithClient(<EngineControl />);
 
     const btn = await screen.findByTestId("engine-stop");

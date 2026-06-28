@@ -100,6 +100,10 @@ export function EngineControl() {
   // is actively running with source=tripadvisor (even after the source selector
   // is hidden by the running-state UI branch).
   const state: EngineState = data?.state ?? "idle";
+  // enabled = operator-intent latch (true from /start, false only after /stop).
+  // Used to drive the start/stop UI branch: when enabled=true but state=idle,
+  // the engine is still logically "on" (workers processing) → show stop button.
+  const enabled = data?.enabled ?? false;
   const showSessionStatus =
     selectedSource === "tripadvisor" ||
     (state !== "idle" && data?.source === "tripadvisor");
@@ -165,7 +169,7 @@ export function EngineControl() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {state === "idle" ? (
+          {!enabled ? (
             <>
               <div
                 className="flex flex-wrap items-center gap-1.5"
