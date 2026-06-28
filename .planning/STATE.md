@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 17.1 (Painel Brave — remaining pages + real backend (slice 2)) — EXECUTING
-Plan: 2 of 7
+Plan: 3 of 7 (17.1-01 + 17.1-03 wave-1 complete)
 Status: Ready to execute
 Last activity: 2026-06-28
 
@@ -94,6 +94,7 @@ Progress: [████████░░] 84%
 | Phase 10 P03 | 9min | 2 tasks | 4 files |
 | Phase 10 P4 | 6min | 1 tasks | 2 files |
 | Phase 17.1 P01 | ~25min | 2 tasks | 4 files |
+| Phase 17.1 P03 | ~25min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -139,6 +140,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 10 P02]: ENG-03/04/05/07 — engine depth threaded orchestrator->producers; nascente forces Mtur-only (run_rio=False, no Desmembramento, no atrativos); nascente_rio gates the entire find_contacts fan-out (delay + inline .run) so the WhatsApp chain is never kicked; no automated Mar push added under any depth (stays on human DLQ gate + WhatsApp finalize); lanes never read Redis depth
 - [Phase 10 P03]: ENG-01/02 client half — /processo depth selector (3 PT-BR opts via DEPTH_LABELS); Ligar motor disabled until a depth is chosen (no default spend); chosen depth sent in POST /start body; active depth read back from /status on engine-active-depth testid; native radiogroup (no new npm pkg); Vitest+MSW offline 140/140
 - [Phase 10 P04]: ENG-06/07 — StageBadge nascente variant: prop-driven `nascente?: boolean` chip (PT-BR "Nascente", `--color-primary` CSS-var token, no hex), rendered stage-first; stage stays implicit by table membership (D-01), no backend/schema/endpoint change; Vitest +2 offline, full dashboard suite 142/142
+- [Phase 17.1 P03]: UI-PAINEL-2 stage transitions — ONE generic audited `transition` endpoint per entity, gated by a SERVER-SIDE edge allow-list (the twin of client mapDrop), keyed by (expected_column, to_column)→handler tag. cms.py `_ALLOWED_EDGES` (destino): rio→mar/descarte/dlq, dlq→rio/mar/descarte. atrativos.py `_ATRATIVO_ALLOWED_EDGES`: rio→dlq/mar/descarte, dlq→rio reopen (NEW), whatsapp→whatsapp. mar→* is ABSENT from both → 409 "transição não suportada" (no depublish; existing cms descarte_destino Mar guard intact). Endpoints REUSE existing helpers (validate_and_promote_rio / reprocess_record / promote_override) — no new pipeline machinery; into-whatsapp delegates fully to the audited approve_whatsapp_gate (sub_state aguardando_consulta_whatsapp guard), never duplicating outreach. TransitionBody (extra=forbid) + _ROUTING_TO_COLUMN optimistic-concurrency 409 shared via import (atrativos imports from cms — paired contract). 20 offline edge-table unit tests (RUN_REAL_EXTERNALS unset). Client mapDrop (plan 17.1-06) must mirror these allow-lists edge-for-edge.
+
 - [Phase 17.1 P01]: UI-PAINEL-2 Duplicados backend — GET /api/v1/dedup/pairs is compute-on-read (territorial-key blocked candidate↔Mar pairs; matched/diverged + Jaccard token similarity computed in Python, similarity_source="embedding_stub", NO pgvector operator in the read path — real embeddings deferred A1). PATCH /api/v1/dedup/pairs/{candidate_rio_id}/resolve does merge|keep|discard, audited. merge (LOCKED A2, overrides stale RESEARCH Pitfall 4) unions the candidate source_ref into the EXISTING Mar's provenance["merged_source_refs"] + routes the candidate Rio→descarte: no new MarRecord, mar.source_ref untouched, no 409, no promote_to_mar. Candidate source_ref derived as canonical_key or str(id) (RioRecord has no source_ref column). 12 offline unit tests green (RUN_REAL_EXTERNALS unset).
 
 ### Pending Todos
@@ -175,6 +178,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-28T13:01:11.085Z
-Stopped at: Completed 14-02-PLAN.md (phase 14 all 2 plans done; Level-3 human-verified)
+Last session: 2026-06-28
+Stopped at: Completed 17.1-03-PLAN.md (per-entity transition allow-list; wave 1 of phase 17.1 done)
 Resume file: None
