@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 17.1 (Painel Brave — remaining pages + real backend (slice 2)) — EXECUTING
-Plan: 3 of 7 (17.1-01 + 17.1-03 wave-1 complete)
+Plan: 4 of 7 (17.1-01 + 17.1-03 wave-1 + 17.1-02 wave-2 backend complete)
 Status: Ready to execute
 Last activity: 2026-06-28
 
@@ -95,6 +95,7 @@ Progress: [████████░░] 84%
 | Phase 10 P4 | 6min | 1 tasks | 2 files |
 | Phase 17.1 P01 | ~25min | 2 tasks | 4 files |
 | Phase 17.1 P03 | ~25min | 2 tasks | 3 files |
+| Phase 17.1 P02 | ~30min | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -142,6 +143,8 @@ Recent decisions affecting current work:
 - [Phase 10 P04]: ENG-06/07 — StageBadge nascente variant: prop-driven `nascente?: boolean` chip (PT-BR "Nascente", `--color-primary` CSS-var token, no hex), rendered stage-first; stage stays implicit by table membership (D-01), no backend/schema/endpoint change; Vitest +2 offline, full dashboard suite 142/142
 - [Phase 17.1 P03]: UI-PAINEL-2 stage transitions — ONE generic audited `transition` endpoint per entity, gated by a SERVER-SIDE edge allow-list (the twin of client mapDrop), keyed by (expected_column, to_column)→handler tag. cms.py `_ALLOWED_EDGES` (destino): rio→mar/descarte/dlq, dlq→rio/mar/descarte. atrativos.py `_ATRATIVO_ALLOWED_EDGES`: rio→dlq/mar/descarte, dlq→rio reopen (NEW), whatsapp→whatsapp. mar→* is ABSENT from both → 409 "transição não suportada" (no depublish; existing cms descarte_destino Mar guard intact). Endpoints REUSE existing helpers (validate_and_promote_rio / reprocess_record / promote_override) — no new pipeline machinery; into-whatsapp delegates fully to the audited approve_whatsapp_gate (sub_state aguardando_consulta_whatsapp guard), never duplicating outreach. TransitionBody (extra=forbid) + _ROUTING_TO_COLUMN optimistic-concurrency 409 shared via import (atrativos imports from cms — paired contract). 20 offline edge-table unit tests (RUN_REAL_EXTERNALS unset). Client mapDrop (plan 17.1-06) must mirror these allow-lists edge-for-edge.
 
+- [Phase 17.1 P02]: UI-PAINEL-2 Varreduras backend — durable runs_history trail (engine runs lived only in Redis). RunHistory model + Alembic 0007 (down_revision 0006, non-CONCURRENTLY ix_runs_history_started_at). engine_start INSERTs a row ONLY after depth/source 422 + start_run() success (Pitfall 3 — no phantom rows on rejected starts), persists run_id to Redis (brave:engine:run_id) + threads it into engine_sweep_run.delay; INSERT best-effort (never aborts a valid start). engine_sweep_run finalize (_finalize_run_history) UPDATEs ended_at/ufs_dispatched/status (concluido|parcial via STOPPING state read) in a swallow-all finally — a finalize write failure can NEVER abort the sweep (T-17.1-02-02). GET /api/v1/runs: source/depth SQL-filtered, uf filtered in Python over the JSON ufs array (no JSONB operator → portable+offline); synced/failed/total computed ON-READ over [started_at, ended_at] (Mar published + Rio dlq/descarte + PoisonQuarantine; A4 time-window approximation — producers never return counts). PATCH /runs/{id}/reprocess re-runs the SCOPE (ufs×source×lane) via the sweep.py prod-vs-offline broker fallback, audited run_reprocessed (per-record replay DEFERRED). 16 offline tests green (RUN_REAL_EXTERNALS unset) + migration DB up/down skip-safe without BRAVE_DB_URL. Deviation: added get_db override to test_engine_source client fixture (engine_start now needs db).
+
 - [Phase 17.1 P01]: UI-PAINEL-2 Duplicados backend — GET /api/v1/dedup/pairs is compute-on-read (territorial-key blocked candidate↔Mar pairs; matched/diverged + Jaccard token similarity computed in Python, similarity_source="embedding_stub", NO pgvector operator in the read path — real embeddings deferred A1). PATCH /api/v1/dedup/pairs/{candidate_rio_id}/resolve does merge|keep|discard, audited. merge (LOCKED A2, overrides stale RESEARCH Pitfall 4) unions the candidate source_ref into the EXISTING Mar's provenance["merged_source_refs"] + routes the candidate Rio→descarte: no new MarRecord, mar.source_ref untouched, no 409, no promote_to_mar. Candidate source_ref derived as canonical_key or str(id) (RioRecord has no source_ref column). 12 offline unit tests green (RUN_REAL_EXTERNALS unset).
 
 ### Pending Todos
@@ -179,5 +182,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-06-28
-Stopped at: Completed 17.1-03-PLAN.md (per-entity transition allow-list; wave 1 of phase 17.1 done)
+Stopped at: Completed 17.1-02-PLAN.md (Varreduras runs-history backend; wave-2 backend of phase 17.1 done)
 Resume file: None
