@@ -35,16 +35,21 @@ export function RecordCard({
 }: RecordCardProps) {
   // The error/quarantine column is "falha" in the 6-column model (17.1-06).
   const isFalha = card.column === "falha";
+  // Nascente cards are the raw immutable ingest layer — READ-ONLY: no drag
+  // (nascente → rio is automatic), only a click-through to the drawer.
+  const isNascente = card.column === "nascente";
 
   return (
     <div
-      draggable
+      draggable={!isNascente}
       data-id={card.id}
       data-testid="record-card"
-      onDragStart={() => onDragStart(card)}
-      onDragEnd={onDragEnd}
+      onDragStart={isNascente ? undefined : () => onDragStart(card)}
+      onDragEnd={isNascente ? undefined : onDragEnd}
       onClick={() => onClick?.(card)}
-      className="flex cursor-grab flex-col gap-2 rounded-lg border border-[var(--painel-border-inner)] bg-[var(--card)] p-3 active:cursor-grabbing"
+      className={`flex flex-col gap-2 rounded-lg border border-[var(--painel-border-inner)] bg-[var(--card)] p-3 ${
+        isNascente ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"
+      }`}
     >
       {/* top row: type chip + score band */}
       <div className="flex items-center justify-between gap-2">

@@ -29,11 +29,16 @@ import {
   type DestinoListItem,
 } from "@/lib/destinos-api";
 import {
+  ENGINE_REFETCH_INTERVAL_MS,
   engineKeys,
-  fetchEngineStatus,
   fetchFailures,
   type FailureItem,
 } from "@/lib/engine-api";
+import {
+  fetchNascenteList,
+  nascenteKeys,
+  type NascenteListItem,
+} from "@/lib/nascente-api";
 
 // --- Types ---
 
@@ -142,7 +147,25 @@ export function toPainelCards(
   destinos: DestinoListItem[],
   atrativos: AtrativoListItem[],
   failures: FailureItem[] = [],
+  nascente: NascenteListItem[] = [],
 ): PainelCard[] {
+  // Nascente cards: the raw immutable ingest layer, READ-ONLY (no routing yet).
+  // entity_type is the backend's "destination"/"attraction" — map to the board's
+  // destino/atrativo. They always bucket into the Nascente column.
+  const nascenteCards: PainelCard[] = nascente.map((n) => ({
+    id: n.id,
+    type: n.entity_type === "attraction" ? ("atrativo" as const) : ("destino" as const),
+    name: n.name,
+    uf: n.uf,
+    municipality: null,
+    routing: "nascente",
+    column: "nascente" as const,
+    score: null,
+    source: n.source,
+    duplicate: false,
+    error: null,
+  }));
+
   const destinoCards: PainelCard[] = destinos.map((d) => ({
     id: d.id,
     type: "destino" as const,
@@ -176,7 +199,7 @@ export function toPainelCards(
 
   const falhaCards = failures.map(failureToCard);
 
-  return [...destinoCards, ...atrativoCards, ...falhaCards];
+  return [...nascenteCards, ...destinoCards, ...atrativoCards, ...falhaCards];
 }
 
 /** Infer the entity type of a quarantined task from its task_name. */
@@ -256,16 +279,26 @@ export function usePainelBoard(): {
   const destinosQuery = useQuery({
     queryKey: destinoKeys.list({ board: true }),
     queryFn: () => fetchDestinoList({ limit: 500 }),
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
   const atrativosQuery = useQuery({
     queryKey: atrativoKeys.list({ board: true }),
     queryFn: () => fetchAtrativoList({ limit: 500 }),
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
   // Falha column: real PoisonQuarantine records (draggable for reprocess). The
   // board still loads if /failures fails — falha just renders empty (additive).
   const failuresQuery = useQuery({
     queryKey: engineKeys.failures,
     queryFn: () => fetchFailures(),
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+  });
+  // Nascente column: raw ingest cards (read-only). The board still loads if
+  // /nascente fails — the column just renders empty (additive, like falha).
+  const nascenteQuery = useQuery({
+    queryKey: nascenteKeys.list({ board: true }),
+    queryFn: () => fetchNascenteList({ limit: 500 }),
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
 
   const cards =
@@ -274,6 +307,7 @@ export function usePainelBoard(): {
           destinosQuery.data.items,
           atrativosQuery.data.items,
           failuresQuery.data?.items ?? [],
+          nascenteQuery.data?.items ?? [],
         )
       : [];
 
@@ -301,32 +335,41 @@ export function usePainelMetrics(): {
   const destinoTotal = useQuery({
     queryKey: destinoKeys.list({ count: "total" }),
     queryFn: () => fetchDestinoList({ limit: 1 }),
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
   const destinoMar = useQuery({
     queryKey: destinoKeys.list({ count: "mar" }),
     queryFn: () => fetchDestinoList({ routing: "mar", limit: 1 }),
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
   const destinoFalha = useQuery({
     queryKey: destinoKeys.list({ count: "descarte" }),
     queryFn: () => fetchDestinoList({ routing: "descarte", limit: 1 }),
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
 
   const atrativoTotal = useQuery({
     queryKey: atrativoKeys.list({ count: "total" }),
     queryFn: () => fetchAtrativoList({ limit: 1 }),
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
   const atrativoMar = useQuery({
     queryKey: atrativoKeys.list({ count: "mar" }),
     queryFn: () => fetchAtrativoList({ routing: "mar", limit: 1 }),
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
   const atrativoFalha = useQuery({
     queryKey: atrativoKeys.list({ count: "descarte" }),
     queryFn: () => fetchAtrativoList({ routing: "descarte", limit: 1 }),
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
 
-  const engine = useQuery({
-    queryKey: engineKeys.status,
-    queryFn: fetchEngineStatus,
+  // Nascente count from the nascente list ENVELOPE total (current versions
+  // only) so the column header matches the rendered Nascente cards exactly.
+  const nascenteTotal = useQuery({
+    queryKey: nascenteKeys.list({ count: "total" }),
+    queryFn: () => fetchNascenteList({ limit: 1 }),
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
 
   const queries = [
@@ -336,7 +379,7 @@ export function usePainelMetrics(): {
     atrativoTotal,
     atrativoMar,
     atrativoFalha,
-    engine,
+    nascenteTotal,
   ];
 
   return {
@@ -350,7 +393,7 @@ export function usePainelMetrics(): {
       atrativoMar.data?.total ?? 0,
       atrativoFalha.data?.total ?? 0,
     ),
-    nascenteCount: engine.data?.counts.nascente ?? 0,
+    nascenteCount: nascenteTotal.data?.total ?? 0,
     isPending: queries.some((q) => q.isPending),
   };
 }

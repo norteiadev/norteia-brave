@@ -621,3 +621,71 @@ def test_promote_swallows_push_failure_offline(client, db_session: Session, monk
 
     r = client.patch(f"/api/v1/destinos/{rio_id}/promote", headers=STEWARD_HEADERS)
     assert r.status_code == 202, f"Expected 202, got {r.status_code}: {r.text}"
+
+
+# ===========================================================================
+# NASCENTE — read-only board cards (GET /api/v1/nascente)
+# ===========================================================================
+
+
+def test_list_nascente_bearer_required(client):
+    """GET /api/v1/nascente without Authorization: Bearer → 401."""
+    r = client.get("/api/v1/nascente")
+    assert r.status_code == 401
+
+
+@pytest.mark.integration
+def test_list_nascente_with_bearer_shape_and_name(client, db_session: Session):
+    """GET /api/v1/nascente → 200; envelope shape; name comes from payload.name."""
+    nascente = _make_nascente(db_session, uf="AC", entity_type="destination")
+    db_session.commit()
+
+    r = client.get("/api/v1/nascente?uf=AC&limit=500", headers=BEARER_HEADERS)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+
+    body = r.json()
+    assert set(["items", "total", "offset", "limit"]).issubset(body.keys())
+    assert body["total"] >= 1
+
+    item = next(i for i in body["items"] if i["id"] == str(nascente.id))
+    assert item["uf"] == "AC"
+    assert item["entity_type"] == "destination"
+    assert item["source"] == "mtur"
+    # name is read from payload.name (allow-list), never the whole payload
+    assert item["name"] == nascente.payload["name"]
+    assert "payload" not in item
+    assert "content_hash" not in item
+
+
+@pytest.mark.integration
+def test_list_nascente_excludes_superseded(client, db_session: Session):
+    """Superseded rows (superseded_by_id set) are NOT listed — current versions only."""
+    from brave.core.models import NascenteRecord  # noqa: PLC0415
+
+    old = _make_nascente(db_session, uf="RR", entity_type="destination")
+    new = _make_nascente(db_session, uf="RR", entity_type="destination")
+    old.superseded_by_id = new.id
+    db_session.commit()
+
+    r = client.get("/api/v1/nascente?uf=RR&limit=500", headers=BEARER_HEADERS)
+    assert r.status_code == 200, r.text
+    ids = [i["id"] for i in r.json()["items"]]
+    assert str(new.id) in ids
+    assert str(old.id) not in ids
+
+
+@pytest.mark.integration
+def test_list_nascente_entity_type_filter(client, db_session: Session):
+    """entity_type filter narrows the list to attractions only."""
+    dest = _make_nascente(db_session, uf="AP", entity_type="destination")
+    attr = _make_nascente(db_session, uf="AP", entity_type="attraction")
+    db_session.commit()
+
+    r = client.get(
+        "/api/v1/nascente?uf=AP&entity_type=attraction&limit=500",
+        headers=BEARER_HEADERS,
+    )
+    assert r.status_code == 200, r.text
+    ids = [i["id"] for i in r.json()["items"]]
+    assert str(attr.id) in ids
+    assert str(dest.id) not in ids

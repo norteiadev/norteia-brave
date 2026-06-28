@@ -19,7 +19,7 @@ import os
 import uuid
 
 import structlog
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from redis import Redis
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -78,6 +78,51 @@ def engine_status(
     status = collection_engine.get_status(redis)
     status["counts"] = _pipeline_counts(db)
     return status
+
+
+@router.get("/api/v1/nascente", dependencies=[Depends(require_bearer)])
+def list_nascente(
+    uf: str | None = Query(None),
+    entity_type: str | None = Query(None, description="destination | attraction"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> dict:
+    """List raw Nascente records as read-only board cards (newest first).
+
+    Nascente is the immutable append-only raw-payload layer. We surface only
+    the CURRENT version of each record (superseded_by_id IS NULL) so the board
+    reflects live ingest without duplicate version churn — matching the way the
+    Mar count already excludes superseded rows.
+
+    LGPD: an explicit allow-list of fields only. The raw `payload` is never
+    returned wholesale; only `payload.name` (the public place name) is read.
+    Returns paginated {items, total, offset, limit}.
+    """
+    stmt = select(NascenteRecord).where(NascenteRecord.superseded_by_id.is_(None))
+    if uf:
+        stmt = stmt.where(NascenteRecord.uf == uf)
+    if entity_type:
+        stmt = stmt.where(NascenteRecord.entity_type == entity_type)
+
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.scalars(
+        stmt.order_by(NascenteRecord.ingested_at.desc()).offset(offset).limit(limit)
+    ).all()
+
+    items = [
+        {
+            "id": str(rec.id),
+            "entity_type": rec.entity_type,
+            "uf": rec.uf,
+            "source": rec.source,
+            "name": (rec.payload or {}).get("name") or rec.source_ref,
+            "ingested_at": rec.ingested_at.isoformat() if rec.ingested_at else None,
+        }
+        for rec in rows
+    ]
+
+    return {"items": items, "total": total, "offset": offset, "limit": limit}
 
 
 @router.post(
