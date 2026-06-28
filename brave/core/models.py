@@ -270,6 +270,57 @@ class LLMGeneration(Base):
 
 
 # ---------------------------------------------------------------------------
+# RunHistory — durable engine-sweep run trail (UI-PAINEL-2, Varreduras view)
+# ---------------------------------------------------------------------------
+
+
+class RunHistory(Base):
+    """A persisted engine-sweep "run" envelope (the Varreduras DB trail).
+
+    Engine runs lived only in Redis until now (no DB audit trail). This table is
+    written at engine-start (status="running") and finalized when the orchestrator
+    returns to idle (ended_at, ufs_dispatched, status). synced/failed are NOT
+    threaded through the async producer tasks; they are computed ON-READ in the
+    list endpoint over the run's [started_at, ended_at] window (RESEARCH #2, A4).
+
+    Mirrors the LLMGeneration table style (mapped_column + server_default).
+    """
+
+    __tablename__ = "runs_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ufs: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    depth: Mapped[str] = mapped_column(String(32), nullable=False)
+    lane: Mapped[str] = mapped_column(String(32), nullable=False, server_default="both")
+    ufs_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    ufs_dispatched: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    # Nullable aggregate snapshot — the list endpoint recomputes synced/failed on-read.
+    total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    synced: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    failed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="running"
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<RunHistory id={self.id} source={self.source!r} "
+            f"depth={self.depth!r} status={self.status!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
 # AuditLog — steward + pipeline action audit trail (D-21, OBS-04)
 # ---------------------------------------------------------------------------
 
