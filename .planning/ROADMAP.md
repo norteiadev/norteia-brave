@@ -114,6 +114,17 @@ Plans:
 **Depends on:** Phase 17 (shell + Kanban slice 1), Phase 8 (ops CMS endpoints), Phase 10 (engine depth/source/UF), Phase 11–15 (TripAdvisor lane + session)
 **Out of scope:** replacing the 10 legacy dark routes; dark/light theme toggle; new collection lanes; changing the §7.6 score engine.
 
+**Plans:** 7 plans
+
+Plans:
+- [ ] 17.1-01-PLAN.md — Duplicados backend: compute-on-read dedup-pairs list + merge/keep/discard resolve (audited) [wave 1]
+- [ ] 17.1-03-PLAN.md — Generic audited stage-transition endpoint per entity + server-side edge allow-list (mar→* 409) [wave 1]
+- [ ] 17.1-02-PLAN.md — Varreduras backend: RunHistory model + 0007 migration + engine/sweep write points + runs list/reprocess [wave 2]
+- [ ] 17.1-04-PLAN.md — Duplicados frontend: dedup client + MSW handler + PainelDuplicados view [wave 2]
+- [ ] 17.1-06-PLAN.md — Board 6-column model + whatsapp/falha sourcing + full-pipeline transition allow-list (client) [wave 2]
+- [ ] 17.1-05-PLAN.md — Varreduras frontend: runs client + MSW handler + PainelVarreduras table view [wave 3]
+- [ ] 17.1-07-PLAN.md — Origem modal + Motor depth toggle + TA TTL pill + two-group nav + view-switcher (all 6 views) [wave 4]
+
 ---
 
 ### Phase 14: Coordless attraction geo-resolution via OpenStreetMap Nominatim (close Phase-13 quarantine gap)
