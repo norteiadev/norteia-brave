@@ -62,5 +62,17 @@ for _uf in UF_LIST:
         "options": {"queue": "brave.sweep"},
     }
 
+# ---------------------------------------------------------------------------
+# 260628-m1n: TA sweep auto-resume safety net (60s heartbeat)
+# ---------------------------------------------------------------------------
+
+BRAVE_BEAT_SCHEDULE["ta-resume-watch"] = {
+    "task": "brave.ta_resume_watch",
+    "schedule": 60.0,  # every 60 seconds
+    "args": (),
+    "kwargs": {},
+    "options": {"queue": "brave.sweep"},
+}
+
 # Apply to app config
 app.conf.beat_schedule = BRAVE_BEAT_SCHEDULE

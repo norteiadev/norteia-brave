@@ -1041,7 +1041,14 @@ def sweep_tripadvisor(
                 _effective_start_page = start_page
                 _resume_offset = (start_page - 1) * 30
 
-            sweep_progress.start(rc, pages_total=334, resume_from_offset=_resume_offset)
+            sweep_progress.start(
+                rc,
+                pages_total=334,
+                resume_from_offset=_resume_offset,
+                depth=depth,
+                geo_id=geo_id,
+                target_max_pages=max_pages or 334,
+            )
 
             bulk_ingest = TripAdvisorAtrativosIngest(
                 ta_client=ta_client,
@@ -1989,3 +1996,35 @@ def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> Non
         logger.warning(
             "engine_run_history_finalize_failed", run_id=run_id, error=str(exc)
         )
+
+
+@shared_task(
+    bind=False,
+    name="brave.ta_resume_watch",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=30,
+    ignore_result=True,
+)
+def ta_resume_watch() -> None:
+    """60s beat safety net: auto-resume a bulk TA sweep paused on session expiry.
+
+    Idempotent and race-safe via claim_resume. Covers worker restarts and
+    inject paths that bypass the API (e.g. direct Redis writes, operator scripts).
+
+    The lazy import of maybe_resume_bulk_sweep avoids circular imports at module
+    load time (brave.tasks.pipeline is imported by many modules). The patch target
+    for tests is "brave.lanes.tripadvisor.resume.maybe_resume_bulk_sweep".
+    """
+    import os as _os
+
+    import redis as _redis_lib
+
+    from brave.lanes.tripadvisor.resume import maybe_resume_bulk_sweep  # noqa: PLC0415
+
+    rc = _redis_lib.from_url(_os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+    try:
+        if maybe_resume_bulk_sweep(rc):
+            logger.info("ta_resume_watch_dispatched")
+    except Exception:
+        logger.exception("ta_resume_watch_error")
