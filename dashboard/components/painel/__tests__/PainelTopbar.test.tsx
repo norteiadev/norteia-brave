@@ -1,6 +1,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
+import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PainelTopbar } from "@/components/painel/PainelTopbar";
@@ -203,5 +204,62 @@ describe("PainelTopbar", () => {
     await screen.findByTestId("painel-depth-menu");
     await new Promise((r) => setTimeout(r, 50));
     expect(stopCalled).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // R2 client gate tests (260629-e69)
+  // ---------------------------------------------------------------------------
+
+  it("source=tripadvisor + no valid session blocks depth menu on switch click", async () => {
+    server.use(
+      engineStatus({ source: "tripadvisor", enabled: false, state: "idle" }),
+      taSessionStatus({ present: false, reason: null }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+    const sw = await screen.findByTestId("painel-motor-switch");
+    await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "false"));
+    await user.click(sw);
+    await new Promise((r) => setTimeout(r, 50));
+    // taBlocked → depth menu must NOT open
+    expect(screen.queryByTestId("painel-depth-menu")).toBeNull();
+  });
+
+  it("source=tripadvisor + valid session → switch click opens depth menu", async () => {
+    server.use(
+      engineStatus({ source: "tripadvisor", enabled: false, state: "idle" }),
+      taSessionStatus({ present: true, expires_in: 1200 }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+    const sw = await screen.findByTestId("painel-motor-switch");
+    await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "false"));
+    await user.click(sw);
+    // Valid session → depth menu opens normally
+    await screen.findByTestId("painel-depth-menu");
+  });
+
+  it("409 from startEngine with TA detail message shows the backend message", async () => {
+    const TA_MSG =
+      "Motor TripAdvisor requer uma sessão com TTL válido — injete um cURL primeiro.";
+    const spy = vi.spyOn(toast, "error");
+    server.use(
+      engineStatus({ source: "tripadvisor", enabled: false, state: "idle" }),
+      taSessionStatus({ present: true, expires_in: 1200 }),
+      http.post("http://localhost:3000/api/api/v1/engine/start", () =>
+        HttpResponse.json({ detail: TA_MSG }, { status: 409 }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+    const sw = await screen.findByTestId("painel-motor-switch");
+    await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "false"));
+    await user.click(sw);
+    await screen.findByTestId("painel-depth-menu");
+    await user.click(screen.getByTestId("painel-depth-nascente"));
+    // 409 detail must surface via toast.error (not the hardcoded "Motor já está em execução.")
+    await waitFor(() =>
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining("TTL")),
+    );
   });
 });
