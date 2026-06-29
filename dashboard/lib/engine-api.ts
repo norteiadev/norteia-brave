@@ -225,3 +225,18 @@ export function injectTASession(
     body: JSON.stringify(body),
   });
 }
+
+/**
+ * Persist the active collection source WITHOUT starting a run.
+ * Calls POST /api/v1/engine/source — validates + writes to Redis source key so
+ * the next /start picks up the correct sweep lane (default vs tripadvisor).
+ */
+export function setEngineSource(
+  source: EngineSource,
+): Promise<{ source: EngineSource }> {
+  return apiFetch<{ source: EngineSource }>("api/v1/engine/source", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source }),
+  });
+}

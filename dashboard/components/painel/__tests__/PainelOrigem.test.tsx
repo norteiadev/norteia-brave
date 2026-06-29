@@ -3,12 +3,13 @@ import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { PainelOrigem } from "@/components/painel/PainelOrigem";
-import { taSessionStatus } from "@/mocks/handlers/engine";
+import { engineSetSourceSuccess, taSessionStatus } from "@/mocks/handlers/engine";
 import { server } from "@/mocks/server";
 
 import { renderWithClient } from "@/components/cms/__tests__/test-utils";
 
 const TA_INJECT_URL = "http://localhost:3000/api/api/v1/tripadvisor/session";
+const ENGINE_SOURCE_URL = "http://localhost:3000/api/api/v1/engine/source";
 
 /** A realistic "Copy as cURL" paste with a cookie jar, UA and a persisted-query id. */
 const SAMPLE_CURL =
@@ -58,6 +59,7 @@ describe("PainelOrigem", () => {
         captured = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json({ status: "ready" });
       }),
+      engineSetSourceSuccess(),
     );
     renderWithClient(<PainelOrigem open onClose={() => {}} />);
 
@@ -118,5 +120,43 @@ describe("PainelOrigem", () => {
 
     expect(await screen.findByTestId("origem-error-503")).toBeInTheDocument();
     expect(screen.queryByTestId("origem-error-422")).toBeNull();
+  });
+
+  it("saving TA (after inject success) fires POST /engine/source with {source: 'tripadvisor'}", async () => {
+    let captured: Record<string, unknown> | null = null;
+    server.use(
+      taSessionStatus(),
+      http.post(TA_INJECT_URL, () => HttpResponse.json({ status: "ready" })),
+      http.post(ENGINE_SOURCE_URL, async ({ request }) => {
+        captured = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ source: "tripadvisor" });
+      }),
+    );
+    renderWithClient(<PainelOrigem open onClose={() => {}} />);
+
+    fireEvent.click(screen.getByTestId("origem-radio-tripadvisor"));
+    fireEvent.change(await screen.findByTestId("origem-curl"), {
+      target: { value: SAMPLE_CURL },
+    });
+    fireEvent.click(screen.getByTestId("origem-submit"));
+
+    await waitFor(() => expect(captured).toMatchObject({ source: "tripadvisor" }));
+  });
+
+  it("saving mtur fires POST /engine/source with {source: 'default'}", async () => {
+    let captured: Record<string, unknown> | null = null;
+    server.use(
+      taSessionStatus(),
+      http.post(ENGINE_SOURCE_URL, async ({ request }) => {
+        captured = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ source: "default" });
+      }),
+    );
+    renderWithClient(<PainelOrigem open onClose={() => {}} />);
+
+    // mtur is already selected by default — just click Salvar
+    fireEvent.click(screen.getByTestId("origem-submit"));
+
+    await waitFor(() => expect(captured).toMatchObject({ source: "default" }));
   });
 });

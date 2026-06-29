@@ -96,6 +96,17 @@ export function nascenteEmpty() {
   return nascenteList([], 0);
 }
 
+/**
+ * MSW handler for POST /engine/source — the dedicated set-source endpoint.
+ * Returns {source: <whatever was POSTed} with 200.
+ */
+export function engineSetSourceSuccess() {
+  return http.post(`${BASE}/source`, async ({ request }) => {
+    const body = (await request.json()) as { source: EngineSource };
+    return HttpResponse.json({ source: body.source });
+  });
+}
+
 /** Default barrel: idle status + start/stop success + TA session ready. */
 export const engineHandlers = [
   engineStatus(),

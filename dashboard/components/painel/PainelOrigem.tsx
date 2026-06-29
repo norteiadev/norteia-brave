@@ -6,9 +6,12 @@ import { toast } from "sonner";
 
 import { ApiError } from "@/lib/api-client";
 import {
+  type EngineSource,
   type InjectTASessionBody,
+  engineKeys,
   fetchTASessionStatus,
   injectTASession,
+  setEngineSource,
   taSessionKeys,
 } from "@/lib/engine-api";
 
@@ -148,12 +151,22 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
     refetchOnWindowFocus: false,
   });
 
+  // Persists the active collection source to Redis via POST /engine/source.
+  // Renamed to avoid conflict with the setSource state setter from useState above.
+  const activateSource = useMutation({
+    mutationFn: (src: EngineSource) => setEngineSource(src),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: engineKeys.status });
+    },
+  });
+
   const inject = useMutation({
     mutationFn: (body: InjectTASessionBody) => injectTASession(body),
     onSuccess: () => {
       setErrorKind(null);
       toast.success("Sessão TripAdvisor reconhecida");
       void qc.invalidateQueries({ queryKey: taSessionKeys.status });
+      activateSource.mutate("tripadvisor");
       onClose();
     },
     onError: (err) => {
@@ -197,6 +210,7 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
   const onSave = () => {
     if (source !== "tripadvisor") {
       toast.success(`Origem definida: ${SOURCE_LABEL[source]}`);
+      activateSource.mutate("default");
       onClose();
       return;
     }

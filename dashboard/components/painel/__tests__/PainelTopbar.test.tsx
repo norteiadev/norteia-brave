@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PainelTopbar } from "@/components/painel/PainelTopbar";
 import { server } from "@/mocks/server";
 import {
+  engineSetSourceSuccess,
   engineStartSuccess,
   engineStatus,
   engineStopSuccess,
@@ -85,7 +86,7 @@ describe("PainelTopbar", () => {
 
     await user.click(screen.getByTestId("painel-depth-nascente_rio"));
     await waitFor(() => expect(startBody).not.toBeNull());
-    expect(startBody).toEqual({ depth: "nascente_rio" });
+    expect(startBody).toMatchObject({ depth: "nascente_rio" });
   });
 
   it("opening the depth menu without picking does NOT fire POST /start", async () => {
@@ -237,6 +238,28 @@ describe("PainelTopbar", () => {
     await user.click(sw);
     // Valid session → depth menu opens normally
     await screen.findByTestId("painel-depth-menu");
+  });
+
+  it("source=tripadvisor in status: picking a depth fires POST /start with {depth, source: 'tripadvisor'}", async () => {
+    let startBody: { depth?: string; source?: string } | null = null;
+    server.use(
+      engineStatus({ source: "tripadvisor", state: "idle", enabled: false }),
+      taSessionStatus({ present: true, expires_in: 1200 }),
+      engineSetSourceSuccess(),
+      http.post("http://localhost:3000/api/api/v1/engine/start", async ({ request }) => {
+        startBody = (await request.json()) as { depth?: string; source?: string };
+        return HttpResponse.json({ status: "started", ufs_total: 27 }, { status: 202 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+    const sw = await screen.findByTestId("painel-motor-switch");
+    await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "false"));
+    await user.click(sw);
+    await screen.findByTestId("painel-depth-menu");
+    await user.click(screen.getByTestId("painel-depth-nascente_rio"));
+    await waitFor(() => expect(startBody).not.toBeNull());
+    expect(startBody).toMatchObject({ depth: "nascente_rio", source: "tripadvisor" });
   });
 
   it("409 from startEngine with TA detail message shows the backend message", async () => {

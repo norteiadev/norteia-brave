@@ -133,8 +133,10 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
 
   // START requires a pipeline depth (backend 422s a depthless start) — the
   // operator picks one from the depth menu, which is threaded into startEngine.
+  // source is already in scope from line below (data?.source ?? "default") and
+  // is passed so the selected origem lane actually reaches the sweep orchestrator.
   const start = useMutation({
-    mutationFn: (depth: EngineDepth) => startEngine({ depth }),
+    mutationFn: (depth: EngineDepth) => startEngine({ depth, source }),
     onError: (err) => toast.error(explainError(err)),
     onSuccess: () => toast.success("Motor ligado — varredura iniciada"),
     onSettled: invalidate,
