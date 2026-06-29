@@ -16,6 +16,8 @@ sweep_atrativos_by_uf:
   All 27 UF tasks fan out independently; each UF is a separate Celery message.
 """
 
+from datetime import timedelta
+
 from celery.schedules import crontab
 
 from brave.tasks.celery_app import app
@@ -64,3 +66,18 @@ for _uf in UF_LIST:
 
 # Apply to app config
 app.conf.beat_schedule = BRAVE_BEAT_SCHEDULE
+
+# ---------------------------------------------------------------------------
+# Keep-alive beat — maintains sliding TTL on active TA sessions (260629-p2v)
+# Fires every BRAVE_TA_KEEPALIVE_INTERVAL_SECONDS (default 600s / 10 min).
+# TripAdvisorConfig() is safe at import time: pydantic-settings env-only, no DB.
+# ---------------------------------------------------------------------------
+from brave.config.settings import TripAdvisorConfig as _TripAdvisorConfig  # noqa: E402, PLC0415
+
+_ta_beat_interval = _TripAdvisorConfig().keepalive_interval_seconds
+BRAVE_BEAT_SCHEDULE["ta-keepalive"] = {
+    "task": "brave.ta_keepalive",
+    "schedule": timedelta(seconds=_ta_beat_interval),
+    "options": {"queue": "brave.sweep"},
+}
+app.conf.beat_schedule = BRAVE_BEAT_SCHEDULE  # re-apply after adding keepalive entry

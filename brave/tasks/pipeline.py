@@ -2002,3 +2002,91 @@ def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> Non
         )
 
 
+@shared_task(
+    bind=False,
+    max_retries=0,
+    name="brave.ta_keepalive",
+    ignore_result=True,
+)
+def ta_keepalive() -> None:
+    """Keep-alive beat: refresh DataDome cookies when session is live (260629-p2v).
+
+    Fires on a periodic interval (BRAVE_TA_KEEPALIVE_INTERVAL_SECONDS, default 600s).
+    Issues ONE light HTML GET via fetch_attractions_paginated(max_pages=1) to re-mint
+    datadome + __vt. Cookie write-back is handled inside fetch_attractions_paginated
+    (session.persist_rotated_cookies), sliding the session TTL automatically.
+
+    Skips silently when:
+      - run_real_externals is False (offline / CI)
+      - No session in Redis (brave:ta:session TTL <= 0)
+
+    On 403/SessionExpiredError/SessionMissingError:
+      Same fallback as sweep_tripadvisor: sets needs_bootstrap + engine OFF.
+      Does NOT crash the beat (exception is caught and logged).
+
+    On any other exception: logs error_type at WARNING and returns. Never raises.
+
+    T-p2v-02: Never logs cookie values or str(exc) — error_type and ttl_before only.
+    """
+    app_config = AppConfig()
+    if not app_config.run_real_externals:
+        logger.debug("ta_keepalive_skipped_offline")
+        return
+
+    import redis as _redis_lib  # noqa: PLC0415
+
+    _redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+    rc = _redis_lib.from_url(_redis_url)
+
+    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY  # noqa: PLC0415
+
+    ttl = rc.ttl(BRAVE_TA_SESSION_KEY)
+    if ttl <= 0:
+        logger.debug("ta_keepalive_skipped_no_session")
+        return
+
+    from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
+    from brave.lanes.tripadvisor.client import (  # noqa: PLC0415
+        SessionExpiredError,
+        SessionMissingError,
+        TripAdvisorClient,
+    )
+    from brave.core import engine as collection_engine  # noqa: PLC0415
+
+    ta_config = TripAdvisorConfig()
+    ta_client = TripAdvisorClient(config=ta_config, redis=rc)
+
+    try:
+        import asyncio as _asyncio  # noqa: PLC0415
+
+        async def _ping() -> None:
+            # ONE HTML GET (all-Brazil geoId 294280, page 1) to re-mint datadome.
+            # geo_id=294280 is the all-Brazil national listing (same as bulk sweep).
+            # fetch_attractions_paginated calls persist_rotated_cookies internally.
+            async for _offset, _cards in ta_client.fetch_attractions_paginated(
+                geo_id=294280, start_page=1, max_pages=1
+            ):
+                pass  # write-back + TTL slide happened inside; result not needed
+
+        _asyncio.run(_ping())
+        logger.info("ta_keepalive_ok", ttl_before=ttl)
+
+    except (SessionExpiredError, SessionMissingError) as exc:
+        # Same fallback as sweep_tripadvisor: needs_bootstrap + engine OFF.
+        _mark_needs_bootstrap()
+        collection_engine.set_enabled(rc, False)
+        collection_engine.mark_idle(rc)
+        logger.warning(
+            "ta_keepalive_session_expired",
+            error_type=type(exc).__name__,
+            # T-p2v-02: never log str(exc) — may contain cookie fragments
+        )
+
+    except Exception as exc:  # noqa: BLE001
+        # Unknown error (DNS, proxy, asyncio loop conflict) — log and return.
+        # The beat scheduler MUST NOT crash; the next interval fires normally.
+        logger.warning(
+            "ta_keepalive_error",
+            error_type=type(exc).__name__,
+        )
+

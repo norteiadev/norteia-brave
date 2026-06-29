@@ -291,6 +291,15 @@ class TripAdvisorConfig(BaseSettings):
             "the 334-page full-Brazil sweep. 0 disables throttling (tests)."
         ),
     )
+    keepalive_interval_seconds: int = Field(
+        default=600,
+        description=(
+            "Keep-alive beat interval in seconds (BRAVE_TA_KEEPALIVE_INTERVAL_SECONDS). "
+            "Default 600s (10 min) — well under session_ttl/2=900s for a safe margin. "
+            "Set 0 to disable (beat will still fire but skip when no session)."
+        ),
+    )
+    # CR-02: NO Field(alias=...) — resolves ONLY from BRAVE_TA_KEEPALIVE_INTERVAL_SECONDS.
 
     model_config = SettingsConfigDict(env_prefix="BRAVE_TA_")
     # CR-02: NO Field(alias=...) anywhere in this class.
