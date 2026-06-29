@@ -329,6 +329,7 @@ class TripAdvisorClient:
             SessionExpiredError: On 403 or 429 HTTP status (DataDome block / rate limit).
         """
         from brave.lanes.tripadvisor.geo import resolve_geo_id  # noqa: PLC0415
+        from brave.lanes.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
 
         geo_id = resolve_geo_id(uf, self._redis, self._config)
         session = self._get_session()
@@ -370,6 +371,16 @@ class TripAdvisorClient:
                 )
 
             resp.raise_for_status()
+            # Write-back: merge rotated cookies into Redis session (260629-p2v).
+            # Best-effort — errors must not abort the fetch (belt-and-suspenders
+            # guard in addition to persist_rotated_cookies's own internal try/except).
+            rotated = dict(resp.cookies)
+            if rotated:
+                cookies = {**cookies, **rotated}  # update local var for next page
+                try:
+                    persist_rotated_cookies(self._redis, rotated, self._config)
+                except Exception:  # noqa: BLE001
+                    pass  # persist_rotated_cookies already swallows, but guard defensively
             data = resp.json()
             # Handle both list-wrapped and dict response shapes
             if isinstance(data, list) and data:
@@ -408,6 +419,8 @@ class TripAdvisorClient:
             SessionMissingError: When no session is in Redis (operator gate).
             SessionExpiredError: On 403 or 429 HTTP status.
         """
+        from brave.lanes.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
+
         session = self._get_session()
         # T-13-01-02: qid is hardcoded — NOT read from session["query_ids"]["attractions"].
         # The real listing qid is fixed (a5cb7fa004b5e4b5); reading it from session
@@ -494,6 +507,14 @@ class TripAdvisorClient:
             )
 
         resp.raise_for_status()
+        # Write-back: merge rotated cookies into Redis session (260629-p2v).
+        # Single POST — no local cookies var to update for next iteration.
+        rotated = dict(resp.cookies)
+        if rotated:
+            try:
+                persist_rotated_cookies(self._redis, rotated, self._config)
+            except Exception:  # noqa: BLE001
+                pass  # best-effort guard
         data = resp.json()
 
         # Safe extraction of sections list from the real response path
@@ -552,6 +573,8 @@ class TripAdvisorClient:
                 f"geo_id must be an int (SSRF guard); got {type(geo_id).__name__}"
             )
 
+        from brave.lanes.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
+
         session = self._get_session()
         cookies = session.get("cookies", {})
         user_agent = session.get("user_agent", "")
@@ -599,6 +622,15 @@ class TripAdvisorClient:
                 )
 
             resp.raise_for_status()
+            # Write-back: merge rotated cookies into Redis session (260629-p2v).
+            # Update local cookies var so next page uses the fresh jar.
+            rotated = dict(resp.cookies)
+            if rotated:
+                cookies = {**cookies, **rotated}  # update local var for next page
+                try:
+                    persist_rotated_cookies(self._redis, rotated, self._config)
+                except Exception:  # noqa: BLE001
+                    pass  # best-effort guard
             sections = self._extract_sections_from_html(resp.text)
             cards = self._parse_attractions_page(sections)
             logger.info(
