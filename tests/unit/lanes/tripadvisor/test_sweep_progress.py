@@ -168,12 +168,11 @@ def test_progress_hash_holds_no_secrets(redis):
     keys = {k.decode() if isinstance(k, bytes) else k for k in raw}
     forbidden = {"cookies", "cookie", "session", "session_id", "datadome", "proxy", "user_agent", "query_ids"}
     assert keys.isdisjoint(forbidden), f"secret-bearing fields leaked into progress hash: {keys & forbidden}"
-    # Whitelist: only the known non-secret fields.
-    # depth/geo_id/target_max_pages are non-secret run params stored for auto-resume (260628-m1n).
+    # Whitelist: only the known non-secret fields (depth/geo_id/target_max_pages removed
+    # as part of 260629-e69 auto-resume machinery removal).
     allowed = {
         "state", "pages_total", "pages_done", "attractions_ingested",
         "current_offset", "last_completed_offset", "error_count",
         "started_at", "updated_at",
-        "depth", "geo_id", "target_max_pages",
     }
     assert keys <= allowed, f"unexpected fields in progress hash: {keys - allowed}"

@@ -87,7 +87,14 @@ def test_engine_start_invalid_source_returns_422(client):
 
 
 def test_engine_start_tripadvisor_source_returns_202(client, dispatched):
-    """POST /engine/start with source='tripadvisor' + valid depth → 202 + source echoed."""
+    """POST /engine/start with source='tripadvisor' + valid depth → 202 + source echoed.
+
+    R2 gate: a valid session must be present in Redis before starting the TA motor.
+    """
+    from brave.api.deps import get_redis
+
+    # Seed a valid TA session so the R2 gate passes
+    get_redis().setex("brave:ta:session", 3600, '{"cookies":{}}')
     resp = client.post(
         "/api/v1/engine/start",
         headers=STEWARD_HEADERS,

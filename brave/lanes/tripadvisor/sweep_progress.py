@@ -41,16 +41,10 @@ IDLE = "idle"
 RUNNING = "running"
 DONE = "done"
 STOPPED_NEEDS_BOOTSTRAP = "stopped_needs_bootstrap"
-RESUMING = "resuming"
-_VALID_STATES = frozenset({IDLE, RUNNING, DONE, STOPPED_NEEDS_BOOTSTRAP, RESUMING})
+_VALID_STATES = frozenset({IDLE, RUNNING, DONE, STOPPED_NEEDS_BOOTSTRAP})
 
 # One Redis HASH, brave:ta:* convention (client.py:47 brave:ta:session).
 _PROGRESS_KEY = "brave:ta:sweep:progress"
-
-# Atomic SETNX gate for claim_resume — TTL=30s auto-expires if dispatch crashes
-# and the self-heal block also fails (e.g. Redis itself is down), so the next
-# trigger can retry. See claim_resume() for the full protocol.
-_RESUME_CLAIM_KEY = "brave:ta:sweep:resume:claiming"
 
 # Hash fields (no secrets — offsets/counts/state/timestamps only).
 _F_STATE = "state"
@@ -62,13 +56,6 @@ _F_LAST_COMPLETED_OFFSET = "last_completed_offset"
 _F_ERROR_COUNT = "error_count"
 _F_STARTED_AT = "started_at"
 _F_UPDATED_AT = "updated_at"
-
-# Non-secret run params stored for auto-resume (260628-m1n).
-# depth: pipeline depth string (e.g. "nascente"); geo_id: TripAdvisor geoId int;
-# target_max_pages: page cap for slice runs. These carry no cookie/session data.
-_F_DEPTH = "depth"
-_F_GEO_ID = "geo_id"
-_F_TARGET_MAX_PAGES = "target_max_pages"
 
 
 def _decode(value: Any) -> str:
@@ -88,48 +75,27 @@ def start(
     redis: Any,
     pages_total: int,
     resume_from_offset: int = 0,
-    *,
-    depth: str | None = None,
-    geo_id: int | None = None,
-    target_max_pages: int | None = None,
 ) -> None:
     """Seed a fresh run: state=running, counters zeroed, offsets seeded for resume.
 
     `resume_from_offset` lets a re-run continue mid-sweep — current_offset and
     last_completed_offset start there so get_resume_offset() reflects prior progress.
-
-    Keyword-only args (260628-m1n auto-resume):
-      depth:            Pipeline depth string (e.g. "nascente"). Only stored when provided.
-      geo_id:           TripAdvisor geoId integer. MUST default to None — NOT 294280.
-                        The 294280 fallback lives exclusively in get_resume_params().
-                        The {k:v if v is not None} filter relies on this to avoid
-                        writing geo_id when start() is called without it.
-      target_max_pages: Page cap for slice runs. Only stored when provided.
     """
     now = _now()
-    core_mapping: dict[str, Any] = {
-        _F_STATE: RUNNING,
-        _F_PAGES_TOTAL: int(pages_total),
-        _F_PAGES_DONE: 0,
-        _F_ATTRACTIONS: 0,
-        _F_CURRENT_OFFSET: int(resume_from_offset),
-        _F_LAST_COMPLETED_OFFSET: int(resume_from_offset),
-        _F_ERROR_COUNT: 0,
-        _F_STARTED_AT: now,
-        _F_UPDATED_AT: now,
-    }
-    # Optional run params: only write fields that were explicitly provided.
-    # geo_id default is None (not 294280) so the filter correctly omits it when absent.
-    optional_mapping = {
-        k: v
-        for k, v in {
-            _F_DEPTH: depth,
-            _F_GEO_ID: str(int(geo_id)) if geo_id is not None else None,
-            _F_TARGET_MAX_PAGES: str(int(target_max_pages)) if target_max_pages is not None else None,
-        }.items()
-        if v is not None
-    }
-    redis.hset(_PROGRESS_KEY, mapping={**core_mapping, **optional_mapping})
+    redis.hset(
+        _PROGRESS_KEY,
+        mapping={
+            _F_STATE: RUNNING,
+            _F_PAGES_TOTAL: int(pages_total),
+            _F_PAGES_DONE: 0,
+            _F_ATTRACTIONS: 0,
+            _F_CURRENT_OFFSET: int(resume_from_offset),
+            _F_LAST_COMPLETED_OFFSET: int(resume_from_offset),
+            _F_ERROR_COUNT: 0,
+            _F_STARTED_AT: now,
+            _F_UPDATED_AT: now,
+        },
+    )
 
 
 def record_page(redis: Any, offset: int, ingested_delta: int) -> None:
@@ -216,57 +182,3 @@ def get_resume_offset(redis: Any) -> int:
     return int(_decode(raw) or 0)
 
 
-def is_paused_needs_bootstrap(redis: Any) -> bool:
-    """Return True iff the sweep is in the stopped_needs_bootstrap state.
-
-    Called by maybe_resume_bulk_sweep before attempting to claim the resume gate.
-    Returns False when the hash is absent (no run started), when the state is RUNNING,
-    DONE, RESUMING, or IDLE — only STOPPED_NEEDS_BOOTSTRAP returns True.
-    """
-    raw = redis.hget(_PROGRESS_KEY, _F_STATE)
-    return _decode(raw) == STOPPED_NEEDS_BOOTSTRAP
-
-
-def claim_resume(redis: Any) -> bool:
-    """Atomically claim the right to dispatch a resume sweep.
-
-    Protocol (order is mandatory):
-      1. State check: if not stopped_needs_bootstrap → return False immediately.
-         This prevents a RUNNING-state caller from winning the SETNX on a fresh
-         Redis instance and wrongly returning True.
-      2. SETNX gate: SET _RESUME_CLAIM_KEY NX EX 30 → if already set → return False.
-         The EX=30 TTL ensures the lock auto-expires if both the dispatch AND the
-         self-heal in maybe_resume_bulk_sweep fail (e.g. Redis completely down),
-         so the 60s beat can retry on the next tick.
-      3. Transition state to RESUMING.
-      4. Return True (this caller owns the dispatch).
-
-    Concurrent inject hook + beat racing on the same Redis: exactly one wins the
-    SETNX; the other returns False immediately. No re-dispatch loop possible.
-    """
-    if not is_paused_needs_bootstrap(redis):
-        return False
-    if not redis.set(_RESUME_CLAIM_KEY, "1", nx=True, ex=30):
-        return False
-    redis.hset(_PROGRESS_KEY, _F_STATE, RESUMING)
-    return True
-
-
-def get_resume_params(redis: Any) -> dict[str, Any]:
-    """Return the run params stored at start() time for use by the resume dispatch.
-
-    Fallbacks:
-      depth:     None (no fallback — the task handles None depth correctly)
-      geo_id:    294280 (all-Brazil national geoId)
-      max_pages: 334   (full national sweep)
-
-    The 294280 fallback lives EXCLUSIVELY here — start() stores geo_id only when
-    explicitly provided (geo_id default is None, not 294280).
-    """
-    depth_raw = redis.hget(_PROGRESS_KEY, _F_DEPTH)
-    geo_id_raw = redis.hget(_PROGRESS_KEY, _F_GEO_ID)
-    max_pages_raw = redis.hget(_PROGRESS_KEY, _F_TARGET_MAX_PAGES)
-    depth = _decode(depth_raw) or None
-    geo_id = int(_decode(geo_id_raw) or 294280)
-    max_pages = int(_decode(max_pages_raw)) if max_pages_raw else 334
-    return {"depth": depth, "geo_id": geo_id, "max_pages": max_pages}

@@ -526,3 +526,54 @@ class TestSweepTripAdvisorBulkNational:
         assert fake_client.paginated_calls[0]["start_page"] == 3, (
             "re-run must resume at the page after the last completed offset, not page 1"
         )
+
+
+# ---------------------------------------------------------------------------
+# R1: session expiry turns the engine OFF (260629-e69)
+# ---------------------------------------------------------------------------
+
+
+class TestR1EngineOffOnSessionExpiry:
+    """R1: when the sweep fails fast on SessionMissing/Expired, the engine latch
+    must be turned OFF so the operator must inject a fresh session before re-starting.
+    No auto-restart ever fires.
+    """
+
+    def test_r1_session_missing_disables_engine(self, monkeypatch):
+        """SessionMissingError during per-UF sweep → engine latch set OFF + state=idle."""
+        import fakeredis as _fr
+
+        from brave.core import engine as collection_engine
+
+        fake_redis = _fr.FakeRedis()
+        # Seed engine as running (operator started a sweep)
+        collection_engine.start_run(fake_redis, ufs_total=1)
+        assert collection_engine.is_enabled(fake_redis), "precondition: engine enabled"
+
+        _run_sweep_with_stub_client(_StubMissingSessionClient, fake_redis, monkeypatch)
+
+        assert collection_engine.is_enabled(fake_redis) is False, (
+            "R1: engine latch must be OFF after SessionMissingError"
+        )
+        assert collection_engine.get_state(fake_redis) == collection_engine.IDLE, (
+            "R1: engine state must be idle after SessionMissingError"
+        )
+
+    def test_r1_session_expired_disables_engine(self, monkeypatch):
+        """SessionExpiredError during per-UF sweep → engine latch set OFF + state=idle."""
+        import fakeredis as _fr
+
+        from brave.core import engine as collection_engine
+
+        fake_redis = _fr.FakeRedis()
+        collection_engine.start_run(fake_redis, ufs_total=1)
+        assert collection_engine.is_enabled(fake_redis), "precondition: engine enabled"
+
+        _run_sweep_with_stub_client(_StubExpiredSessionClient, fake_redis, monkeypatch)
+
+        assert collection_engine.is_enabled(fake_redis) is False, (
+            "R1: engine latch must be OFF after SessionExpiredError"
+        )
+        assert collection_engine.get_state(fake_redis) == collection_engine.IDLE, (
+            "R1: engine state must be idle after SessionExpiredError"
+        )
