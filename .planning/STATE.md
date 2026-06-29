@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 Phase: 17.1 (Painel Brave — remaining pages + real backend (slice 2)) — EXECUTING
 Plan: 7 of 7 COMPLETE (17.1-01/03 wave-1 + 17.1-02 backend + 17.1-04 Duplicados + 17.1-06 board 6-col + 17.1-05 Varreduras + 17.1-07 shell integration — all 7 plans done)
 Status: Phase complete — ready to verify/close
-Last activity: 2026-06-29 - Completed quick task 260629-p2v: TripAdvisor session auto-refresh (cookie write-back + keep-alive beat)
+Last activity: 2026-06-29 - Completed quick task 260629-qny: Painel motor start source fix (origem reaches engine/start)
 
 Progress: [█████████░] 92%
 
@@ -186,6 +186,7 @@ None yet.
 | 260628-m1n | TripAdvisor bulk sync auto-resume on token re-inject (inject hook + 60s beat reconciler + persisted resume params; verified passed 7/7) | 2026-06-28 | (pending) | [260628-m1n-tripadvisor-bulk-sync-auto-resume-on-tok](./quick/260628-m1n-tripadvisor-bulk-sync-auto-resume-on-tok/) |
 | 260629-e69 | TA motor token-validity gate — token expiry turns motor OFF + start blocked for tripadvisor without valid-TTL session; auto-resume removed (verified 9/9) | 2026-06-29 | (pending) | [260629-e69-tripadvisor-motor-token-validity-gate-au](./quick/260629-e69-tripadvisor-motor-token-validity-gate-au/) |
 | 260629-p2v | TripAdvisor session auto-refresh — cookie write-back across 3 client transports (merge Set-Cookie + slide TTL + re-derive session_id) + keep-alive beat (10min HTML GET re-mints datadome) so operator pastes cURL only once; fallback (403→needs_bootstrap+engine OFF) unchanged (verified 5/5) | 2026-06-29 | 3bd1def | [260629-p2v-tripadvisor-session-auto-refresh-cookie-](./quick/260629-p2v-tripadvisor-session-auto-refresh-cookie-/) |
+| 260629-qny | Painel motor start dropped source (always swept default/Places) — new POST /engine/source sets active source w/o starting; PainelOrigem Salvar activates source (TA after inject; mtur/places→default); PainelTopbar start passes status source into startEngine. EngineControl + taBlocked intact (verified 7/7) | 2026-06-29 | 96c661e | [260629-qny-fix-painel-motor-start-dropping-source-s](./quick/260629-qny-fix-painel-motor-start-dropping-source-s/) |
 
 ## Deferred Items
 
