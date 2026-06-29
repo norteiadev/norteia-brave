@@ -237,6 +237,35 @@ def engine_start(
 
 
 @router.post(
+    "/api/v1/engine/source",
+    status_code=200,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def engine_set_source(
+    redis: Redis = Depends(get_redis),
+    body: dict = Body(default={}),
+) -> dict:
+    """Persist the active collection source without starting a run.
+
+    Validates the source against the known-valid set and writes it to the
+    Redis source key (brave:engine:source). The next /start will read this
+    key and route to the correct sweep lane.
+
+    Invalid source → 422 before any Redis write (mirrors the /start guard).
+    No RunHistory row — this is a configuration write, not a dispatch.
+    """
+    source = body.get("source", "default")
+    if source not in collection_engine._VALID_SOURCES:
+        raise HTTPException(
+            status_code=422,
+            detail="source must be 'default' or 'tripadvisor'",
+        )
+    collection_engine.set_source(redis, source)
+    logger.info("engine_source_set", source=source)
+    return {"source": source}
+
+
+@router.post(
     "/api/v1/engine/stop",
     status_code=202,
     dependencies=[Depends(require_steward_or_bearer)],
