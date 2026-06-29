@@ -167,6 +167,18 @@ def engine_start(
             detail="source must be 'default' or 'tripadvisor'",
         )
 
+    # R2: TripAdvisor motor requires a live session — operator must inject a cURL first
+    if source == "tripadvisor":
+        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY  # noqa: PLC0415
+        _ta_ttl = redis.ttl(BRAVE_TA_SESSION_KEY)
+        # ttl > 0 → present + valid; 0 → just expired; -1 → no TTL (infinite, setex always
+        # sets TTL so -1 = operator manually set via redis-cli); -2 → key absent
+        if _ta_ttl != -1 and _ta_ttl <= 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Motor TripAdvisor requer uma sessão com TTL válido — injete um cURL primeiro.",
+            )
+
     if not collection_engine.start_run(redis, ufs_total=len(ufs)):
         raise HTTPException(
             status_code=409,

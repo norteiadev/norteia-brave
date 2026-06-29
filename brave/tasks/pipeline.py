@@ -1045,9 +1045,6 @@ def sweep_tripadvisor(
                 rc,
                 pages_total=334,
                 resume_from_offset=_resume_offset,
-                depth=depth,
-                geo_id=geo_id,
-                target_max_pages=max_pages or 334,
             )
 
             bulk_ingest = TripAdvisorAtrativosIngest(
@@ -1129,6 +1126,13 @@ def sweep_tripadvisor(
         # UnboundLocalError (T-15-07-04). No retry, no quarantine (unchanged).
         if rc is not None:
             sweep_progress.stop_needs_bootstrap(rc)
+        # R1: token expired → engine OFF — operator must inject a valid session before re-starting
+        import redis as _r1_redis  # noqa: PLC0415
+        _r1_rc = rc if rc is not None else _r1_redis.from_url(
+            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        )
+        collection_engine.set_enabled(_r1_rc, False)
+        collection_engine.mark_idle(_r1_rc)
         logger.warning(
             "sweep_tripadvisor_session_fail_fast",
             uf=uf,
@@ -1998,33 +2002,3 @@ def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> Non
         )
 
 
-@shared_task(
-    bind=False,
-    name="brave.ta_resume_watch",
-    acks_late=True,
-    reject_on_worker_lost=True,
-    time_limit=30,
-    ignore_result=True,
-)
-def ta_resume_watch() -> None:
-    """60s beat safety net: auto-resume a bulk TA sweep paused on session expiry.
-
-    Idempotent and race-safe via claim_resume. Covers worker restarts and
-    inject paths that bypass the API (e.g. direct Redis writes, operator scripts).
-
-    The lazy import of maybe_resume_bulk_sweep avoids circular imports at module
-    load time (brave.tasks.pipeline is imported by many modules). The patch target
-    for tests is "brave.lanes.tripadvisor.resume.maybe_resume_bulk_sweep".
-    """
-    import os as _os
-
-    import redis as _redis_lib
-
-    from brave.lanes.tripadvisor.resume import maybe_resume_bulk_sweep  # noqa: PLC0415
-
-    rc = _redis_lib.from_url(_os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
-    try:
-        if maybe_resume_bulk_sweep(rc):
-            logger.info("ta_resume_watch_dispatched")
-    except Exception:
-        logger.exception("ta_resume_watch_error")

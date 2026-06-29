@@ -29,7 +29,6 @@ from redis import Redis
 from brave.api.deps import get_redis, require_steward_or_bearer
 from brave.lanes.tripadvisor import sweep_progress as sweep_progress_state
 from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, SessionExpiredError
-from brave.lanes.tripadvisor.resume import maybe_resume_bulk_sweep
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -122,7 +121,7 @@ class TASweepProgressResponse(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    state: Literal["running", "done", "stopped_needs_bootstrap", "idle", "resuming"]
+    state: Literal["running", "done", "stopped_needs_bootstrap", "idle"]
     pages_done: int
     pages_total: int
     attractions_ingested: int
@@ -278,17 +277,6 @@ async def inject_session(
 
     # Canary gate: validates the session synchronously before returning ready
     await _run_canary(session, ta_config, redis)
-
-    # Auto-resume best-effort: if a bulk sweep is stopped_needs_bootstrap and the fresh
-    # session is now present, dispatch it. Exception must NEVER block the inject response.
-    # maybe_resume_bulk_sweep is imported at module level (plan_check_correction) so tests
-    # can monkeypatch brave.api.routers.tripadvisor_session.maybe_resume_bulk_sweep.
-    try:
-        _resumed = maybe_resume_bulk_sweep(redis)
-        if _resumed:
-            logger.info("ta_session_inject_auto_resumed")
-    except Exception:
-        logger.warning("ta_session_inject_resume_error")
 
     # Audit log (T-12-02-01: only metadata, NEVER cookie values)
     #
