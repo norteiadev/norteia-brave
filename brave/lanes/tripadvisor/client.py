@@ -72,6 +72,13 @@ _TA_FLEXCARD_TYPENAME: str = "WebPresentation_SingleFlexCardSection"
 # Safety guard: max pagination pages before stopping (prevents infinite loops, Risk A5)
 _MAX_PAGES: int = 50
 
+# Destinations (GEO entities) persisted query id.
+# Discovered by inspecting browser DevTools: the POST to /data/graphql/ids
+# that returns locations[] for a Brazilian state geo page.
+# Set to None until captured from a real session; override via
+# BRAVE_TA_QUERY_ID_OVERRIDE={"destinations":"<qid>"}.
+_DESTINATIONS_QID: str | None = None
+
 
 class SessionExpiredError(Exception):
     """Raised when a GraphQL request returns 403 or 429.
@@ -333,7 +340,24 @@ class TripAdvisorClient:
 
         geo_id = resolve_geo_id(uf, self._redis, self._config)
         session = self._get_session()
-        query_id = session.get("query_ids", {}).get("destinations", "")
+        # Three-step QID resolution (SPIKE 260629-rmz Finding 2):
+        # 1. config.query_id_override["destinations"] — operator override wins
+        # 2. session["query_ids"].get("destinations")  — legacy session key
+        # 3. _DESTINATIONS_QID module constant          — pinned when discovered
+        # If all three are falsy, raise ValueError (T-rmz-04: never silent empty QID).
+        query_id = (
+            self._config.query_id_override.get("destinations")
+            or session.get("query_ids", {}).get("destinations")
+            or _DESTINATIONS_QID
+        )
+        if not query_id:
+            raise ValueError(
+                "No destinations queryId configured. "
+                'Set BRAVE_TA_QUERY_ID_OVERRIDE={"destinations":"<qid>"} or pin '
+                "_DESTINATIONS_QID in client.py. "
+                "Discover the QID by inspecting browser DevTools: POST /data/graphql/ids "
+                "for a TA destinations/geo listing page and copy the preRegisteredQueryId."
+            )
         cookies = session.get("cookies", {})
         user_agent = session.get("user_agent", "")
         headers: dict[str, str] = {"Content-Type": "application/json"}

@@ -92,3 +92,61 @@ class TestResolveGeoId:
 
         data = load_uf_geoids(GEO_SEED_PATH)
         assert len(data) == 27, f"Expected 27 UF keys, found {len(data)}: {sorted(data.keys())}"
+
+
+# ---------------------------------------------------------------------------
+# TestUfGeoidsSeed — structural validation of the committed uf_geoids.json
+# ---------------------------------------------------------------------------
+
+
+class TestUfGeoidsSeed:
+    """Validate the committed data/tripadvisor/uf_geoids.json seed file.
+
+    These tests run offline (no Redis, no network). They verify that the
+    committed seed has the exact set of 27 Brazilian state UF codes, all
+    positive integer geoIds, and no value from the previously-wrong
+    sequential 303509-303534 range (those were arbitrary city geoIds, not
+    state-level — confirmed by spike finding that 303509 = Teresopolis/RJ).
+    """
+
+    _EXPECTED_UF_CODES = frozenset({
+        "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA",
+        "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN",
+        "RO", "RR", "RS", "SC", "SE", "SP", "TO",
+    })
+
+    def _load(self) -> dict:
+        from brave.lanes.tripadvisor.geo import GEO_SEED_PATH, load_uf_geoids
+
+        return load_uf_geoids(GEO_SEED_PATH)
+
+    def test_uf_geoids_has_27_keys(self):
+        """Exactly 27 UF codes, matching the canonical Brazilian state set."""
+        data = self._load()
+        assert set(data.keys()) == self._EXPECTED_UF_CODES, (
+            f"Key mismatch. Expected {sorted(self._EXPECTED_UF_CODES)}, "
+            f"got {sorted(data.keys())}"
+        )
+
+    def test_uf_geoids_all_positive_ints(self):
+        """All geoId values must be positive integers (> 0)."""
+        data = self._load()
+        for uf, geo_id in data.items():
+            assert isinstance(geo_id, int), f"UF {uf}: value {geo_id!r} is not an int"
+            assert geo_id > 0, f"UF {uf}: geoId {geo_id} must be > 0"
+
+    def test_uf_geoids_no_legacy_sequential_range(self):
+        """No value must fall in 303509-303534 (the previously wrong sequential city geoIds).
+
+        Root cause (SPIKE 260629-rmz): that sequential range holds arbitrary city
+        geoIds (e.g. 303509 = Teresopolis/RJ) that were used as placeholder UF-geoId
+        mappings. None of them are state-level geoIds. This test guards against
+        regression to the old placeholders.
+        """
+        data = self._load()
+        sequential_uf = {uf: v for uf, v in data.items() if 303509 <= v <= 303534}
+        assert not sequential_uf, (
+            f"Found geoIds in the wrong sequential range 303509-303534: {sequential_uf}. "
+            "Replace with correct state-level geoIds discovered via "
+            "scripts/ta_discover_state_geoids.py."
+        )

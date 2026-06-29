@@ -914,3 +914,100 @@ class TestBootstrapQueryIdRejectList:
         assert result["session_id"] == "", (
             f"Expected empty session_id when TASID absent, got: {result['session_id']!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestFetchDestinationsQid — fixed QID resolution chain
+# ---------------------------------------------------------------------------
+
+
+class TestFetchDestinationsQid:
+    """Verify the fixed fetch_destinations QID resolution chain.
+
+    Bug (SPIKE 260629-rmz Finding 2): the previous code used
+      query_id = session.get("query_ids", {}).get("destinations", "")
+    which always resolved to "" because the cURL parser stores query_ids
+    positionally (query_0..query_N), never writing a "destinations" key.
+
+    Fix: three-step priority chain:
+      1. config.query_id_override["destinations"]   (operator override wins)
+      2. session["query_ids"].get("destinations")   (legacy session key)
+      3. _DESTINATIONS_QID module constant           (pinned when discovered)
+      4. ValueError when all three are falsy
+    """
+
+    @staticmethod
+    def _make_redis_with_positional_session():
+        """Seed fakeredis with a session that has positional query_ids (no "destinations" key)."""
+        import json
+
+        import fakeredis
+
+        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+
+        redis = fakeredis.FakeRedis()
+        session_data = {
+            "cookies": {"datadome": "abc", "TASession": "xyz"},
+            "query_ids": {"query_0": "old_positional_qid"},  # no "destinations" key
+            "user_agent": "Mozilla/5.0 test",
+            "acquired_at": "2026-06-24T12:00:00Z",
+        }
+        redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session_data))
+        return redis
+
+    @pytest.mark.asyncio
+    async def test_uses_config_override_qid(self):
+        """config.query_id_override["destinations"] takes priority over session lookup.
+
+        Session has only positional keys (no "destinations"); config has an override.
+        The POST must use the override QID, not the positional one.
+        """
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor.model_copy(
+            update={"query_id_override": {"destinations": "override_qid_xyz"}}
+        )
+        redis = self._make_redis_with_positional_session()
+
+        captured_body = None
+
+        with respx.mock:
+            def capture(request):
+                nonlocal captured_body
+                captured_body = json.loads(request.content)
+                return httpx.Response(200, json=[{"data": {"locations": []}}])
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=capture
+            )
+            await TripAdvisorClient(config=config, redis=redis).fetch_destinations(uf="SP")
+
+        assert captured_body is not None, "No request captured"
+        assert captured_body[0]["extensions"]["preRegisteredQueryId"] == "override_qid_xyz", (
+            f"Expected 'override_qid_xyz' (config override), "
+            f"got {captured_body[0]['extensions']['preRegisteredQueryId']!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_raises_when_no_qid_configured(self, monkeypatch):
+        """ValueError raised (not empty-QID request) when no QID is available.
+
+        Session has no "destinations" key, config override is empty, and
+        _DESTINATIONS_QID is None. Must raise ValueError immediately.
+        """
+        import brave.lanes.tripadvisor.client as client_mod
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        # Ensure _DESTINATIONS_QID is None (it is by default, but patch defensively)
+        monkeypatch.setattr(client_mod, "_DESTINATIONS_QID", None)
+
+        config = AppConfig().tripadvisor.model_copy(
+            update={"query_id_override": {}}  # no override
+        )
+        redis = self._make_redis_with_positional_session()
+
+        with pytest.raises(ValueError, match="No destinations queryId configured"):
+            await TripAdvisorClient(config=config, redis=redis).fetch_destinations(uf="SP")
