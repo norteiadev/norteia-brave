@@ -72,7 +72,7 @@ function fmtMMSS(seconds: number): string {
 function explainError(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 401) return "Sessão expirada ou token inválido.";
-    if (err.status === 409) return "Motor já está em execução.";
+    if (err.status === 409) return err.message || "Motor já está em execução.";
     return err.message;
   }
   return "Falha ao controlar o motor.";
@@ -155,6 +155,12 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   // (workers still processing) and only clears it when /stop is explicitly called.
   const motorOn = data?.enabled ?? (state !== "idle");
 
+  // R2 client gate: when source is tripadvisor, require a valid session before
+  // enabling the depth menu. Reuses the sessionStatus query (present && expires_in > 0).
+  const taBlocked =
+    source === "tripadvisor" &&
+    (!sessionStatus?.present || (sessionStatus?.expires_in ?? 0) <= 0);
+
   // One-shot expiry toast driven by the real expires_in (warn at 5 min). The
   // ref guards against re-toasting on every 10s poll while inside the band.
   const warnedRef = useRef(false);
@@ -171,12 +177,32 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     }
   }, [sessionStatus]);
 
+  // Auto-off toast: when engine transitions from enabled→disabled mid-run
+  // (R1: session expired during sweep, engine latched off by the worker).
+  const prevEnabledRef = useRef<boolean | undefined>(undefined);
+  useEffect(() => {
+    const enabled = data?.enabled;
+    if (prevEnabledRef.current === true && enabled === false) {
+      toast.warning(
+        "Motor TripAdvisor desligado — sessão expirada. Injete um cURL para reiniciar.",
+      );
+    }
+    prevEnabledRef.current = enabled;
+  }, [data?.enabled]);
+
   const onToggleMotor = () => {
     if (pending) return;
     if (motorOn) {
       // Engine is on (operator intent) — stop it.
       stop.mutate();
     } else {
+      // R2: block if source=tripadvisor and no valid session
+      if (taBlocked) {
+        toast.error(
+          "Injete uma sessão TripAdvisor válida antes de ligar o motor.",
+        );
+        return;
+      }
       // Engine is off — open the depth picker to start.
       setDepthMenuOpen((v) => !v);
     }
