@@ -50,6 +50,9 @@ app.conf.update(
     # Timezone
     timezone="UTC",
     enable_utc=True,
+    # Single-queue model: all tasks (beat and .delay) land on 'celery'. No task_routes,
+    # no -Q flag on the worker. Dedicated lanes deferred until HOL-blocking is observed.
+    task_default_queue="celery",  # Explicit default — matches worker start cmd and beat dispatch
 )
 
 # Auto-discover tasks in brave.tasks.pipeline.
