@@ -46,6 +46,37 @@ def _make_records() -> list[IbgeMunicipio]:
     return result
 
 
+PR_ROWS_CSV = """\
+ibge_code,nome,uf,lat,lng
+4106902,Curitiba,PR,-25.4195,-49.2646
+4104659,Carambeí,PR,-24.9152,-50.0986
+4115200,Maringá,PR,-23.4205,-51.9333
+"""
+
+
+def _make_pr_records() -> list[IbgeMunicipio]:
+    """Build 3 Paraná IbgeMunicipio records for accent-fold tests (TA-03).
+
+    Separate from _make_records() / MINIMAL_CSV so TestLoadIbgeCsv::test_load_ibge_csv_from_file
+    len(records) == 5 assertion is never disturbed.
+    """
+    lines = PR_ROWS_CSV.strip().split("\n")
+    _header, *rows = lines
+    result = []
+    for row in rows:
+        ibge_code, nome, uf, lat, lng = row.split(",")
+        result.append(
+            IbgeMunicipio(
+                ibge_code=ibge_code,
+                nome=nome,
+                uf=uf,
+                lat=float(lat),
+                lng=float(lng),
+            )
+        )
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Tests: IbgeMunicipio dataclass
 # ---------------------------------------------------------------------------
@@ -162,6 +193,43 @@ class TestResolveMunicipio:
         """When name doesn't match and no coords provided, must return None."""
         records = _make_records()
         result = resolve_municipio("Inexistente Cidade", "SP", records)
+        assert result is None
+
+    # ---------------------------------------------------------------------------
+    # Tests: resolve_municipio — accent-fold (TA-03 fix, 2026-06-30)
+    # ---------------------------------------------------------------------------
+
+    def test_ibge_accent_fold_maringa(self) -> None:
+        """ASCII 'Maringa' must resolve to accented IBGE 'Maringá' (TA-03 accent fix).
+
+        Before the _fold_accents fix, fuzz.token_sort_ratio('maringa', 'maringá') = 85.7
+        which fell below the 88 threshold, causing a None return for 4 of 60 PR atrativos.
+        """
+        records = _make_pr_records()
+        result = resolve_municipio("Maringa", "PR", records)
+        assert result is not None, "Expected Maringá — accent fold must bridge ASCII→accented"
+        assert result.nome == "Maringá"
+        assert result.ibge_code == "4115200"
+
+    def test_ibge_accent_fold_carambei(self) -> None:
+        """ASCII 'Carambei' must resolve to accented IBGE 'Carambeí' (TA-03 accent fix)."""
+        records = _make_pr_records()
+        result = resolve_municipio("Carambei", "PR", records)
+        assert result is not None, "Expected Carambeí — accent fold must bridge ASCII→accented"
+        assert result.nome == "Carambeí"
+        assert result.ibge_code == "4104659"
+
+    def test_ibge_exact_match_still_works_curitiba(self) -> None:
+        """Exact name 'Curitiba' (no accent needed) must still resolve after fold."""
+        records = _make_pr_records()
+        result = resolve_municipio("Curitiba", "PR", records)
+        assert result is not None
+        assert result.ibge_code == "4106902"
+
+    def test_ibge_accent_fold_no_overmatch(self) -> None:
+        """Accent-folding must not cause over-matching: 'ZZZFantasia' in PR must return None."""
+        records = _make_pr_records()
+        result = resolve_municipio("ZZZFantasia", "PR", records)
         assert result is None
 
 
