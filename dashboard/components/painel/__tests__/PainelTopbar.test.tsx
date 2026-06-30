@@ -287,6 +287,25 @@ describe("PainelTopbar", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Logs icon button test (Phase ks0)
+  // ---------------------------------------------------------------------------
+
+  it("logs icon button opens the logs sidebar", async () => {
+    server.use(
+      engineStatus({ enabled: true, state: "running", source: "tripadvisor" }),
+      taSessionStatus(),
+      http.get("http://localhost:3000/api/api/v1/logs", () =>
+        HttpResponse.json({ source: "tripadvisor", lines: [], cursor: 0 }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+    const btn = await screen.findByTestId("logs-icon-btn");
+    await user.click(btn);
+    await screen.findByTestId("painel-logs-panel");
+  });
+
+  // ---------------------------------------------------------------------------
   // Sync indicator tests (Phase ks0)
   // ---------------------------------------------------------------------------
 

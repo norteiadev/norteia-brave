@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Terminal } from "lucide-react";
 import { toast } from "sonner";
 
 import { ApiError } from "@/lib/api-client";
@@ -20,6 +21,7 @@ import {
   type EngineState,
   type TASessionStatus,
 } from "@/lib/engine-api";
+import { PainelLogs } from "@/components/painel/PainelLogs";
 import { PainelOrigem, type OrigemSource } from "@/components/painel/PainelOrigem";
 
 /**
@@ -113,6 +115,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   const qc = useQueryClient();
   const [origemOpen, setOrigemOpen] = useState(false);
   const [depthMenuOpen, setDepthMenuOpen] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
 
   const { data } = useQuery({
     queryKey: engineKeys.status,
@@ -322,6 +325,22 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
           )}
         </div>
 
+        {/* Logs sidebar toggle — opens the per-source log ring buffer viewer */}
+        <button
+          type="button"
+          data-testid="logs-icon-btn"
+          aria-label="Ver logs de sincronização"
+          aria-pressed={logsOpen}
+          onClick={() => setLogsOpen((v) => !v)}
+          className="flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-[8px] border bg-[var(--card)] hover:bg-[var(--painel-chip)]"
+          style={{ borderColor: "var(--painel-border-outer)" }}
+        >
+          <Terminal
+            className="h-[15px] w-[15px]"
+            style={{ color: logsOpen ? "var(--painel-navy)" : "var(--painel-muted)" }}
+          />
+        </button>
+
         {/* Divider */}
         <div
           className="h-[24px] w-px"
@@ -398,6 +417,13 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
         open={origemOpen}
         onClose={() => setOrigemOpen(false)}
         initialSource={origemSourceFor(source)}
+      />
+
+      {/* Log ring buffer sidebar */}
+      <PainelLogs
+        open={logsOpen}
+        onClose={() => setLogsOpen(false)}
+        source={source}
       />
     </div>
   );
