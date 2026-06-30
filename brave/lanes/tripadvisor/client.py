@@ -72,6 +72,13 @@ _TA_FLEXCARD_TYPENAME: str = "WebPresentation_SingleFlexCardSection"
 # Safety guard: max pagination pages before stopping (prevents infinite loops, Risk A5)
 _MAX_PAGES: int = 50
 
+# Destinations (GEO entities) persisted query id.
+# Discovered by inspecting browser DevTools: the POST to /data/graphql/ids
+# that returns locations[] for a Brazilian state geo page.
+# Set to None until captured from a real session; override via
+# BRAVE_TA_QUERY_ID_OVERRIDE={"destinations":"<qid>"}.
+_DESTINATIONS_QID: str | None = None
+
 
 class SessionExpiredError(Exception):
     """Raised when a GraphQL request returns 403 or 429.
@@ -169,16 +176,19 @@ class TripAdvisorClient:
                 logger.debug("ta_parse_skip_missing_flex_content", section_type=section.get("__typename"))
                 continue
             try:
-                name: str = card.get("cardTitle", {}).get("text", "")
+                # Use `(card.get(k) or {})` instead of `card.get(k, {})` so that
+                # present-but-null fields (e.g. bubbleRating=null) are also guarded.
+                # `.get(k, {})` only catches absent keys; `or {}` catches None too.
+                name: str = (card.get("cardTitle") or {}).get("text", "")
                 location_id_raw = (
                     card.get("cardLink", {})
                     .get("webRoute", {})
                     .get("typedParams", {})
                     .get("detailId")
                 )
-                rating_raw = card.get("bubbleRating", {}).get("rating")
-                review_count_raw = card.get("bubbleRating", {}).get("reviewCount")
-                category: str = card.get("primaryInfo", {}).get("text", "")
+                rating_raw = (card.get("bubbleRating") or {}).get("rating")
+                review_count_raw = (card.get("bubbleRating") or {}).get("reviewCount")
+                category: str = (card.get("primaryInfo") or {}).get("text", "")
 
                 if location_id_raw is None:
                     logger.debug("ta_parse_skip_missing_detail_id", name=name)
@@ -333,7 +343,24 @@ class TripAdvisorClient:
 
         geo_id = resolve_geo_id(uf, self._redis, self._config)
         session = self._get_session()
-        query_id = session.get("query_ids", {}).get("destinations", "")
+        # Three-step QID resolution (SPIKE 260629-rmz Finding 2):
+        # 1. config.query_id_override["destinations"] — operator override wins
+        # 2. session["query_ids"].get("destinations")  — legacy session key
+        # 3. _DESTINATIONS_QID module constant          — pinned when discovered
+        # If all three are falsy, raise ValueError (T-rmz-04: never silent empty QID).
+        query_id = (
+            self._config.query_id_override.get("destinations")
+            or session.get("query_ids", {}).get("destinations")
+            or _DESTINATIONS_QID
+        )
+        if not query_id:
+            raise ValueError(
+                "No destinations queryId configured. "
+                'Set BRAVE_TA_QUERY_ID_OVERRIDE={"destinations":"<qid>"} or pin '
+                "_DESTINATIONS_QID in client.py. "
+                "Discover the QID by inspecting browser DevTools: POST /data/graphql/ids "
+                "for a TA destinations/geo listing page and copy the preRegisteredQueryId."
+            )
         cookies = session.get("cookies", {})
         user_agent = session.get("user_agent", "")
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -530,6 +557,61 @@ class TripAdvisorClient:
         # Single page only — no partial-page break (the meaningless `< 30` guard is
         # removed: there is no second page to gate, so card count never terminates a loop).
         return self._parse_attractions_page(sections)
+
+    async def fetch_attraction_detail(self, location_id: int) -> dict | None:
+        """Fetch the TA detail record for a single attraction (qid 444040f131735091).
+
+        Returns the first location dict from the response (contains parents[] geo
+        hierarchy). Returns None on empty response or any parsing error.
+        Never raises on data shape issues — returns None instead.
+
+        Used by TripAdvisorAtrativosIngest._ingest_one as a tertiary ibge fallback:
+        when name-match and geocoder both miss, parents[0].localizedName gives the
+        parent city name which can be fuzzy-matched against IBGE.
+
+        Args:
+            location_id: TripAdvisor integer locationId of the attraction.
+
+        Raises:
+            SessionMissingError: When no session is in Redis.
+            SessionExpiredError: On 403 or 429 HTTP status.
+        """
+        from brave.lanes.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
+
+        session = self._get_session()
+        cookies = session.get("cookies", {})
+        user_agent = session.get("user_agent", "")
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if user_agent:
+            headers["User-Agent"] = user_agent
+        proxy = self._config.proxy_url or None
+        payload = [
+            {
+                "variables": {"locationId": location_id},
+                "extensions": {"preRegisteredQueryId": "444040f131735091"},
+            }
+        ]
+        async with httpx.AsyncClient(cookies=cookies, follow_redirects=True, proxy=proxy) as hc:
+            resp = await hc.post(_TA_GRAPHQL_URL, json=payload, headers=headers)
+        if resp.status_code in (403, 429):
+            raise SessionExpiredError(
+                f"TripAdvisor detail returned {resp.status_code} — session expired."
+            )
+        resp.raise_for_status()
+        rotated = dict(resp.cookies)
+        if rotated:
+            try:
+                persist_rotated_cookies(self._redis, rotated, self._config)
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            data = resp.json()
+            locations = data[0]["data"]["locations"]
+            if not locations:
+                return None
+            return locations[0]
+        except (IndexError, KeyError, TypeError, ValueError):
+            return None
 
     async def fetch_attractions_paginated(
         self, geo_id: int, start_page: int = 1, max_pages: int = _TA_MAX_PAGE

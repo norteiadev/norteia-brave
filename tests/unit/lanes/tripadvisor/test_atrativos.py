@@ -463,3 +463,145 @@ class TestAtrativosGeoEnrichment:
             await ingest.produce("MG", run_rio=False)
 
         assert mock_store_raw.called
+
+
+# ---------------------------------------------------------------------------
+# TestDetailParentsLinkage — atrativos._ingest_one detail-parents ibge fallback
+# ---------------------------------------------------------------------------
+
+
+class TestDetailParentsLinkage:
+    """Verify the tertiary ibge fallback: TA detail parents[] -> city name -> IBGE.
+
+    When name-match fails (card name does not fuzzy-match an IBGE municipio) AND
+    geocoder is None (or misses), _ingest_one now fetches fetch_attraction_detail
+    and uses parents[0].localizedName as the city name for a second IBGE lookup.
+
+    Tests use FakeTripAdvisorClient extended with fixture_details + detail_calls.
+    """
+
+    _FOZ_IBGE = IbgeMunicipio("4108304", "Foz do Iguacu", "PR", -25.5163, -54.5854)
+
+    def _make_destino_rio_map(self) -> dict:
+        return {"4108304": (uuid.uuid4(), "tripadvisor:destination:303444")}
+
+    def _make_fake_client(
+        self,
+        detail_fixture: dict | None,
+        attraction_name: str = "Cataratas Iguacu",
+    ):
+        """Build a FakeTripAdvisorClient with the given detail fixture."""
+        from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
+
+        fixture_details = {312332: detail_fixture} if detail_fixture is not None else {}
+        return FakeTripAdvisorClient(
+            fixture_attractions={303435: [{
+                "locationId": 312332,
+                "name": attraction_name,
+                "review_count": 10,
+                "rating": 4.5,
+                "category": "Nature",
+            }]},
+            geo_ids={"PR": 303435},
+            fixture_details=fixture_details,
+        )
+
+    @pytest.mark.asyncio
+    async def test_ingest_one_resolves_ibge_via_detail_parents(self) -> None:
+        """Attraction with no lat/lng and non-matching name resolves via detail parents[].
+
+        Card name "Cataratas Iguacu" does NOT fuzzy-match "Foz do Iguacu" (the IBGE
+        municipio). Geocoder is not configured. The detail fallback fires, retrieves
+        parents[0].localizedName="Foz do Iguacu", and that name matches in resolve_municipio.
+        The record must be stored in Nascente (not quarantined as ibge_unmatched).
+        """
+        from brave.config.settings import TripAdvisorConfig
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        detail_fixture = {
+            "parents": [
+                {"locationId": 303444, "localizedName": "Foz do Iguacu"},
+                {"locationId": 303435, "localizedName": "Parana"},
+            ]
+        }
+        fake_client = self._make_fake_client(detail_fixture)
+        destino_rio_map = self._make_destino_rio_map()
+        ta_config = TripAdvisorConfig(page_throttle_seconds=0)
+
+        entity = {
+            "locationId": 312332,
+            "name": "Cataratas Iguacu",
+            "review_count": 10,
+            "rating": 4.5,
+            "category": "Nature",
+        }
+
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_nascente = MagicMock()
+            mock_nascente.id = uuid.uuid4()
+            mock_store_raw.return_value = mock_nascente
+
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=fake_client,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=[self._FOZ_IBGE],
+                destino_rio_map=destino_rio_map,
+                ta_config=ta_config,
+            )
+            await ingest._ingest_one("PR", entity, run_rio=False)
+
+        # detail was called exactly once for locationId 312332
+        assert fake_client.detail_calls == [312332], (
+            f"Expected detail_calls==[312332], got {fake_client.detail_calls}"
+        )
+        # record was stored (not quarantined)
+        assert mock_store_raw.called, (
+            "store_raw must be called — the record must resolve via detail parents, "
+            "not quarantine as ibge_unmatched"
+        )
+        payload = mock_store_raw.call_args.kwargs["payload"]
+        assert payload["canonical"]["municipio"] == "Foz do Iguacu", (
+            f"Expected municipio='Foz do Iguacu', got {payload['canonical'].get('municipio')!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_ingest_one_still_quarantines_when_detail_also_misses(self) -> None:
+        """When detail returns None, the card must still quarantine as ibge_unmatched."""
+        from brave.config.settings import TripAdvisorConfig
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        # fixture_details={} -> fetch_attraction_detail returns None for 312332
+        fake_client = self._make_fake_client(detail_fixture=None)
+        ta_config = TripAdvisorConfig(page_throttle_seconds=0)
+
+        entity = {
+            "locationId": 312332,
+            "name": "Cataratas Iguacu",
+            "review_count": 10,
+            "rating": 4.5,
+            "category": "Nature",
+        }
+
+        with patch("brave.lanes.tripadvisor.atrativos.quarantine_poison") as mock_q:
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=fake_client,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=[self._FOZ_IBGE],
+                destino_rio_map={},
+                ta_config=ta_config,
+            )
+            await ingest._ingest_one("PR", entity, run_rio=False)
+
+        ibge_calls = [
+            c for c in mock_q.call_args_list
+            if c.kwargs.get("task_name") == "brave.ta.atrativos.ibge_unmatched"
+        ]
+        assert len(ibge_calls) == 1, (
+            f"Expected 1 ibge_unmatched quarantine when detail also misses; "
+            f"got {len(ibge_calls)}"
+        )

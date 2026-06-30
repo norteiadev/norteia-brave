@@ -37,30 +37,36 @@ class FakeTripAdvisorClient:
         geo_ids: dict[str, int] | None = None,
         fixture_pages: dict[int, list[tuple[int, list[dict[str, Any]]]]]
         | None = None,
+        fixture_details: dict[int, dict[str, Any] | None] | None = None,
     ) -> None:
         """Initialize with optional fixture data.
 
         Args:
-            fixture_destinations: Dict mapping UF code → list of location dicts.
+            fixture_destinations: Dict mapping UF code -> list of location dicts.
                                   Returned by fetch_destinations().
-            fixture_attractions:  Dict mapping geoId → list of attraction dicts.
+            fixture_attractions:  Dict mapping geoId -> list of attraction dicts.
                                   Returned by fetch_attractions().
-            geo_ids:              Dict mapping UF → geoId integer.
+            geo_ids:              Dict mapping UF -> geoId integer.
                                   Returned by resolve_geo_id().
-            fixture_pages:        Dict mapping geoId → list of (offset, cards) tuples.
+            fixture_pages:        Dict mapping geoId -> list of (offset, cards) tuples.
                                   Yielded one tuple at a time by
                                   fetch_attractions_paginated().
+            fixture_details:      Dict mapping locationId -> detail dict (or None).
+                                  Returned by fetch_attraction_detail().
+                                  Keys absent from the dict return None.
         """
         self._fixture_destinations = fixture_destinations or {}
         self._fixture_attractions = fixture_attractions or {}
         self._geo_ids = geo_ids or {}
         self._fixture_pages = fixture_pages or {}
+        self._fixture_details: dict[int, dict[str, Any] | None] = fixture_details or {}
 
         # Call recording lists for test assertions
         self.destinations_calls: list[dict[str, Any]] = []
         self.attractions_calls: list[dict[str, Any]] = []
         self.paginated_calls: list[dict[str, Any]] = []
         self.resolve_calls: list[str] = []
+        self.detail_calls: list[int] = []
 
     async def fetch_destinations(self, uf: str) -> list[dict[str, Any]]:
         """Return fixture destinations for the given UF.
@@ -123,6 +129,20 @@ class FakeTripAdvisorClient:
         """
         self.resolve_calls.append(uf)
         return self._geo_ids.get(uf, 0)
+
+    async def fetch_attraction_detail(self, location_id: int) -> dict[str, Any] | None:
+        """Return fixture detail for the given locationId, or None if absent.
+
+        Records each call in detail_calls for test assertion.
+
+        Args:
+            location_id: TripAdvisor integer locationId.
+
+        Returns:
+            Fixture detail dict if locationId is in fixture_details, else None.
+        """
+        self.detail_calls.append(location_id)
+        return self._fixture_details.get(location_id)
 
 
 # Structural type check: FakeTripAdvisorClient must satisfy TripAdvisorClientProtocol

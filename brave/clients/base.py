@@ -326,6 +326,22 @@ class TripAdvisorClientProtocol(Protocol):
         """
         ...
 
+    async def fetch_attraction_detail(self, location_id: int) -> dict | None:
+        """Fetch the detail record (parents[] geo hierarchy) for one attraction.
+
+        Args:
+            location_id: TripAdvisor integer locationId.
+
+        Returns:
+            First location dict from the GraphQL response (includes parents[]),
+            or None when the response is empty or malformed.
+
+        Raises:
+            SessionMissingError: When no session is in Redis (real client).
+            SessionExpiredError: On 403 or 429 HTTP status (real client).
+        """
+        ...
+
 
 class GeocoderClientProtocol(Protocol):
     """OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14).

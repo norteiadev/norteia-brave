@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from sqlalchemy.orm import Session
 
-from brave.config.settings import ScoreConfig
+from brave.config.settings import ScoreConfig, TripAdvisorConfig
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
 from brave.core.rio.routing import process_nascente_record
@@ -108,6 +108,7 @@ class TripAdvisorAtrativosIngest:
         ibge_records: list[IbgeMunicipio],
         destino_rio_map: dict[str, tuple[uuid.UUID, str]] | None = None,
         geocoder: "GeocoderClientProtocol | None" = None,
+        ta_config: TripAdvisorConfig | None = None,
     ) -> None:
         self._client = ta_client
         self._session = session
@@ -115,6 +116,7 @@ class TripAdvisorAtrativosIngest:
         self._ibge_records = ibge_records
         self._destino_rio_map: dict[str, tuple[uuid.UUID, str]] = destino_rio_map or {}
         self._geocoder = geocoder
+        self._ta_config = ta_config
 
     async def produce(self, uf: str, *, run_rio: bool = True) -> None:
         """Ingest one full UF sweep for TripAdvisor attractions.
@@ -195,6 +197,32 @@ class TripAdvisorAtrativosIngest:
                     candidate_lng=lng,
                     max_distance_km=50.0,
                 )
+
+        # TA-rmz-04: detail-parents IBGE fallback — when card lat/lng AND geocoder both
+        # miss, fetch the TA detail record for this attraction. The detail contains a
+        # parents[] geo hierarchy; parents[0] is typically the parent city whose
+        # localizedName can be fuzzy-matched against IBGE. This handles attractions
+        # that lack coordinates (coordless cards) AND whose names don't fuzzy-match the
+        # municipality (e.g. "Cataratas do Iguacu" != "Foz do Iguacu").
+        # Only attempted when ibge_match is still None after the geocoder step.
+        if ibge_match is None:
+            try:
+                loc_id_int = int(location_id) if location_id else None
+            except (ValueError, TypeError):
+                loc_id_int = None
+            if loc_id_int is not None:
+                # _ingest_one is always async; await is always safe here.
+                detail = await self._client.fetch_attraction_detail(loc_id_int)
+                if detail is not None:
+                    parents: list[dict] = detail.get("parents") or []
+                    if parents:
+                        parent_city_name = parents[0].get("localizedName", "")
+                        if parent_city_name:
+                            ibge_match = resolve_municipio(
+                                parent_city_name,
+                                uf,
+                                self._ibge_records,
+                            )
 
         # WR-01: the normalized AttractionsFusion card uses camelCase `locationId`
         # and carries no `uf`/`location_id`/`lat`/`lng`, so feeding the raw card to
