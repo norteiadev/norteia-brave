@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: verifying
 stopped_at: Completed 17.1-07-PLAN.md (Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher — all 6 views reachable; Painel Brave shell finished). Phase 17.1 all 7 plans complete.
-last_updated: "2026-06-30T19:28:51.529Z"
-last_activity: 2026-06-30 - Completed quick task 260630-mb4: unify Celery queue routing (fix silent beat-task drop)
+last_updated: "2026-06-30T20:55:48.102Z"
+last_activity: 2026-06-30
 progress:
   total_phases: 8
   completed_phases: 8
@@ -30,7 +30,7 @@ Plan: 7 of 7 COMPLETE (17.1-01/03 wave-1 + 17.1-02 backend + 17.1-04 Duplicados 
 Status: Phase complete — ready for verification
 Last activity: 2026-06-30
 
-Progress: [█████████░] 92%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -100,6 +100,7 @@ Progress: [█████████░] 92%
 | Phase 17.1 P06 | ~45min | 3 tasks | 13 files |
 | Phase 17.1 P05 | ~20min | 2 tasks | 4 files |
 | Phase 17.1 P07 | ~30min | 3 tasks | 6 files |
+| Phase quick-260630-oa3 P01 | 15 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -158,6 +159,7 @@ Recent decisions affecting current work:
 - [Phase 17.1 P04]: UI-PAINEL-2 Duplicados frontend — dashboard/lib/dedup-api.ts typed client (DedupPairItem/DedupPairsResponse mirroring brave/api/routers/dedup.py field-for-field; fetchDedupPairs(uf) + resolveDedupPair(id, {action, mar_id}); dedupKeys ['dedup'] prefix) + dashboard/mocks/handlers/dedup.ts at the double-prefixed /api/api/v1/dedup/... path (payloads typed against the lib interfaces = the A5 contract mirror; success/empty/error/resolve factories). Handler is NOT registered in mocks/handlers/index.ts — follows the established empty-barrel + per-suite server.use() pattern (cost.ts is also unregistered; keeps the harness booting with zero global mocks). PainelDuplicados.tsx renders candidate≈Mar pair cards with coincide/diverge chips + labeled similarity (similarity_source surfaced because embeddings are an A1 zero-stub), resolves via useMutation(resolveDedupPair)+toast+invalidateQueries(['dedup']); validation banner + ✓ empty state; pure --painel-* tokens. 3 offline Vitest tests green (renders pairs+chips+similarity, Descartar fires real resolve PATCH, empty state). Shell wiring into app/painel/page.tsx is plan 17.1-07.
 
 - [Phase 17.1 P01]: UI-PAINEL-2 Duplicados backend — GET /api/v1/dedup/pairs is compute-on-read (territorial-key blocked candidate↔Mar pairs; matched/diverged + Jaccard token similarity computed in Python, similarity_source="embedding_stub", NO pgvector operator in the read path — real embeddings deferred A1). PATCH /api/v1/dedup/pairs/{candidate_rio_id}/resolve does merge|keep|discard, audited. merge (LOCKED A2, overrides stale RESEARCH Pitfall 4) unions the candidate source_ref into the EXISTING Mar's provenance["merged_source_refs"] + routes the candidate Rio→descarte: no new MarRecord, mar.source_ref untouched, no 409, no promote_to_mar. Candidate source_ref derived as canonical_key or str(id) (RioRecord has no source_ref column). 12 offline unit tests green (RUN_REAL_EXTERNALS unset).
+- [Phase ?]: TA-destinos step removed from sweep_tripadvisor per-UF path (no QID captured); destino_rio_map widened to all destination RioRecords (Mtur/IBGE authoritative)
 
 ### Pending Todos
 
@@ -203,6 +205,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-30T19:28:51.518Z
+Last session: 2026-06-30T20:55:44.362Z
 Stopped at: Completed 17.1-07-PLAN.md (Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher — all 6 views reachable; Painel Brave shell finished). Phase 17.1 all 7 plans complete.
 Resume file: None

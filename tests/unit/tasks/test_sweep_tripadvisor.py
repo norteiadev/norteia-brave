@@ -91,8 +91,8 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
     - patch redis.from_url to return fakeredis (for both the client and _mark_needs_bootstrap).
     - patch _get_session (SQLAlchemy factory) to return mock DB session/engine.
     - patch load_ibge_csv to return empty list.
-    - patch TripAdvisorDestinosIngest and TripAdvisorAtrativosIngest so that their
-      produce() raises the exception from the stub client directly.
+    - patch TripAdvisorAtrativosIngest so that its produce() raises the exception from
+      the stub client directly (destinos step removed — oa3).
     """
     # Build a mock AppConfig with run_real_externals=True
     mock_app_config = MagicMock()
@@ -146,22 +146,15 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
         lambda path: [],
     )
 
-    # Patch the destinos and atrativos produce() to actually call the stub client
-    # and propagate its errors — this is what the real produce() would do.
+    # Patch the atrativos produce() to actually call the stub client
+    # and propagate its errors (destinos step removed — oa3).
     async def _stub_produce(uf, run_rio=True):
-        # Call fetch_destinations to propagate stub errors
-        await stub_client.fetch_destinations()
-
-    mock_destinos_ingest = MagicMock()
-    mock_destinos_ingest.produce = AsyncMock(side_effect=_stub_produce)
+        # Errors originate from the atrativos path (no destinos step — oa3)
+        await stub_client.fetch_attractions(geo_id=0)
 
     mock_atrativos_ingest = MagicMock()
     mock_atrativos_ingest.produce = AsyncMock(side_effect=_stub_produce)
 
-    monkeypatch.setattr(
-        "brave.lanes.tripadvisor.destinos.TripAdvisorDestinosIngest",
-        lambda **kw: mock_destinos_ingest,
-    )
     monkeypatch.setattr(
         "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
         lambda **kw: mock_atrativos_ingest,
@@ -287,6 +280,83 @@ class TestSweepTripAdvisorSessionFailFast:
         assert sweep_progress.get_progress(fake_redis)["state"] == "idle", (
             "the per-UF path must NOT write the bulk sweep progress hash "
             "(guarded `if rc is not None` skipped stop_needs_bootstrap)"
+        )
+
+
+class TestSweepTripAdvisorPerUfDestinoBuild:
+    """Per-UF destino_rio_map is built from ALL destination RioRecords, not source-filtered."""
+
+    def test_per_uf_destino_rio_map_sourced_from_authoritative_rio(self, monkeypatch):
+        """destino_rio_map is keyed by municipio_id from ANY destination RioRecord (Mtur etc).
+
+        Simulates a Mtur destino already in Rio for BA/Salvador (ibge 2927408).
+        Asserts atrativos ingest receives that map entry — proves the source=='tripadvisor'
+        filter is gone and the oa3 fix is wired end-to-end.
+        """
+        import uuid as _uuid
+        import asyncio as _asyncio
+
+        fake_redis = fakeredis.FakeRedis()
+        mtur_rio_id = _uuid.uuid4()
+        mtur_source_ref = "mtur:BA:2927408"
+
+        # Fake DB row simulating a Mtur destino RioRecord for Salvador/BA
+        fake_row = MagicMock()
+        fake_row.id = mtur_rio_id
+        fake_row.source_ref = mtur_source_ref
+        fake_row.municipio_id = "2927408"
+
+        mock_db_session = MagicMock()
+        mock_db_session.execute.return_value = MagicMock(all=lambda: [fake_row])
+        mock_db_engine = MagicMock()
+
+        captured: dict = {}
+
+        class _CapturingAtrativosIngest:
+            def __init__(self, **kw):
+                captured["map"] = dict(kw.get("destino_rio_map") or {})
+
+            async def produce(self, uf, *, run_rio=True):
+                pass  # no-op; constructor arg is what we assert
+
+        mock_app_config = MagicMock()
+        mock_app_config.run_real_externals = False  # uses NullTripAdvisorClient
+
+        monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
+        monkeypatch.setattr("brave.tasks.pipeline.ScoreConfig", lambda: MagicMock())
+        monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
+        monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setattr(
+            "brave.tasks.pipeline._get_session",
+            lambda: (mock_db_session, mock_db_engine),
+        )
+        monkeypatch.setattr(
+            "brave.lanes.tripadvisor.ibge.load_ibge_csv",
+            lambda path: [],
+        )
+        monkeypatch.setattr(
+            "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
+            lambda **kw: _CapturingAtrativosIngest(**kw),
+        )
+
+        mock_self = MagicMock()
+        mock_self.MaxRetriesExceededError = type("MaxRetriesExceededError", (Exception,), {})
+        mock_self.retry.side_effect = lambda **kw: mock_self.MaxRetriesExceededError()
+
+        from brave.tasks.pipeline import sweep_tripadvisor  # noqa: PLC0415
+
+        raw_fn = sweep_tripadvisor.__wrapped__.__func__
+        try:
+            raw_fn(mock_self, uf="BA")
+        except Exception:
+            pass  # MaxRetriesExceededError etc. are fine; we only check captured
+
+        assert "2927408" in captured.get("map", {}), (
+            f"destino_rio_map must contain Mtur ibge key '2927408'; "
+            f"got keys: {list(captured.get('map', {}).keys())}"
+        )
+        assert captured["map"]["2927408"] == (mtur_rio_id, mtur_source_ref), (
+            "Map entry must be (rio_id, source_ref) from the authoritative destino row"
         )
 
 

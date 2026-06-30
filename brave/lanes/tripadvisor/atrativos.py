@@ -87,10 +87,13 @@ class TripAdvisorAtrativosIngest:
     """TripAdvisor attractions ingestion lane — ingests atrativos into Nascente.
 
     Mirrors TripAdvisorDestinosIngest in class structure. Resolves the parent
-    destino RioRecord from destino_rio_map (built by TripAdvisorDestinosIngest
-    in the same sweep run). Quarantines with "parent_destino_absent" when no
-    parent is found in the map (deliberately diverges from discovery_agent.py's
-    Mar-only resolution — see CONTEXT.md TA-03).
+    destino RioRecord from destino_rio_map (built by sweep_tripadvisor
+    from authoritative destination RioRecords already in Rio — Mtur/IBGE, origem=100).
+    Caller must ensure Mtur destinos exist in Rio before running the TA atrativos sweep,
+    or every atrativo will quarantine with 'parent_destino_absent'.
+    Quarantines with "parent_destino_absent" when no parent is found in the map
+    (deliberately diverges from discovery_agent.py's Mar-only resolution — see
+    CONTEXT.md TA-03).
 
     Args:
         ta_client:       TripAdvisorClientProtocol implementation (real or fake).
