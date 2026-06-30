@@ -3,8 +3,12 @@
 
 Truncates every data table in the Brave Postgres — keeping the SCHEMA and the
 `alembic_version` row intact — and flushes the engine/cache `brave:*` keys from
-Redis. This is the fast "start the collection over from cold" reset: no
-migrations are re-run, so the DB stays at the current Alembic head.
+Redis. By default, also purges the Celery broker queue (the `celery` task list
+key and `_kombu*` binding/unacked metadata) so stale queued tasks don't re-fire
+after a reset and hit reset-away rio_ids.
+
+This is the fast "start the collection over from cold" reset: no migrations are
+re-run, so the DB stays at the current Alembic head.
 
 DESTRUCTIVE + IRREVERSIBLE. There is no backup. Requires `--yes` (or an
 interactive y/N confirmation) before it will touch anything.
@@ -16,16 +20,18 @@ Connection:
     else redis://localhost:6379/0.
 
 Scope flags:
-  --keep TABLE     preserve a table (repeatable), e.g. --keep audit_log --keep llm_generations
-  --no-redis       leave Redis untouched (Postgres only)
-  --redis-pattern  key glob to delete (default "brave:*"); never does FLUSHALL
-  -y / --yes       skip the confirmation prompt (required in non-interactive use)
+  --keep TABLE        preserve a table (repeatable), e.g. --keep audit_log --keep llm_generations
+  --no-redis          leave Redis untouched (Postgres only); also skips broker purge
+  --no-broker-purge   skip Celery broker queue purge (Postgres + brave:* flush still run)
+  --redis-pattern     key glob to delete (default "brave:*"); never does FLUSHALL
+  -y / --yes          skip the confirmation prompt (required in non-interactive use)
 
 Examples:
-  python scripts/reset_db.py            # interactive confirm, full data wipe + brave:* flush
+  python scripts/reset_db.py            # interactive confirm, full data wipe + brave:* flush + broker purge
   python scripts/reset_db.py --yes      # no prompt (CI / agent)
   python scripts/reset_db.py --yes --keep audit_log --keep llm_generations  # keep the audit/cost trail
   python scripts/reset_db.py --yes --no-redis                               # Postgres only
+  python scripts/reset_db.py --yes --no-broker-purge                        # skip broker purge only
 """
 
 from __future__ import annotations
@@ -80,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--keep", action="append", default=[], metavar="TABLE",
                     help="preserve a table (repeatable)")
     ap.add_argument("--no-redis", action="store_true", help="do not touch Redis")
+    ap.add_argument("--no-broker-purge", action="store_true",
+                    help="skip Celery broker queue purge (Postgres + brave:* flush still run)")
     ap.add_argument("--redis-pattern", default="brave:*", help='key glob to delete (default "brave:*")')
     ap.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
     args = ap.parse_args(argv)
@@ -157,6 +165,22 @@ def main(argv: list[str] | None = None) -> int:
         deleted = r.delete(*keys) if keys else 0
         remaining = sum(1 for _ in r.scan_iter(match=args.redis_pattern, count=500))
         print(f"\nRedis flush ({args.redis_pattern}): {len(keys)} found, {deleted} deleted, {remaining} remaining.")
+
+        # Celery broker queue purge — scoped to the broker keys only.
+        # Safety: only deletes "celery" (the task queue list) and "_kombu*"
+        # (Kombu binding/unacked metadata). Never FLUSHALL, never brave:* again.
+        # Gate: skip when --no-redis is set (already skipped above) OR when
+        # --no-broker-purge is set explicitly.
+        if not args.no_broker_purge:
+            celery_keys = list(r.scan_iter(match="celery", count=100))
+            kombu_keys = list(r.scan_iter(match="_kombu*", count=100))
+            n_celery = r.delete(*celery_keys) if celery_keys else 0
+            n_kombu = r.delete(*kombu_keys) if kombu_keys else 0
+            print(
+                f"Celery broker purge (celery + _kombu*): "
+                f"{n_celery} task(s), {n_kombu} kombu key(s) deleted."
+            )
+            print("  Stale queued tasks cleared — restart workers to begin fresh.")
 
     print("\nDone — base zerada (schema + alembic_version intact).")
     return 0
