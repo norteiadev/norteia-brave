@@ -199,6 +199,72 @@ def test_sweep_uf_no_notebooklm(isolated_session, monkeypatch):
     assert notebooklm_rows == [], "sweep_uf must not run NotebookLM (manual ingest only)"
 
 
+@pytest.mark.integration
+def test_sweep_uf_bad_record_doesnt_discard_good_ones(isolated_session, monkeypatch):
+    """A single bad process_nascente_record call is quarantined; other records survive.
+
+    Verifies the per-record SAVEPOINT fix in MturSeedIngest.produce (pfr #2A):
+    before the fix, one RuntimeError inside process_nascente_record propagated out of
+    produce() and rolled back ALL previously written Mtur records. After the fix,
+    only the failing record's SAVEPOINT is rolled back; the outer transaction retains
+    all good records plus the quarantine row for the bad one.
+
+    Strategy: patch process_nascente_record at the mtur.py import site to raise on
+    the FIRST call only; subsequent calls delegate to the real function. Then run a
+    BA sweep and assert:
+      1. At least one RioRecord exists for BA (good records committed).
+      2. At least one PoisonQuarantine row exists with task_name='brave.sweep_uf'
+         (the bad record's savepoint was rolled back and replaced by a quarantine entry).
+    """
+    from sqlalchemy import select
+
+    from brave.core.models import PoisonQuarantine, RioRecord
+    from brave.core.rio.routing import process_nascente_record as _real_fn
+    from brave.tasks import pipeline
+
+    monkeypatch.setattr(pipeline, "_get_session", lambda: (isolated_session, _NoDispose()))
+    _patch_fake_llm(monkeypatch)
+
+    call_count = [0]
+
+    def _fail_first(session, nascente, config):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("simulated poison: bad record (pfr #2A test)")
+        return _real_fn(session, nascente, config)
+
+    monkeypatch.setattr("brave.lanes.destinos.mtur.process_nascente_record", _fail_first)
+
+    pipeline.sweep_uf.run("BA")
+
+    # Good records must survive (the savepoint rollback was per-record, not the whole UF).
+    rios = list(
+        isolated_session.scalars(
+            select(RioRecord).where(
+                RioRecord.uf == "BA",
+                RioRecord.entity_type == "destination",
+            )
+        ).all()
+    )
+    assert len(rios) > 0, (
+        "good Mtur records must survive even when one record's process_nascente_record raises "
+        "(per-record SAVEPOINT isolation — pfr #2A)"
+    )
+
+    # The bad record must be quarantined, not silently lost.
+    quarantines = list(
+        isolated_session.scalars(
+            select(PoisonQuarantine).where(
+                PoisonQuarantine.task_name == "brave.sweep_uf",
+            )
+        ).all()
+    )
+    assert len(quarantines) >= 1, (
+        "the failing record must produce a PoisonQuarantine row with task_name='brave.sweep_uf' "
+        "(quarantine_poison called after sp.rollback in the per-record except block)"
+    )
+
+
 class _NoDispose:
     """Stand-in engine whose dispose() is a no-op (the test owns the session lifecycle)."""
 

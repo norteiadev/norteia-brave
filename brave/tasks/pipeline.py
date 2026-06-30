@@ -987,6 +987,12 @@ def sweep_tripadvisor(
         config = ScoreConfig()
         app_config = AppConfig()
 
+        # T1 (pfr-01): ta_config must be defined before the branch so it is always
+        # in scope for the per-UF TripAdvisorAtrativosIngest constructor. Without
+        # this, ta_config is only defined inside the run_real_externals block and
+        # the offline path would raise NameError; passing None keeps the
+        # fetch_attraction_geo guard (ta_config is not None) dormant offline.
+        ta_config = None
         if app_config.run_real_externals:
             import redis as _redis_lib
             from brave.lanes.tripadvisor.client import TripAdvisorClient
@@ -1094,7 +1100,9 @@ def sweep_tripadvisor(
             if row.municipio_id
         }
 
-        # Run atrativos producer using destino_rio_map
+        # Run atrativos producer using destino_rio_map.
+        # ta_config=ta_config wires the TripAdvisorConfig instance so the
+        # fetch_attraction_geo ftx geo-linkage guard activates under real externals.
         atrativos_ingest = TripAdvisorAtrativosIngest(
             ta_client=ta_client,
             session=session,
@@ -1102,6 +1110,7 @@ def sweep_tripadvisor(
             ibge_records=ibge_records,
             destino_rio_map=destino_rio_map,
             geocoder=geocoder,
+            ta_config=ta_config,
         )
         _asyncio.run(atrativos_ingest.produce(uf, run_rio=run_rio))
 

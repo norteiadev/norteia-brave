@@ -82,13 +82,18 @@ async def test_desmembramento_agent_happy_path(
     )
     await agent.produce("BA")
 
-    # Exactly one NascenteRecord with source="desm"
+    # Exactly one NascenteRecord for this IBGE code from this test run.
+    # Filter by source_ref prefix to avoid counting pre-existing records from
+    # real sweep runs committed to the shared test DB (pfr robustness fix).
     records = (
         db_session.query(NascenteRecord)
-        .filter_by(source="desm")
+        .filter(
+            NascenteRecord.source == "desm",
+            NascenteRecord.source_ref.like("desm:BA:2927408:%"),
+        )
         .all()
     )
-    assert len(records) == 1, f"Expected 1 nascente record, got {len(records)}"
+    assert len(records) == 1, f"Expected 1 nascente record for desm:BA:2927408:*, got {len(records)}"
 
     record = records[0]
     assert record.payload["origem_value"] == 40.0
@@ -134,8 +139,17 @@ async def test_desmembramento_offline_null_llm_does_not_crash(
     # Must not raise even though the município is Oferta Principal (extract is called).
     await agent.produce("BA")
 
-    records = db_session.query(NascenteRecord).filter_by(source="desm").all()
-    assert records == [], f"Expected no desm records, got {len(records)}"
+    # Filter by source_ref prefix to avoid counting pre-existing records from
+    # real sweep runs committed to the shared test DB (pfr robustness fix).
+    records = (
+        db_session.query(NascenteRecord)
+        .filter(
+            NascenteRecord.source == "desm",
+            NascenteRecord.source_ref.like("desm:BA:2927408:%"),
+        )
+        .all()
+    )
+    assert records == [], f"Expected no desm records for desm:BA:2927408:*, got {len(records)}"
 
 
 # ---------------------------------------------------------------------------
@@ -171,14 +185,19 @@ async def test_desmembramento_agent_malformed_output_quarantined(
     # Must not raise — exception is caught and quarantined
     await agent.produce("BA")
 
-    # No NascenteRecord with source="desm" was created
+    # No NascenteRecord for this IBGE code was created (LLM raised, so nothing stored).
+    # Filter by source_ref prefix to avoid counting pre-existing records from
+    # real sweep runs committed to the shared test DB (pfr robustness fix).
     desm_records = (
         db_session.query(NascenteRecord)
-        .filter_by(source="desm")
+        .filter(
+            NascenteRecord.source == "desm",
+            NascenteRecord.source_ref.like("desm:BA:2927408:%"),
+        )
         .all()
     )
     assert len(desm_records) == 0, (
-        f"Expected 0 nascente records with source='desm', got {len(desm_records)}"
+        f"Expected 0 nascente records with source_ref desm:BA:2927408:*, got {len(desm_records)}"
     )
 
     # One PoisonQuarantine row with task_name="brave.desmembramento"
@@ -230,14 +249,19 @@ async def test_desmembramento_agent_empty_destinos_skips(
     # Must not raise
     await agent.produce("BA")
 
-    # No NascenteRecords created
+    # No NascenteRecords created for this IBGE code (empty destinos list).
+    # Filter by source_ref prefix to avoid counting pre-existing records from
+    # real sweep runs committed to the shared test DB (pfr robustness fix).
     records = (
         db_session.query(NascenteRecord)
-        .filter_by(source="desm")
+        .filter(
+            NascenteRecord.source == "desm",
+            NascenteRecord.source_ref.like("desm:BA:2927408:%"),
+        )
         .all()
     )
     assert len(records) == 0, (
-        f"Expected 0 nascente records for empty destinos, got {len(records)}"
+        f"Expected 0 nascente records for desm:BA:2927408:* (empty destinos), got {len(records)}"
     )
 
 

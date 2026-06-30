@@ -19,6 +19,9 @@ engine/cache state in Redis, so the collector starts a fresh cold "carga inicial
 The **schema and `alembic_version` are preserved** — this is a data reset, not a
 migration reset, so it's fast and leaves the DB at the current Alembic head.
 
+By default, the broker queue (pending Celery tasks) is also purged to prevent stale
+tasks from re-firing after a reset and hitting reset-away rio_ids or stale records.
+
 ## When to use
 
 Any "make the base empty again" request: `limpe a base`, `zerar a base`, `reset db`,
@@ -36,7 +39,9 @@ prompts for a typed `reset` confirmation.
 
 It only ever truncates tables in the `public` schema and only deletes Redis keys
 matching `brave:*` — it never runs `FLUSHALL` and never drops the schema or the
-`alembic_version` row.
+`alembic_version` row. The broker purge is similarly scoped: only the Celery task
+queue list and Kombu metadata keys are deleted — never FLUSHALL, never the `brave:*`
+engine/session keys (those are the Redis flush step above).
 
 ## How to run
 
@@ -45,7 +50,7 @@ Postgres/Redis URLs from `--db-url`/`--redis-url`, then `$BRAVE_DB_URL` /
 `$BRAVE_DB_REDIS_URL`, then the repo-root `.env`, so it works without exporting env.
 
 ```bash
-# Full data wipe + brave:* Redis flush (the default scope), no prompt:
+# Full data wipe + brave:* Redis flush + Celery broker purge (the default scope), no prompt:
 .venv/bin/python .claude/skills/reset-brave-db/scripts/reset_db.py --yes
 ```
 
@@ -58,6 +63,9 @@ Useful variants:
 
 # Postgres only, leave Redis (engine counters/session) intact:
 .venv/bin/python .claude/skills/reset-brave-db/scripts/reset_db.py --yes --no-redis
+
+# Skip broker purge (keep queued tasks — rarely needed):
+.venv/bin/python .claude/skills/reset-brave-db/scripts/reset_db.py --yes --no-broker-purge
 
 # Interactive (prompts for a typed 'reset' confirmation):
 .venv/bin/python .claude/skills/reset-brave-db/scripts/reset_db.py
@@ -73,3 +81,7 @@ sweep will log many `parent_destino_absent` warnings and route records to DLQ un
 destinos are collected first. That's expected cold-start behavior, not a bug. If the
 engine was running, its Redis state (counts, depth, source, run_id, TA session) is
 cleared by the `brave:*` flush, so the painel shows the motor idle with zeroed counts.
+
+Stale queued tasks (e.g., old `push_destination` referencing reset-away rio_ids) are
+cleared by the broker purge step. If workers were running, restart them after reset
+so they pick up fresh tasks only.
