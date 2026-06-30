@@ -1,7 +1,7 @@
 """IBGE municipality resolver for the TripAdvisor lane (TA-03).
 
 Resolves a TripAdvisor location name + UF to an IBGE municipality record via:
-  1. rapidfuzz token_sort_ratio fuzzy match (threshold ≥ 88 by default)
+  1. rapidfuzz token_sort_ratio with explicit accent-folding via unicodedata (NFKD) (threshold ≥ 88 by default)
   2. Haversine distance fallback if coordinates are provided (< 15km by default)
   3. Returns None if neither succeeds → caller quarantines as "ibge_unmatched"
 
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import csv
 import math
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -105,6 +106,23 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Accent-fold helper
+# ---------------------------------------------------------------------------
+
+
+def _fold_accents(s: str) -> str:
+    """Strip combining diacritical marks (Unicode category Mn) after NFKD decomposition.
+
+    This is the explicit accent-fold step used by resolve_municipio — default_process
+    alone does NOT remove diacritics (it only lowercases and strips non-alphanumeric
+    ASCII punctuation). Without this, 'Maringa' vs 'Maringá' scores 85.7 < 88.
+    """
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", s) if unicodedata.category(ch) != "Mn"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Municipality resolver
 # ---------------------------------------------------------------------------
 
@@ -124,8 +142,10 @@ def resolve_municipio(
     Resolution strategy (TA-03):
       1. Filter records by UF (only search within the same state).
       2. rapidfuzz process.extractOne with scorer=fuzz.token_sort_ratio,
-         score_cutoff=threshold (default 88). Handles accent normalization
-         ('Sao Paulo' ↔ 'São Paulo') and word-order variation.
+         score_cutoff=threshold (default 88). Accent-folding via _fold_accents
+         (unicodedata NFKD) is applied explicitly to both query and choices before
+         matching so pure diacritic differences score 100 ('Maringa' ↔ 'Maringá').
+         Returned record always carries the original accented IBGE nome.
       3. On miss, haversine fallback if candidate_lat/lng are provided:
          return the first UF record within max_distance_km.
       4. Return None if neither matches → caller quarantines as "ibge_unmatched".
@@ -147,11 +167,15 @@ def resolve_municipio(
     if not uf_records:
         return None
 
-    # Step 2: rapidfuzz fuzzy match (processor=default_process handles case normalization
-    # and accent-agnostic comparison — 'Sao Paulo' ↔ 'São Paulo', 'salvador' ↔ 'Salvador')
-    choices = [r.nome for r in uf_records]
+    # Step 2: rapidfuzz fuzzy match — accent-folded query + choices so pure diacritic
+    # differences score 100 instead of ~85 (e.g. 'Maringa' ↔ 'Maringá').
+    # NOTE: rapidfuzz default_process does NOT fold accents — that step is done
+    # explicitly here via _fold_accents (unicodedata NFKD + strip Mn).
+    # processor=default_process then handles case normalisation and non-alnum stripping.
+    folded_name = _fold_accents(name)
+    choices = [_fold_accents(r.nome) for r in uf_records]
     result = process.extractOne(
-        name,
+        folded_name,
         choices,
         scorer=fuzz.token_sort_ratio,
         score_cutoff=threshold,
@@ -159,7 +183,7 @@ def resolve_municipio(
     )
     if result is not None:
         _matched_name, _score, index = result
-        return uf_records[index]
+        return uf_records[index]  # original accented record — fold is never written back
 
     # Step 3: haversine fallback (only when coordinates are provided)
     if candidate_lat is not None and candidate_lng is not None:
