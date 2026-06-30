@@ -38,6 +38,7 @@ class FakeTripAdvisorClient:
         fixture_pages: dict[int, list[tuple[int, list[dict[str, Any]]]]]
         | None = None,
         fixture_details: dict[int, dict[str, Any] | None] | None = None,
+        fixture_geo: dict[int, dict[str, Any] | None] | None = None,
     ) -> None:
         """Initialize with optional fixture data.
 
@@ -54,12 +55,16 @@ class FakeTripAdvisorClient:
             fixture_details:      Dict mapping locationId -> detail dict (or None).
                                   Returned by fetch_attraction_detail().
                                   Keys absent from the dict return None.
+            fixture_geo:          Dict mapping locationId -> geo dict (or None).
+                                  Returned by fetch_attraction_geo().
+                                  Keys absent from the dict return None.
         """
         self._fixture_destinations = fixture_destinations or {}
         self._fixture_attractions = fixture_attractions or {}
         self._geo_ids = geo_ids or {}
         self._fixture_pages = fixture_pages or {}
         self._fixture_details: dict[int, dict[str, Any] | None] = fixture_details or {}
+        self._fixture_geo: dict[int, dict[str, Any] | None] = fixture_geo or {}
 
         # Call recording lists for test assertions
         self.destinations_calls: list[dict[str, Any]] = []
@@ -67,6 +72,7 @@ class FakeTripAdvisorClient:
         self.paginated_calls: list[dict[str, Any]] = []
         self.resolve_calls: list[str] = []
         self.detail_calls: list[int] = []
+        self.geo_calls: list[int] = []
 
     async def fetch_destinations(self, uf: str) -> list[dict[str, Any]]:
         """Return fixture destinations for the given UF.
@@ -143,6 +149,18 @@ class FakeTripAdvisorClient:
         """
         self.detail_calls.append(location_id)
         return self._fixture_details.get(location_id)
+
+    async def fetch_attraction_geo(self, location_id: int) -> dict[str, Any] | None:
+        """Record call and return fixture geo dict for locationId, or None if absent.
+
+        Args:
+            location_id: TripAdvisor integer locationId.
+
+        Returns:
+            Fixture geo dict if locationId is in fixture_geo, else None.
+        """
+        self.geo_calls.append(location_id)
+        return self._fixture_geo.get(location_id)
 
 
 # Structural type check: FakeTripAdvisorClient must satisfy TripAdvisorClientProtocol

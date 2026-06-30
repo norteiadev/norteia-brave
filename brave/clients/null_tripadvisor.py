@@ -93,6 +93,17 @@ class NullTripAdvisorClient:
         """
         return None
 
+    async def fetch_attraction_geo(self, location_id: int) -> dict | None:
+        """Return None — offline stub performs no geo lookup.
+
+        Args:
+            location_id: TripAdvisor locationId (ignored).
+
+        Returns:
+            None.
+        """
+        return None
+
 
 # Structural type check: NullTripAdvisorClient must satisfy TripAdvisorClientProtocol
 def _check_protocol_compliance() -> None:
