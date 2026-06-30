@@ -1011,3 +1011,163 @@ class TestFetchDestinationsQid:
 
         with pytest.raises(ValueError, match="No destinations queryId configured"):
             await TripAdvisorClient(config=config, redis=redis).fetch_destinations(uf="SP")
+
+
+# ---------------------------------------------------------------------------
+# TestParserNullSafety — _parse_attractions_page handles null fields
+# ---------------------------------------------------------------------------
+
+
+def _make_null_card_section(
+    card_title=None,
+    bubble_rating=None,
+    primary_info=None,
+    detail_id: str = "12345",
+) -> dict:
+    """Build a SingleFlexCardSection with selectively null nested fields."""
+    return {
+        "__typename": "WebPresentation_SingleFlexCardSection",
+        "singleFlexCardContent": {
+            "cardTitle": card_title,
+            "bubbleRating": bubble_rating,
+            "primaryInfo": primary_info,
+            "cardLink": {"webRoute": {"typedParams": {"detailId": detail_id}}},
+        },
+    }
+
+
+class TestParserNullSafety:
+    """Regression tests for null bubbleRating/cardTitle/primaryInfo.
+
+    Bug (SPIKE 260629-rmz Finding 4): .get(k, {}).get(...) raises AttributeError
+    when the field is present-but-null (review-less or title-less attractions).
+    Fix: (card.get(k) or {}).get(...) short-circuits on None.
+    """
+
+    def test_parse_null_bubble_rating_no_attribute_error(self):
+        """Card with bubbleRating=None must not raise; rating=0.0, review_count=0."""
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        section = _make_null_card_section(
+            card_title={"text": "Some Attraction"},
+            bubble_rating=None,  # present-but-null
+            primary_info={"text": "Nature"},
+        )
+        # Must not raise AttributeError
+        cards = TripAdvisorClient._parse_attractions_page([section])
+        assert len(cards) == 1, f"Expected 1 card, got {len(cards)}"
+        assert cards[0]["rating"] == 0.0, f"Expected rating=0.0, got {cards[0]['rating']}"
+        assert cards[0]["review_count"] == 0, (
+            f"Expected review_count=0, got {cards[0]['review_count']}"
+        )
+
+    def test_parse_null_card_title_no_attribute_error(self):
+        """Card with cardTitle=None must not raise; name=''."""
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        section = _make_null_card_section(
+            card_title=None,  # present-but-null
+            bubble_rating={"rating": 4.5, "reviewCount": 100},
+            primary_info={"text": "Waterfall"},
+        )
+        cards = TripAdvisorClient._parse_attractions_page([section])
+        assert len(cards) == 1, f"Expected 1 card, got {len(cards)}"
+        assert cards[0]["name"] == "", f"Expected name='', got {cards[0]['name']!r}"
+
+    def test_parse_null_primary_info_no_attribute_error(self):
+        """Card with primaryInfo=None must not raise; category=''."""
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        section = _make_null_card_section(
+            card_title={"text": "Iguazu Falls"},
+            bubble_rating={"rating": 4.9, "reviewCount": 50000},
+            primary_info=None,  # present-but-null
+        )
+        cards = TripAdvisorClient._parse_attractions_page([section])
+        assert len(cards) == 1, f"Expected 1 card, got {len(cards)}"
+        assert cards[0]["category"] == "", (
+            f"Expected category='', got {cards[0]['category']!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestFetchAttractionDetail — new detail client method
+# ---------------------------------------------------------------------------
+
+
+def _seed_ta_session(redis, session_id: str = "TASID_VALUE") -> None:
+    """Seed fakeredis with a minimal valid TA session."""
+    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+
+    redis.set(
+        BRAVE_TA_SESSION_KEY,
+        json.dumps({
+            "cookies": {"datadome": "abc", "TASID": session_id},
+            "query_ids": {"query_0": "some_qid"},
+            "user_agent": "Mozilla/5.0",
+            "acquired_at": "2026-06-24T12:00:00Z",
+            "session_id": session_id,
+        }),
+    )
+
+
+class TestFetchAttractionDetail:
+    """Verify fetch_attraction_detail method (SPIKE 260629-rmz Finding 3)."""
+
+    @pytest.mark.asyncio
+    async def test_sends_correct_payload(self):
+        """fetch_attraction_detail POSTs {variables:{locationId:N}, extensions:{preRegisteredQueryId:'444040f131735091'}}."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        _seed_ta_session(redis)
+
+        captured_body = None
+
+        with respx.mock:
+            def capture(request):
+                nonlocal captured_body
+                captured_body = json.loads(request.content)
+                return httpx.Response(
+                    200,
+                    json=[{"data": {"locations": [{"parents": [], "locationId": 312332}]}}],
+                )
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=capture
+            )
+            result = await TripAdvisorClient(config=config, redis=redis).fetch_attraction_detail(312332)
+
+        assert captured_body is not None, "No request captured"
+        assert isinstance(captured_body, list), "Payload must be a list"
+        item = captured_body[0]
+        assert item["variables"] == {"locationId": 312332}
+        assert item["extensions"]["preRegisteredQueryId"] == "444040f131735091", (
+            f"Expected '444040f131735091', got {item['extensions']['preRegisteredQueryId']!r}"
+        )
+        assert result is not None, "Expected a location dict, got None"
+        assert result["locationId"] == 312332
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_empty_locations(self):
+        """When locations=[], fetch_attraction_detail returns None."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        _seed_ta_session(redis)
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                return_value=httpx.Response(200, json=[{"data": {"locations": []}}])
+            )
+            result = await TripAdvisorClient(config=config, redis=redis).fetch_attraction_detail(99999)
+
+        assert result is None, f"Expected None on empty locations, got {result!r}"
