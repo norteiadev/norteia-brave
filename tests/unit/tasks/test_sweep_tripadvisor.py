@@ -647,3 +647,121 @@ class TestR1EngineOffOnSessionExpiry:
         assert collection_engine.get_state(fake_redis) == collection_engine.IDLE, (
             "R1: engine state must be idle after SessionExpiredError"
         )
+
+
+# ---------------------------------------------------------------------------
+# T1: ta_config wired to TripAdvisorAtrativosIngest constructor in per-UF path
+# ---------------------------------------------------------------------------
+
+
+class TestSweepTripAdvisorTaConfig:
+    """sweep_tripadvisor per-UF path must wire ta_config to TripAdvisorAtrativosIngest.
+
+    Bug (260630-pfr #1): sweep_tripadvisor defined ta_config ONLY inside the
+    `if run_real_externals:` block. The offline else-branch and the constructor
+    call at the bottom of the per-UF path never saw ta_config — so fetch_attraction_geo
+    (the ftx geo-linkage, plan 260630-ftx) was permanently dormant even in production.
+    Fix: initialise ta_config=None before the if-block; pass ta_config=ta_config
+    to the TripAdvisorAtrativosIngest constructor unconditionally.
+    """
+
+    def _run_per_uf_capture_ta_config(
+        self,
+        monkeypatch: Any,
+        *,
+        real_externals: bool,
+    ) -> "tuple[Any, Any]":
+        """Run sweep_tripadvisor per-UF path and return (captured_ta_config, sentinel).
+
+        sentinel is the object() returned by our patched TripAdvisorConfig() when
+        real_externals=True, or None when real_externals=False.
+        """
+        fake_redis = fakeredis.FakeRedis()
+        mock_db_session = MagicMock()
+        mock_db_session.execute.return_value = MagicMock(all=lambda: [])
+        mock_db_engine = MagicMock()
+
+        captured: dict[str, Any] = {}
+
+        class _CapturingAtrativosIngest:
+            def __init__(self, **kw: Any) -> None:
+                captured.update(kw)
+
+            async def produce(self, uf: str, *, run_rio: bool = True) -> None:
+                pass  # no-op — constructor args are what we assert
+
+        mock_app_config = MagicMock()
+        mock_app_config.run_real_externals = real_externals
+
+        monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
+        monkeypatch.setattr("brave.tasks.pipeline.ScoreConfig", lambda: MagicMock())
+        monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
+        monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setattr(
+            "brave.tasks.pipeline._get_session",
+            lambda: (mock_db_session, mock_db_engine),
+        )
+        monkeypatch.setattr(
+            "brave.lanes.tripadvisor.ibge.load_ibge_csv",
+            lambda path: [],
+        )
+        # Patch TripAdvisorAtrativosIngest at module level so the lazy import in
+        # pipeline.py picks up the capturing class.
+        monkeypatch.setattr(
+            "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
+            lambda **kw: _CapturingAtrativosIngest(**kw),
+        )
+
+        sentinel: Any = None
+        if real_externals:
+            # Build a unique sentinel so we can assert identity, not equality.
+            sentinel = object()
+            monkeypatch.setattr(
+                "brave.config.settings.TripAdvisorConfig",
+                lambda: sentinel,
+            )
+            monkeypatch.setattr(
+                "brave.lanes.tripadvisor.client.TripAdvisorClient",
+                lambda **kw: MagicMock(),
+            )
+            from brave.clients.null_nominatim import NullGeocoderClient  # noqa: PLC0415
+            monkeypatch.setattr(
+                "brave.clients.nominatim.NominatimGeocoderClient",
+                lambda config, redis: NullGeocoderClient(),
+            )
+
+        mock_self = MagicMock()
+        mock_self.MaxRetriesExceededError = type("MaxRetriesExceededError", (Exception,), {})
+        mock_self.retry.side_effect = lambda **kw: mock_self.MaxRetriesExceededError()
+
+        from brave.tasks.pipeline import sweep_tripadvisor  # noqa: PLC0415
+
+        raw_fn = sweep_tripadvisor.__wrapped__.__func__
+        try:
+            raw_fn(mock_self, uf="BA")
+        except Exception:
+            pass  # MaxRetriesExceededError or similar — only the captured kwargs matter
+
+        return captured.get("ta_config"), sentinel
+
+    def test_passes_ta_config_when_real_externals(self, monkeypatch: Any) -> None:
+        """With run_real_externals=True, TripAdvisorAtrativosIngest receives the
+        TripAdvisorConfig instance (not None) — gate for fetch_attraction_geo ftx path."""
+        ta_config_received, sentinel = self._run_per_uf_capture_ta_config(
+            monkeypatch, real_externals=True
+        )
+        assert ta_config_received is sentinel, (
+            f"expected ta_config to be the TripAdvisorConfig sentinel, "
+            f"got {ta_config_received!r} — sweep_tripadvisor likely did not pass "
+            "ta_config=ta_config to TripAdvisorAtrativosIngest"
+        )
+
+    def test_passes_ta_config_none_when_offline(self, monkeypatch: Any) -> None:
+        """With run_real_externals=False (offline), TripAdvisorAtrativosIngest receives
+        ta_config=None — the ftx guard (ta_config is not None) keeps geo-linkage dormant."""
+        ta_config_received, _ = self._run_per_uf_capture_ta_config(
+            monkeypatch, real_externals=False
+        )
+        assert ta_config_received is None, (
+            f"expected ta_config=None in offline mode, got {ta_config_received!r}"
+        )
