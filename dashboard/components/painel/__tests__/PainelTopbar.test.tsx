@@ -285,4 +285,41 @@ describe("PainelTopbar", () => {
       expect(spy).toHaveBeenCalledWith(expect.stringContaining("TTL")),
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // Sync indicator tests (Phase ks0)
+  // ---------------------------------------------------------------------------
+
+  describe("sync indicator", () => {
+    it("shows Sincronizando + source + UF progress when motor is running", async () => {
+      server.use(
+        engineStatus({
+          enabled: true,
+          state: "running",
+          source: "tripadvisor",
+          ufs_done: 3,
+          ufs_total: 27,
+          current_uf: "SP",
+        }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      const ind = await screen.findByTestId("sync-indicator");
+      await waitFor(() => {
+        expect(ind).toHaveTextContent("Sincronizando");
+        expect(ind).toHaveTextContent("TripAdvisor");
+        expect(ind).toHaveTextContent("3/27");
+      });
+    });
+
+    it("shows 'Motor parado' when motor is idle", async () => {
+      server.use(
+        engineStatus({ enabled: false, state: "idle" }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      const ind = await screen.findByTestId("sync-indicator");
+      await waitFor(() => expect(ind).toHaveTextContent("Motor parado"));
+    });
+  });
 });

@@ -270,6 +270,58 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
           Origem <strong className="font-semibold">{SOURCE_LABELS[source]}</strong>
         </button>
 
+        {/* Sync status indicator — reads from the existing engine/status query (no second poll).
+            Shows Sincronizando + UF progress when motor is ON; muted "Motor parado" when idle.
+            aria-live polite so screen readers announce state changes. */}
+        <div
+          data-testid="sync-indicator"
+          className="flex min-w-[160px] flex-col items-end gap-[3px]"
+        >
+          {motorOn ? (
+            <>
+              <div className="flex items-center gap-[6px]">
+                <span
+                  className="h-[7px] w-[7px] flex-shrink-0 animate-pulse rounded-full"
+                  style={{ background: "var(--status-mar)" }}
+                  aria-hidden
+                />
+                <span
+                  aria-live="polite"
+                  className="whitespace-nowrap text-[11.5px] font-medium"
+                  style={{ color: "var(--painel-text)" }}
+                >
+                  Sincronizando {SOURCE_LABELS[source]} · UF{" "}
+                  {data?.ufs_done ?? 0}/{data?.ufs_total ?? 0}
+                  {data?.current_uf ? ` · ${data.current_uf}` : ""}
+                </span>
+              </div>
+              {(data?.ufs_total ?? 0) > 0 && (
+                <div
+                  className="h-[3px] w-full overflow-hidden rounded-full"
+                  style={{ background: "var(--painel-border-outer)" }}
+                  aria-hidden
+                >
+                  <div
+                    className="h-full rounded-full transition-[width]"
+                    style={{
+                      background: "var(--status-mar)",
+                      width: `${Math.min(100, Math.round(((data?.ufs_done ?? 0) / (data?.ufs_total ?? 1)) * 100))}%`,
+                    }}
+                  />
+                </div>
+              )}
+            </>
+          ) : (
+            <span
+              aria-live="polite"
+              className="whitespace-nowrap text-[11.5px]"
+              style={{ color: "var(--painel-muted)" }}
+            >
+              Motor parado
+            </span>
+          )}
+        </div>
+
         {/* Divider */}
         <div
           className="h-[24px] w-px"
