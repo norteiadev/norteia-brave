@@ -53,6 +53,7 @@ from brave.lanes.tripadvisor.ibge import (
     resolve_municipio_national,
 )
 from brave.lanes.tripadvisor.schemas import TripAdvisorAtrativoPayload, TripAdvisorReviewSignals
+from brave.lanes.tripadvisor.uf_names import state_name_to_uf
 from brave.lanes.tripadvisor.scoring import (
     atualidade_from_recency,
     completude_from_fields,
@@ -199,37 +200,28 @@ class TripAdvisorAtrativosIngest:
                     max_distance_km=50.0,
                 )
 
-        # TA-rmz-04: detail-parents IBGE fallback — when card lat/lng AND geocoder both
-        # miss, fetch the TA detail record for this attraction. The detail contains a
-        # parents[] geo hierarchy; parents[0] is typically the parent city whose
-        # localizedName can be fuzzy-matched against IBGE. This handles attractions
-        # that lack coordinates (coordless cards) AND whose names don't fuzzy-match the
-        # municipality (e.g. "Cataratas do Iguacu" != "Foz do Iguacu").
-        # Only attempted when ibge_match is still None after the geocoder step, AND only
-        # when a TripAdvisorConfig is wired (ta_config). The +1 detail request raises
-        # DataDome exposure, so it is gated behind explicit config and throttled by
-        # page_throttle_seconds — without ta_config the fallback is skipped entirely.
+        # TA-ftx: geo-linkage via d3d4987463b78a39 — single GraphQL query returns
+        # cityName + stateName directly. Replaces the broken parents[0].localizedName
+        # path (rmz-04) where that field is absent from live TA data.
+        # Validated: 5 attractions / 2 cities (SPIKE-2 2026-06-30).
+        # ToS/LGPD: aggregate geo only (cityName/stateName/geoIds), no PII.
         if ibge_match is None and self._ta_config is not None:
             try:
                 loc_id_int = int(location_id) if location_id else None
             except (ValueError, TypeError):
                 loc_id_int = None
             if loc_id_int is not None:
-                # Throttle the extra detail request (DataDome protection).
                 if self._ta_config.page_throttle_seconds > 0:
                     await asyncio.sleep(self._ta_config.page_throttle_seconds)
-                # _ingest_one is always async; await is always safe here.
-                detail = await self._client.fetch_attraction_detail(loc_id_int)
-                if detail is not None:
-                    parents: list[dict] = detail.get("parents") or []
-                    if parents:
-                        parent_city_name = parents[0].get("localizedName", "")
-                        if parent_city_name:
-                            ibge_match = resolve_municipio(
-                                parent_city_name,
-                                uf,
-                                self._ibge_records,
-                            )
+                geo = await self._client.fetch_attraction_geo(loc_id_int)
+                if geo is not None:
+                    derived_uf = state_name_to_uf(geo["state_name"])
+                    if derived_uf:
+                        ibge_match = resolve_municipio(
+                            geo["city_name"],
+                            derived_uf,
+                            self._ibge_records,
+                        )
 
         # WR-01: the normalized AttractionsFusion card uses camelCase `locationId`
         # and carries no `uf`/`location_id`/`lat`/`lng`, so feeding the raw card to

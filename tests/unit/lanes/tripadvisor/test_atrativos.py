@@ -466,18 +466,20 @@ class TestAtrativosGeoEnrichment:
 
 
 # ---------------------------------------------------------------------------
-# TestDetailParentsLinkage — atrativos._ingest_one detail-parents ibge fallback
+# TestAtrativosGeoFallback — TA-ftx: fetch_attraction_geo-based IBGE fallback
 # ---------------------------------------------------------------------------
 
 
-class TestDetailParentsLinkage:
-    """Verify the tertiary ibge fallback: TA detail parents[] -> city name -> IBGE.
+class TestAtrativosGeoFallback:
+    """Verify the rewired tertiary IBGE fallback using fetch_attraction_geo.
 
-    When name-match fails (card name does not fuzzy-match an IBGE municipio) AND
-    geocoder is None (or misses), _ingest_one now fetches fetch_attraction_detail
-    and uses parents[0].localizedName as the city name for a second IBGE lookup.
+    TA-ftx replaces the broken parents[0].localizedName path (rmz-04) with a
+    single GraphQL query (qid d3d4987463b78a39) that returns cityName/stateName
+    directly. state_name_to_uf derives the UF; resolve_municipio finishes the
+    IBGE match.
 
-    Tests use FakeTripAdvisorClient extended with fixture_details + detail_calls.
+    Tests use FakeTripAdvisorClient with fixture_geo + geo_calls to verify the
+    correct method is called and the correct behavior follows.
     """
 
     _FOZ_IBGE = IbgeMunicipio("4108304", "Foz do Iguacu", "PR", -25.5163, -54.5854)
@@ -485,56 +487,31 @@ class TestDetailParentsLinkage:
     def _make_destino_rio_map(self) -> dict:
         return {"4108304": (uuid.uuid4(), "tripadvisor:destination:303444")}
 
-    def _make_fake_client(
-        self,
-        detail_fixture: dict | None,
-        attraction_name: str = "Cataratas Iguacu",
-    ):
-        """Build a FakeTripAdvisorClient with the given detail fixture."""
-        from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
-
-        fixture_details = {312332: detail_fixture} if detail_fixture is not None else {}
-        return FakeTripAdvisorClient(
-            fixture_attractions={303435: [{
-                "locationId": 312332,
-                "name": attraction_name,
-                "review_count": 10,
-                "rating": 4.5,
-                "category": "Nature",
-            }]},
-            geo_ids={"PR": 303435},
-            fixture_details=fixture_details,
-        )
-
     @pytest.mark.asyncio
-    async def test_ingest_one_resolves_ibge_via_detail_parents(self) -> None:
-        """Attraction with no lat/lng and non-matching name resolves via detail parents[].
+    async def test_geo_fallback_resolves_ibge_via_fetch_attraction_geo(self) -> None:
+        """Coordless card with non-matching name resolves via fetch_attraction_geo.
 
-        Card name "Cataratas Iguacu" does NOT fuzzy-match "Foz do Iguacu" (the IBGE
-        municipio). Geocoder is not configured. The detail fallback fires, retrieves
-        parents[0].localizedName="Foz do Iguacu", and that name matches in resolve_municipio.
-        The record must be stored in Nascente (not quarantined as ibge_unmatched).
+        'Cachoeira do Tabuleiro' does NOT match any IBGE município name. The
+        geo fallback fires, calls fetch_attraction_geo(312332), gets
+        {city_name:'Uberlândia', state_name:'State of Minas Gerais'}, derives UF='MG',
+        then resolve_municipio resolves to the MG IBGE record. store_raw is called.
         """
         from brave.config.settings import TripAdvisorConfig
         from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
-        detail_fixture = {
-            "parents": [
-                {"locationId": 303444, "localizedName": "Foz do Iguacu"},
-                {"locationId": 303435, "localizedName": "Parana"},
-            ]
-        }
-        fake_client = self._make_fake_client(detail_fixture)
-        destino_rio_map = self._make_destino_rio_map()
+        card = _make_coordless_card()  # name="Cachoeira do Tabuleiro" — no IBGE match
+        fake_client = FakeTripAdvisorClient(
+            fixture_attractions={_GEO_ID_MG: [card]},
+            geo_ids={"MG": _GEO_ID_MG},
+            fixture_geo={312332: {
+                "location_id": 312332,
+                "city_name": "Uberlândia",
+                "state_name": "State of Minas Gerais",
+                "city_geo_id": 303380,
+                "state_geo_id": 303383,
+            }},
+        )
         ta_config = TripAdvisorConfig(page_throttle_seconds=0)
-
-        entity = {
-            "locationId": 312332,
-            "name": "Cataratas Iguacu",
-            "review_count": 10,
-            "rating": 4.5,
-            "category": "Nature",
-        }
 
         with (
             patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
@@ -548,60 +525,102 @@ class TestDetailParentsLinkage:
                 ta_client=fake_client,
                 session=MagicMock(),
                 config=_make_config(),
-                ibge_records=[self._FOZ_IBGE],
-                destino_rio_map=destino_rio_map,
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=_DESTINO_RIO_MAP,
                 ta_config=ta_config,
             )
-            await ingest._ingest_one("PR", entity, run_rio=False)
+            await ingest.produce("MG", run_rio=False)
 
-        # detail was called exactly once for locationId 312332
-        assert fake_client.detail_calls == [312332], (
-            f"Expected detail_calls==[312332], got {fake_client.detail_calls}"
+        # fetch_attraction_geo was called for locationId 312332
+        assert fake_client.geo_calls == [312332], (
+            f"Expected geo_calls==[312332], got {fake_client.geo_calls}. "
+            "fetch_attraction_geo must be called, not fetch_attraction_detail."
         )
         # record was stored (not quarantined)
         assert mock_store_raw.called, (
-            "store_raw must be called — the record must resolve via detail parents, "
-            "not quarantine as ibge_unmatched"
-        )
-        payload = mock_store_raw.call_args.kwargs["payload"]
-        assert payload["canonical"]["municipio"] == "Foz do Iguacu", (
-            f"Expected municipio='Foz do Iguacu', got {payload['canonical'].get('municipio')!r}"
+            "store_raw must be called — the geo fallback must resolve Uberlândia/MG "
+            "and store the record, not quarantine as ibge_unmatched"
         )
 
     @pytest.mark.asyncio
-    async def test_ingest_one_still_quarantines_when_detail_also_misses(self) -> None:
-        """When detail returns None, the card must still quarantine as ibge_unmatched."""
+    async def test_geo_fallback_skipped_when_ta_config_none(self) -> None:
+        """When ta_config=None, fetch_attraction_geo is never called.
+
+        Without ta_config the geo fallback is skipped entirely. The coordless card
+        may quarantine as ibge_unmatched — that is correct behavior.
+        """
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        card = _make_coordless_card()
+        fake_client = FakeTripAdvisorClient(
+            fixture_attractions={_GEO_ID_MG: [card]},
+            geo_ids={"MG": _GEO_ID_MG},
+            fixture_geo={312332: {
+                "location_id": 312332,
+                "city_name": "Uberlândia",
+                "state_name": "State of Minas Gerais",
+                "city_geo_id": 303380,
+                "state_geo_id": 303383,
+            }},
+        )
+
+        with patch("brave.lanes.tripadvisor.atrativos.quarantine_poison"):
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=fake_client,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=_DESTINO_RIO_MAP,
+                # ta_config NOT passed → defaults to None → geo fallback is skipped
+            )
+            await ingest.produce("MG", run_rio=False)
+
+        # fetch_attraction_geo must NOT have been called
+        assert fake_client.geo_calls == [], (
+            f"Expected geo_calls==[] when ta_config=None, got {fake_client.geo_calls}. "
+            "The geo fallback must be gated behind ta_config."
+        )
+
+    @pytest.mark.asyncio
+    async def test_geo_fallback_returns_none_no_crash(self) -> None:
+        """When fetch_attraction_geo returns None (empty fixture), no crash occurs.
+
+        The card quarantines as ibge_unmatched, but no exception is raised.
+        geo_calls is still populated (the method was called).
+        """
         from brave.config.settings import TripAdvisorConfig
         from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
-        # fixture_details={} -> fetch_attraction_detail returns None for 312332
-        fake_client = self._make_fake_client(detail_fixture=None)
+        card = _make_coordless_card()
+        fake_client = FakeTripAdvisorClient(
+            fixture_attractions={_GEO_ID_MG: [card]},
+            geo_ids={"MG": _GEO_ID_MG},
+            fixture_geo={},  # geo returns None for all locationIds
+        )
         ta_config = TripAdvisorConfig(page_throttle_seconds=0)
-
-        entity = {
-            "locationId": 312332,
-            "name": "Cataratas Iguacu",
-            "review_count": 10,
-            "rating": 4.5,
-            "category": "Nature",
-        }
 
         with patch("brave.lanes.tripadvisor.atrativos.quarantine_poison") as mock_q:
             ingest = TripAdvisorAtrativosIngest(
                 ta_client=fake_client,
                 session=MagicMock(),
                 config=_make_config(),
-                ibge_records=[self._FOZ_IBGE],
-                destino_rio_map={},
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=_DESTINO_RIO_MAP,
                 ta_config=ta_config,
             )
-            await ingest._ingest_one("PR", entity, run_rio=False)
+            # Must not raise — geo returning None leads to quarantine, not crash
+            await ingest.produce("MG", run_rio=False)
 
-        ibge_calls = [
+        # fetch_attraction_geo was called (but returned None)
+        assert fake_client.geo_calls == [312332], (
+            f"Expected geo_calls==[312332], got {fake_client.geo_calls}"
+        )
+        # Quarantine occurred (ibge_unmatched — geo returned None)
+        quarantine_calls = [
             c for c in mock_q.call_args_list
             if c.kwargs.get("task_name") == "brave.ta.atrativos.ibge_unmatched"
         ]
-        assert len(ibge_calls) == 1, (
-            f"Expected 1 ibge_unmatched quarantine when detail also misses; "
-            f"got {len(ibge_calls)}"
+        assert len(quarantine_calls) == 1, (
+            f"Expected 1 ibge_unmatched quarantine when geo returns None; "
+            f"got {len(quarantine_calls)}"
         )

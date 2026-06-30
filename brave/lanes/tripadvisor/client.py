@@ -561,13 +561,14 @@ class TripAdvisorClient:
     async def fetch_attraction_detail(self, location_id: int) -> dict | None:
         """Fetch the TA detail record for a single attraction (qid 444040f131735091).
 
+        NOTE (TA-ftx): No longer called by TripAdvisorAtrativosIngest._ingest_one —
+        replaced by fetch_attraction_geo (qid d3d4987463b78a39) which returns
+        cityName/stateName directly without a parents[] hop. Method kept; existing
+        TestFetchAttractionDetail tests remain valid and must not be removed.
+
         Returns the first location dict from the response (contains parents[] geo
         hierarchy). Returns None on empty response or any parsing error.
         Never raises on data shape issues — returns None instead.
-
-        Used by TripAdvisorAtrativosIngest._ingest_one as a tertiary ibge fallback:
-        when name-match and geocoder both miss, parents[0].localizedName gives the
-        parent city name which can be fuzzy-matched against IBGE.
 
         Args:
             location_id: TripAdvisor integer locationId of the attraction.
