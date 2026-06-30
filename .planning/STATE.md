@@ -5,7 +5,7 @@ milestone_name: milestone
 status: verifying
 stopped_at: Completed 17.1-07-PLAN.md (Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher — all 6 views reachable; Painel Brave shell finished). Phase 17.1 all 7 plans complete.
 last_updated: "2026-06-28T14:30:46.695Z"
-last_activity: 2026-06-28
+last_activity: 2026-06-29 - Completed quick task 260629-rmz: Fix TripAdvisor lane geo-targeting and atrativo→destino linkage
 progress:
   total_phases: 8
   completed_phases: 7
@@ -178,15 +178,16 @@ None yet.
 
 ### Quick Tasks Completed
 
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260623-j78 | Fix Celery worker registering zero tasks (autodiscover related_name="pipeline") | 2026-06-23 | 22f9c25 | [260623-j78-fix-celery-worker-registering-zero-tasks](./quick/260623-j78-fix-celery-worker-registering-zero-tasks/) |
-| 260623-jw3 | Desmembramento None-result guard (offline NullLLMClient crash + Mtur-seed rollback) | 2026-06-23 | a49ebbd | [260623-jw3-desmembramento-none-result-guard-offline](./quick/260623-jw3-desmembramento-none-result-guard-offline/) |
-| 260628-jvk | Engine toggle persistence — operator-intent latch (brave:engine:enabled) so motor stays on across refresh + can be turned off | 2026-06-28 | 0362a5c | [260628-jvk-fix-engine-toggle-persistence-add-operat](./quick/260628-jvk-fix-engine-toggle-persistence-add-operat/) |
-| 260628-m1n | TripAdvisor bulk sync auto-resume on token re-inject (inject hook + 60s beat reconciler + persisted resume params; verified passed 7/7) | 2026-06-28 | (pending) | [260628-m1n-tripadvisor-bulk-sync-auto-resume-on-tok](./quick/260628-m1n-tripadvisor-bulk-sync-auto-resume-on-tok/) |
-| 260629-e69 | TA motor token-validity gate — token expiry turns motor OFF + start blocked for tripadvisor without valid-TTL session; auto-resume removed (verified 9/9) | 2026-06-29 | (pending) | [260629-e69-tripadvisor-motor-token-validity-gate-au](./quick/260629-e69-tripadvisor-motor-token-validity-gate-au/) |
-| 260629-p2v | TripAdvisor session auto-refresh — cookie write-back across 3 client transports (merge Set-Cookie + slide TTL + re-derive session_id) + keep-alive beat (10min HTML GET re-mints datadome) so operator pastes cURL only once; fallback (403→needs_bootstrap+engine OFF) unchanged (verified 5/5) | 2026-06-29 | 3bd1def | [260629-p2v-tripadvisor-session-auto-refresh-cookie-](./quick/260629-p2v-tripadvisor-session-auto-refresh-cookie-/) |
-| 260629-qny | Painel motor start dropped source (always swept default/Places) — new POST /engine/source sets active source w/o starting; PainelOrigem Salvar activates source (TA after inject; mtur/places→default); PainelTopbar start passes status source into startEngine. EngineControl + taBlocked intact (verified 7/7) | 2026-06-29 | 96c661e | [260629-qny-fix-painel-motor-start-dropping-source-s](./quick/260629-qny-fix-painel-motor-start-dropping-source-s/) |
+| # | Description | Date | Commit | Status | Directory |
+|---|-------------|------|--------|--------|-----------|
+| 260623-j78 | Fix Celery worker registering zero tasks (autodiscover related_name="pipeline") | 2026-06-23 | 22f9c25 | | [260623-j78-fix-celery-worker-registering-zero-tasks](./quick/260623-j78-fix-celery-worker-registering-zero-tasks/) |
+| 260623-jw3 | Desmembramento None-result guard (offline NullLLMClient crash + Mtur-seed rollback) | 2026-06-23 | a49ebbd | | [260623-jw3-desmembramento-none-result-guard-offline](./quick/260623-jw3-desmembramento-none-result-guard-offline/) |
+| 260628-jvk | Engine toggle persistence — operator-intent latch (brave:engine:enabled) so motor stays on across refresh + can be turned off | 2026-06-28 | 0362a5c | | [260628-jvk-fix-engine-toggle-persistence-add-operat](./quick/260628-jvk-fix-engine-toggle-persistence-add-operat/) |
+| 260628-m1n | TripAdvisor bulk sync auto-resume on token re-inject (inject hook + 60s beat reconciler + persisted resume params; verified passed 7/7) | 2026-06-28 | (pending) | | [260628-m1n-tripadvisor-bulk-sync-auto-resume-on-tok](./quick/260628-m1n-tripadvisor-bulk-sync-auto-resume-on-tok/) |
+| 260629-e69 | TA motor token-validity gate — token expiry turns motor OFF + start blocked for tripadvisor without valid-TTL session; auto-resume removed (verified 9/9) | 2026-06-29 | (pending) | | [260629-e69-tripadvisor-motor-token-validity-gate-au](./quick/260629-e69-tripadvisor-motor-token-validity-gate-au/) |
+| 260629-p2v | TripAdvisor session auto-refresh — cookie write-back across 3 client transports (merge Set-Cookie + slide TTL + re-derive session_id) + keep-alive beat (10min HTML GET re-mints datadome) so operator pastes cURL only once; fallback (403→needs_bootstrap+engine OFF) unchanged (verified 5/5) | 2026-06-29 | 3bd1def | | [260629-p2v-tripadvisor-session-auto-refresh-cookie-](./quick/260629-p2v-tripadvisor-session-auto-refresh-cookie-/) |
+| 260629-qny | Painel motor start dropped source (always swept default/Places) — new POST /engine/source sets active source w/o starting; PainelOrigem Salvar activates source (TA after inject; mtur/places→default); PainelTopbar start passes status source into startEngine. EngineControl + taBlocked intact (verified 7/7) | 2026-06-29 | 96c661e | | [260629-qny-fix-painel-motor-start-dropping-source-s](./quick/260629-qny-fix-painel-motor-start-dropping-source-s/) |
+| 260629-rmz | Fix TripAdvisor lane geo-targeting + atrativo→destino linkage — 4 spike-confirmed bugs: corrected uf_geoids.json (27 state geoIds + RUN_REAL_EXTERNALS discovery script), destinos QID resolution chain (override→session→const, ValueError not silent-empty; _DESTINATIONS_QID stays None), null-safe _parse_attractions_page, + fetch_attraction_detail across client stack with detail-parents IBGE fallback (ta_config-gated + throttled). 162 TA unit tests pass offline | 2026-06-29 | f9a10d7 | Needs Review | [260629-rmz-fix-tripadvisor-lane-geo-targeting-and-a](./quick/260629-rmz-fix-tripadvisor-lane-geo-targeting-and-a/) |
 
 ## Deferred Items
 
