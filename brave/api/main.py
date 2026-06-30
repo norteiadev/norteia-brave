@@ -9,9 +9,41 @@ Includes all Phase 1 routers:
 
 Phase 3 additions:
   - atrativos_gate — WhatsApp gate endpoints (D-06, ATR-05, COMP-01/02)
+
+Phase ks0 additions:
+  - logs — GET /api/v1/logs (per-source log ring buffer tail, Bearer-gated)
 """
 
+import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    """Configure structlog on startup — wires the Redis log-buffer processor.
+
+    When BRAVE_USE_FAKEREDIS=1 (offline tests) or when Redis is unreachable,
+    falls back to console-only structlog (no buffer). The fallback is
+    fail-silent so the API process always starts even if Redis is down.
+    """
+    try:
+        if not os.environ.get("BRAVE_USE_FAKEREDIS"):
+            from brave.api.deps import get_redis  # noqa: PLC0415
+            _r = get_redis()
+            from brave.observability.structlog_setup import configure_structlog  # noqa: PLC0415
+            configure_structlog(redis=_r)
+        else:
+            from brave.observability.structlog_setup import configure_structlog  # noqa: PLC0415
+            configure_structlog(redis=None)
+    except Exception:
+        try:
+            from brave.observability.structlog_setup import configure_structlog  # noqa: PLC0415
+            configure_structlog(redis=None)   # offline / test — console renderer only
+        except Exception:
+            pass
+    yield
 
 # Bind the configured Celery app as the process GLOBAL-DEFAULT app at startup. Without
 # this, the API process never instantiates the Redis-configured Celery() as the *default*
@@ -42,6 +74,7 @@ app = FastAPI(
     title="norteia-brave",
     description="Brave pipeline: Nascente → Rio → Mar with §7.6 score gate",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Include all Phase 1 routers
@@ -91,3 +124,8 @@ app.include_router(dedup_router)
 from brave.api.routers.runs import router as runs_router
 
 app.include_router(runs_router)
+
+# Phase ks0: per-source log ring buffer tail (Bearer-gated)
+from brave.api.routers.logs import router as logs_router  # noqa: E402
+
+app.include_router(logs_router)

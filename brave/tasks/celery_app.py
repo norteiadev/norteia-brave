@@ -59,3 +59,38 @@ app.conf.update(
 # empty [tasks] list, and every dispatched task (engine_sweep_run/sweep_uf/…)
 # silently never runs.
 app.autodiscover_tasks(["brave.tasks"], related_name="pipeline")
+
+# ---------------------------------------------------------------------------
+# Structlog configuration for Celery workers (Phase ks0)
+# ---------------------------------------------------------------------------
+
+from celery.signals import worker_process_init  # noqa: E402
+
+
+@worker_process_init.connect
+def _configure_structlog_on_worker_init(**kwargs):
+    """Wire the Redis log buffer into structlog for each Celery worker process.
+
+    Called once per forked worker process (not on the main process). Creates a
+    fresh Redis client from BRAVE_DB_REDIS_URL. Falls back to console-only when
+    Redis is unavailable or BRAVE_USE_FAKEREDIS is set (offline tests).
+
+    The fall-through to console-only is intentional: a worker that cannot reach
+    Redis should still run — structlog events will appear in stdout rather than
+    the dashboard log sidebar, but pipeline processing is unaffected.
+    """
+    import os  # noqa: PLC0415
+
+    from brave.observability.structlog_setup import configure_structlog  # noqa: PLC0415
+
+    if os.environ.get("BRAVE_USE_FAKEREDIS"):
+        configure_structlog(redis=None)
+        return
+    try:
+        from redis import Redis as _Redis  # noqa: PLC0415
+
+        r = _Redis.from_url(REDIS_URL, socket_connect_timeout=2)
+        r.ping()
+        configure_structlog(redis=r)
+    except Exception:
+        configure_structlog(redis=None)
