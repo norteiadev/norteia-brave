@@ -34,6 +34,7 @@ and brave.lanes.tripadvisor.*. It does NOT import from other lane modules.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -204,13 +205,19 @@ class TripAdvisorAtrativosIngest:
         # localizedName can be fuzzy-matched against IBGE. This handles attractions
         # that lack coordinates (coordless cards) AND whose names don't fuzzy-match the
         # municipality (e.g. "Cataratas do Iguacu" != "Foz do Iguacu").
-        # Only attempted when ibge_match is still None after the geocoder step.
-        if ibge_match is None:
+        # Only attempted when ibge_match is still None after the geocoder step, AND only
+        # when a TripAdvisorConfig is wired (ta_config). The +1 detail request raises
+        # DataDome exposure, so it is gated behind explicit config and throttled by
+        # page_throttle_seconds — without ta_config the fallback is skipped entirely.
+        if ibge_match is None and self._ta_config is not None:
             try:
                 loc_id_int = int(location_id) if location_id else None
             except (ValueError, TypeError):
                 loc_id_int = None
             if loc_id_int is not None:
+                # Throttle the extra detail request (DataDome protection).
+                if self._ta_config.page_throttle_seconds > 0:
+                    await asyncio.sleep(self._ta_config.page_throttle_seconds)
                 # _ingest_one is always async; await is always safe here.
                 detail = await self._client.fetch_attraction_detail(loc_id_int)
                 if detail is not None:
