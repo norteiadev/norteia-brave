@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Terminal } from "lucide-react";
 import { toast } from "sonner";
 
 import { ApiError } from "@/lib/api-client";
@@ -20,6 +21,7 @@ import {
   type EngineState,
   type TASessionStatus,
 } from "@/lib/engine-api";
+import { PainelLogs } from "@/components/painel/PainelLogs";
 import { PainelOrigem, type OrigemSource } from "@/components/painel/PainelOrigem";
 
 /**
@@ -113,6 +115,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   const qc = useQueryClient();
   const [origemOpen, setOrigemOpen] = useState(false);
   const [depthMenuOpen, setDepthMenuOpen] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
 
   const { data } = useQuery({
     queryKey: engineKeys.status,
@@ -270,6 +273,74 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
           Origem <strong className="font-semibold">{SOURCE_LABELS[source]}</strong>
         </button>
 
+        {/* Sync status indicator — reads from the existing engine/status query (no second poll).
+            Shows Sincronizando + UF progress when motor is ON; muted "Motor parado" when idle.
+            aria-live polite so screen readers announce state changes. */}
+        <div
+          data-testid="sync-indicator"
+          className="flex min-w-[160px] flex-col items-end gap-[3px]"
+        >
+          {motorOn ? (
+            <>
+              <div className="flex items-center gap-[6px]">
+                <span
+                  className="h-[7px] w-[7px] flex-shrink-0 animate-pulse rounded-full"
+                  style={{ background: "var(--status-mar)" }}
+                  aria-hidden
+                />
+                <span
+                  aria-live="polite"
+                  className="whitespace-nowrap text-[11.5px] font-medium"
+                  style={{ color: "var(--painel-text)" }}
+                >
+                  Sincronizando {SOURCE_LABELS[source]} · UF{" "}
+                  {data?.ufs_done ?? 0}/{data?.ufs_total ?? 0}
+                  {data?.current_uf ? ` · ${data.current_uf}` : ""}
+                </span>
+              </div>
+              {(data?.ufs_total ?? 0) > 0 && (
+                <div
+                  className="h-[3px] w-full overflow-hidden rounded-full"
+                  style={{ background: "var(--painel-border-outer)" }}
+                  aria-hidden
+                >
+                  <div
+                    className="h-full rounded-full transition-[width]"
+                    style={{
+                      background: "var(--status-mar)",
+                      width: `${Math.min(100, Math.round(((data?.ufs_done ?? 0) / (data?.ufs_total ?? 1)) * 100))}%`,
+                    }}
+                  />
+                </div>
+              )}
+            </>
+          ) : (
+            <span
+              aria-live="polite"
+              className="whitespace-nowrap text-[11.5px]"
+              style={{ color: "var(--painel-muted)" }}
+            >
+              Motor parado
+            </span>
+          )}
+        </div>
+
+        {/* Logs sidebar toggle — opens the per-source log ring buffer viewer */}
+        <button
+          type="button"
+          data-testid="logs-icon-btn"
+          aria-label="Ver logs de sincronização"
+          aria-pressed={logsOpen}
+          onClick={() => setLogsOpen((v) => !v)}
+          className="flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-[8px] border bg-[var(--card)] hover:bg-[var(--painel-chip)]"
+          style={{ borderColor: "var(--painel-border-outer)" }}
+        >
+          <Terminal
+            className="h-[15px] w-[15px]"
+            style={{ color: logsOpen ? "var(--painel-navy)" : "var(--painel-muted)" }}
+          />
+        </button>
+
         {/* Divider */}
         <div
           className="h-[24px] w-px"
@@ -346,6 +417,13 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
         open={origemOpen}
         onClose={() => setOrigemOpen(false)}
         initialSource={origemSourceFor(source)}
+      />
+
+      {/* Log ring buffer sidebar */}
+      <PainelLogs
+        open={logsOpen}
+        onClose={() => setLogsOpen(false)}
+        source={source}
       />
     </div>
   );
