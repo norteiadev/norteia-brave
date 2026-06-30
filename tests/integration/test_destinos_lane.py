@@ -395,19 +395,24 @@ def test_validate_batch_returns_503_when_push_fails_under_real_externals(
     r = client.post(f"/api/v1/dlq/validate-batch?uf={test_uf}&entity_type=destination")
     assert r.status_code == 503
 
-    # WR-01 per-row proof: first row committed to 'mar', second row never processed.
+    # WR-01 per-row proof: exactly one record committed to 'mar', one stays 'dlq'.
+    # The endpoint processes rows in heap order (no ORDER BY), so we can't assert
+    # WHICH record (rio_a vs rio_b) gets promoted — only that WR-01 prevented a
+    # full rollback: one row is committed to 'mar' before dispatch fails, and the
+    # other row was never reached (stays 'dlq').
     db_session.expire_all()
     reloaded_a = db_session.get(RioRecord, rio_a.id)
     reloaded_b = db_session.get(RioRecord, rio_b.id)
     assert reloaded_a is not None
     assert reloaded_b is not None
-    assert reloaded_a.routing == "mar", (
-        f"WR-01: first batch record should be committed to 'mar' before dispatch fails, "
-        f"got '{reloaded_a.routing}'"
+    statuses = {reloaded_a.routing, reloaded_b.routing}
+    assert "mar" in statuses, (
+        f"WR-01: at least one batch record should be committed to 'mar' before dispatch "
+        f"fails, got routings: a={reloaded_a.routing!r}, b={reloaded_b.routing!r}"
     )
-    assert reloaded_b.routing == "dlq", (
-        f"WR-01: second batch record was never reached — should stay 'dlq', "
-        f"got '{reloaded_b.routing}'"
+    assert "dlq" in statuses, (
+        f"WR-01: at least one batch record should remain 'dlq' (never reached by loop), "
+        f"got routings: a={reloaded_a.routing!r}, b={reloaded_b.routing!r}"
     )
 
 
