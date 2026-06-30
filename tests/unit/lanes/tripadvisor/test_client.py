@@ -1171,3 +1171,253 @@ class TestFetchAttractionDetail:
             result = await TripAdvisorClient(config=config, redis=redis).fetch_attraction_detail(99999)
 
         assert result is None, f"Expected None on empty locations, got {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# TestFetchAttractionGeo — fetch_attraction_geo (qid d3d4987463b78a39)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchAttractionGeo:
+    """Verify fetch_attraction_geo uses qid d3d4987463b78a39 and parses correctly.
+
+    SPIKE-2 validated response shape (scrubbed fixture, no cookies/PII):
+      data[0].data.gtmData.locationData = {
+        "cityName": "Foz do Iguacu",
+        "stateName": "State of Parana",
+        "stateId": 303435,
+        "countryName": "Brazil",
+        "countryId": 294280,
+        "locationHierarchy": ":312332:1:13:294280:303435:303444:",
+      }
+    city_geo_id = last non-empty element of locationHierarchy.split(':') = 303444.
+    """
+
+    # SPIKE-2 scrubbed fixture (no cookies, no PII — aggregate geo only)
+    _FOZ_RESPONSE = [{"data": {"gtmData": {"locationData": {
+        "cityName": "Foz do Iguacu",
+        "stateName": "State of Parana",
+        "stateId": 303435,
+        "countryName": "Brazil",
+        "countryId": 294280,
+        "locationHierarchy": ":312332:1:13:294280:303435:303444:",
+    }}}}]
+
+    @pytest.mark.asyncio
+    async def test_happy_path_foz_do_iguacu(self, monkeypatch):
+        """Happy path: Cataratas fixture returns correct normalized geo dict."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        client = TripAdvisorClient(config=config, redis=redis)
+
+        stub_session = {
+            "cookies": {"datadome": "abc"},
+            "user_agent": "Mozilla/5.0 test",
+            "acquired_at": "2026-06-24T12:00:00Z",
+        }
+        monkeypatch.setattr(client, "_get_session", lambda: stub_session)
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                return_value=httpx.Response(200, json=self._FOZ_RESPONSE)
+            )
+            result = await client.fetch_attraction_geo(312332)
+
+        assert result == {
+            "location_id": 312332,
+            "city_name": "Foz do Iguacu",
+            "state_name": "State of Parana",
+            "city_geo_id": 303444,
+            "state_geo_id": 303435,
+        }, f"Unexpected result: {result!r}"
+
+    @pytest.mark.asyncio
+    async def test_uses_correct_qid_d3d4987463b78a39(self, monkeypatch):
+        """POST payload must use preRegisteredQueryId 'd3d4987463b78a39'."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        client = TripAdvisorClient(config=config, redis=redis)
+
+        stub_session = {
+            "cookies": {"datadome": "abc"},
+            "user_agent": "Mozilla/5.0 test",
+            "acquired_at": "2026-06-24T12:00:00Z",
+        }
+        monkeypatch.setattr(client, "_get_session", lambda: stub_session)
+
+        captured_body = None
+
+        with respx.mock:
+            def capture(request):
+                nonlocal captured_body
+                captured_body = json.loads(request.content)
+                return httpx.Response(200, json=self._FOZ_RESPONSE)
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=capture
+            )
+            await client.fetch_attraction_geo(312332)
+
+        assert captured_body is not None, "No request captured"
+        assert isinstance(captured_body, list), "Payload must be a list (batch array)"
+        item = captured_body[0]
+        assert item["extensions"]["preRegisteredQueryId"] == "d3d4987463b78a39", (
+            f"Expected 'd3d4987463b78a39', got {item['extensions'].get('preRegisteredQueryId')!r}"
+        )
+        assert item["variables"]["locationId"] == 312332
+        assert item["variables"]["eventType"] == "PAGEVIEW"
+        assert item["variables"]["isGeoPage"] is True
+
+    @pytest.mark.asyncio
+    async def test_malformed_response_returns_none(self, monkeypatch):
+        """Response missing gtmData key → returns None, no exception."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        client = TripAdvisorClient(config=config, redis=redis)
+
+        stub_session = {"cookies": {"datadome": "abc"}, "user_agent": "", "acquired_at": "2026-06-24"}
+        monkeypatch.setattr(client, "_get_session", lambda: stub_session)
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                return_value=httpx.Response(200, json=[{"data": {}}])
+            )
+            result = await client.fetch_attraction_geo(999)
+
+        assert result is None, f"Expected None on malformed response, got {result!r}"
+
+    @pytest.mark.asyncio
+    async def test_non_brazil_guard_returns_none(self, monkeypatch):
+        """countryId != 294280 → returns None (non-Brazil guard)."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        client = TripAdvisorClient(config=config, redis=redis)
+
+        stub_session = {"cookies": {"datadome": "abc"}, "user_agent": "", "acquired_at": "2026-06-24"}
+        monkeypatch.setattr(client, "_get_session", lambda: stub_session)
+
+        non_brazil = [{"data": {"gtmData": {"locationData": {
+            "cityName": "Buenos Aires",
+            "stateName": "Buenos Aires Province",
+            "stateId": 999,
+            "countryId": 999999,
+            "locationHierarchy": ":111:1:13:999999:999:888:",
+        }}}}]
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                return_value=httpx.Response(200, json=non_brazil)
+            )
+            result = await client.fetch_attraction_geo(111)
+
+        assert result is None, f"Expected None for non-Brazil countryId, got {result!r}"
+
+    @pytest.mark.asyncio
+    async def test_403_raises_session_expired(self, monkeypatch):
+        """403 response → raises SessionExpiredError."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        client = TripAdvisorClient(config=config, redis=redis)
+
+        stub_session = {"cookies": {"datadome": "abc"}, "user_agent": "", "acquired_at": "2026-06-24"}
+        monkeypatch.setattr(client, "_get_session", lambda: stub_session)
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                return_value=httpx.Response(403, json={"error": "forbidden"})
+            )
+            with pytest.raises(SessionExpiredError):
+                await client.fetch_attraction_geo(312332)
+
+    @pytest.mark.asyncio
+    async def test_429_raises_session_expired(self, monkeypatch):
+        """429 response → raises SessionExpiredError."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        client = TripAdvisorClient(config=config, redis=redis)
+
+        stub_session = {"cookies": {"datadome": "abc"}, "user_agent": "", "acquired_at": "2026-06-24"}
+        monkeypatch.setattr(client, "_get_session", lambda: stub_session)
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                return_value=httpx.Response(429, json={"error": "rate_limited"})
+            )
+            with pytest.raises(SessionExpiredError):
+                await client.fetch_attraction_geo(312332)
+
+
+# ---------------------------------------------------------------------------
+# TestFakeTripAdvisorClientGeo — fetch_attraction_geo in FakeTripAdvisorClient
+# ---------------------------------------------------------------------------
+
+
+class TestFakeTripAdvisorClientGeo:
+    """Tests for FakeTripAdvisorClient.fetch_attraction_geo (fixture_geo + geo_calls)."""
+
+    @pytest.mark.asyncio
+    async def test_fake_fixture_geo_returns_configured(self):
+        """FakeTripAdvisorClient with fixture_geo returns the configured dict."""
+        from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
+
+        geo_dict = {
+            "location_id": 312332,
+            "city_name": "Foz do Iguacu",
+            "state_name": "State of Parana",
+            "city_geo_id": 303444,
+            "state_geo_id": 303435,
+        }
+        fake = FakeTripAdvisorClient(fixture_geo={312332: geo_dict})
+        result = await fake.fetch_attraction_geo(312332)
+        assert result == geo_dict
+
+    @pytest.mark.asyncio
+    async def test_fake_fixture_geo_returns_none_on_miss(self):
+        """FakeTripAdvisorClient returns None for a locationId not in fixture_geo."""
+        from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
+
+        fake = FakeTripAdvisorClient()
+        result = await fake.fetch_attraction_geo(999)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_fake_fixture_geo_records_calls(self):
+        """geo_calls list records each fetch_attraction_geo call's location_id."""
+        from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
+
+        geo_dict = {"location_id": 312332, "city_name": "Foz do Iguacu",
+                    "state_name": "State of Parana", "city_geo_id": 303444, "state_geo_id": 303435}
+        fake = FakeTripAdvisorClient(fixture_geo={312332: geo_dict})
+        await fake.fetch_attraction_geo(312332)
+        await fake.fetch_attraction_geo(999)
+        assert fake.geo_calls == [312332, 999]
