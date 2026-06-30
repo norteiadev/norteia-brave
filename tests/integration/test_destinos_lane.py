@@ -278,11 +278,12 @@ def test_validate_batch_limit_bounds(client):
 def test_validate_returns_503_when_push_fails_under_real_externals(
     client, db_session, monkeypatch
 ):
-    """A broker-down push during validate surfaces 503 and rolls the promotion back.
+    """WR-01: a broker-down push surfaces 503 but the promotion IS committed.
 
-    Under run_real_externals=True, a failed push_destination_task.delay must not
-    silently drop: the steward gets a 503 and the validate is NOT committed
-    (record stays 'dlq', no dlq_validated audit), so it is safely retryable.
+    Promotion is committed (WR-01) before dispatch. A broker-down push returns 503
+    so the steward knows to retry the push, but the record IS in Mar — it is NOT
+    rolled back. This is the correct semantics: the dispatch failure is retryable
+    (idempotent re-validate), and the record stays promoted to avoid re-scoring.
     """
     from sqlalchemy import select
 
@@ -301,20 +302,22 @@ def test_validate_returns_503_when_push_fails_under_real_externals(
     r = client.patch(f"/api/v1/dlq/{rio_id}/validate")
     assert r.status_code == 503
 
-    # Rollback proof: promotion + audit must NOT persist (retryable).
+    # WR-01 proof: promotion is committed BEFORE dispatch, so it survives the 503.
     db_session.expire_all()
     reloaded = db_session.get(RioRecord, rio_id)
     assert reloaded is not None
-    assert reloaded.routing == "dlq", (
-        f"expected rollback to 'dlq' but got '{reloaded.routing}' — a failed push "
-        "must not leave the record promoted-but-unpublished"
+    assert reloaded.routing == "mar", (
+        f"WR-01: expected record to be 'mar' (promotion committed before dispatch) "
+        f"but got '{reloaded.routing}' — the 503 signals dispatch failure, not rollback"
     )
     audit = db_session.scalar(
         select(AuditLog).where(
             AuditLog.action == "dlq_validated", AuditLog.record_id == rio_id
         )
     )
-    assert audit is None, "no dlq_validated audit row should persist on a rolled-back validate"
+    assert audit is not None, (
+        "dlq_validated audit row must persist — audit is written before db.commit() (WR-01)"
+    )
 
 
 @pytest.mark.integration
@@ -348,14 +351,39 @@ def test_validate_swallows_push_failure_offline(client, db_session, monkeypatch)
 def test_validate_batch_returns_503_when_push_fails_under_real_externals(
     client, db_session, monkeypatch
 ):
-    """A broker-down push during batch validate surfaces 503 and rolls the batch back."""
+    """WR-01 per-row commit: first record is committed to Mar before dispatch fails.
+
+    With WR-01 per-row semantics: the first DLQ record processed is promoted and
+    committed BEFORE its dispatch fires. When dispatch raises (broker down), 503 is
+    returned and the loop exits. The first committed record stays 'mar' (it cannot be
+    rolled back — db.commit() already fired). The second record is never processed
+    and stays 'dlq'. The batch is partially promoted and retryable (idempotent).
+
+    Pre-test cleanup: marks any accumulated PE dlq rows from prior test runs as
+    'descarte' so the batch processes exactly our two new records in creation order.
+    This makes the "first row = mar" assertion deterministic.
+    """
+    from sqlalchemy import update
+
     from brave.tasks.pipeline import push_destination_task
 
-    # Scope the proof to THIS test's records — the shared docker DB accumulates
-    # 'mar' rows from other runs, so a global PE count would be flaky.
-    rio_a = _make_dlq_record(db_session, uf="PE", corroboracao=50.0)
-    rio_b = _make_dlq_record(db_session, uf="PE", corroboracao=50.0)
-    ids = [rio_a.id, rio_b.id]
+    test_uf = "PE"
+
+    # Clean up accumulated PE dlq rows from prior test runs that would pollute the
+    # ordering. These are test artifacts left by the old rollback-on-503 semantics.
+    db_session.execute(
+        update(RioRecord)
+        .where(
+            RioRecord.uf == test_uf,
+            RioRecord.routing == "dlq",
+            RioRecord.entity_type == "destination",
+        )
+        .values(routing="descarte", dlq_reason="test_cleanup")
+    )
+    db_session.commit()
+
+    rio_a = _make_dlq_record(db_session, uf=test_uf, corroboracao=50.0)
+    rio_b = _make_dlq_record(db_session, uf=test_uf, corroboracao=50.0)
 
     monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
 
@@ -364,18 +392,23 @@ def test_validate_batch_returns_503_when_push_fails_under_real_externals(
 
     monkeypatch.setattr(push_destination_task, "delay", _broker_down)
 
-    r = client.post("/api/v1/dlq/validate-batch?uf=PE&entity_type=destination")
+    r = client.post(f"/api/v1/dlq/validate-batch?uf={test_uf}&entity_type=destination")
     assert r.status_code == 503
 
-    # Whole batch rolled back: this test's records stay 'dlq' (retryable).
+    # WR-01 per-row proof: first row committed to 'mar', second row never processed.
     db_session.expire_all()
-    for rio_id in ids:
-        reloaded = db_session.get(RioRecord, rio_id)
-        assert reloaded is not None
-        assert reloaded.routing == "dlq", (
-            f"record {rio_id} should roll back to 'dlq' on batch push failure, "
-            f"got '{reloaded.routing}'"
-        )
+    reloaded_a = db_session.get(RioRecord, rio_a.id)
+    reloaded_b = db_session.get(RioRecord, rio_b.id)
+    assert reloaded_a is not None
+    assert reloaded_b is not None
+    assert reloaded_a.routing == "mar", (
+        f"WR-01: first batch record should be committed to 'mar' before dispatch fails, "
+        f"got '{reloaded_a.routing}'"
+    )
+    assert reloaded_b.routing == "dlq", (
+        f"WR-01: second batch record was never reached — should stay 'dlq', "
+        f"got '{reloaded_b.routing}'"
+    )
 
 
 # ---------------------------------------------------------------------------
