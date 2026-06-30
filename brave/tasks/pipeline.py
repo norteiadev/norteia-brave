@@ -931,10 +931,12 @@ def sweep_tripadvisor(
     max_pages: int | None = None,
     geo_id: int = 294280,
 ) -> None:
-    """TripAdvisor sweep for one UF — destinos then atrativos (plan 11-03, TA-05/TA-06).
+    """TripAdvisor sweep for one UF — atrativos only, parent destinos from authoritative Rio records (Mtur/IBGE) (oa3).
 
     Mirrors sweep_uf but uses the TripAdvisor ingest lane instead of Mtur/Desmembramento.
-    Produces TripAdvisor destination + attraction records via the GraphQL scraper lane.
+    Produces TripAdvisor attraction records only. Parent destino RioRecords must already
+    exist in Rio (run Mtur seed sweep first). TA-destinos (TripAdvisorDestinosIngest) is
+    not wired here — no destinos QID has been captured; deferred until QID is discovered.
 
     Depth gate: depth=NASCENTE → run_rio=False (Nascente + §7.6 score only, no Rio validation).
     depth=None (legacy/direct call) defaults to the full pipeline path.
@@ -959,7 +961,7 @@ def sweep_tripadvisor(
         uf:            Two-letter Brazilian state code (e.g. "BA", "RJ").
         depth:         Pipeline depth (nascente|nascente_rio|nascente_rio_mar|None).
         bulk_national: When True, run the national bulk pagination branch (geoId 294280)
-                       instead of the per-UF destinos+atrativos path.
+                       instead of the per-UF atrativos path.
         start_page:    1-based page to start a FRESH bulk run at (offset = (start_page-1)*30).
                        Ignored when a prior run recorded progress (resume takes precedence).
         max_pages:     Cap on pages to fetch this bulk run (slice-first). None → full 334.
@@ -970,7 +972,6 @@ def sweep_tripadvisor(
     from brave.lanes.tripadvisor import sweep_progress
     from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
     from brave.lanes.tripadvisor.client import SessionExpiredError, SessionMissingError
-    from brave.lanes.tripadvisor.destinos import TripAdvisorDestinosIngest
     from brave.lanes.tripadvisor.ibge import load_ibge_csv
 
     run_rio = depth != collection_engine.NASCENTE
@@ -1069,18 +1070,12 @@ def sweep_tripadvisor(
             session.commit()
             return
 
-        # Step 1: Run destinos producer — builds the destino_rio_map for atrativos
-        destinos_ingest = TripAdvisorDestinosIngest(
-            ta_client=ta_client,
-            session=session,
-            config=config,
-            ibge_records=ibge_records,
-        )
+        # Build destino_rio_map: keyed by municipio_id (IBGE code) → (rio_id, source_ref)
+        # Query ALL destination RioRecords in this UF — Mtur/IBGE origin=100 are the
+        # authoritative source (oa3: TA does not produce destinos; QID not captured).
+        # Operator must run a destinos/default sweep (Mtur seed) before a TA atrativos
+        # sweep, or atrativos will quarantine with parent_destino_absent per record.
         import asyncio as _asyncio
-        _asyncio.run(destinos_ingest.produce(uf, run_rio=run_rio))
-
-        # Build destino_rio_map: keyed by ibge_code → (rio_id, source_ref)
-        # Query RioRecord for TA destination records in this UF (after produce + flush)
         from sqlalchemy import select as _select
         from brave.core.models import RioRecord as _RioRecord, NascenteRecord as _NascenteRecord
         session.flush()
@@ -1088,7 +1083,6 @@ def sweep_tripadvisor(
             _select(_RioRecord.id, _NascenteRecord.source_ref, _RioRecord.municipio_id)
             .join(_NascenteRecord, _RioRecord.nascente_id == _NascenteRecord.id)
             .where(
-                _NascenteRecord.source == "tripadvisor",
                 _NascenteRecord.entity_type == "destination",
                 _RioRecord.uf == uf,
             )
@@ -1100,7 +1094,7 @@ def sweep_tripadvisor(
             if row.municipio_id
         }
 
-        # Step 2: Run atrativos producer using destino_rio_map
+        # Run atrativos producer using destino_rio_map
         atrativos_ingest = TripAdvisorAtrativosIngest(
             ta_client=ta_client,
             session=session,
@@ -1927,9 +1921,9 @@ def engine_sweep_run(
                 logger.info("engine_stop_drain", at_uf=uf, dispatched=dispatched)
                 break
             if source == "tripadvisor":
-                # TripAdvisor lane — single task covers both destinos + atrativos
-                # (sweep_tripadvisor runs TripAdvisorDestinosIngest then TripAdvisorAtrativosIngest).
-                # Depth gate still applies: nascente-only is run_rio=False inside sweep_tripadvisor.
+                # TripAdvisor lane — atrativos-only per oa3 fix; parent destinos must be
+                # seeded via Mtur sweep first. Depth gate still applies:
+                # nascente-only is run_rio=False inside sweep_tripadvisor.
                 sweep_tripadvisor.delay(uf, depth=effective_depth)
             elif nascente_only:
                 # Free path: Mtur-only seed regardless of lane (atrativos = Places,
