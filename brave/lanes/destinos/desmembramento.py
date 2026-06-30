@@ -194,7 +194,9 @@ class DesmembramentoAgent:
             if result is None:
                 continue
 
-            # Each valid destino → Nascente with origem=40 (D-06 firewall)
+            # Each valid destino → Nascente with origem=40 (D-06 firewall).
+            # pfr #2A: per-item SAVEPOINT so a single store_raw failure doesn't
+            # discard other valid sub-destinos from the same município LLM result.
             for destino in result.destinos:
                 slug = (
                     destino.nome.lower()
@@ -228,11 +230,23 @@ class DesmembramentoAgent:
                     },
                 }
 
-                store_raw(
-                    session=self._session,
-                    source="desm",
-                    source_ref=source_ref,
-                    entity_type="destination",
-                    uf=uf,
-                    payload=payload,
-                )
+                sp = self._session.begin_nested()
+                try:
+                    store_raw(
+                        session=self._session,
+                        source="desm",
+                        source_ref=source_ref,
+                        entity_type="destination",
+                        uf=uf,
+                        payload=payload,
+                    )
+                    sp.commit()
+                except Exception as exc:
+                    sp.rollback()
+                    quarantine_poison(
+                        session=self._session,
+                        nascente_id=None,
+                        task_name="brave.desmembramento",
+                        error=str(exc),
+                        payload={"source_ref": source_ref},
+                    )

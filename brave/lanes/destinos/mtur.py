@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
 from brave.core.nascente.service import store_raw
+from brave.core.quarantine import quarantine_poison
 from brave.core.rio.routing import process_nascente_record
 
 if TYPE_CHECKING:
@@ -86,6 +87,11 @@ class MturSeedIngest:
     For each municipality returned by the Mtur client, writes a NascenteRecord
     via store_raw and immediately runs the Rio pipeline via process_nascente_record.
 
+    Per-record SAVEPOINT isolation (pfr #2A): each municipality is wrapped in a
+    session.begin_nested() savepoint. On exception the savepoint is rolled back
+    and the record is quarantined — the outer transaction retains all good records
+    and quarantine rows so a single bad record never discards a whole UF sweep.
+
     Args:
         mtur_client: MturClientProtocol implementation (real or fake).
         session:     SQLAlchemy synchronous Session.
@@ -119,6 +125,10 @@ class MturSeedIngest:
 
         Idempotent: store_raw deduplicates by (source, source_ref, content_hash).
         Re-running produce() for the same UF with the same data is a no-op.
+
+        Per-record SAVEPOINT isolation (pfr #2A): each record is wrapped in a
+        savepoint so a single failure quarantines only that record without
+        discarding the 168+ good records already written in the same UF sweep.
 
         Args:
             uf: Two-letter Brazilian state code (e.g. "BA", "RJ", "SP").
@@ -156,20 +166,37 @@ class MturSeedIngest:
                 },
             }
 
-            nascente = store_raw(
-                session=self._session,
-                source="mtur",
-                source_ref=source_ref,
-                entity_type="destination",
-                uf=uf,
-                payload=payload,
-            )
-
-            if run_rio:
-                process_nascente_record(
+            # pfr #2A: per-record SAVEPOINT so a single bad record does not discard
+            # the entire UF sweep. sp.rollback() releases only the nested savepoint;
+            # the outer transaction remains valid and accumulates good records.
+            # quarantine_poison is called AFTER sp.rollback() — it writes to the
+            # outer transaction which is still open and will be committed by sweep_uf.
+            sp = self._session.begin_nested()
+            try:
+                nascente = store_raw(
                     session=self._session,
-                    nascente=nascente,
-                    config=self._config,
+                    source="mtur",
+                    source_ref=source_ref,
+                    entity_type="destination",
+                    uf=uf,
+                    payload=payload,
+                )
+
+                if run_rio:
+                    process_nascente_record(
+                        session=self._session,
+                        nascente=nascente,
+                        config=self._config,
+                    )
+                sp.commit()
+            except Exception as exc:
+                sp.rollback()
+                quarantine_poison(
+                    session=self._session,
+                    nascente_id=None,
+                    task_name="brave.sweep_uf",
+                    error=str(exc),
+                    payload={"source_ref": source_ref, "uf": uf},
                 )
 
 
