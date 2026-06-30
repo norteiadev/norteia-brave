@@ -130,7 +130,30 @@ This milestone delivers the **entity-agnostic Brave core** plus its **first two 
 <!-- GSD:conventions-start source:CONVENTIONS.md -->
 ## Conventions
 
-Conventions not yet established. Will populate as patterns emerge during development.
+### Celery — Single-Queue Model (established 260630-mb4)
+
+All Celery tasks (beat-dispatched and `.delay()`-dispatched) land on the **default `celery`
+queue**. There are no task_routes, no custom Queue() objects, and no -Q flag on the worker.
+
+`task_default_queue = "celery"` is set explicitly in `brave/tasks/celery_app.py` for
+documentation and drift prevention. Beat schedule entries must NOT carry `options.queue`.
+
+**Worker start (local / ops):**
+```
+celery -A brave.tasks.celery_app:app worker --loglevel=info
+```
+
+**Beat start (local / ops):**
+```
+celery -A brave.tasks.beat_schedule beat --loglevel=info
+```
+Note: beat must target `brave.tasks.beat_schedule` (not `celery_app`) so importing it executes
+the BRAVE_BEAT_SCHEDULE builder and registers entries into the RedBeatScheduler. If beat is
+already running when this configuration deploys, restart the beat service — redbeat persists
+the schedule (including options) in Redis and only resyncs entry definitions on process restart.
+
+**Dedicated lanes deferred:** task_routes + separate worker pools are deferred until
+head-of-line-blocking is observed (long sweeps starving outreach/push under a single worker pool).
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->

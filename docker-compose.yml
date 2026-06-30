@@ -27,6 +27,44 @@ services:
       timeout: 3s
       retries: 10
 
+  worker:
+    # TODO: add `build: .` once a Dockerfile is present in the project root.
+    # Until then, run the worker locally with:
+    #   .venv/bin/celery -A brave.tasks.celery_app:app worker --loglevel=info
+    image: python:3.12-slim
+    command: celery -A brave.tasks.celery_app:app worker --loglevel=info
+    # No -Q flag: worker consumes the default 'celery' queue (single-queue model).
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      BRAVE_DB_URL: ${BRAVE_DB_URL:-postgresql+psycopg://brave:brave@postgres:5432/norteia_brave}
+      BRAVE_DB_REDIS_URL: ${BRAVE_DB_REDIS_URL:-redis://redis:6379/0}
+      RUN_REAL_EXTERNALS: "0"
+      # BRAVE_USE_FAKEREDIS is intentionally NOT set — worker reaches real Redis via the
+      # 'redis' service hostname.
+
+  beat:
+    # Only one beat instance should run — redbeat enforces this via Redis lock.
+    # TODO: add `build: .` once a Dockerfile is present in the project root.
+    # Until then, run beat locally with:
+    #   .venv/bin/celery -A brave.tasks.beat_schedule beat --loglevel=info
+    image: python:3.12-slim
+    command: celery -A brave.tasks.beat_schedule beat --loglevel=info
+    # Module target is beat_schedule (not celery_app): importing it executes the
+    # BRAVE_BEAT_SCHEDULE builder and registers entries into the RedBeatScheduler.
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      BRAVE_DB_REDIS_URL: ${BRAVE_DB_REDIS_URL:-redis://redis:6379/0}
+      # BRAVE_USE_FAKEREDIS is intentionally NOT set — beat reaches real Redis via the
+      # 'redis' service hostname.
+
 volumes:
   postgres-data:
   redis-data:

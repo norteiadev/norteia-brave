@@ -4,14 +4,14 @@ milestone: v1.0
 milestone_name: milestone
 status: verifying
 stopped_at: Completed 17.1-07-PLAN.md (Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher — all 6 views reachable; Painel Brave shell finished). Phase 17.1 all 7 plans complete.
-last_updated: "2026-06-28T14:30:46.695Z"
-last_activity: 2026-06-30 - Completed quick task 260630-ks0: frontend sync indicator + logs sidebar (live-validated on a real UF=PR sweep)
+last_updated: "2026-06-30T19:28:51.529Z"
+last_activity: 2026-06-30
 progress:
   total_phases: 8
-  completed_phases: 7
+  completed_phases: 8
   total_plans: 38
-  completed_plans: 35
-  percent: 92
+  completed_plans: 38
+  percent: 100
 ---
 
 # Project State
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 Phase: 17.1 (Painel Brave — remaining pages + real backend (slice 2)) — EXECUTING
 Plan: 7 of 7 COMPLETE (17.1-01/03 wave-1 + 17.1-02 backend + 17.1-04 Duplicados + 17.1-06 board 6-col + 17.1-05 Varreduras + 17.1-07 shell integration — all 7 plans done)
-Status: Phase complete — ready to verify/close
-Last activity: 2026-06-29 - Completed quick task 260629-qny: Painel motor start source fix (origem reaches engine/start)
+Status: Phase complete — ready for verification
+Last activity: 2026-06-30
 
 Progress: [█████████░] 92%
 
@@ -202,6 +202,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-28
+Last session: 2026-06-30T19:28:51.518Z
 Stopped at: Completed 17.1-07-PLAN.md (Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher — all 6 views reachable; Painel Brave shell finished). Phase 17.1 all 7 plans complete.
 Resume file: None

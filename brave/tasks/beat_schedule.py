@@ -37,6 +37,9 @@ UF_LIST = [
 # Phase 1: Stub — actual sweep tasks defined in Phase 2
 # ---------------------------------------------------------------------------
 
+# Single-queue model: all tasks (beat and .delay) land on the default 'celery' queue.
+# Dedicated lane routing (task_routes + worker pools) is deferred until HOL-blocking is observed.
+
 # Define the schedule structure for Phase 1
 # Real UF sweep tasks arrive with the Destinos lane in Phase 2
 BRAVE_BEAT_SCHEDULE: dict = {}
@@ -47,7 +50,6 @@ for _uf in UF_LIST:
         "schedule": crontab(hour=2, minute=0),  # 2 AM UTC daily
         "args": (_uf,),
         "kwargs": {},
-        "options": {"queue": "brave.sweep"},
     }
 
 # ---------------------------------------------------------------------------
@@ -61,7 +63,6 @@ for _uf in UF_LIST:
         "schedule": crontab(hour=3, minute=0),  # 3 AM UTC daily — 1h after sweep_uf
         "args": (_uf,),
         "kwargs": {},
-        "options": {"queue": "brave.sweep"},
     }
 
 # Apply to app config
@@ -78,6 +79,5 @@ _ta_beat_interval = _TripAdvisorConfig().keepalive_interval_seconds
 BRAVE_BEAT_SCHEDULE["ta-keepalive"] = {
     "task": "brave.ta_keepalive",
     "schedule": timedelta(seconds=_ta_beat_interval),
-    "options": {"queue": "brave.sweep"},
 }
 app.conf.beat_schedule = BRAVE_BEAT_SCHEDULE  # re-apply after adding keepalive entry
