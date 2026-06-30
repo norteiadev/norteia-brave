@@ -342,6 +342,21 @@ class TripAdvisorClientProtocol(Protocol):
         """
         ...
 
+    async def fetch_attraction_geo(self, location_id: int) -> dict | None:
+        """Fetch parent municipality geo data for one attraction (qid d3d4987463b78a39).
+
+        Returns a normalized dict {location_id:int, city_name:str, state_name:str,
+        city_geo_id:int, state_geo_id:int} or None when response is empty, malformed,
+        or countryId != 294280 (non-Brazil).
+
+        ToS/LGPD: aggregate geo only (cityName/stateName/geoIds), no PII.
+
+        Raises:
+            SessionMissingError: When no session is in Redis.
+            SessionExpiredError: On 403 or 429 HTTP status.
+        """
+        ...
+
 
 class GeocoderClientProtocol(Protocol):
     """OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14).

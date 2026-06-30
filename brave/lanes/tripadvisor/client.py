@@ -561,13 +561,14 @@ class TripAdvisorClient:
     async def fetch_attraction_detail(self, location_id: int) -> dict | None:
         """Fetch the TA detail record for a single attraction (qid 444040f131735091).
 
+        NOTE (TA-ftx): No longer called by TripAdvisorAtrativosIngest._ingest_one —
+        replaced by fetch_attraction_geo (qid d3d4987463b78a39) which returns
+        cityName/stateName directly without a parents[] hop. Method kept; existing
+        TestFetchAttractionDetail tests remain valid and must not be removed.
+
         Returns the first location dict from the response (contains parents[] geo
         hierarchy). Returns None on empty response or any parsing error.
         Never raises on data shape issues — returns None instead.
-
-        Used by TripAdvisorAtrativosIngest._ingest_one as a tertiary ibge fallback:
-        when name-match and geocoder both miss, parents[0].localizedName gives the
-        parent city name which can be fuzzy-matched against IBGE.
 
         Args:
             location_id: TripAdvisor integer locationId of the attraction.
@@ -610,6 +611,79 @@ class TripAdvisorClient:
             if not locations:
                 return None
             return locations[0]
+        except (IndexError, KeyError, TypeError, ValueError):
+            return None
+
+    async def fetch_attraction_geo(self, location_id: int) -> dict | None:
+        """Fetch parent município geo data for one attraction (qid d3d4987463b78a39).
+
+        Single GraphQL request — no HTML surface, no parents hop. Returns a
+        normalized dict {location_id, city_name, state_name, city_geo_id,
+        state_geo_id} from data.gtmData.locationData. Returns None on empty
+        response or any parsing error.
+
+        ToS/LGPD: aggregate geo only (cityName/stateName/geoIds); no PII.
+        Validated: 5 attractions / 2 cities (SPIKE-2 2026-06-30).
+
+        Args:
+            location_id: TripAdvisor integer locationId of the attraction.
+
+        Raises:
+            SessionMissingError: When no session is in Redis.
+            SessionExpiredError: On 403 or 429 HTTP status.
+        """
+        from brave.lanes.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
+
+        session = self._get_session()
+        cookies = session.get("cookies", {})
+        user_agent = session.get("user_agent", "")
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if user_agent:
+            headers["User-Agent"] = user_agent
+        proxy = self._config.proxy_url or None
+        payload = [
+            {
+                "variables": {
+                    "locationId": location_id,
+                    "eventType": "PAGEVIEW",
+                    "isGeoPage": True,
+                },
+                "extensions": {"preRegisteredQueryId": "d3d4987463b78a39"},
+            }
+        ]
+        async with httpx.AsyncClient(cookies=cookies, follow_redirects=True, proxy=proxy) as hc:
+            resp = await hc.post(_TA_GRAPHQL_URL, json=payload, headers=headers)
+        if resp.status_code in (403, 429):
+            raise SessionExpiredError(
+                f"TripAdvisor geo returned {resp.status_code} — session expired."
+            )
+        resp.raise_for_status()
+        rotated = dict(resp.cookies)
+        if rotated:
+            try:
+                persist_rotated_cookies(self._redis, rotated, self._config)
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            data = resp.json()
+            loc_data = data[0]["data"]["gtmData"]["locationData"]
+            # Non-Brazil guard: filter out any non-Brazilian attraction
+            if loc_data.get("countryId") != 294280:
+                return None
+            # city_geo_id: last non-empty element in locationHierarchy path
+            hierarchy = loc_data.get("locationHierarchy", "")
+            parts = [p for p in hierarchy.split(":") if p]
+            try:
+                city_geo_id = int(parts[-1]) if parts else 0
+            except (ValueError, IndexError):
+                city_geo_id = 0
+            return {
+                "location_id": location_id,
+                "city_name": loc_data["cityName"],
+                "state_name": loc_data["stateName"],
+                "city_geo_id": city_geo_id,
+                "state_geo_id": int(loc_data["stateId"]),
+            }
         except (IndexError, KeyError, TypeError, ValueError):
             return None
 
