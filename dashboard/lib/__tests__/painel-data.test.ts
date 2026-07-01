@@ -166,13 +166,15 @@ describe("toPainelCards", () => {
   });
 
   it("projects NascenteListItem[] into read-only nascente-column cards", () => {
-    const nascente = [
+    const nascente: NascenteListItem[] = [
       {
         id: "n-1",
         entity_type: "destination",
         uf: "BA",
         source: "places",
         name: "Praia do Forte",
+        municipio: "Mata de São João",
+        municipio_id: "2919926",
         ingested_at: "2026-06-28T00:00:00Z",
       },
       {
@@ -181,6 +183,8 @@ describe("toPainelCards", () => {
         uf: "RJ",
         source: "tripadvisor",
         name: "Pão de Açúcar",
+        municipio: null,
+        municipio_id: null,
         ingested_at: "2026-06-28T00:01:00Z",
       },
     ];
@@ -194,9 +198,14 @@ describe("toPainelCards", () => {
     expect(n1.source).toBe("places");
     expect(n1.score).toBeNull();
     expect(n1.routing).toBe("nascente");
+    // município carried from the item's municipio (surfaced on the card)
+    expect(n1.municipality).toBe("Mata de São João");
 
+    const n2 = cards.find((c) => c.id === "n-2")!;
     // entity_type "attraction" → atrativo
-    expect(cards.find((c) => c.id === "n-2")!.type).toBe("atrativo");
+    expect(n2.type).toBe("atrativo");
+    // no município → municipality stays null (UF-only fallback preserved)
+    expect(n2.municipality).toBeNull();
     // Exactly the 2 nascente cards land in the nascente column.
     expect(cards.filter((c) => c.column === "nascente")).toHaveLength(2);
   });

@@ -37,6 +37,32 @@ describe("RecordCard", () => {
     expect(screen.getByText("Salvador")).toBeInTheDocument();
   });
 
+  it("renders the município next to the UF chip when municipality is set", () => {
+    render(
+      <RecordCard
+        card={makeCard({ uf: "ES", municipality: "Vila Velha" })}
+        onDragStart={noop}
+        onRetry={noop}
+      />,
+    );
+    expect(screen.getByText("ES")).toBeInTheDocument();
+    expect(screen.getByText("Vila Velha")).toBeInTheDocument();
+  });
+
+  it("does NOT render a município (UF-only) when municipality is null", () => {
+    render(
+      <RecordCard
+        card={makeCard({ uf: "ES", municipality: null })}
+        onDragStart={noop}
+        onRetry={noop}
+      />,
+    );
+    // UF chip still shows; no município text leaks in
+    expect(screen.getByText("ES")).toBeInTheDocument();
+    expect(screen.queryByText("Salvador")).not.toBeInTheDocument();
+    expect(screen.queryByText("Vila Velha")).not.toBeInTheDocument();
+  });
+
   it("renders the atrativo chip from card.type", () => {
     render(
       <RecordCard
