@@ -106,7 +106,9 @@ class TestUfGeoidsSeed:
     committed seed has the exact set of 27 Brazilian state UF codes, all
     positive integer geoIds, and no value from the previously-wrong
     sequential 303509-303534 range (those were arbitrary city geoIds, not
-    state-level — confirmed by spike finding that 303509 = Teresopolis/RJ).
+    state-level — confirmed by spike finding that 303509 = Teresopolis/RJ),
+    EXCEPT the two entries the 260701-has live POC re-validated as genuine
+    STATE geoIds that happen to fall in that band (RN=303510, RS=303530).
     """
 
     _EXPECTED_UF_CODES = frozenset({
@@ -136,15 +138,24 @@ class TestUfGeoidsSeed:
             assert geo_id > 0, f"UF {uf}: geoId {geo_id} must be > 0"
 
     def test_uf_geoids_no_legacy_sequential_range(self):
-        """No value must fall in 303509-303534 (the previously wrong sequential city geoIds).
+        """No value in 303509-303534 EXCEPT the live-validated RN/RS state geoIds.
 
         Root cause (SPIKE 260629-rmz): that sequential range holds arbitrary city
         geoIds (e.g. 303509 = Teresopolis/RJ) that were used as placeholder UF-geoId
-        mappings. None of them are state-level geoIds. This test guards against
-        regression to the old placeholders.
+        mappings. This test guards against regression to those placeholders.
+
+        Exception (260701-has live POC): RN=303510 and RS=303530 are the genuine
+        STATE geoIds for those UFs — validated live via the GraphQL fetch_attraction_geo
+        path — and legitimately fall inside the band. They are whitelisted; the guard
+        still catches any OTHER value drifting into the placeholder range.
         """
+        _VALIDATED_IN_BAND = {"RN": 303510, "RS": 303530}
         data = self._load()
-        sequential_uf = {uf: v for uf, v in data.items() if 303509 <= v <= 303534}
+        sequential_uf = {
+            uf: v
+            for uf, v in data.items()
+            if 303509 <= v <= 303534 and _VALIDATED_IN_BAND.get(uf) != v
+        }
         assert not sequential_uf, (
             f"Found geoIds in the wrong sequential range 303509-303534: {sequential_uf}. "
             "Replace with correct state-level geoIds discovered via "
