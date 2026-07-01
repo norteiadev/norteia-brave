@@ -657,6 +657,28 @@ def _make_ta_response(sections: list) -> list:
     return [{"data": {"Result": [{"sections": sections}]}}]
 
 
+def _make_ta_response_with_status(
+    sections: list,
+    *,
+    success: bool,
+    message: str | None = None,
+    total_results: int = 0,
+) -> list:
+    """Build a TA envelope whose Result[0] carries a `status` block + `totalResults`.
+
+    Used to simulate the AttractionsFusion soft-failure envelope (success==false,
+    totalResults==0, sections==[]) vs. a genuinely-empty geo (success==true).
+    """
+    result0: dict = {
+        "sections": sections,
+        "status": {"success": success},
+        "totalResults": total_results,
+    }
+    if message is not None:
+        result0["status"]["message"] = message
+    return [{"data": {"Result": [result0]}}]
+
+
 def _make_session_redis(redis, session_id: str = "TASID_VALUE") -> None:
     """Seed fakeredis with a valid Phase 13 session."""
     from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
@@ -775,6 +797,126 @@ class TestTripAdvisorAttractionsFusionContract:
 
         assert result == [], f"Expected empty result, got: {result}"
         assert call_count == 1, f"Expected exactly 1 HTTP call, got {call_count}"
+
+    @pytest.mark.asyncio
+    async def test_fetch_attractions_retries_transient_soft_failure(self):
+        """First call is a transient soft-failure; second succeeds → 1 card, 2 HTTP calls."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        config.attractions_transient_retry_sleep_seconds = 0
+        config.attractions_transient_max_retries = 3
+        redis = fakeredis.FakeRedis()
+        _make_session_redis(redis)
+
+        call_count = 0
+
+        with respx.mock:
+            def handler(request):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    return httpx.Response(
+                        200,
+                        json=_make_ta_response_with_status(
+                            [],
+                            success=False,
+                            message="Transient AttractionsFusion failure",
+                            total_results=0,
+                        ),
+                    )
+                return httpx.Response(
+                    200,
+                    json=_make_ta_response(
+                        [_IGUAZU_FLEX_CARD, _AD_PLACEHOLDER, _PAGINATION_LINKS]
+                    ),
+                )
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=handler
+            )
+            result = await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
+                geo_id=294280
+            )
+
+        assert len(result) == 1, f"UF must not be dropped on transient, got: {result}"
+        assert result[0]["name"] == "Iguazu Falls"
+        assert call_count == 2, f"Expected exactly 2 HTTP calls, got {call_count}"
+
+    @pytest.mark.asyncio
+    async def test_fetch_attractions_real_empty_not_over_retried(self):
+        """status.success==true with empty sections → [] in exactly 1 HTTP call."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        config.attractions_transient_retry_sleep_seconds = 0
+        config.attractions_transient_max_retries = 3
+        redis = fakeredis.FakeRedis()
+        _make_session_redis(redis)
+
+        call_count = 0
+
+        with respx.mock:
+            def handler(request):
+                nonlocal call_count
+                call_count += 1
+                return httpx.Response(
+                    200,
+                    json=_make_ta_response_with_status([], success=True, total_results=0),
+                )
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=handler
+            )
+            result = await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
+                geo_id=294280
+            )
+
+        assert result == [], f"Real-empty geo must return [], got: {result}"
+        assert call_count == 1, f"Real-empty must not burn retries, got {call_count} calls"
+
+    @pytest.mark.asyncio
+    async def test_fetch_attractions_transient_retries_bounded(self):
+        """Every call transient → [] after exactly max_retries+1 HTTP calls."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        config.attractions_transient_retry_sleep_seconds = 0
+        config.attractions_transient_max_retries = 2
+        redis = fakeredis.FakeRedis()
+        _make_session_redis(redis)
+
+        call_count = 0
+
+        with respx.mock:
+            def handler(request):
+                nonlocal call_count
+                call_count += 1
+                return httpx.Response(
+                    200,
+                    json=_make_ta_response_with_status(
+                        [], success=False, message="still failing", total_results=0
+                    ),
+                )
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=handler
+            )
+            result = await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
+                geo_id=294280
+            )
+
+        assert result == [], f"Exhausted retries must return [], got: {result}"
+        assert call_count == 3, f"Expected max_retries+1 == 3 HTTP calls, got {call_count}"
 
     @pytest.mark.asyncio
     async def test_fetch_attractions_partial_page_stops_pagination(self):

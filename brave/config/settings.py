@@ -245,6 +245,8 @@ class TripAdvisorConfig(BaseSettings):
       BRAVE_TA_IBGE_MATCH_THRESHOLD  — rapidfuzz token_sort_ratio cutoff (default 88)
       BRAVE_TA_IBGE_MAX_DISTANCE_KM  — haversine fallback radius in km (default 15.0)
       BRAVE_TA_PAGE_THROTTLE_SECONDS — sleep between sequential -oa{N}- page GETs (default 2.0)
+      BRAVE_TA_ATTRACTIONS_TRANSIENT_MAX_RETRIES — bounded retries on AttractionsFusion soft-failure (default 3)
+      BRAVE_TA_ATTRACTIONS_TRANSIENT_RETRY_SLEEP_SECONDS — sleep between transient retries (default 1.0)
     """
 
     proxy_url: str = Field(
@@ -300,6 +302,26 @@ class TripAdvisorConfig(BaseSettings):
         ),
     )
     # CR-02: NO Field(alias=...) — resolves ONLY from BRAVE_TA_KEEPALIVE_INTERVAL_SECONDS.
+    attractions_transient_max_retries: int = Field(
+        default=3,
+        description=(
+            "Bounded retry count for AttractionsFusion soft-failures "
+            "(BRAVE_TA_ATTRACTIONS_TRANSIENT_MAX_RETRIES). AttractionsFusion "
+            "intermittently returns HTTP 200 with Result[0].status.success==false "
+            "for a VALID geoId; retrying the identical request succeeds. This bounds "
+            "the retries so a persistently-failing geo returns [] after max_retries+1 "
+            "calls (T-has-01) — no unbounded loop. Set 0 to disable retries."
+        ),
+    )
+    attractions_transient_retry_sleep_seconds: float = Field(
+        default=1.0,
+        description=(
+            "Seconds to sleep between AttractionsFusion transient retries "
+            "(BRAVE_TA_ATTRACTIONS_TRANSIENT_RETRY_SLEEP_SECONDS). Set 0 in tests to "
+            "keep the offline suite fast."
+        ),
+    )
+    # CR-02: NO Field(alias=...) — both resolve ONLY from their exact BRAVE_TA_ names.
 
     model_config = SettingsConfigDict(env_prefix="BRAVE_TA_")
     # CR-02: NO Field(alias=...) anywhere in this class.
