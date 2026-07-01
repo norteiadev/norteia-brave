@@ -481,82 +481,114 @@ class TripAdvisorClient:
                 "duplicate cards. Multi-page pagination is a follow-up (PAGINATION GAP)."
             )
 
-        pageview_uid = str(uuid.uuid4())
-        payload = [
-            {
-                "variables": {
-                    "request": {
+        def _build_payload() -> list:
+            pageview_uid = str(uuid.uuid4())
+            return [
+                {
+                    "variables": {
+                        "request": {
+                            "tracking": {
+                                "screenName": "AttractionsFusion",
+                                "pageviewUid": pageview_uid,
+                            },
+                            "routeParameters": {
+                                "geoId": geo_id,
+                                "contentType": "attraction",
+                                "webVariant": "AttractionsFusion",
+                                "filters": [{"id": "allAttractions", "value": ["true"]}],
+                            },
+                            "updateToken": None,
+                        },
+                        "commerce": {
+                            "attractionCommerce": {
+                                "pax": [{"ageBand": "ADULT", "count": 2}]
+                            }
+                        },
                         "tracking": {
                             "screenName": "AttractionsFusion",
                             "pageviewUid": pageview_uid,
                         },
-                        "routeParameters": {
-                            "geoId": geo_id,
-                            "contentType": "attraction",
-                            "webVariant": "AttractionsFusion",
-                            "filters": [{"id": "allAttractions", "value": ["true"]}],
-                        },
-                        "updateToken": None,
+                        "sessionId": session_id,
+                        "unitLength": "MILES",
+                        "currency": "USD",
+                        "currentGeoPoint": None,
+                        "mapSurface": False,
+                        "debug": False,
+                        "polling": False,
                     },
-                    "commerce": {
-                        "attractionCommerce": {
-                            "pax": [{"ageBand": "ADULT", "count": 2}]
-                        }
-                    },
-                    "tracking": {
-                        "screenName": "AttractionsFusion",
-                        "pageviewUid": pageview_uid,
-                    },
-                    "sessionId": session_id,
-                    "unitLength": "MILES",
-                    "currency": "USD",
-                    "currentGeoPoint": None,
-                    "mapSurface": False,
-                    "debug": False,
-                    "polling": False,
-                },
-                "extensions": {"preRegisteredQueryId": _LISTING_QID},
-            }
-        ]
-        async with httpx.AsyncClient(
-            cookies=cookies, follow_redirects=True, proxy=proxy
-        ) as hc:
-            resp = await hc.post(
-                _TA_GRAPHQL_URL,
-                json=payload,
-                headers=headers,
-            )
+                    "extensions": {"preRegisteredQueryId": _LISTING_QID},
+                }
+            ]
 
-        if resp.status_code in (403, 429):
-            raise SessionExpiredError(
-                f"TripAdvisor GraphQL returned {resp.status_code} — "
-                "DataDome session expired or queryId rotated. Re-inject required."
-            )
+        # TRANSIENT-RETRY (260701-has): AttractionsFusion intermittently returns
+        # HTTP 200 with Result[0].status.success == false, totalResults == 0 and
+        # sections == [] for a VALID geoId; retrying the identical request succeeds.
+        # A single wrong drop previously silenced an entire UF. Retries are bounded
+        # by attractions_transient_max_retries (T-has-01) — a persistently-failing
+        # geo returns [] after max_retries+1 calls, never an unbounded loop.
+        # CRITICAL: status ABSENT (or success true) is NOT transient — it must fall
+        # straight through to real-empty so a genuinely-empty geo returns [] in ONE
+        # call (existing empty-sections contract).
+        max_retries = self._config.attractions_transient_max_retries
+        for attempt in range(max_retries + 1):
+            payload = _build_payload()  # regenerate pageview_uid per attempt
+            async with httpx.AsyncClient(
+                cookies=cookies, follow_redirects=True, proxy=proxy
+            ) as hc:
+                resp = await hc.post(
+                    _TA_GRAPHQL_URL,
+                    json=payload,
+                    headers=headers,
+                )
 
-        resp.raise_for_status()
-        # Write-back: merge rotated cookies into Redis session (260629-p2v).
-        # Single POST — no local cookies var to update for next iteration.
-        rotated = dict(resp.cookies)
-        if rotated:
+            if resp.status_code in (403, 429):
+                raise SessionExpiredError(
+                    f"TripAdvisor GraphQL returned {resp.status_code} — "
+                    "DataDome session expired or queryId rotated. Re-inject required."
+                )
+
+            resp.raise_for_status()
+            # Write-back: merge rotated cookies into Redis session (260629-p2v).
+            rotated = dict(resp.cookies)
+            if rotated:
+                try:
+                    persist_rotated_cookies(self._redis, rotated, self._config)
+                except Exception:  # noqa: BLE001
+                    pass  # best-effort guard
+            data = resp.json()
+
+            # Safe extraction of Result[0] from the real response path.
+            result0: dict = {}
             try:
-                persist_rotated_cookies(self._redis, rotated, self._config)
-            except Exception:  # noqa: BLE001
-                pass  # best-effort guard
-        data = resp.json()
+                result0 = data[0]["data"]["Result"][0]
+            except (IndexError, KeyError, TypeError):
+                result0 = {}
 
-        # Safe extraction of sections list from the real response path
-        sections: list = []
-        try:
-            sections = data[0]["data"]["Result"][0]["sections"]
-        except (IndexError, KeyError, TypeError):
-            sections = []
+            # Transient ONLY when status is a dict with success is False. Status
+            # absent / None / success true → real result (fall through below).
+            status = result0.get("status") if isinstance(result0, dict) else None
+            if (
+                isinstance(status, dict)
+                and status.get("success") is False
+                and attempt < max_retries
+            ):
+                await asyncio.sleep(
+                    self._config.attractions_transient_retry_sleep_seconds
+                )
+                continue
 
-        if not sections:
-            return []  # Empty sections → no attractions for this geo
+            # Real result (or retries exhausted): extract sections.
+            sections = (
+                result0.get("sections") if isinstance(result0, dict) else None
+            ) or []
+            if not sections:
+                return []  # Real-empty geo or exhausted transient → no attractions.
 
-        # Single page only — no partial-page break (the meaningless `< 30` guard is
-        # removed: there is no second page to gate, so card count never terminates a loop).
-        return self._parse_attractions_page(sections)
+            # Single page only — no partial-page break (there is no second page to
+            # gate, so card count never terminates a loop).
+            return self._parse_attractions_page(sections)
+
+        return []  # Unreachable safety net (loop always returns).
 
     async def fetch_attraction_detail(self, location_id: int) -> dict | None:
         """Fetch the TA detail record for a single attraction (qid 444040f131735091).
