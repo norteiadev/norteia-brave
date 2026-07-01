@@ -22,6 +22,8 @@ export interface NascenteListItem {
   uf: string | null;
   source: string | null;
   name: string | null;
+  municipio: string | null;
+  municipio_id: string | null;
   ingested_at: string | null;
 }
 
