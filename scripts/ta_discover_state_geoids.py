@@ -10,7 +10,9 @@ Usage:
 
 What it does:
   For each of the 27 Brazilian states, this script:
-  1. Searches the TypeAhead endpoint for the state geoId (no auth required).
+  1. Searches the TypeAhead endpoint for the state geoId. NOTE: TypeAhead is
+     NOT "no auth" — it is DataDome rate-limited (see Discovery reality below);
+     it works only with the operator cookie jar and only slowly.
   2. Validates the discovered geoId by doing a redirect check:
      GET https://www.tripadvisor.com/Attractions-g{geo_id}-Activities-
          a_allAttractions.true-oa0-Brazil.html
@@ -27,12 +29,20 @@ Security note (T-rmz-01): All geoIds in the output should be validated
 before committing. The redirect check ensures each geoId maps to the
 expected state and not a city or other geo entity.
 
-Discovery method (typeahead, no session required):
-  The TypeAhead endpoint at
-    https://www.tripadvisor.com/TypeAheadJson?action=API&...
-  accepts a plain GET with a state name query. It returns GEO entities
-  including Brazilian states. We pick the first result whose "type" is
-  "GEO" and name contains the state name.
+Discovery reality (live-validated 260701-has — corrects earlier false claims):
+  - TypeAheadJson is NOT open/unauthenticated. It is DataDome rate-limited:
+    after ~5-6 rapid hits it soft-blocks and returns an HTTP 403 whose body is
+    a JSON object of the shape {"url": "...captcha-delivery..."} (a DataDome
+    challenge redirect), not the GEO results. It works with the operator cookie
+    jar but only slowly (space the requests out).
+  - The state geoId is NOT exposed in a dedicated "locationId"/"geoId" field.
+    It is embedded in the result's "url" field — e.g. a Parana result carries
+    a url containing "-g303435-", so the geoId is 303435. Parse it out of url.
+  - The DURABLE discovery/validation path is the GraphQL endpoint, NOT
+    TypeAhead: canonicalize the query (qid a26bffd43d0e25b6) and then
+    fetch_attraction_geo (qid d3d4987463b78a39) to confirm the state geoId
+    resolves to the expected stateName. Prefer GraphQL; treat TypeAhead as a
+    rate-limited best-effort seed only.
 """
 
 import json
