@@ -157,7 +157,7 @@ export function toPainelCards(
     type: n.entity_type === "attraction" ? ("atrativo" as const) : ("destino" as const),
     name: n.name,
     uf: n.uf,
-    municipality: null,
+    municipality: n.municipio,
     routing: "nascente",
     column: "nascente" as const,
     score: null,

@@ -40,6 +40,34 @@ _ATRATIVO_SUB_STATES = [
 ]
 
 
+def _project_nascente_item(rec) -> dict:
+    """Project a NascenteRecord into the LGPD field allow-list (board card).
+
+    Pure + DB-free (unit-testable offline). The raw ``payload`` is NEVER returned
+    wholesale — only the explicitly-approved fields below are read.
+
+    LGPD allow-list — APPROVED fields:
+      id, entity_type, uf, source, name, ingested_at, municipio, municipio_id.
+    ``municipio`` (nome, e.g. "Vila Velha") and ``municipio_id`` (IBGE code) are
+    PUBLIC-GEO — NOT PII, same class as name/uf (público, geo-territorial). They
+    are resolved at ingest and live at ``payload.canonical.municipio`` /
+    ``payload.municipio_id``. Both are null-safe: a missing/None payload,
+    canonical, or field yields None (never raises).
+    """
+    payload = rec.payload or {}
+    canonical = payload.get("canonical") or {}
+    return {
+        "id": str(rec.id),
+        "entity_type": rec.entity_type,
+        "uf": rec.uf,
+        "source": rec.source,
+        "name": payload.get("name") or rec.source_ref,
+        "ingested_at": rec.ingested_at.isoformat() if rec.ingested_at else None,
+        "municipio": canonical.get("municipio"),
+        "municipio_id": payload.get("municipio_id"),
+    }
+
+
 def _pipeline_counts(db: Session) -> dict:
     """Per-layer counts for the engine progress feedback (mirrors /metrics)."""
     nascente = db.scalar(select(func.count(NascenteRecord.id))) or 0
@@ -95,9 +123,12 @@ def list_nascente(
     reflects live ingest without duplicate version churn — matching the way the
     Mar count already excludes superseded rows.
 
-    LGPD: an explicit allow-list of fields only. The raw `payload` is never
-    returned wholesale; only `payload.name` (the public place name) is read.
-    Returns paginated {items, total, offset, limit}.
+    LGPD: an explicit allow-list of fields only (see `_project_nascente_item`).
+    The raw `payload` is never returned wholesale; only `payload.name` (public
+    place name) plus `payload.canonical.municipio` (município nome) and
+    `payload.municipio_id` (IBGE code) are read. municipio + municipio_id are
+    APPROVED PUBLIC-GEO fields — NOT PII, same class as name/uf (público,
+    geo-territorial). Returns paginated {items, total, offset, limit}.
     """
     stmt = select(NascenteRecord).where(NascenteRecord.superseded_by_id.is_(None))
     if uf:
@@ -110,17 +141,7 @@ def list_nascente(
         stmt.order_by(NascenteRecord.ingested_at.desc()).offset(offset).limit(limit)
     ).all()
 
-    items = [
-        {
-            "id": str(rec.id),
-            "entity_type": rec.entity_type,
-            "uf": rec.uf,
-            "source": rec.source,
-            "name": (rec.payload or {}).get("name") or rec.source_ref,
-            "ingested_at": rec.ingested_at.isoformat() if rec.ingested_at else None,
-        }
-        for rec in rows
-    ]
+    items = [_project_nascente_item(rec) for rec in rows]
 
     return {"items": items, "total": total, "offset": offset, "limit": limit}
 
