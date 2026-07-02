@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cd /Users/leandro/Projects/norteia/norteia-brave\\nset -a; . ./.env 2>/dev/null; set +a; unset BRAVE_USE_FAKEREDIS\\necho \\\"PR geoid no arquivo: $(python3 -c \\\"import json;print(json.load(op...",
+  "error": "Exit code 1\nPR geoid no arquivo: 303435\n<string>:5: DeprecationWarning: Call to deprecated setex. (Use 'set' instead.) -- Deprecated since version 2.6.12.\n{\"status\":\"started\",\"ufs_total\":1,\"lane\":\"both\",\"depth\":\"nascente\",\"source\":\"tripadvisor\"} http=202\nTraceback (most recent call last):\n  File \"<string>\", line 5, in <module>\n  File \"/Users/leandro/Projects/norteia/norteia-brave/.venv/lib/python3.12/site-packages/psycopg/connection.py\", line 300, in execute\n    raise ex.with_traceback(None)\npsy...",
+  "timestamp": "2026-07-01T13:52:43.300Z",
+  "retry_count": 1
+}

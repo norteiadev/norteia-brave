@@ -1,0 +1,7 @@
+{
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/private/tmp/claude-501/-Users-leandro-Projects-norteia-norteia-brave/78d2cb34-2a56-44f8-810b-29610d4291c4/tasks/ruvn5oaa8.output\"}",
+  "error": "File content (772.4KB) exceeds maximum allowed size (256KB). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
+  "timestamp": "2026-07-02T01:02:32.376Z",
+  "retry_count": 1
+}
