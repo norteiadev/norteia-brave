@@ -33,13 +33,13 @@ A promoção coleta automaticamente os atrativos turisticos do status nascente e
 A promoção utiliza um sistema de busca por availiações do atrativo turistico com base da fonte de dados externa:
 - mTur (Ministério do Turismo)
   - Pesquisa pelo atrativo turistico no Google atraves da API Google Places
-    - Coleta todas as informações possíveis sobre o atrativo turistico como: horario de funcionamento, preço, formas de contato (email, telefone, site, instagram), etc e adiciona ao atrativo turistico.
+    - Coleta todas as informações possíveis sobre o atrativo turistico como: horario de funcionamento, preço, formas de contato (email, CELULAR + DDD (Possivel numero de whatsapp), site, instagram), etc e adiciona ao atrativo turistico.
     - Complementa as informações faltantes fazendo uma busca pelo atrativo em sites conhecidos sobre turismo no Brasil utilizando LLMs (configuravel no painel)
     - Pesquisa pelas ultimas avaliações do atrativo turistico e com base nas datas classifica se o atrativo esta aberto e funcionando.
       - IMPORTANTE: Caso não haja availiações ou as ultimas avaliações tenham mais de 3 meses enviar o atrativo para DLQ para revisão manual.
 - TripAdvisor
   - Pesquisa pelo atrativo turistico no TripAdvisor
-    - Coleta todas as informações possíveis sobre o atrativo turistico como: horario de funcionamento, preço, formas de contato (email, telefone, site, instagram), etc e adiciona ao atrativo turistico.
+    - Coleta todas as informações possíveis sobre o atrativo turistico como: horario de funcionamento, preço, formas de contato (email, CELULAR + DDD (Possivel numero de whatsapp), site, instagram), etc e adiciona ao atrativo turistico.
       - IMPORTANTE: Os dados do atrativo requeridos pela API da Norteia que não estivem disponiveis no TripAdvisor serão complementados com uma busca pelo atrativo em sites conhecidos sobre turismo no Brasil utilizando LLMs (configuravel no painel)
     - Pesquisa pelas ultimas avaliações do atrativo turistico e com base nas datas classifica se o atrativo esta aberto e funcionando.
       - IMPORTANTE: Caso não haja avaliações ou as ultimas avaliações tenham mais de 3 meses enviar o atrativo para DLQ para revisão manual.
@@ -95,3 +95,11 @@ A promoção utiliza um sistema de busca por availiações do atrativo turistico
 - O sistema Brave deve ter camada de dtos.
 - O sistema Brave deve ter camada de exceptions.
 - O sistema Brave deve ter camada de tests.
+
+### Whatsapp
+Manter o whatsapp. Ele funcionará da seguinte forma:
+- Atrativos em DLQ podem ser selecionados (multiplos) e movidos para uma coluna Whatsapp no Kanban
+  - Regras:
+    - Atrativos sem informações de horario de funcionamento e preço PODEM ser movidos para coluna Whatsapp no Kanban.
+    - Atrativos movidos para coluna Whatsapp devem ser processados novamente pelo modelo LLM para coleta de whatsappCASO NÃO HAJA celular + DDD cadastrado previamente
+- Atrativos movidos para Whatsapp com celular + ddd no cadastro iniciam o processo de conversa para coleta das informações
