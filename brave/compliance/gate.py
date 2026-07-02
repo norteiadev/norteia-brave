@@ -38,19 +38,13 @@ if TYPE_CHECKING:
 
 from brave.compliance.consent_log import is_opted_out
 from brave.compliance.quality_rating import is_quality_red
+from brave.shared.exceptions import ComplianceError
 
 logger = structlog.get_logger(__name__)
 
-
-class ComplianceError(Exception):
-    """Raised when any D-11 compliance gate condition fails.
-
-    Always blocks the send — never advisory. The Celery task or endpoint that
-    calls send_path_gate must catch ComplianceError and abort the send operation.
-    Do NOT catch ComplianceError and proceed anyway — that defeats the gate.
-
-    The error message always identifies which condition failed (for audit/debugging).
-    """
+# ComplianceError is defined in the central hierarchy (brave/shared/exceptions.py)
+# and imported above. Re-exported here (it is raised throughout this module) so
+# existing importers keep working unchanged.
 
 
 def _next_utc_midnight() -> datetime:

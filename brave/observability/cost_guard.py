@@ -21,14 +21,11 @@ from datetime import date
 from redis import Redis
 
 from brave.config.settings import LLMConfig
+from brave.shared.exceptions import CostGuardError
 
-
-class CostGuardError(Exception):
-    """Raised by pre_dispatch_check when daily USD budget is exceeded.
-
-    This is an operational halt, not a bug. The Celery task should catch this,
-    log appropriately (without leaking budget details), and abort the LLM call.
-    """
+# CostGuardError is defined in the central hierarchy (brave/shared/exceptions.py)
+# and imported above. Re-exported here (it is raised below) so existing importers
+# keep working unchanged.
 
 
 def _daily_key() -> str:

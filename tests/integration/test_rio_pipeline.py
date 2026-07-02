@@ -43,7 +43,7 @@ def test_process_nascente_record_creates_rio(db_session):
     assert rio is not None
     assert isinstance(rio, RioRecord)
     assert rio.nascente_id == nascente.id
-    assert rio.routing in ("mar", "dlq", "descarte")
+    assert rio.routing in ("mar", "dlq")
     assert rio.score_version == config.score_version
 
 
@@ -130,8 +130,8 @@ def test_route_by_score_dlq_routing(db_session):
 
 
 @pytest.mark.integration
-def test_route_by_score_descarte_routing(db_session):
-    """A record with low values routes to 'descarte' (≤50)."""
+def test_route_by_score_low_routing_dlq(db_session):
+    """A record with low values routes to 'dlq' (binary gate, score < 80)."""
     from brave.core.rio.routing import process_nascente_record
 
     source_ref = f"mtur:BA:{uuid.uuid4().hex[:8]}"
@@ -153,4 +153,4 @@ def test_route_by_score_descarte_routing(db_session):
 
     config = ScoreConfig()
     rio = process_nascente_record(db_session, nascente, config)
-    assert rio.routing == "descarte"
+    assert rio.routing == "dlq"

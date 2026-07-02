@@ -7,17 +7,24 @@ D-05: Hard descarte path fires FIRST, before any §7.6 scoring:
     → rio.routing = "descarte", rio.sub_state = None, rio.dlq_reason = "closed_place"
     → write audit row, flush, return (no scoring)
 
-D-05: Apify IG scraping is best-effort and non-blocking:
-  - Any ApifyClientProtocol exception → ig_data = {} (degrades signal, never fails record)
-
 Score inputs set on normalized:
   - atualidade_value: 100 if review ≤ 30 days, 50 if 1–6 months, 0 if no recent reviews
   - weekday_text: stored for completude scoring
-  - corroboracao_value: 40 if Apify returns IG data confirming activity, else 0
+  - corroboracao_value: fixed at 0.0. The social-signal (Apify IG) corroboration
+    source was retired (Phase E); no Places field feeds corroboração today, so the
+    lane writes a deterministic 0.0. This matches the prior offline (Null) behaviour
+    exactly and keeps the §7.6 score input present (no default drift in routing).
+
+No-recent-reviews rule (Phase F), attraction only, BEFORE any §7.6 scoring:
+  - NO reviews OR most-recent review older than 90 days:
+    → rio.routing = "dlq", rio.dlq_reason = "no_recent_reviews", rio.sub_state = None
+    → terminal DLQ; does NOT enter the WhatsApp gate (the gate is manual now).
+  The 90-day check uses an injectable reference clock (SignalAgent(now=...)) so it is
+  fully deterministic offline.
 
 After gathering signals, calls route_by_score to apply §7.6 and route to mar/dlq/descarte.
-If routing == "dlq" (borderline <85%), sets sub_state = "aguardando_consulta_whatsapp"
-(human WhatsApp gate, D-06).
+For a NON-stale borderline record (routing == "dlq" via score), sets
+sub_state = "aguardando_consulta_whatsapp" (human WhatsApp gate, D-06).
 
 D-18 boundary: no imports from brave.lanes.destinos or brave.tasks.
 """
@@ -38,7 +45,7 @@ from brave.lanes.atrativos.schemas import SignalResult
 from brave.observability.audit import write_audit
 
 if TYPE_CHECKING:
-    from brave.clients.base import ApifyClientProtocol, PlacesClientProtocol
+    from brave.clients.base import PlacesClientProtocol
     from brave.core.models import RioRecord
 
 logger = structlog.get_logger(__name__)
@@ -115,7 +122,7 @@ def _compute_atualidade(reviews: list[dict[str, Any]], reference_date: datetime 
 
 
 class SignalAgent:
-    """SignalAgent — gathers Places + Apify signals and triggers §7.6 scoring.
+    """SignalAgent — gathers Places signals and triggers §7.6 scoring.
 
     Advances sub_state from "contacts_found" to "signals_gathered".
     Idempotency guard: returns immediately if sub_state != "contacts_found".
@@ -123,8 +130,10 @@ class SignalAgent:
     Hard descarte check (D-05): fires BEFORE any scoring.
     business_status CLOSED_PERMANENTLY or CLOSED_TEMPORARILY → descarte + return.
 
-    Apify is best-effort (D-05): any exception → ig_data = {} (degrades corroboração
-    signal but never fails the record).
+    Corroboração (Phase E): the social-signal (Apify IG) source was retired, so
+    corroboracao_value is written as a deterministic 0.0 (no Places field feeds it
+    today). This preserves the prior offline behaviour and keeps the score input
+    present so §7.6 routing does not silently drift.
 
     After signals: calls route_by_score. If routing == "dlq" (borderline), sets
     sub_state = "aguardando_consulta_whatsapp" (human gate, D-06).
@@ -133,7 +142,6 @@ class SignalAgent:
 
     Args:
         places_client: PlacesClientProtocol implementation (real or fake).
-        apify_client:  ApifyClientProtocol implementation (real or fake).
         session:       SQLAlchemy synchronous Session.
         config:        ScoreConfig with §7.6 weights (optional; defaults to ScoreConfig()).
     """
@@ -141,14 +149,17 @@ class SignalAgent:
     def __init__(
         self,
         places_client: "PlacesClientProtocol",
-        apify_client: "ApifyClientProtocol",
         session: Session,
         config: ScoreConfig | None = None,
+        now: datetime | None = None,
     ) -> None:
         self._places_client = places_client
-        self._apify_client = apify_client
         self._session = session
         self._config = config or ScoreConfig()
+        # Injectable reference clock (Phase F). None → resolved to
+        # datetime.now(timezone.utc) at run() time. Pinning it makes the atualidade
+        # buckets AND the 90-day no-recent-reviews rule fully deterministic offline.
+        self._now = now
 
     async def run(self, rio: "RioRecord") -> None:
         """Gather signals for an atrativo and advance to signals_gathered.
@@ -158,12 +169,14 @@ class SignalAgent:
         Pipeline:
           1. Fetch place_details by place_id_cache
           2. HARD DESCARTE CHECK: CLOSED_* → descarte + return
+          2.5 NO-RECENT-REVIEWS RULE (attraction): no reviews OR newest > 90 days →
+              terminal DLQ (dlq_reason="no_recent_reviews", sub_state=None) + return.
+              Does NOT enter the WhatsApp gate.
           3. Compute atualidade_value from reviews
-          4. Best-effort Apify IG scrape (never raise)
-          5. Compute corroboracao_value from Apify data
-          6. Mutate normalized with flag_modified, advance sub_state
-          7. Call route_by_score for §7.6 scoring
-          8. If routing == "dlq" → set sub_state = "aguardando_consulta_whatsapp"
+          4. Set corroboracao_value to the deterministic 0.0 constant (Apify retired)
+          5. Mutate normalized (incl. most_recent_review_at) with flag_modified, advance sub_state
+          6. Call route_by_score for §7.6 scoring
+          7. If routing == "dlq" → set sub_state = "aguardando_consulta_whatsapp"
 
         Args:
             rio: RioRecord with sub_state="contacts_found".
@@ -206,40 +219,59 @@ class SignalAgent:
             )
             return
 
-        # Step 3: Compute atualidade_value from reviews (D-05)
+        # Reference clock (Phase F): resolve ONCE so the atualidade buckets, the
+        # 90-day no-recent-reviews rule, and reviews_recent_count all share one
+        # deterministic 'now' (injectable via SignalAgent(now=...) for offline tests).
+        ref_date = self._now or datetime.now(timezone.utc)
+
         reviews: list[dict[str, Any]] = details.get("reviews", [])
-        atualidade_value = _compute_atualidade(reviews)
+
+        # Step 2.5: NO-RECENT-REVIEWS RULE (Phase F) — attraction only, BEFORE scoring.
+        # No reviews at all, OR the most-recent review older than 90 days → terminal
+        # DLQ (dlq_reason="no_recent_reviews"). This deliberately does NOT enter the
+        # WhatsApp gate: the record lands in the plain DLQ (sub_state=None) for a
+        # manual, operator-driven move (Phase F makes the gate manual). The CLOSED
+        # hard-descarte path above still fires first; corroboração stays the Phase E
+        # 0.0 constant on the scored (non-stale) path below.
+        if rio.entity_type == "attraction" and _reviews_stale_90d(reviews, ref_date):
+            rio.routing = "dlq"
+            rio.dlq_reason = "no_recent_reviews"
+            rio.sub_state = None
+
+            write_audit(
+                session=self._session,
+                action="no_recent_reviews",
+                entity_type="attraction",
+                record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
+                before_state={"sub_state": "contacts_found"},
+                after_state={"routing": "dlq", "sub_state": None, "reason": "no_recent_reviews"},
+                actor="signal_agent",
+            )
+            self._session.flush()
+
+            logger.info(
+                "atrativo_no_recent_reviews",
+                rio_id=str(rio.id),
+                review_count=len(reviews),
+            )
+            return
+
+        # Step 3: Compute atualidade_value from reviews (D-05)
+        atualidade_value = _compute_atualidade(reviews, ref_date)
 
         # Compute reviews_recent_count (for SignalResult)
-        ref_date = datetime.now(timezone.utc)
         recent_count = sum(
             1 for r in reviews
             if _is_recent_review(r, ref_date)
         )
 
-        # Step 4: Best-effort Apify IG scrape (never raises, D-05)
-        contacts = normalized.get("contacts", {})
-        ig_handle: str = contacts.get("ig_handle", "") if isinstance(contacts, dict) else ""
+        # Step 4: Corroboração — deterministic 0.0 constant (Apify IG source retired,
+        # Phase E). No Places field feeds corroboração today; writing an explicit 0.0
+        # keeps the §7.6 score input present and matches the prior offline behaviour
+        # (routing does not silently drift on a missing key).
+        corroboracao_value = 0.0
 
-        ig_data: dict[str, Any] = {}
-        if ig_handle:
-            try:
-                ig_data = await self._apify_client.scrape_ig(ig_handle)
-            except Exception as exc:
-                # Graceful degradation — degrade corroboração, never fail record (D-05)
-                logger.warning(
-                    "apify_scrape_failed",
-                    rio_id=str(rio.id),
-                    ig_handle=ig_handle,
-                    error=str(exc),
-                )
-                ig_data = {}
-
-        # Step 5: Compute corroboracao_value from Apify data
-        # Apify confirms activity → 40; no Apify data → 0
-        corroboracao_value = _compute_corroboracao(ig_data)
-
-        # Step 6: Mutate normalized with flag_modified (T-02-06-04 lesson)
+        # Step 5: Mutate normalized with flag_modified (T-02-06-04 lesson)
         weekday_text: list[str] = details.get("weekday_text", [])
 
         signal = SignalResult(
@@ -254,8 +286,14 @@ class SignalAgent:
         new_normalized["atualidade_value"] = atualidade_value
         new_normalized["corroboracao_value"] = corroboracao_value
         new_normalized["weekday_text"] = weekday_text
-        if ig_data:
-            new_normalized["ig_data"] = ig_data
+        # Phase F: persist the most-recent review timestamp (ISO-8601, UTC) so the
+        # promote_to_mar recency BACKSTOP can re-check the 90-day rule at promotion
+        # time. Excluded from the Mar `canonical` payload in promote_to_mar so the
+        # norteia-api push shape stays byte-identical (Pact).
+        newest_dt = _newest_review_dt(reviews)
+        new_normalized["most_recent_review_at"] = (
+            newest_dt.isoformat() if newest_dt is not None else None
+        )
 
         rio.normalized = new_normalized
         flag_modified(rio, "normalized")
@@ -273,20 +311,24 @@ class SignalAgent:
         )
         self._session.flush()
 
-        # Step 7: Apply §7.6 scoring (route_by_score mutates routing in-place)
+        # Step 6: Apply §7.6 scoring (route_by_score mutates routing in-place)
         route_by_score(self._session, rio, self._config)
         self._session.flush()
 
-        # Step 8: Borderline DLQ → await human WhatsApp gate (D-06)
+        # Step 7 (Phase F, spec 2026-07-02): NÃO auto-gate. A borderline score→dlq
+        # attraction now STAYS in DLQ with sub_state=None. The operator moves it to
+        # the WhatsApp column manually via the DLQ→WhatsApp batch endpoint
+        # (POST /api/v1/dlq/whatsapp-batch), which drives the None→aguardando_consulta_whatsapp
+        # FSM edge. Auto-enrollment into aguardando_consulta_whatsapp was removed here.
         if rio.routing == "dlq":
-            rio.sub_state = "aguardando_consulta_whatsapp"
+            rio.sub_state = None
             write_audit(
                 session=self._session,
                 action="sub_state_advanced",
                 entity_type="attraction",
                 record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
                 before_state={"sub_state": "signals_gathered"},
-                after_state={"sub_state": "aguardando_consulta_whatsapp"},
+                after_state={"sub_state": None, "routing": "dlq"},
                 actor="signal_agent",
             )
             self._session.flush()
@@ -305,36 +347,50 @@ class SignalAgent:
 # ---------------------------------------------------------------------------
 
 
-def _compute_corroboracao(ig_data: dict[str, Any]) -> float:
-    """Compute corroboracao_value from Apify IG data.
+def _parse_publish_time(review: dict[str, Any]) -> datetime | None:
+    """Parse a review's publishTime into a UTC-aware datetime, or None.
 
-    A genuinely active IG presence (real followers OR a real post signal) →
-    40.0 (partial corroboration). An empty dict, or a found-but-inactive/
-    error-shaped dict (0 followers, no posts), scores 0.0.
-
-    WR-08: the previous implementation returned 40.0 for ANY non-empty dict via
-    an `or len(ig_data) > 0` catch-all, making the has_followers/has_posts checks
-    dead — an inactive or error-shaped profile still scored full corroboração.
-    It also read "post_count" while the apify client writes "posts_count", so
-    that branch never fired. Both are fixed here.
-
-    Args:
-        ig_data: Dict from ApifyClientProtocol.scrape_ig(), may be empty.
-
-    Returns:
-        Float corroboracao_value (0.0 or 40.0).
+    Reuses the codebase's deterministic parse: read publishTime/publish_time,
+    normalize a trailing 'Z' to '+00:00', datetime.fromisoformat, force UTC when
+    naive. Unparseable / missing → None.
     """
-    if not ig_data:
-        return 0.0
+    publish_time_raw = review.get("publishTime") or review.get("publish_time")
+    if not publish_time_raw or not isinstance(publish_time_raw, str):
+        return None
+    try:
+        publish_dt = datetime.fromisoformat(publish_time_raw.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if publish_dt.tzinfo is None:
+        publish_dt = publish_dt.replace(tzinfo=timezone.utc)
+    return publish_dt
 
-    # Real activity signals only — no catch-all on dict non-emptiness.
-    has_followers = int(ig_data.get("followers", 0) or 0) > 0
-    has_posts = bool(ig_data.get("last_post")) or int(ig_data.get("posts_count", 0) or 0) > 0
 
-    if has_followers or has_posts:
-        return 40.0
+def _newest_review_dt(reviews: list[dict[str, Any]]) -> datetime | None:
+    """Return the most-recent parseable review publishTime, or None."""
+    newest: datetime | None = None
+    for review in reviews:
+        publish_dt = _parse_publish_time(review)
+        if publish_dt is None:
+            continue
+        if newest is None or publish_dt > newest:
+            newest = publish_dt
+    return newest
 
-    return 0.0
+
+def _reviews_stale_90d(reviews: list[dict[str, Any]], reference_date: datetime) -> bool:
+    """True when the no-recent-reviews rule fires (Phase F).
+
+    Fires when there are NO reviews, OR none carry a parseable publishTime, OR the
+    most-recent review is older than 90 days relative to reference_date. Pure +
+    deterministic (reference_date injected) → fully offline-testable.
+    """
+    if not reviews:
+        return True
+    newest = _newest_review_dt(reviews)
+    if newest is None:
+        return True  # reviews present but no usable recency signal → treat as stale
+    return (reference_date - newest) > timedelta(days=90)
 
 
 def _is_recent_review(review: dict[str, Any], reference_date: datetime) -> bool:

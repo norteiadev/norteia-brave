@@ -4,8 +4,8 @@ These lock the cost-checkpoint contract: the operator-selected *depth* (read onc
 at the /start edge in plan 10-01 and threaded down as an explicit task arg) decides
 which producers fan out and how far the pipeline flows.
 
-  nascente          — Mtur-only seed; Nascente + §7.6 score; NO Rio, NO Desmembramento
-                      LLM, NO atrativos (Places). Zero external cost.
+  nascente          — Mtur-only seed; Nascente + §7.6 score; NO Rio,
+                      NO atrativos (Places). Zero external cost.
   nascente_rio      — producers + Rio routing, but the atrativos WhatsApp-gate FSM
                       chain is NOT kicked (neither find_contacts_task.delay nor its
                       .run inline fallback fires).
@@ -231,39 +231,26 @@ def _patched_sweep_uf():
             seed_calls["run_rio"] = run_rio
             seed_calls["uf"] = uf
 
-    desm_instantiated = {"count": 0}
-
-    class _SpyDesm:
-        def __init__(self, *_a, **_k):
-            desm_instantiated["count"] += 1
-
-        async def produce(self, uf):
-            return None
-
     with patch.object(pipeline, "_get_session", return_value=(fake_session, MagicMock())), patch(
         "brave.lanes.destinos.mtur.MturSeedIngest", _SpySeed
-    ), patch("brave.lanes.destinos.desmembramento.DesmembramentoAgent", _SpyDesm), patch(
-        "brave.clients.mtur.MturClient", MagicMock()
-    ):
-        yield seed_calls, desm_instantiated
+    ), patch("brave.clients.mtur.MturClient", MagicMock()):
+        yield seed_calls
 
 
-def test_sweep_uf_nascente_runs_mtur_only_no_rio_no_desmembramento():
-    """depth=nascente → produce(run_rio=False) and Desmembramento is NOT instantiated."""
-    with _patched_sweep_uf() as (seed_calls, desm):
+def test_sweep_uf_nascente_runs_mtur_only_no_rio():
+    """depth=nascente → Mtur seed produce(run_rio=False) (Nascente-only, no Rio)."""
+    with _patched_sweep_uf() as seed_calls:
         pipeline.sweep_uf.run("BA", depth=collection_engine.NASCENTE)
 
     assert seed_calls["run_rio"] is False
-    assert desm["count"] == 0  # LLM Desmembramento skipped entirely
 
 
-def test_sweep_uf_nascente_rio_runs_rio_and_desmembramento():
-    """depth=nascente_rio → produce(run_rio=True) and Desmembramento runs."""
-    with _patched_sweep_uf() as (seed_calls, desm):
+def test_sweep_uf_nascente_rio_runs_rio():
+    """depth=nascente_rio → Mtur seed produce(run_rio=True) (Nascente + Rio)."""
+    with _patched_sweep_uf() as seed_calls:
         pipeline.sweep_uf.run("BA", depth=collection_engine.NASCENTE_RIO)
 
     assert seed_calls["run_rio"] is True
-    assert desm["count"] == 1
 
 
 # --- discover_atrativo_task: WhatsApp-gate chain kickoff gating ------------

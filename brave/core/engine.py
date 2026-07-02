@@ -13,10 +13,15 @@ orchestrator task):
   brave:engine:current_uf the UF currently being fanned out (for visual feedback)
   brave:engine:ufs_done   how many UFs the current run has dispatched
   brave:engine:ufs_total  how many UFs the current run will dispatch
+  brave:engine:mode       LIGADO | PAUSADO | DESLIGADO — the operator layer,
+                          orthogonal to state; governs auto-dispatch + the
+                          Kanban card edit-lock (Motor Pausado, phase C)
 
 This module is pure state — it performs no dispatch. The orchestrator task
 (brave.tasks.pipeline.engine_sweep_run) reads `state` between UFs and breaks the
-loop when it is no longer `running`, which is what makes Stop graceful.
+loop when it is no longer `running`, which is what makes Stop graceful. It also
+reads `mode` and breaks when it is no longer `LIGADO`: PAUSADO/DESLIGADO stop new
+fan-out (graceful drain) while releasing the card edit-lock.
 """
 
 from __future__ import annotations
@@ -46,11 +51,30 @@ _UFS_TOTAL_KEY = "brave:engine:ufs_total"
 _DEPTH_KEY = "brave:engine:depth"
 _SOURCE_KEY = "brave:engine:source"
 _ENABLED_KEY = "brave:engine:enabled"
+_MODE_KEY = "brave:engine:mode"
 
 # Source selects which ingest lane the orchestrator dispatches:
 #   default      — existing Mtur/Discovery lane (sweep_uf + discover_atrativo_task)
 #   tripadvisor  — TripAdvisor lane (sweep_tripadvisor task, plan 11-03)
 _VALID_SOURCES = frozenset({"default", "tripadvisor"})
+
+# Operator mode (Motor Pausado, phase C) — an ORTHOGONAL operator layer, distinct
+# from the runtime state axis (idle|running|stopping). It governs two things at
+# once: whether the orchestrator keeps fanning out work, and whether the Kanban
+# card edit-lock is released.
+#   LIGADO     — normal auto-collection: the sweep dispatches; card editing is
+#                LOCKED (the four mutation endpoints return 423).
+#   PAUSADO    — the orchestrator drains (breaks its loop: no new UFs, no auto-push)
+#                but the runtime state is left AS-IS; card editing is UNLOCKED so a
+#                steward can hand-edit / promote. Does NOT clear the enabled latch.
+#   DESLIGADO  — hard off: additionally marks the engine idle + clears the enabled
+#                latch; card editing is UNLOCKED.
+# Values are uppercase Portuguese (operator-facing), unlike the lowercase runtime
+# state/depth/source values — the case difference marks the distinct axis.
+LIGADO = "LIGADO"
+PAUSADO = "PAUSADO"
+DESLIGADO = "DESLIGADO"
+_VALID_MODES = frozenset({LIGADO, PAUSADO, DESLIGADO})
 
 
 def _decode(value: Any) -> str:
@@ -158,8 +182,110 @@ def get_source(redis: Any) -> str | None:
     return raw if raw in _VALID_SOURCES else None
 
 
-def get_status(redis: Any) -> dict[str, Any]:
-    """Engine status snapshot for the dashboard."""
+def set_mode(redis: Any, mode: str, *, session: Any = None) -> None:
+    """Persist the operator mode (Motor Pausado, phase C). Rejects unknown values.
+
+    Mode is orthogonal to the runtime state (idle|running|stopping) and does NOT by
+    itself drive state transitions — with one deliberate exception:
+
+      - DESLIGADO is a hard off, so it ALSO returns the engine to idle (mark_idle)
+        and clears the operator-intent enabled latch (set_enabled False).
+      - PAUSADO leaves the runtime AS-IS — a running sweep drains gracefully on its
+        next mode check — and does NOT clear the enabled latch.
+      - LIGADO only records the mode.
+
+    Invalid values raise ValueError and are never written (mirrors set_source): the
+    engine must not land in an unrecognized operator mode.
+
+    Durable persistence (Phase D): Redis stays the fast/authoritative path for the
+    LIVE mode (dispatch + card edit-lock). When ``session`` is supplied the mode is
+    ALSO upserted into ``config_settings`` (key ``engine.mode``) so a Redis flush no
+    longer resets the mode to LIGADO — :func:`get_mode` re-seeds Redis from that row.
+    The snapshot cache is busted so the next effective-config read reflects the change.
+    The Redis write happens FIRST (and the DESLIGADO side effects), so a DB hiccup can
+    never lose the live mode. When ``session`` is None the behavior is exactly the
+    Phase-C Redis-only path (unchanged).
+    """
+    if mode not in _VALID_MODES:
+        raise ValueError(
+            f"invalid mode {mode!r}; expected one of {sorted(_VALID_MODES)}"
+        )
+    redis.set(_MODE_KEY, mode)
+    if mode == DESLIGADO:
+        mark_idle(redis)
+        set_enabled(redis, False)
+    if session is not None:
+        # Lazy import keeps brave.core.engine importable without brave.config.runtime
+        # at module load (mirrors brave.core.dlq.service, which already depends on it).
+        from brave.config.runtime import bust_config_snapshot, upsert_config
+
+        upsert_config(session, {_ENGINE_MODE_CONFIG_KEY: mode}, updated_by="engine")
+        bust_config_snapshot(redis)
+
+
+def get_mode(redis: Any, *, session: Any = None) -> str:
+    """Operator mode. Absent/corrupt → LIGADO (normal auto-collection).
+
+    NB the default is LIGADO, NOT None — the OPPOSITE convention from
+    get_depth/get_source. A fresh or flushed Redis must keep the engine runnable and
+    the card edit-lock engaged; defaulting to anything else would silently halt every
+    sweep (or unlock editing) on an empty key.
+
+    Durable fallback (Phase D): on a Redis MISS (absent/corrupt key — e.g. after a
+    flush) AND when ``session`` is supplied, the persisted ``config_settings`` row
+    (key ``engine.mode``) is consulted; a valid value re-seeds Redis (self-healing
+    fast path) and is returned. Without a ``session`` the Phase-C behavior is exact:
+    a Redis miss returns the LIGADO default.
+    """
+    raw = _decode(redis.get(_MODE_KEY))
+    if raw in _VALID_MODES:
+        return raw
+    if session is not None:
+        persisted = _read_persisted_mode(session)
+        if persisted is not None:
+            redis.set(_MODE_KEY, persisted)  # re-seed the fast path
+            return persisted
+    return LIGADO
+
+
+# config_settings dotted key mirroring the Redis _MODE_KEY (durable store).
+_ENGINE_MODE_CONFIG_KEY = "engine.mode"
+
+
+def _read_persisted_mode(session: Any) -> str | None:
+    """Return the durable ``engine.mode`` from config_settings, or None when absent/invalid.
+
+    Reads the single row via the ORM; a missing row, a malformed value wrapper, or an
+    out-of-contract mode all yield None so the caller falls back to the LIGADO default.
+    Never raises on a read miss — durability must not make mode-reads fragile.
+    """
+    from brave.core.models import ConfigSetting  # lazy: same package, avoids import cost
+
+    row = session.get(ConfigSetting, _ENGINE_MODE_CONFIG_KEY)
+    if row is None or not isinstance(row.value, dict):
+        return None
+    value = row.value.get("v")
+    return value if value in _VALID_MODES else None
+
+
+def is_editing_unlocked(redis: Any, *, session: Any = None) -> bool:
+    """True iff the card edit-lock is released — i.e. mode is PAUSADO or DESLIGADO.
+
+    ``session`` is forwarded to :func:`get_mode` so a mode-read after a Redis flush
+    self-heals from the durable ``config_settings`` row (Phase D). Omitting it keeps
+    the exact Phase-C Redis-only behavior.
+    """
+    return get_mode(redis, session=session) in (PAUSADO, DESLIGADO)
+
+
+def get_status(redis: Any, *, session: Any = None) -> dict[str, Any]:
+    """Engine status snapshot for the dashboard.
+
+    ``session`` (optional) is threaded only into the mode reads so a status poll
+    after a Redis flush re-seeds the live mode from the durable ``config_settings``
+    row (Phase D self-heal). Every other field stays Redis-only; callers that pass
+    no session get byte-identical Phase-C behavior.
+    """
     return {
         "state": get_state(redis),
         "current_uf": _decode(redis.get(_CURRENT_UF_KEY)) or None,
@@ -168,4 +294,6 @@ def get_status(redis: Any) -> dict[str, Any]:
         "depth": get_depth(redis),
         "source": get_source(redis),
         "enabled": is_enabled(redis),
+        "mode": get_mode(redis, session=session),
+        "editing_unlocked": is_editing_unlocked(redis, session=session),
     }

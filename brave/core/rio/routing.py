@@ -10,16 +10,20 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
 from brave.core.models import NascenteRecord, RioRecord
+from brave.core.repositories import SqlAlchemyRioRepository
 from brave.core.rio.dedup import compute_embedding, find_duplicate
 from brave.core.rio.label import label_entity
 from brave.core.rio.normalize import normalize_address, normalize_coordinates, normalize_name
 from brave.core.score.engine import compute_score
 from brave.core.score.schemas import ScoreInput
+
+# Stateless data-access seam (Phase A). The Session is passed per call and the
+# caller still owns the transaction — this repo flushes but never commits.
+_rio_repo = SqlAlchemyRioRepository()
 
 
 def route_by_score(
@@ -78,19 +82,6 @@ def route_by_score(
     else:
         rio_record.dlq_reason = None
 
-    # Set mar_ready flag for TA attractions meeting the promote bar (TA-05, T-11-02-02).
-    # Explicit False for ALL non-qualifying paths so that re-scoring always resets the flag
-    # (never leaves a stale True from a previous score run with different inputs).
-    # Security: flag only True when entity_type=="attraction" AND canonical_key starts with
-    # "tripadvisor:" AND atualidade≥bar AND corroboracao≥bar. This ensures mar_ready can
-    # never be set by mtur, places, or any other non-TA source.
-    rio_record.mar_ready = (
-        rio_record.entity_type == "attraction"
-        and (rio_record.canonical_key or "").startswith("tripadvisor:")
-        and score_input.atualidade_value >= config.mar_ready_atualidade_bar
-        and score_input.corroboracao_value >= config.mar_ready_corrob_bar
-    )
-
     return rio_record
 
 
@@ -111,7 +102,7 @@ def process_nascente_record(
     3. Normalize names/coordinates/addresses
     4. Label with Norteia taxonomy (Phase 1 stub)
     5. Score via §7.6 pure function
-    6. Route to mar/dlq/descarte
+    6. Route to mar/dlq (binary threshold_mar gate)
 
     Args:
         session:    SQLAlchemy synchronous Session.
@@ -125,9 +116,7 @@ def process_nascente_record(
     # Idempotency check: use canonical_key = source_ref from payload or nascente.source_ref
     canonical_key = nascente.source_ref
 
-    existing = session.scalar(
-        select(RioRecord).where(RioRecord.canonical_key == canonical_key)
-    )
+    existing = _rio_repo.get_by_canonical_key(session, canonical_key)
     if existing is not None:
         return existing
 
@@ -174,6 +163,14 @@ def process_nascente_record(
     if nascente.entity_type == "attraction" and "parent_mar_id" in payload:
         normalized["parent_mar_id"] = payload["parent_mar_id"]
 
+    # Attraction-specific: carry a lane-supplied MASKED WhatsApp candidate (Phase F)
+    # from payload["contact"] into normalized["contact"]. Value is already masked at
+    # the lane boundary (whatsapp_candidate_from_phone → mask_phone); it is excluded
+    # from the Mar `canonical` push in promote_to_mar so the norteia-api shape is
+    # unchanged. Mirrors the place_id_cache / parent_mar_id attraction-scoped copies.
+    if nascente.entity_type == "attraction" and "contact" in payload:
+        normalized["contact"] = payload["contact"]
+
     # Add taxonomy labels (Phase 1 stub)
     normalized = label_entity(nascente.entity_type, normalized)
 
@@ -206,8 +203,7 @@ def process_nascente_record(
         embedding=embedding,
         canonical_key=canonical_key,
     )
-    session.add(rio)
-    session.flush()
+    _rio_repo.add(session, rio)
 
     # Apply §7.6 scoring and routing
     route_by_score(session, rio, config)
@@ -238,7 +234,7 @@ def reprocess_record(
     Raises:
         ValueError: If no RioRecord with rio_id exists.
     """
-    rio = session.get(RioRecord, rio_id)
+    rio = _rio_repo.get(session, rio_id)
     if rio is None:
         raise ValueError(f"RioRecord {rio_id} not found")
 

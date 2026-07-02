@@ -18,9 +18,9 @@ corroboracao 20%, atualidade 15%, validacao_humana 15%):
     origem=100, completude=40, corroboracao=20, atualidade=20, validacao_humana=40
     score = 30 + 8 + 4 + 3 + 6 = 51.0  (51 ≤ 51 < 85 → dlq)
 
-  Descarte-score:
+  Low-score:
     origem=40, completude=0, corroboracao=0, atualidade=0, validacao_humana=0
-    score = 12 + 0 + 0 + 0 + 0 = 12.0  (< 51 → descarte)
+    score = 12 + 0 + 0 + 0 + 0 = 12.0  (< 80 → dlq)
 
 Note: Tests use source_ref in payload to ensure unique content_hash per test invocation.
 Phase 1 uses zero-vector embeddings as a stub — Stage 1 dedup checks content_hash,
@@ -67,7 +67,7 @@ def _high_score_payload(source_ref: str) -> dict:
 
 
 def _dlq_score_payload(source_ref: str) -> dict:
-    """DLQ-score payload: score = 30+8+4+3+6 = 51.0 (at threshold → dlq)."""
+    """DLQ-score payload: score = 30+8+4+3+6 = 51.0 (< 80 → dlq)."""
     return {
         "name": "Praia Marginal",
         "municipio": "Bahia",
@@ -81,8 +81,8 @@ def _dlq_score_payload(source_ref: str) -> dict:
     }
 
 
-def _descarte_score_payload(source_ref: str) -> dict:
-    """Descarte-score payload: score = 12.0 < 51 → descarte."""
+def _low_score_payload(source_ref: str) -> dict:
+    """Low-score payload: score = 12.0 < 80 → dlq."""
     return {
         "name": "Lugar Desconhecido",
         "municipio": "Interior",
@@ -292,7 +292,7 @@ def test_e2e_dlq_routing_no_push(db_session: Session):
     rio = process_nascente_record(db_session, nascente, config)
     db_session.flush()
 
-    # Score = 51, which is exactly at threshold_dlq=51 → dlq
+    # Score = 51.0 < 80 → dlq
     assert rio.routing == "dlq", (
         f"Expected routing=dlq for score=51.0, got {rio.routing} (score={rio.score})"
     )
@@ -303,13 +303,13 @@ def test_e2e_dlq_routing_no_push(db_session: Session):
 
 
 # ---------------------------------------------------------------------------
-# Test 4: Descarte routing — no push
+# Test 4: Low-score routing — no push
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.enable_socket
-def test_e2e_descarte_routing_no_push(db_session: Session):
-    """Descarte-routed fixture: push_destination is NOT called."""
+def test_e2e_low_score_routing_no_push(db_session: Session):
+    """Low-score-routed fixture (dlq): push_destination is NOT called."""
     config = ScoreConfig()
     fake_client = FakeNorteiaApiClient()
 
@@ -320,19 +320,19 @@ def test_e2e_descarte_routing_no_push(db_session: Session):
         source_ref=source_ref,
         entity_type="destination",
         uf="BA",
-        payload=_descarte_score_payload(source_ref),
+        payload=_low_score_payload(source_ref),
     )
     db_session.flush()
 
     rio = process_nascente_record(db_session, nascente, config)
     db_session.flush()
 
-    # Score = 12 < 51 → descarte
-    assert rio.routing == "descarte", (
-        f"Expected routing=descarte for score=12.0, got {rio.routing} (score={rio.score})"
+    # Score = 12 < 80 → dlq
+    assert rio.routing == "dlq", (
+        f"Expected routing=dlq for score=12.0, got {rio.routing} (score={rio.score})"
     )
 
-    # Descarte records are NOT pushed
+    # DLQ records are NOT pushed
     assert len(fake_client.push_destination_calls) == 0
     assert len(fake_client.push_attraction_calls) == 0
 

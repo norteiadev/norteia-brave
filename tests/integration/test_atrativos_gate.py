@@ -55,6 +55,18 @@ os.environ["BRAVE_WEBHOOK_SECRET"] = WEBHOOK_SECRET
 WEBHOOK_HEADERS = {"X-Webhook-Secret": WEBHOOK_SECRET}
 
 
+@pytest.fixture(autouse=True)
+def _force_env(monkeypatch):
+    """Re-assert this module's secrets per test so they win over any cross-file
+    module-level os.environ writes (import order is not deterministic — another
+    test module setting BRAVE_DASHBOARD_BEARER_TOKEN at import time would otherwise
+    make the bearer tests here send the wrong token and 401). monkeypatch auto-reverts.
+    """
+    monkeypatch.setenv("BRAVE_STEWARD_SECRET", STEWARD_SECRET)
+    monkeypatch.setenv("BRAVE_DASHBOARD_BEARER_TOKEN", DASHBOARD_BEARER)
+    monkeypatch.setenv("BRAVE_WEBHOOK_SECRET", WEBHOOK_SECRET)
+
+
 @pytest.fixture(scope="module")
 def client():
     """FastAPI TestClient (no default steward header — auth tests need bare client)."""

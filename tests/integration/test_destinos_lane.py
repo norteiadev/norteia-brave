@@ -8,13 +8,6 @@ Tests:
   - POST /api/v1/dlq/validate-batch?uf=BA: validates all DLQ records for UF
   - Both endpoints write audit rows with action='dlq_validated' and actor='steward'
 
-NotebookLMIngest corroboration tests (D-02, DEST-02):
-  - test_notebooklm_corroboration_boosts_mtur: DB-level proof that calling
-    NotebookLMIngest.produce('BA') on a municipality that already has a Mtur RioRecord
-    boosts normalized['corroboracao_value'] by >=50 on the surviving record.
-    If flag_modified was omitted or the IBGE-match query did not fire, the value
-    remains 0.0 and this test fails.
-
 All tests are integration-marked (require docker-compose postgres).
 """
 
@@ -161,11 +154,13 @@ def test_validate_endpoint_promotes_to_mar_with_corroboration(client, db_session
 
 
 @pytest.mark.integration
-def test_validate_endpoint_stays_dlq_without_corroboration(client, db_session):
-    """PATCH /api/v1/dlq/{rio_id}/validate with corroboracao=0 stays in 'dlq'.
+def test_validate_endpoint_promotes_at_threshold_without_corroboration(client, db_session):
+    """PATCH /api/v1/dlq/{rio_id}/validate with corroboracao=0 reaches 'mar' at the binary threshold.
 
     Mtur cold-start: origem=100, completude=100, corroboracao=0, atualidade=100,
-    validacao_humana=100 → score = 30+20+0+15+15 = 80.0 < 85 threshold → stays dlq.
+    validacao_humana=100 → score = 30+20+0+15+15 = 80.0. Under the binary gate
+    (≥80 → Mar) this record now promotes to Mar even without corroboration —
+    the old three-band 85 threshold that held it in dlq is gone.
     """
     rio = _make_dlq_record(db_session, corroboracao=0.0)
     rio_id = rio.id
@@ -181,8 +176,8 @@ def test_validate_endpoint_stays_dlq_without_corroboration(client, db_session):
     assert updated_rio.normalized is not None
     assert updated_rio.normalized.get("validacao_humana_value") == 100.0
 
-    # But routing stays dlq — 80.0 < 85 threshold
-    assert updated_rio.routing == "dlq"
+    # Binary gate: score 80.0 ≥ threshold_mar (80.0) → mar
+    assert updated_rio.routing == "mar"
 
 
 @pytest.mark.integration
@@ -416,126 +411,6 @@ def test_validate_batch_returns_503_when_push_fails_under_real_externals(
     )
 
 
-# ---------------------------------------------------------------------------
-# NotebookLMIngest corroboration boost (D-02, DEST-02, RISK-02)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.integration
-def test_notebooklm_corroboration_boosts_mtur(db_session: Session):
-    """DB-level proof: NotebookLMIngest.produce('BA') boosts corroboracao_value on a
-    pre-existing Mtur RioRecord that shares the same IBGE code.
-
-    Setup:
-      1. Ingest a Mtur RioRecord for Porto Seguro (IBGE 2927408) via store_raw +
-         process_nascente_record — simulates the post-02-05 state.
-      2. Force routing='dlq' so the RioRecord is a live record eligible for boost.
-
-    Action:
-      3. Call NotebookLMIngest.produce('BA') with a FakeNotebookLMClient that returns
-         a non-empty report for "Porto Seguro:BA:2927408".
-
-    Assertion:
-      4. Re-read the Mtur RioRecord from DB (expire_all to bypass ORM cache).
-      5. Assert normalized['corroboracao_value'] >= 50.0
-         — if flag_modified was omitted or the IBGE-match query did not fire,
-         the value remains 0.0 and this test fails.
-
-    This is the load-bearing corroboration test: without it, Mtur records score max
-    80.0 after human validation and never cross the Mar threshold (RESEARCH.md Pitfall 2).
-    """
-    import asyncio
-
-    from brave.config.settings import ScoreConfig
-    from brave.core.models import RioRecord
-    from brave.core.nascente.service import store_raw
-    from brave.core.rio.routing import process_nascente_record
-    from brave.lanes.destinos.notebooklm import NotebookLMIngest
-    from tests.fakes.fake_notebooklm import FakeNotebookLMClient
-
-    uf = "BA"
-    ibge_code = "2927408"
-    municipio_key = f"Porto Seguro:{uf}:{ibge_code}"
-
-    # Step 1: Seed a Mtur RioRecord for Porto Seguro (simulates 02-05 state)
-    unique_tag = uuid.uuid4().hex[:8]
-    source_ref = f"mtur:{uf}:{ibge_code}-{unique_tag}"
-
-    nascente = store_raw(
-        session=db_session,
-        source="mtur",
-        source_ref=source_ref,
-        entity_type="destination",
-        uf=uf,
-        payload={
-            "name": "Porto Seguro",
-            "municipio_id": ibge_code,
-            "uf": uf,
-            "origem_value": 100.0,
-            "completude_value": 100.0,
-            "corroboracao_value": 0.0,
-            "atualidade_value": 70.0,
-            "validacao_humana_value": 0.0,
-            "canonical": {
-                "name": "Porto Seguro",
-                "uf": uf,
-                "municipio": "Porto Seguro",
-                "ibge_code": ibge_code,
-            },
-        },
-    )
-
-    config = ScoreConfig()
-    rio = process_nascente_record(db_session, nascente, config)
-
-    # Step 2: Force routing to 'dlq' — NotebookLMIngest queries routing.in_(["dlq","mar"])
-    rio.routing = "dlq"
-    db_session.flush()
-    mtur_rio_id = rio.id
-
-    # Confirm baseline: corroboracao starts at 0
-    assert rio.normalized is not None
-    assert float(rio.normalized.get("corroboracao_value", 0.0)) == 0.0, (
-        "Pre-condition failed: expected corroboracao_value=0.0 before NotebookLM ingest"
-    )
-
-    # Step 3: Run NotebookLMIngest.produce('BA') with a fake client that returns
-    # a non-empty report for the municipio_key.
-    fake_nb = FakeNotebookLMClient(
-        reports={
-            municipio_key: {
-                "name": "Porto Seguro",
-                "highlights": ["beaches", "history"],
-                "publish_date": "2024-01-15",
-            }
-        }
-    )
-
-    mtur_municipalities = [{"ibge_code": ibge_code, "name": "Porto Seguro", "uf": uf}]
-
-    lane = NotebookLMIngest(
-        notebooklm_client=fake_nb,
-        session=db_session,
-        config=config,
-        mtur_municipalities=mtur_municipalities,
-    )
-    asyncio.run(lane.produce(uf))
-
-    # Step 4: Re-read from DB, bypassing ORM cache
-    db_session.expire_all()
-    updated_rio = db_session.get(RioRecord, mtur_rio_id)
-    assert updated_rio is not None
-
-    # Step 5: Assert corroboracao_value was boosted by >= 50
-    assert updated_rio.normalized is not None
-    actual_corroboracao = float(updated_rio.normalized.get("corroboracao_value", 0.0))
-    assert actual_corroboracao >= 50.0, (
-        f"Expected corroboracao_value >= 50.0 but got {actual_corroboracao}. "
-        "flag_modified was likely omitted OR the IBGE exact-match query did not fire "
-        "(check routing.in_(['dlq','mar']) filter and municipio_id match)."
-    )
-
-
 @pytest.mark.integration
 def test_mtur_lane_end_to_end(db_session: Session):
     """Headline acceptance: a single Mtur municipality flows seed → Nascente → Rio → DLQ.
@@ -545,9 +420,9 @@ def test_mtur_lane_end_to_end(db_session: Session):
       - A NascenteRecord with source='mtur' is written
       - The Rio record lands in 'dlq' by default (cold start, no human validation)
 
-    Score math (threshold_dlq=40, threshold_mar=85): origem=100→30, atualidade=70→10.5,
+    Score math (binary threshold_mar=80): origem=100→30, atualidade=70→10.5,
     corroboracao=0, validacao_humana=0. Score = 30 + completude·0.2 + 10.5, which is
-    >=40.5 and <85 for any completude value → routing='dlq' (never descarte, never mar).
+    <80 for any completude value → routing='dlq' (never mar).
     """
     import asyncio
 

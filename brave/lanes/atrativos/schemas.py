@@ -1,10 +1,11 @@
 """Pydantic v2 schemas for the Atrativos lane (Phase 3).
 
-Four schemas:
+Five schemas:
   - AtrativoResult       — LLM extraction output for one attraction (instructor Mode.Tools)
   - ContactResult        — ContactFinderAgent output (Places Details + site/IG/email)
   - SignalResult         — SignalAgent output (business_status / weekday_text / reviews)
   - ConversationExtractionResult — DeepSeek extraction of owner WhatsApp responses
+  - WhatsAppNumberDiscovery — LLM-discovered phone/WhatsApp number (Phase F number-discovery)
 
 Every Field has a description= kwarg for instructor Mode.Tools tool-calling compliance.
 Literal types are used for constrained fields; `| None` for optional extraction outputs.
@@ -136,7 +137,7 @@ class ContactResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# SignalResult — output of SignalAgent (business_status / reviews / Apify)
+# SignalResult — output of SignalAgent (business_status / reviews)
 # ---------------------------------------------------------------------------
 
 
@@ -144,8 +145,8 @@ class SignalResult(BaseModel):
     """Operating signal data gathered by SignalAgent.
 
     business_status: CLOSED_PERMANENTLY or CLOSED_TEMPORARILY triggers hard
-    descarte before §7.6 scoring (D-05). Apify data is best-effort and
-    non-blocking — failure degrades corroboração_value but never fails the record.
+    descarte before §7.6 scoring (D-05). Corroboração is a fixed 0.0 constant
+    (the Apify IG social-signal source was retired in Phase E); it never fails the record.
     """
 
     business_status: str = Field(
@@ -226,5 +227,43 @@ class ConversationExtractionResult(BaseModel):
         description=(
             "Confiança geral da extração (0.0–1.0). Estimado pelo DeepSeek com base "
             "na clareza e coerência das respostas do proprietário."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# WhatsAppNumberDiscovery — LLM number-discovery output (Phase F)
+# ---------------------------------------------------------------------------
+
+
+class WhatsAppNumberDiscovery(BaseModel):
+    """LLM-discovered WhatsApp/phone number for an atrativo (Phase F number-discovery).
+
+    Emitted by the number-discovery LLM (instructor Mode.Tools) when an atrativo
+    reaches the WhatsApp gate WITHOUT a celular candidate captured at enrichment
+    time. The offline (Null) client never returns this — it yields no number, so the
+    record routes straight back to DLQ with dlq_reason="no_contact_found".
+
+    `phone` is a RAW candidate string (E.164 / 55-prefixed / bare national) or None
+    when the model could not find a plausible number. Celular-validation + LGPD
+    masking happen downstream (whatsapp_candidate_from_phone); this schema carries the
+    raw candidate only so the outreach/consent path can normalize it to E.164.
+    """
+
+    phone: str | None = Field(
+        default=None,
+        description=(
+            "Número de WhatsApp/telefone do responsável, se encontrado, em formato "
+            "E.164 (+55DDDNNNNNNNNN) ou nacional (DDD + número). None se nenhum "
+            "número plausível foi encontrado."
+        ),
+    )
+    confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Confiança de que o número encontrado pertence a este atrativo (0.0–1.0). "
+            "Estimado pelo modelo com base nas fontes consultadas."
         ),
     )

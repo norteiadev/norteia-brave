@@ -73,9 +73,9 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
 ignore = ["E501"]
 
 [tool.ruff.lint.flake8-bugbear]
-# FastAPI dependency-injection idiom: Depends/Query/Header/Path in argument
+# FastAPI dependency-injection idiom: Depends/Query/Header/Path/Body in argument
 # defaults is the framework's intended pattern, not the B008 mutable-default bug.
-extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Path"]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Path", "fastapi.Body"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["brave"]

@@ -12,13 +12,20 @@ Stage 2: Territorial-key block + pgvector HNSW fuzzy search.
 Phase 1 note: compute_embedding returns a zero stub. Real embeddings via LLMClient in Phase 2.
 """
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brave.core.models import NascenteRecord, RioRecord
+from brave.core.models import RioRecord
+from brave.core.repositories import (
+    SqlAlchemyNascenteRepository,
+    SqlAlchemyRioRepository,
+)
 
 # Cosine similarity threshold for dedup candidate acceptance
 DEDUP_THRESHOLD = 0.95
+
+# Stateless data-access seam (Phase A). Session passed per call; caller commits.
+_nascente_repo = SqlAlchemyNascenteRepository()
+_rio_repo = SqlAlchemyRioRepository()
 
 
 def find_duplicate(
@@ -55,20 +62,12 @@ def find_duplicate(
     # an arbitrary linked RioRecord — violating the never-compare-across-UF
     # invariant (CR-02). Scoping the hash match keeps homonym municípios in
     # different states (e.g. São Domingos/BA vs São Domingos/SE) from colliding.
-    existing_nascente = session.scalar(
-        select(NascenteRecord).where(
-            NascenteRecord.content_hash == content_hash,
-            NascenteRecord.uf == uf,
-            NascenteRecord.entity_type == entity_type,
-        )
+    existing_nascente = _nascente_repo.find_by_hash_scoped(
+        session, content_hash, uf, entity_type
     )
     if existing_nascente is not None:
         # Check if there's a RioRecord for this nascente
-        rio = session.scalar(
-            select(RioRecord).where(
-                RioRecord.nascente_id == existing_nascente.id,
-            )
-        )
+        rio = _rio_repo.get_by_nascente_id(session, existing_nascente.id)
         if rio is not None:
             return rio
 
@@ -78,16 +77,16 @@ def find_duplicate(
         return None
 
     # Query RioRecord with territorial-key block (UF + municipio_id + entity_type)
-    # This ENSURES we never compare across UF boundaries
-    candidates = session.scalars(
-        select(RioRecord).where(
-            RioRecord.uf == uf,
-            RioRecord.municipio_id == municipio_id,
-            RioRecord.entity_type == entity_type,
-            RioRecord.embedding.isnot(None),
-        )
-        .order_by(RioRecord.embedding.cosine_distance(embedding))
-        .limit(10)
+    # This ENSURES we never compare across UF boundaries. The pgvector
+    # cosine-distance ORDER BY + LIMIT 10 is preserved in the repository; the
+    # exact-similarity post-filter stays here.
+    candidates = _rio_repo.find_dedup_candidates(
+        session,
+        uf=uf,
+        municipio_id=municipio_id,
+        entity_type=entity_type,
+        embedding=embedding,
+        limit=10,
     )
 
     for candidate in candidates:

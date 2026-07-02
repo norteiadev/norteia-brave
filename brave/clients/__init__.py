@@ -1,6 +1,6 @@
 """Clients package — the single testability seam for all external systems (D-18).
 
-All outbound I/O (LLM, NorteiaApi, Places, OTA, Apify, WhatsApp, Mtur, NotebookLM)
+All outbound I/O (LLM, NorteiaApi, Places, OTA, WhatsApp, Mtur, TripAdvisor, Geocoder)
 flows through typed Protocol interfaces defined in clients/base.py.
 
 Production code accepts Protocol types.

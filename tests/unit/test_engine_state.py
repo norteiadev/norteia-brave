@@ -155,3 +155,81 @@ def test_get_status_enabled_true_after_start_run(redis):
     engine.start_run(redis, ufs_total=1)
     status = engine.get_status(redis)
     assert status["enabled"] is True
+
+
+# --- Operator mode (Motor Pausado, phase C) ---------------------------------
+
+
+def test_default_mode_is_ligado(redis):
+    """Absent key → LIGADO (opposite convention from depth/source which default None)."""
+    assert engine.get_mode(redis) == engine.LIGADO
+    assert engine.is_editing_unlocked(redis) is False
+
+
+def test_mode_constant_values_are_the_fixed_contract():
+    assert engine.LIGADO == "LIGADO"
+    assert engine.PAUSADO == "PAUSADO"
+    assert engine.DESLIGADO == "DESLIGADO"
+    assert engine._VALID_MODES == frozenset({"LIGADO", "PAUSADO", "DESLIGADO"})
+
+
+@pytest.mark.parametrize("mode", [engine.LIGADO, engine.PAUSADO, engine.DESLIGADO])
+def test_set_mode_then_get_mode_round_trips(redis, mode):
+    engine.set_mode(redis, mode)
+    assert engine.get_mode(redis) == mode
+
+
+def test_set_mode_rejects_invalid_value(redis):
+    with pytest.raises(ValueError):
+        engine.set_mode(redis, "bogus")
+    # Nothing persisted on the invalid write → still the LIGADO default.
+    assert engine.get_mode(redis) == engine.LIGADO
+
+
+def test_get_mode_defaults_ligado_on_corrupt_value(redis):
+    redis.set(engine._MODE_KEY, "on")  # bypass the setter
+    assert engine.get_mode(redis) == engine.LIGADO
+
+
+def test_is_editing_unlocked_only_when_paused_or_off(redis):
+    engine.set_mode(redis, engine.LIGADO)
+    assert engine.is_editing_unlocked(redis) is False
+    engine.set_mode(redis, engine.PAUSADO)
+    assert engine.is_editing_unlocked(redis) is True
+    engine.set_mode(redis, engine.DESLIGADO)
+    assert engine.is_editing_unlocked(redis) is True
+
+
+def test_set_mode_pausado_leaves_runtime_and_enabled(redis):
+    """PAUSADO drains via the orchestrator but must NOT flip state nor clear enabled."""
+    engine.start_run(redis, ufs_total=3)
+    assert engine.get_state(redis) == engine.RUNNING
+    assert engine.is_enabled(redis) is True
+
+    engine.set_mode(redis, engine.PAUSADO)
+    assert engine.get_state(redis) == engine.RUNNING  # runtime left as-is (drain)
+    assert engine.is_enabled(redis) is True  # latch untouched
+
+
+def test_set_mode_desligado_marks_idle_and_clears_enabled(redis):
+    """DESLIGADO is a hard off: mark_idle + set_enabled(False)."""
+    engine.start_run(redis, ufs_total=3)
+    engine.mark_uf_dispatched(redis, "BA")
+    assert engine.get_state(redis) == engine.RUNNING
+    assert engine.is_enabled(redis) is True
+
+    engine.set_mode(redis, engine.DESLIGADO)
+    assert engine.get_state(redis) == engine.IDLE
+    assert engine.is_enabled(redis) is False
+    assert engine.get_status(redis)["current_uf"] is None  # mark_idle cleared it
+
+
+def test_get_status_includes_mode_and_editing_unlocked(redis):
+    status = engine.get_status(redis)
+    assert status["mode"] == engine.LIGADO  # default
+    assert status["editing_unlocked"] is False
+
+    engine.set_mode(redis, engine.PAUSADO)
+    status = engine.get_status(redis)
+    assert status["mode"] == engine.PAUSADO
+    assert status["editing_unlocked"] is True

@@ -26,7 +26,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from brave.api.deps import get_db, require_bearer, require_steward_or_bearer
+from brave.api.deps import (
+    get_db,
+    require_bearer,
+    require_editing_unlocked,
+    require_steward_or_bearer,
+)
 from brave.core.models import AuditLog, MarRecord, NascenteRecord, RioRecord, mask_phone
 from brave.observability.audit import write_audit
 
@@ -131,13 +136,33 @@ def _safe_contacts(contacts: dict | None) -> dict | None:
     return out or None
 
 
+def _safe_contact(contact: dict | None) -> dict | None:
+    """Return an allow-listed, MASKED view of normalized["contact"] (Phase F, LGPD R3).
+
+    The Phase F enrichment stores a WhatsApp candidate at
+    normalized["contact"]["whatsapp_candidate"] ALREADY masked (mask_phone). This is a
+    deny-by-default allow-list: only whatsapp_candidate is surfaced and it is passed
+    through mask_phone again as a defense-in-depth guarantee (mask_phone is idempotent
+    on the masked form) so a raw celular can NEVER transit the board even if some
+    future writer bypasses the write-time masking. Any other keys are dropped.
+    """
+    if not isinstance(contact, dict):
+        return None
+    out: dict = {}
+    if contact.get("whatsapp_candidate") is not None:
+        out["whatsapp_candidate"] = mask_phone(contact.get("whatsapp_candidate"))
+    return out or None
+
+
 def _safe_normalized(normalized: dict | None) -> dict:
     """Return a copy of the Rio normalized dict with the contacts sub-dict minimized.
 
     The Rio normalized payload stores the owner's raw contact data at
-    normalized["contacts"]. This function MUST be called on every atrativo response
-    path — owner PII (phone_e164, email, ig_handle) must never be returned to the
-    caller. Delegates to _safe_contacts for the allow-listed contacts summary.
+    normalized["contacts"] and a Phase F MASKED WhatsApp candidate at
+    normalized["contact"]["whatsapp_candidate"]. This function MUST be called on every
+    atrativo response path — owner PII (phone_e164, email, ig_handle) must never be
+    returned to the caller. Delegates to _safe_contacts / _safe_contact for the
+    allow-listed summaries.
 
     Mirrors atrativos_gate.py masking contract (phone masked) and additionally
     drops non-website contact PII (email, ig_handle) per CR-01.
@@ -150,6 +175,14 @@ def _safe_normalized(normalized: dict | None) -> dict:
             n.pop("contacts", None)
         else:
             n["contacts"] = safe
+    # Phase F: minimize the singular "contact" sub-dict (WhatsApp candidate) too.
+    contact = n.get("contact")
+    if "contact" in n:
+        safe_contact = _safe_contact(contact) if isinstance(contact, dict) else None
+        if safe_contact is None:
+            n.pop("contact", None)
+        else:
+            n["contact"] = safe_contact
     return n
 
 
@@ -427,7 +460,10 @@ def descarte_destino(
 @router.patch(
     "/api/v1/destinos/{rio_id}/transition",
     status_code=200,
-    dependencies=[Depends(require_steward_or_bearer)],
+    dependencies=[
+        Depends(require_steward_or_bearer),
+        Depends(require_editing_unlocked),
+    ],
 )
 def transition_destino(
     rio_id: uuid.UUID,
@@ -478,10 +514,10 @@ def transition_destino(
         rio.dlq_reason = "steward_sent_to_review"
     elif edge == "reprocess":
         # Reopen: reset → re-score (§7.6). Reuses the routing helper, no new machinery.
-        from brave.config.settings import ScoreConfig
+        from brave.config.runtime import load_effective_config
         from brave.core.rio.routing import reprocess_record
 
-        reprocess_record(db, rio.id, ScoreConfig())
+        reprocess_record(db, rio.id, load_effective_config(db).score)
         db.refresh(rio)
 
     write_audit(
@@ -534,10 +570,10 @@ def reprocess_destino(
         dispatch_mode = "celery"
     except (KombuOperationalError, ConnectionError, OSError):
         # Broker unreachable (offline tests/dev) → run synchronously.
-        from brave.config.settings import ScoreConfig
+        from brave.config.runtime import load_effective_config
         from brave.core.rio.routing import reprocess_record
 
-        reprocess_record(db, rio_id, ScoreConfig())
+        reprocess_record(db, rio_id, load_effective_config(db).score)
         dispatch_mode = "synchronous"
 
     write_audit(
@@ -555,7 +591,10 @@ def reprocess_destino(
 @router.patch(
     "/api/v1/destinos/{rio_id}/edit",
     status_code=200,
-    dependencies=[Depends(require_steward_or_bearer)],
+    dependencies=[
+        Depends(require_steward_or_bearer),
+        Depends(require_editing_unlocked),
+    ],
 )
 def edit_destino(
     rio_id: uuid.UUID,
@@ -726,7 +765,10 @@ def get_atrativo_detail(
 @router.patch(
     "/api/v1/atrativos/{rio_id}/advance",
     status_code=200,
-    dependencies=[Depends(require_steward_or_bearer)],
+    dependencies=[
+        Depends(require_steward_or_bearer),
+        Depends(require_editing_unlocked),
+    ],
 )
 def advance_atrativo_state(
     rio_id: uuid.UUID,
@@ -804,7 +846,10 @@ def descarte_atrativo(
 @router.patch(
     "/api/v1/atrativos/{rio_id}/edit",
     status_code=200,
-    dependencies=[Depends(require_steward_or_bearer)],
+    dependencies=[
+        Depends(require_steward_or_bearer),
+        Depends(require_editing_unlocked),
+    ],
 )
 def edit_atrativo(
     rio_id: uuid.UUID,

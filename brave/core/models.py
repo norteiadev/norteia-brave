@@ -110,9 +110,10 @@ class RioRecord(Base):
 
     routing values (D-02):
       "in_progress" — being processed
-      "mar"         — promoted to MarRecord (≥85%)
-      "dlq"         — §7.6 review DLQ (51–84.9%)
-      "descarte"    — rejected (≤50%)
+      "mar"         — promoted to MarRecord (score ≥ threshold_mar)
+      "dlq"         — §7.6 review DLQ (score < threshold_mar; binary score gate)
+      "descarte"    — rejected by a non-score path (hard-descarte for CLOSED places,
+                      steward reject, dedup discard). The score engine never emits it.
 
     sub_state is used by the Atrativos lane Phase 3 state machine; null for Destinos.
     """
@@ -149,13 +150,6 @@ class RioRecord(Base):
     )
     canonical_key: Mapped[str | None] = mapped_column(
         String(256), nullable=True, unique=True
-    )
-    # mar_ready: TA-05 promote-override gate. True only for TA attractions that meet
-    # the atualidade + corroboracao bars (route_by_score sets this). Default false via
-    # server_default="false" — no client-side default needed (Alembic 0006 migration
-    # adds this column; plan 11-02 adds it here; migration is in plan 11-03).
-    mar_ready: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false"), index=True
     )
 
     # Relationship helpers
@@ -484,6 +478,50 @@ def mask_phone(phone: str | None) -> str:
     return f"{prefix}*****{suffix}"
 
 
+def whatsapp_candidate_from_phone(phone_raw: str | None) -> str | None:
+    """Return a MASKED Brazilian celular (WhatsApp candidate) or None (LGPD, Phase F).
+
+    Phase F enrichment captures a `whatsapp_candidate` (celular + DDD) from the
+    phone surfaced by an enrichment source (Google Places `internationalPhoneNumber`).
+    Only a MOBILE line (celular) is a plausible WhatsApp number, so landlines are
+    rejected. The returned value is ALWAYS the ``mask_phone()`` form — the raw celular
+    is NEVER returned, so callers can store it in ``normalized["contact"]
+    ["whatsapp_candidate"]`` and surface it on the board without leaking PII (R3).
+
+    Celular shape (Brazil): DDD(2) + leading 9 + 8 subscriber digits = 11 national
+    digits with the subscriber part starting in ``9`` (Google exposes no mobile/landline
+    flag nor a DDD field — the DDD is embedded and parsed from the number).
+
+    Args:
+        phone_raw: Raw phone string from an enrichment source (E.164, ``55``-prefixed,
+            or bare national). None/empty/landline/non-celular → None.
+
+    Returns:
+        Masked celular (e.g. ``"+5573*****01"``) or None when not a BR celular.
+    """
+    if not phone_raw:
+        return None
+
+    digits = "".join(c for c in phone_raw if c.isdigit())
+    if not digits:
+        return None
+
+    # Derive the national number (DDD + subscriber), stripping a +55 country code.
+    if len(digits) in (12, 13) and digits.startswith("55"):
+        national = digits[2:]
+    elif len(digits) in (10, 11):
+        national = digits
+    else:
+        return None
+
+    # Celular = 11 national digits with the subscriber part starting in 9
+    # (DDD(2) + 9 + 8). A 10-digit national number is a landline → rejected.
+    if len(national) != 11 or national[2] != "9":
+        return None
+
+    return mask_phone(f"+55{national}")
+
+
 class ConversationMessage(Base):
     """Append-only log of every WhatsApp conversation message boundary (R2 Option B).
 
@@ -543,3 +581,46 @@ class ConversationMessage(Base):
             f"<ConversationMessage id={self.id} rio_id={self.rio_id} "
             f"direction={self.direction!r} role={self.role!r}>"
         )
+
+
+# ---------------------------------------------------------------------------
+# ConfigSetting — operator-tunable runtime config overlay (Phase D)
+# ---------------------------------------------------------------------------
+
+
+class ConfigSetting(Base):
+    """Sparse key→value overlay for operator-tunable runtime config (Phase D).
+
+    Each row is one dotted config key (e.g. "score.threshold_mar",
+    "source.tripadvisor.enabled", "engine.mode") whose value is wrapped as
+    ``{"v": <any>}`` so any JSON scalar/list/dict — including ``None``, ``False``,
+    or ``0`` — round-trips through the JSON column unambiguously (row presence,
+    not a NULL, marks "set"). brave.config.runtime.load_effective_config reads
+    every row and overlays it onto the env-bootstrapped AppConfig.
+
+    ABSENT rows → the effective config equals the env/AppConfig defaults
+    (behavior-neutral). The idempotent seed (runtime.seed_default_config) inserts
+    default rows equal to the current env-effective values, so a freshly seeded
+    base behaves identically to one with no rows at all.
+
+    This is the FIRST table in the repo to carry an ``updated_at`` column with an
+    ``onupdate`` bump. NB: ``onupdate=func.now()`` is an ORM-flush-level hook
+    (fires on SQLAlchemy ORM UPDATE), NOT a DB trigger — a raw SQL UPDATE will not
+    bump it. The Alembic DDL therefore only emits the INSERT-time ``server_default``.
+    """
+
+    __tablename__ = "config_settings"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    # Always the {"v": <any>} wrapper — never NULL (see class docstring).
+    value: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<ConfigSetting key={self.key!r}>"

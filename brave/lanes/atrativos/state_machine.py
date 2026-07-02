@@ -25,6 +25,41 @@ if TYPE_CHECKING:
     from brave.core.models import RioRecord
 
 
+# ---------------------------------------------------------------------------
+# Canonical atrativos sub_state FSM edges (D-01, D-02)
+# ---------------------------------------------------------------------------
+#
+# DLQ is NOT a sub_state — it is routing="dlq" with sub_state=None. The two Phase F
+# WhatsApp-gate moves are therefore expressed against sub_state None:
+#   (None -> "aguardando_consulta_whatsapp") : dlq -> gate  (steward MANUAL move in)
+#   ("aguardando_consulta_whatsapp" -> None) : gate -> dlq  (no contact / bounce back)
+# advance_sub_state mutates sub_state ONLY — the caller must set routing separately
+# (the gate queue query keys on sub_state, so routing must be updated in the same txn).
+ATRATIVO_SUB_STATE_EDGES: frozenset[tuple[str | None, str | None]] = frozenset(
+    {
+        # Forward discovery → gate FSM.
+        (None, "discovered"),
+        ("discovered", "contacts_found"),
+        ("contacts_found", "signals_gathered"),
+        ("signals_gathered", "aguardando_consulta_whatsapp"),
+        ("aguardando_consulta_whatsapp", "whatsapp_in_progress"),
+        # Phase F manual WhatsApp gate moves (DLQ = routing="dlq", sub_state=None):
+        (None, "aguardando_consulta_whatsapp"),   # dlq -> gate (manual move in)
+        ("aguardando_consulta_whatsapp", None),   # gate -> dlq (no contact / bounce back)
+        # outreach found no phone → back to DLQ.
+        ("whatsapp_in_progress", None),
+    }
+)
+
+
+def is_allowed_sub_state_edge(
+    expected_state: str | None,
+    next_state: str | None,
+) -> bool:
+    """True iff (expected_state, next_state) is a canonical atrativos FSM edge."""
+    return (expected_state, next_state) in ATRATIVO_SUB_STATE_EDGES
+
+
 def advance_sub_state(
     session: Session,
     rio: "RioRecord",
@@ -32,6 +67,7 @@ def advance_sub_state(
     next_state: str | None,
     actor: str = "state_machine",
     lock: bool = True,
+    validate: bool = False,
 ) -> bool:
     """Guard + advance the sub_state FSM for an atrativo RioRecord.
 
@@ -58,11 +94,26 @@ def advance_sub_state(
                         Recorded in the audit row (D-02).
         lock:           Acquire a row-level lock (SELECT ... FOR UPDATE) before the
                         guard (default True). Disable only for mock/unit sessions.
+        validate:       When True, assert (expected_state, next_state) is a canonical
+                        FSM edge (ATRATIVO_SUB_STATE_EDGES) and raise ValueError on an
+                        unknown edge — the server-side guard for the Phase F manual
+                        WhatsApp-gate moves. Default False preserves the historical
+                        generic behaviour for existing callers.
 
     Returns:
         True if the transition was applied; False if sub_state != expected_state
         (idempotency guard fired — already advanced or wrong state).
+
+    Raises:
+        ValueError: When validate=True and (expected_state, next_state) is not an
+        allowed edge in ATRATIVO_SUB_STATE_EDGES.
     """
+    if validate and not is_allowed_sub_state_edge(expected_state, next_state):
+        raise ValueError(
+            f"unsupported atrativo sub_state edge: "
+            f"{expected_state!r} -> {next_state!r}"
+        )
+
     if lock:
         from brave.core.models import RioRecord
 

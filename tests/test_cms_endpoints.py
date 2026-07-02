@@ -68,6 +68,30 @@ def client(app):
     return TestClient(app, raise_server_exceptions=False)
 
 
+@pytest.fixture
+def unlock_editing():
+    """Release the card edit-lock (phase C) so a lock-gated mutation reaches its handler.
+
+    require_editing_unlocked returns 423 while the engine mode is LIGADO (the default),
+    so the /advance (and /edit, /transition) endpoints need mode PAUSADO to exercise
+    their real 200/409 business logic. Sets PAUSADO on the same Redis the app resolves
+    via get_redis(), then restores the LIGADO default on teardown so the mode never
+    leaks to other tests.
+
+    Only lock-gated integration tests request this fixture — the 401 auth tests
+    short-circuit before the lock and must not require a live Redis.
+    """
+    from brave.api.deps import get_redis  # noqa: PLC0415
+    from brave.core import engine as collection_engine  # noqa: PLC0415
+
+    rc = get_redis()
+    collection_engine.set_mode(rc, collection_engine.PAUSADO)
+    try:
+        yield
+    finally:
+        rc.delete(collection_engine._MODE_KEY)  # restore default (LIGADO)
+
+
 # ---------------------------------------------------------------------------
 # Test-data factory helpers
 # ---------------------------------------------------------------------------
@@ -495,8 +519,12 @@ def test_atrativo_owner_email_never_leaked(client, db_session: Session):
 
 
 @pytest.mark.integration
-def test_advance_atrativo_conflict(client, db_session: Session):
-    """PATCH /api/v1/atrativos/{id}/advance → 409 when expected_state != actual sub_state."""
+def test_advance_atrativo_conflict(client, db_session: Session, unlock_editing):
+    """PATCH /api/v1/atrativos/{id}/advance → 409 when expected_state != actual sub_state.
+
+    Requires mode PAUSADO (unlock_editing) — the phase-C edit-lock otherwise 423s
+    this lock-gated endpoint before the conflict check runs.
+    """
     # actual sub_state is "contacts_found"; we send expected_state="discovered" → mismatch → 409
     rio = _make_atrativo(db_session, sub_state="contacts_found")
     db_session.commit()
@@ -512,8 +540,12 @@ def test_advance_atrativo_conflict(client, db_session: Session):
 
 
 @pytest.mark.integration
-def test_advance_atrativo_success(client, db_session: Session):
-    """PATCH /api/v1/atrativos/{id}/advance → 200; sub_state advanced when match."""
+def test_advance_atrativo_success(client, db_session: Session, unlock_editing):
+    """PATCH /api/v1/atrativos/{id}/advance → 200; sub_state advanced when match.
+
+    This is the genuine 200-under-PAUSADO path: unlock_editing sets mode PAUSADO so
+    the edit-lock releases and the real FSM advance runs against Postgres.
+    """
     rio = _make_atrativo(db_session, sub_state="discovered")
     db_session.commit()
 

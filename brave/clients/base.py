@@ -1,4 +1,4 @@
-"""Client Protocol boundary definitions for all 10 external systems (D-09, D-18).
+"""Client Protocol boundary definitions for all 8 external systems (D-09, D-18).
 
 Every external system sits behind a typed typing.Protocol interface.
 Production code accepts these protocol types; tests inject fakes from tests/fakes/.
@@ -7,17 +7,15 @@ Protocols use structural typing — no isinstance() checks anywhere.
 Runtime-checkable is intentionally False: Protocol is the static boundary,
 not a runtime check.
 
-Ten protocols (CORE-11 + TA-01 + TA-14):
+Eight protocols (CORE-11 + TA-01 + TA-14):
   1. LLMClientProtocol          — LLM extraction (OpenRouter/DeepSeek + Anthropic)
   2. NorteiaApiClientProtocol   — Mar push to norteia-api
   3. PlacesClientProtocol       — Google Places (New API) search/details
   4. OTAClientProtocol          — OTA price check (ticketed attractions)
-  5. ApifyClientProtocol        — IG/X scraping (best-effort signal)
-  6. WhatsAppClientProtocol     — WhatsApp Business API template messages
-  7. MturClientProtocol         — Mtur municipality catalog
-  8. NotebookLMClientProtocol   — NotebookLM structured reports
-  9. TripAdvisorClientProtocol  — TripAdvisor GraphQL hybrid scraper (Phase 11)
- 10. GeocoderClientProtocol     — OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14)
+  5. WhatsAppClientProtocol     — WhatsApp Business API template messages
+  6. MturClientProtocol         — Mtur municipality catalog
+  7. TripAdvisorClientProtocol  — TripAdvisor GraphQL hybrid scraper (Phase 11)
+  8. GeocoderClientProtocol     — OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14)
 """
 
 from collections.abc import AsyncIterator
@@ -154,25 +152,6 @@ class OTAClientProtocol(Protocol):
         ...
 
 
-class ApifyClientProtocol(Protocol):
-    """Apify scraping client — IG/X social signals (Phase 3, best-effort).
-
-    Best-effort signal: Apify reads IG business profiles and recent posts.
-    Meta ToS gray area — read-only signal only (no automated DM).
-    """
-
-    async def scrape_ig(self, handle: str) -> dict[str, Any]:
-        """Scrape Instagram business profile for activity signals.
-
-        Args:
-            handle: IG handle (e.g. "@praiabonita_ba").
-
-        Returns:
-            Dict with follower count, last post date, post frequency, ...
-        """
-        ...
-
-
 class WhatsAppClientProtocol(Protocol):
     """WhatsApp Business API client — outreach messages (Phase 3).
 
@@ -214,25 +193,6 @@ class MturClientProtocol(Protocol):
 
         Returns:
             List of municipality dicts (ibge_code, name, category, ...).
-        """
-        ...
-
-
-class NotebookLMClientProtocol(Protocol):
-    """NotebookLM structured report client — Destinos lane (Phase 2).
-
-    Fetches structured tourism reports for destinos not covered by Mtur
-    (origem=80 for NotebookLM-sourced records).
-    """
-
-    async def fetch_report(self, municipio: str) -> dict[str, Any]:
-        """Fetch a structured NotebookLM tourism report for a municipality.
-
-        Args:
-            municipio: Municipality name (e.g. "Lençóis, BA").
-
-        Returns:
-            Structured report dict with tourism highlights, taxonomy labels, ...
         """
         ...
 

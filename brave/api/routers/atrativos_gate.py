@@ -7,6 +7,24 @@ Five endpoints:
   POST  /api/v1/atrativos/whatsapp/quality-rating-webhook  — Twilio quality-rating event
   POST  /api/v1/atrativos/whatsapp/inbound                 — relay inbound reply to task
 
+Phase F — gate substitution (the operator entry moved to the DLQ router):
+  The SINGLE operator entry into the WhatsApp column is now the manual DLQ→WhatsApp
+  batch move POST /api/v1/dlq/whatsapp-batch (brave/api/routers/dlq.py). It pulls
+  eligible DLQ atrativos (no horário AND no preço), moves them to
+  aguardando_consulta_whatsapp, and branches to outreach (celular captured) or the
+  LLM number-discovery task (no celular). The approve/reject endpoints below are NOT
+  a standalone operator gate anymore — they are REPURPOSED as internal moves that the
+  batch/transition paths reuse:
+    - approve_whatsapp_gate: the aguardando_consulta_whatsapp → whatsapp_in_progress +
+      outreach dispatch step. Preserved because transition_atrativo's Phase C
+      ("whatsapp","whatsapp") edge delegates to it (do NOT break that edge); the batch
+      has-celular branch performs the same transition inline.
+    - reject_whatsapp_gate: the aguardando_consulta_whatsapp → DLQ bounce (mirrored by
+      the number-discovery task's no-number path, dlq_reason="no_contact_found").
+  The whole WhatsApp subsystem (outreach_task / resume_conversation_task / LangGraph /
+  consent / ramp / quality-rating / Twilio) is preserved unchanged, including the
+  owner-confirmation path (validacao_humana=100 → reprocess_record → ≥80 → Mar).
+
 Structural template: brave/api/routers/dlq.py (Phase 2 DLQ steward pattern, D-06).
 require_steward copied verbatim from dlq.py (T-02-06-01 / CR-01 carried forward as T-03-03-01).
 

@@ -40,6 +40,8 @@ from urllib.parse import unquote
 import httpx
 import structlog
 
+from brave.shared.exceptions import SourceSessionError
+
 if TYPE_CHECKING:
     from brave.config.settings import TripAdvisorConfig
 
@@ -80,20 +82,29 @@ _MAX_PAGES: int = 50
 _DESTINATIONS_QID: str | None = None
 
 
-class SessionExpiredError(Exception):
+class SessionExpiredError(SourceSessionError):
     """Raised when a GraphQL request returns 403 or 429.
 
     Indicates the DataDome session cookies have expired or the queryId has
     rotated. Operator must re-inject a fresh session.
+
+    Subclasses SourceSessionError (brave/shared/exceptions.py) so it joins the
+    central BraveError hierarchy. The class object is unchanged and still raised
+    here, so every existing ``except SessionExpiredError`` / isinstance check —
+    including the multi-exception tuples in pipeline.py and tripadvisor_session.py
+    — keeps working unchanged.
     """
 
 
-class SessionMissingError(Exception):
+class SessionMissingError(SourceSessionError):
     """Raised when BRAVE_TA_SESSION_KEY is absent from Redis.
 
     Operator must run scripts/ta_bootstrap.py --endpoint <URL> to inject a
     session before sweeping. The injection endpoint validates the session
     (canary check) before writing to Redis.
+
+    Subclasses SourceSessionError (brave/shared/exceptions.py) — see
+    SessionExpiredError for the compatibility rationale.
     """
 
 

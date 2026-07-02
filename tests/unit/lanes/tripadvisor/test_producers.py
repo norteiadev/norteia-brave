@@ -75,10 +75,7 @@ def _make_config() -> ScoreConfig:
         weight_atualidade=15.0,
         weight_validacao_humana=15.0,
         threshold_mar=85.0,
-        threshold_dlq=40.0,
         score_version="v1.1",
-        mar_ready_atualidade_bar=70.0,
-        mar_ready_corrob_bar=60.0,
     )
 
 

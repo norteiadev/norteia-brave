@@ -115,9 +115,12 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
         stub_client_class,
     )
 
-    # Patch AppConfig and ScoreConfig constructors
+    # Patch AppConfig constructor + the effective-config loader (score seam)
     monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
-    monkeypatch.setattr("brave.tasks.pipeline.ScoreConfig", lambda: mock_score_config)
+    monkeypatch.setattr(
+        "brave.tasks.pipeline.load_effective_config",
+        lambda session, redis=None: MagicMock(score=mock_score_config),
+    )
 
     # Patch redis.from_url to return fakeredis
     monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
@@ -323,7 +326,10 @@ class TestSweepTripAdvisorPerUfDestinoBuild:
         mock_app_config.run_real_externals = False  # uses NullTripAdvisorClient
 
         monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
-        monkeypatch.setattr("brave.tasks.pipeline.ScoreConfig", lambda: MagicMock())
+        monkeypatch.setattr(
+            "brave.tasks.pipeline.load_effective_config",
+            lambda session, redis=None: MagicMock(),
+        )
         monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
         monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setattr(
@@ -379,10 +385,7 @@ def _make_config() -> ScoreConfig:
         weight_atualidade=15.0,
         weight_validacao_humana=15.0,
         threshold_mar=85.0,
-        threshold_dlq=40.0,
         score_version="v1.1",
-        mar_ready_atualidade_bar=70.0,
-        mar_ready_corrob_bar=60.0,
     )
 
 
@@ -457,7 +460,10 @@ def _run_bulk_sweep(
         lambda config, redis: fake_geo,
     )
     monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
-    monkeypatch.setattr("brave.tasks.pipeline.ScoreConfig", _make_config)
+    monkeypatch.setattr(
+        "brave.tasks.pipeline.load_effective_config",
+        lambda session, redis=None: MagicMock(score=_make_config()),
+    )
     monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
     monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setattr(
@@ -694,7 +700,10 @@ class TestSweepTripAdvisorTaConfig:
         mock_app_config.run_real_externals = real_externals
 
         monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
-        monkeypatch.setattr("brave.tasks.pipeline.ScoreConfig", lambda: MagicMock())
+        monkeypatch.setattr(
+            "brave.tasks.pipeline.load_effective_config",
+            lambda session, redis=None: MagicMock(),
+        )
         monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
         monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setattr(

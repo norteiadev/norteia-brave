@@ -3,6 +3,12 @@
 Phase 1: Basic sweep structure defined (stubs).
 Phase 2: Destinos lane — sweep_uf tasks.
 Phase 3: Atrativos lane — sweep_atrativos_by_uf fan-out added.
+Phase D: source-gated — only the lanes in ``enabled_sources(effective config)`` are
+  scheduled. The 'default' (Mtur/Discovery) lane owns the per-UF sweep_uf +
+  discover_atrativo entries; the 'tripadvisor' lane owns the ta-keepalive entry (its
+  only beat task — TA sweeps are start-only). Disabling a lane in ``config_settings``
+  drops its entries on the NEXT beat restart (redbeat persists the schedule in Redis
+  and only resyncs entry definitions on process start — see CLAUDE.md).
 
 UF_LIST: 27 Brazilian states (2-letter codes).
 Each UF gets a RedBeatSchedulerEntry that fires the appropriate sweep task.
@@ -16,6 +22,7 @@ sweep_atrativos_by_uf:
   All 27 UF tasks fan out independently; each UF is a separate Celery message.
 """
 
+import os
 from datetime import timedelta
 
 from celery.schedules import crontab
@@ -33,51 +40,88 @@ UF_LIST = [
 ]
 
 # ---------------------------------------------------------------------------
-# Beat schedule entries
-# Phase 1: Stub — actual sweep tasks defined in Phase 2
+# Beat schedule builder (Phase D: source-gated)
 # ---------------------------------------------------------------------------
 
 # Single-queue model: all tasks (beat and .delay) land on the default 'celery' queue.
-# Dedicated lane routing (task_routes + worker pools) is deferred until HOL-blocking is observed.
+# Dedicated lane routing (task_routes + worker pools) is deferred until HOL-blocking is
+# observed. Beat entries therefore carry NO options.queue (guarded by
+# tests/unit/test_celery_queue_routing.py).
 
-# Define the schedule structure for Phase 1
-# Real UF sweep tasks arrive with the Destinos lane in Phase 2
-BRAVE_BEAT_SCHEDULE: dict = {}
 
-for _uf in UF_LIST:
-    BRAVE_BEAT_SCHEDULE[f"sweep-{_uf.lower()}-daily"] = {
-        "task": "brave.sweep_uf",  # Phase 2 task; stub in Phase 1
-        "schedule": crontab(hour=2, minute=0),  # 2 AM UTC daily
-        "args": (_uf,),
-        "kwargs": {},
-    }
+def build_beat_schedule(enabled: list[str]) -> dict:
+    """Build the beat schedule for exactly the ENABLED collection lanes.
 
-# ---------------------------------------------------------------------------
-# Phase 3: Atrativos discovery sweep — fan-out per UF
-# discover_atrativo_task runs per UF at 3 AM UTC daily (staggered from sweep_uf)
-# ---------------------------------------------------------------------------
+    - ``default`` in ``enabled`` → the per-UF Mtur/Discovery sweep entries
+      (sweep-{uf}-daily @ 2 AM UTC + sweep-atrativos-{uf}-daily @ 3 AM UTC).
+    - ``tripadvisor`` in ``enabled`` → the TA session keep-alive beat (the TA lane's
+      only scheduled task; TA sweeps are dispatched on-demand via /engine/start).
 
-for _uf in UF_LIST:
-    BRAVE_BEAT_SCHEDULE[f"sweep-atrativos-{_uf.lower()}-daily"] = {
-        "task": "brave.discover_atrativo",
-        "schedule": crontab(hour=3, minute=0),  # 3 AM UTC daily — 1h after sweep_uf
-        "args": (_uf,),
-        "kwargs": {},
-    }
+    Pure + import-safe: takes the enabled list, reads only env config
+    (TripAdvisorConfig is pydantic-settings, no DB). No options.queue on any entry.
+    """
+    schedule: dict = {}
 
-# Apply to app config
+    if "default" in enabled:
+        for _uf in UF_LIST:
+            schedule[f"sweep-{_uf.lower()}-daily"] = {
+                "task": "brave.sweep_uf",
+                "schedule": crontab(hour=2, minute=0),  # 2 AM UTC daily
+                "args": (_uf,),
+                "kwargs": {},
+            }
+            # Atrativos discovery sweep — fan-out per UF, staggered 1h after sweep_uf.
+            schedule[f"sweep-atrativos-{_uf.lower()}-daily"] = {
+                "task": "brave.discover_atrativo",
+                "schedule": crontab(hour=3, minute=0),  # 3 AM UTC daily
+                "args": (_uf,),
+                "kwargs": {},
+            }
+
+    if "tripadvisor" in enabled:
+        # Keep-alive beat — maintains the sliding TTL on active TA sessions (260629-p2v).
+        # Fires every BRAVE_TA_KEEPALIVE_INTERVAL_SECONDS (default 600s / 10 min).
+        # TripAdvisorConfig() is safe at import time: pydantic-settings env-only, no DB.
+        from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
+
+        schedule["ta-keepalive"] = {
+            "task": "brave.ta_keepalive",
+            "schedule": timedelta(seconds=TripAdvisorConfig().keepalive_interval_seconds),
+        }
+
+    return schedule
+
+
+def _enabled_sources_best_effort() -> list[str]:
+    """The enabled lanes from the effective config, computed import-safely.
+
+    Reads the ``config_settings`` overlay when a DB is reachable so a durably-disabled
+    lane is not scheduled at beat startup (the correct resync point per the redbeat
+    note above). Any failure — no ``BRAVE_DB_URL``, DB down, pytest-socket blocked at
+    import — falls back to the env-only ``AppConfig()`` (both lanes enabled), so beat
+    import NEVER breaks. A dedicated short-lived engine is used and disposed to avoid
+    importing the FastAPI DI layer (``brave.api.deps``) into the Celery process.
+    """
+    from brave.config.runtime import enabled_sources, load_effective_config
+    from brave.config.settings import AppConfig
+
+    db_url = os.environ.get("BRAVE_DB_URL")
+    if db_url:
+        try:
+            from sqlalchemy import create_engine  # noqa: PLC0415
+            from sqlalchemy.orm import sessionmaker  # noqa: PLC0415
+
+            engine = create_engine(db_url)
+            try:
+                with sessionmaker(bind=engine)() as session:
+                    return enabled_sources(load_effective_config(session))
+            finally:
+                engine.dispose()
+        except Exception:
+            pass
+    return enabled_sources(AppConfig())
+
+
+# Build once at import and apply to the Celery app config.
+BRAVE_BEAT_SCHEDULE: dict = build_beat_schedule(_enabled_sources_best_effort())
 app.conf.beat_schedule = BRAVE_BEAT_SCHEDULE
-
-# ---------------------------------------------------------------------------
-# Keep-alive beat — maintains sliding TTL on active TA sessions (260629-p2v)
-# Fires every BRAVE_TA_KEEPALIVE_INTERVAL_SECONDS (default 600s / 10 min).
-# TripAdvisorConfig() is safe at import time: pydantic-settings env-only, no DB.
-# ---------------------------------------------------------------------------
-from brave.config.settings import TripAdvisorConfig as _TripAdvisorConfig  # noqa: E402, PLC0415
-
-_ta_beat_interval = _TripAdvisorConfig().keepalive_interval_seconds
-BRAVE_BEAT_SCHEDULE["ta-keepalive"] = {
-    "task": "brave.ta_keepalive",
-    "schedule": timedelta(seconds=_ta_beat_interval),
-}
-app.conf.beat_schedule = BRAVE_BEAT_SCHEDULE  # re-apply after adding keepalive entry

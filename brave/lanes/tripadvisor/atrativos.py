@@ -20,8 +20,8 @@ checklist (proxy setup, scraper dep group, LGPD acknowledgement).
 
 NO WHATSAPP OUTREACH: TA attractions NEVER enter the WhatsApp outreach pipeline.
 They are review-signal validated only (corroboracao + atualidade from aggregate
-review data). Promotion to Mar requires a human steward's audited
-promote_override action — there is no automated Mar push path for this lane.
+review data). Promotion to Mar requires a human steward's audited transition
+through the §7.6 gate — there is no automated Mar push path for this lane.
 
 Mirrors TripAdvisorDestinosIngest in structure. Adds parent destino linkage:
   - parent_rio_id: from destino_rio_map (dict[ibge_code, (rio_id, source_ref)])
@@ -43,6 +43,7 @@ import structlog
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig, TripAdvisorConfig
+from brave.core.models import whatsapp_candidate_from_phone
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
 from brave.core.rio.routing import process_nascente_record
@@ -324,6 +325,15 @@ class TripAdvisorAtrativosIngest:
             },
         }
 
+        # Phase F: MASKED WhatsApp-candidate seam. TripAdvisor AttractionsFusion cards
+        # carry NO phone (LGPD-aggregate-only lane, "NO WHATSAPP OUTREACH") so this is a
+        # no-op today; if a phone is ever added to the card it is captured MASKED only
+        # (whatsapp_candidate_from_phone → mask_phone) and NEVER as a raw number. The
+        # value rides into normalized["contact"] via process_nascente_record.
+        whatsapp_candidate = whatsapp_candidate_from_phone(entity.get("phone"))
+        if whatsapp_candidate is not None:
+            payload["contact"] = {"whatsapp_candidate": whatsapp_candidate}
+
         nascente = store_raw(
             session=self._session,
             source="tripadvisor",
@@ -486,6 +496,15 @@ class TripAdvisorAtrativosIngest:
                 "source": "tripadvisor",
             },
         }
+
+        # Phase F: MASKED WhatsApp-candidate seam. TripAdvisor AttractionsFusion cards
+        # carry NO phone (LGPD-aggregate-only lane, "NO WHATSAPP OUTREACH") so this is a
+        # no-op today; if a phone is ever added to the card it is captured MASKED only
+        # (whatsapp_candidate_from_phone → mask_phone) and NEVER as a raw number. The
+        # value rides into normalized["contact"] via process_nascente_record.
+        whatsapp_candidate = whatsapp_candidate_from_phone(entity.get("phone"))
+        if whatsapp_candidate is not None:
+            payload["contact"] = {"whatsapp_candidate": whatsapp_candidate}
 
         nascente = store_raw(
             session=self._session,

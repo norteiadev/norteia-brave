@@ -1,13 +1,11 @@
 """Offline integration tests for the brave.sweep_uf Destinos sweep task (ORCH-01, ORCH-04, D-06).
 
-The sweep composes two destino producers:
-  - MturSeedIngest.produce(uf)      — idempotent seed re-ingest (origem=100)
-  - DesmembramentoAgent.produce(uf) — recurring LLM sub-destino discovery (origem=40)
+The sweep runs the single destino producer:
+  - MturSeedIngest.produce(uf) — idempotent seed re-ingest (origem=100)
 
 All tests run 100% offline + keyless:
   - The Mtur side uses the bundled data/mtur/municipios_mtur_2024.csv via the real
     MturClient (offline CSV reader — no network).
-  - The LLM side uses FakeLLMClient because AppConfig().run_real_externals defaults to False.
 
 Requires: docker-compose postgres up + BRAVE_DB_URL set (load .env before running).
 Marked @pytest.mark.integration — skipped when DB unavailable.
@@ -47,37 +45,6 @@ def isolated_session(db_engine):
         connection.close()
 
 
-def _patch_fake_llm(monkeypatch) -> None:
-    """Make the FakeLLMClient that sweep_uf builds return a valid DesmembramentoResult.
-
-    sweep_uf constructs its own NullLLMClient() (extract()->None) when
-    run_real_externals=False, so we patch the Null class at its pipeline import site
-    to a factory returning a FakeLLMClient that injects a schema-valid extract()
-    result. Keeps the test offline + keyless while exercising the real
-    DesmembramentoAgent.produce path.
-    """
-    from brave.lanes.destinos.schemas import DesmembramentoResult, DestinoItem
-    from tests.fakes.fake_llm import FakeLLMClient
-
-    # Porto Seguro is "A"/Oferta Principal in the bundled BA CSV (ibge 2927408).
-    result = DesmembramentoResult(
-        municipio_ibge="2927408",
-        municipio_nome="Porto Seguro",
-        destinos=[
-            DestinoItem(
-                nome="Trancoso",
-                tipo="vila",
-                posicionamento="Vila histórica com Quadrado e praias",
-            ),
-        ],
-    )
-
-    def _factory(*args, **kwargs):
-        return FakeLLMClient(fixture_result=result)
-
-    monkeypatch.setattr("brave.clients.null_llm.NullLLMClient", _factory)
-
-
 def test_sweep_uf_name_resolves():
     """The beat entry sweep-{uf}-daily → 'brave.sweep_uf' resolves to a real task [D-01].
 
@@ -92,15 +59,13 @@ def test_sweep_uf_name_resolves():
 def test_sweep_uf_ingests_destinos(isolated_session, monkeypatch):
     """sweep_uf("BA") creates destination RioRecords routed by §7.6 (producer-only) [D-01/D-02].
 
-    Drives the real offline path: MturClient reads the bundled CSV, FakeLLMClient is
-    selected because run_real_externals defaults to False. Asserts at least the Mtur
+    Drives the real offline path: MturClient reads the bundled CSV. Asserts the Mtur
     seed produced destination Rio rows for BA (origem=100).
     """
     from brave.tasks import pipeline
 
     # Make sweep_uf use this test's transactional session (so rollback cleans up).
     monkeypatch.setattr(pipeline, "_get_session", lambda: (isolated_session, _NoDispose()))
-    _patch_fake_llm(monkeypatch)
 
     pipeline.sweep_uf.run("BA")
 
@@ -115,7 +80,7 @@ def test_sweep_uf_ingests_destinos(isolated_session, monkeypatch):
     assert len(rios) > 0, "sweep_uf must produce destination RioRecords for BA"
     # Producer-only: no auto-validation — validacao_humana stays 0 (D-02).
     for rio in rios:
-        assert rio.routing in ("mar", "dlq", "descarte"), (
+        assert rio.routing in ("mar", "dlq"), (
             f"unexpected routing {rio.routing!r} — §7.6 routes, sweep adds no branch"
         )
 
@@ -129,7 +94,6 @@ def test_sweep_uf_idempotent(isolated_session, monkeypatch):
     from brave.tasks import pipeline
 
     monkeypatch.setattr(pipeline, "_get_session", lambda: (isolated_session, _NoDispose()))
-    _patch_fake_llm(monkeypatch)
 
     pipeline.sweep_uf.run("BA")
     count_after_first = isolated_session.scalar(
@@ -178,28 +142,6 @@ def test_sweep_uf_quarantines_poison(isolated_session, monkeypatch):
 
 
 @pytest.mark.integration
-def test_sweep_uf_no_notebooklm(isolated_session, monkeypatch):
-    """sweep_uf never produces a source='notebooklm' Nascente row [Deferred].
-
-    NotebookLM is a manual report ingest only — the recurring sweep runs Mtur seed +
-    Desmembramento, nothing else.
-    """
-    from brave.tasks import pipeline
-
-    monkeypatch.setattr(pipeline, "_get_session", lambda: (isolated_session, _NoDispose()))
-    _patch_fake_llm(monkeypatch)
-
-    pipeline.sweep_uf.run("BA")
-
-    notebooklm_rows = list(
-        isolated_session.scalars(
-            select(NascenteRecord).where(NascenteRecord.source == "notebooklm")
-        ).all()
-    )
-    assert notebooklm_rows == [], "sweep_uf must not run NotebookLM (manual ingest only)"
-
-
-@pytest.mark.integration
 def test_sweep_uf_bad_record_doesnt_discard_good_ones(isolated_session, monkeypatch):
     """A single bad process_nascente_record call is quarantined; other records survive.
 
@@ -223,7 +165,6 @@ def test_sweep_uf_bad_record_doesnt_discard_good_ones(isolated_session, monkeypa
     from brave.tasks import pipeline
 
     monkeypatch.setattr(pipeline, "_get_session", lambda: (isolated_session, _NoDispose()))
-    _patch_fake_llm(monkeypatch)
 
     call_count = [0]
 

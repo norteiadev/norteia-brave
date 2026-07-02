@@ -21,6 +21,7 @@ import structlog
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from brave.core.models import whatsapp_candidate_from_phone
 from brave.lanes.atrativos.schemas import ContactResult
 from brave.observability.audit import write_audit
 
@@ -104,6 +105,15 @@ class ContactFinderAgent:
         # Mutate normalized JSONB with flag_modified (Phase 2 lesson — T-02-06-04)
         new_normalized = dict(normalized)
         new_normalized["contacts"] = contact.model_dump()
+
+        # Phase F: capture a MASKED WhatsApp candidate (celular + DDD) for the board.
+        # whatsapp_candidate_from_phone returns the mask_phone() form (or None for a
+        # landline / no phone) — the raw celular is NEVER stored here. The raw E.164
+        # stays in normalized["contacts"]["phone_e164"] for the consent/outreach path.
+        whatsapp_candidate = whatsapp_candidate_from_phone(phone_e164)
+        if whatsapp_candidate is not None:
+            new_normalized["contact"] = {"whatsapp_candidate": whatsapp_candidate}
+
         rio.normalized = new_normalized
         flag_modified(rio, "normalized")
         rio.sub_state = "contacts_found"

@@ -105,7 +105,7 @@ from brave.api.routers.engine import router as engine_router
 
 app.include_router(engine_router)
 
-# Phase 11: TripAdvisor mar-ready promote-override endpoints (TA-05, TA-06)
+# Atrativos operator API — audited stage transitions (UI-PAINEL-2)
 from brave.api.routers.atrativos import router as atrativos_router
 
 app.include_router(atrativos_router)
@@ -129,3 +129,9 @@ app.include_router(runs_router)
 from brave.api.routers.logs import router as logs_router  # noqa: E402
 
 app.include_router(logs_router)
+
+# Phase D: operator-tunable runtime config (config_settings overlay) — GET (Bearer)
+# effective snapshot + PATCH (steward) upsert with §7.6 validation + audit + cache-bust.
+from brave.api.routers.config import router as config_router  # noqa: E402
+
+app.include_router(config_router)

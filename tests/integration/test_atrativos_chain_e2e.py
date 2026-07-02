@@ -21,7 +21,7 @@ What this suite asserts:
                                   already-advanced record is a no-op (inline guards, D-04).
 
 100% offline + keyless (D-06): AppConfig().run_real_externals defaults to False, so the tasks
-select FakePlaces/FakeApify/FakeLLM. We patch those fakes at their import sites to inject the
+select FakePlaces/FakeLLM. We patch those fakes at their import sites to inject the
 borderline fixtures (mirrors the score math in test_atrativos_lane_e2e.py::test_sc4).
 
 Isolation: the chain tasks call session.commit() internally, so we use the SAVEPOINT-isolated
@@ -35,10 +35,11 @@ exact offline path an operator hits when no broker/worker is reachable.
 Requires: docker-compose postgres up + BRAVE_DB_URL set (load .env before running).
 Marked @pytest.mark.integration — skipped when DB unavailable.
 
-Score math for the borderline fixture (default ScoreConfig: threshold_dlq=40, threshold_mar=85;
+Score math for the borderline fixture (default ScoreConfig: threshold_mar=80;
 weights origem=30%, completude=20%, corroboracao=20%, atualidade=15%, validacao_humana=15%):
-  origem=60, completude=75, corroboracao=40 (Apify confirms via IG), atualidade=100 (recent
-  review), validacao_humana=0  →  18 + 15 + 8 + 15 + 0 = 56  →  40 ≤ 56 < 85  →  DLQ (the gate).
+  origem=60, completude=75, corroboracao=0 (constant; Apify IG source retired, Phase E),
+  atualidade=100 (recent review), validacao_humana=0  →  18 + 15 + 0 + 15 + 0 = 48  →
+  48 < 80  →  DLQ (the gate).
 """
 
 import uuid
@@ -63,9 +64,9 @@ IBGE = "2999999"
 PLACE_ID = "ChIJtest_chain_e2e"
 SOURCE_REF = f"places:{UF}:{PLACE_ID}"
 
-# A recent-review, OPERATIONAL, IG-linked place_details fixture: drives the borderline
-# score (atualidade=100 from the recent review, corroboracao=40 from Apify confirming the
-# IG handle extracted from the instagram.com website).
+# A recent-review, OPERATIONAL place_details fixture: drives the borderline score
+# (atualidade=100 from the recent review; corroboracao is the fixed 0.0 constant now
+# that the Apify IG source is retired — Phase E).
 _PLACE_DETAILS: dict[str, Any] = {
     "place_id": PLACE_ID,
     "business_status": "OPERATIONAL",
@@ -195,11 +196,10 @@ def _seed_parent_destino(session) -> MarRecord:
 def _patch_fakes(monkeypatch) -> None:
     """Inject borderline fixtures into the fakes the chain tasks build internally.
 
-    The tasks construct their own FakePlacesClient()/FakeApifyClient()/FakeLLMClient() with
+    The tasks construct their own FakePlacesClient()/FakeLLMClient() with
     no fixtures (run_real_externals=False). We patch each class at its import site so the
-    chain produces a borderline (<85%) attraction that lands at the gate.
+    chain produces a borderline (<80%) attraction that lands at the gate.
     """
-    from tests.fakes.fake_apify import FakeApifyClient
     from tests.fakes.fake_llm import FakeLLMClient
     from tests.fakes.fake_places import FakePlacesClient
 
@@ -233,16 +233,8 @@ def _patch_fakes(monkeypatch) -> None:
             )
         )
 
-    def _apify_factory(*args, **kwargs):
-        return FakeApifyClient(
-            fixture_data={
-                "@atrativo_chain_e2e": {"followers": 5000, "last_post": "2026-06-12"}
-            }
-        )
-
     monkeypatch.setattr("brave.clients.null_places.NullPlacesClient", _places_factory)
     monkeypatch.setattr("brave.clients.null_llm.NullLLMClient", _llm_factory)
-    monkeypatch.setattr("brave.clients.null_apify.NullApifyClient", _apify_factory)
 
 
 def _force_inline_fallback(monkeypatch, pipeline) -> None:

@@ -5,7 +5,6 @@ Tests:
   - AtrativoResult with invalid municipio_ibge pattern raises ValidationError
   - ConversationExtractionResult defaults confidence=0.0
   - ContactResult all-None is valid
-  - FakeApifyClient.scrape_ig returns fixture and tracks call
   - FakeWhatsAppClient.send_template appends to sent_messages
   - ConsentLog model is importable from brave.core.models
   - WhatsAppConfig and RampConfig are importable and have defaults
@@ -210,44 +209,6 @@ def test_signal_result_valid() -> None:
     )
     assert result.business_status == "OPERATIONAL"
     assert result.reviews_recent_count == 3
-
-
-# ---------------------------------------------------------------------------
-# FakeApifyClient tests
-# ---------------------------------------------------------------------------
-
-
-def test_fake_apify_client_tracks_calls() -> None:
-    """FakeApifyClient.scrape_ig returns fixture and tracks calls."""
-    from tests.fakes.fake_apify import FakeApifyClient
-
-    client = FakeApifyClient(
-        fixture_data={"@praiadobonito": {"followers": 1200, "last_post": "2026-06-01"}}
-    )
-    assert client.scrape_ig_calls == []
-
-    result = asyncio.run(client.scrape_ig("@praiadobonito"))
-    assert result == {"followers": 1200, "last_post": "2026-06-01"}
-    assert client.scrape_ig_calls == ["@praiadobonito"]
-
-
-def test_fake_apify_client_returns_empty_for_unknown_handle() -> None:
-    """FakeApifyClient returns empty dict for unknown handle."""
-    from tests.fakes.fake_apify import FakeApifyClient
-
-    client = FakeApifyClient()
-    result = asyncio.run(client.scrape_ig("@unknown"))
-    assert result == {}
-
-
-def test_fake_apify_client_raises_on_call_when_configured() -> None:
-    """FakeApifyClient raises configured exception."""
-    from tests.fakes.fake_apify import FakeApifyClient
-
-    exc = RuntimeError("Apify unavailable")
-    client = FakeApifyClient(raise_on_call=exc)
-    with pytest.raises(RuntimeError, match="Apify unavailable"):
-        asyncio.run(client.scrape_ig("@somehandle"))
 
 
 # ---------------------------------------------------------------------------

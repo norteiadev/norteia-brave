@@ -37,7 +37,7 @@ def store_raw(
 
     Args:
         session:    SQLAlchemy synchronous Session.
-        source:     Data source identifier (e.g., "mtur", "notebooklm").
+        source:     Data source identifier (e.g., "mtur", "places_discovery").
         source_ref: Unique source-scoped reference (e.g., "mtur:BA:12345").
         entity_type: "destination" or "attraction".
         uf:         Two-letter state code.
