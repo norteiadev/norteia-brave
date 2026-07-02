@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cd /Users/leandro/Projects/norteia/norteia-brave; echo \\\"--- celery workers ---\\\"; pgrep -fl celery | head; echo \\\"--- proc 27115 cmd ---\\\"; rtk ps -o command= -p 27115 | cut -c1-200; echo...",
-  "error": "Exit code 1\n--- celery workers ---\n3112 /Users/leandro/Projects/norteia/norteia-brave/.venv/bin/python3 .venv/bin/celery -A brave.tasks.celery_app:app worker --loglevel=info\n3171 /Users/leandro/Projects/norteia/norteia-brave/.venv/bin/python3 .venv/bin/celery -A brave.tasks.celery_app:app worker --loglevel=info\n3172 /Users/leandro/Projects/norteia/norteia-brave/.venv/bin/python3 .venv/bin/celery -A brave.tasks.celery_app:app worker --loglevel=info\n3173 /Users/leandro/Projects/norteia/norteia-bra...",
-  "timestamp": "2026-07-01T20:22:40.113Z",
-  "retry_count": 1
-}

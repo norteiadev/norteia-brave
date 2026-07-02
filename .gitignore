@@ -29,3 +29,6 @@ dist/
 postgres-data/
 redis-data/
 .gstack/
+
+# Agent tooling per-machine state (oh-my-claudecode)
+.omc/

@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cd /Users/leandro/Projects/norteia/norteia-brave/dashboard && rtk grep -rln \\\"IntersectionObserver\\\" --include=\\\"*.ts\\\" --include=\\\"*.tsx\\\" . 2>/dev/null | grep -v node_modules; echo \\\"===...",
-  "error": "Exit code 1\n=== vitest setup file ===\n2 matches in 2 files:\n\n17:0:\"jsdom\",\n18:0:[\"./vitest.setup.ts\"],\n(eval):1: no matches found: test/setup.*",
-  "timestamp": "2026-07-01T17:49:02.206Z",
-  "retry_count": 1
-}
