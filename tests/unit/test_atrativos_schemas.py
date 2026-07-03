@@ -121,7 +121,7 @@ def test_atrativo_result_invalid_tipo_raises() -> None:
 
 def test_conversation_extraction_result_defaults_confidence_zero() -> None:
     """ConversationExtractionResult default confidence is 0.0."""
-    from brave.lanes.atrativos.schemas import ConversationExtractionResult
+    from brave.shared.whatsapp.schemas import ConversationExtractionResult
 
     result = ConversationExtractionResult()
     assert result.confidence == 0.0
@@ -129,7 +129,7 @@ def test_conversation_extraction_result_defaults_confidence_zero() -> None:
 
 def test_conversation_extraction_result_all_none() -> None:
     """ConversationExtractionResult with all-None fields is valid."""
-    from brave.lanes.atrativos.schemas import ConversationExtractionResult
+    from brave.shared.whatsapp.schemas import ConversationExtractionResult
 
     result = ConversationExtractionResult(
         existe=None,
@@ -144,7 +144,7 @@ def test_conversation_extraction_result_all_none() -> None:
 
 def test_conversation_extraction_result_filled() -> None:
     """ConversationExtractionResult with valid answers populates correctly."""
-    from brave.lanes.atrativos.schemas import ConversationExtractionResult
+    from brave.shared.whatsapp.schemas import ConversationExtractionResult
 
     result = ConversationExtractionResult(
         existe="sim",
@@ -160,7 +160,7 @@ def test_conversation_extraction_result_filled() -> None:
 
 def test_conversation_extraction_result_confidence_out_of_range_raises() -> None:
     """ConversationExtractionResult confidence outside [0, 1] raises ValidationError."""
-    from brave.lanes.atrativos.schemas import ConversationExtractionResult
+    from brave.shared.whatsapp.schemas import ConversationExtractionResult
 
     with pytest.raises(ValidationError):
         ConversationExtractionResult(confidence=1.5)

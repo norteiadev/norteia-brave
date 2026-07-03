@@ -23,10 +23,10 @@ from brave.api.deps import (
     require_steward_or_bearer,
 )
 from brave.config.settings import StewardConfig
+from brave.core.atrativos.state_machine import advance_sub_state
 from brave.core.dlq.service import validate_and_promote_rio
 from brave.core.models import RioRecord
 from brave.core.repositories import SqlAlchemyDlqRepository
-from brave.lanes.atrativos.state_machine import advance_sub_state
 from brave.observability.audit import write_audit
 
 router = APIRouter()

@@ -26,12 +26,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
+from brave.core.atrativos.state_machine import advance_sub_state
 from brave.core.models import MarRecord
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
 from brave.core.rio.routing import process_nascente_record
 from brave.lanes.atrativos.schemas import AtrativoResult
-from brave.lanes.atrativos.state_machine import advance_sub_state
 from brave.observability.audit import write_audit
 
 if TYPE_CHECKING:

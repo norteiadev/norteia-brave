@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from brave.lanes.atrativos.state_machine import (
+from brave.core.atrativos.state_machine import (
     ATRATIVO_SUB_STATE_EDGES,
     advance_sub_state,
     is_allowed_sub_state_edge,

@@ -956,7 +956,7 @@ class _FakeSaver:
 
 def _patch_graph(monkeypatch, final_state: dict):
     """Patch build_graph + AsyncPostgresSaver so the task runs offline deterministically."""
-    import brave.lanes.atrativos.whatsapp_agent as agent_mod
+    import brave.shared.whatsapp.agent as agent_mod
 
     monkeypatch.setattr(
         agent_mod, "build_graph", lambda **kw: _FakeGraph(final_state)

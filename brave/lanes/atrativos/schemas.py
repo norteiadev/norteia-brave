@@ -1,11 +1,14 @@
 """Pydantic v2 schemas for the Atrativos lane (Phase 3).
 
-Five schemas:
+Four schemas:
   - AtrativoResult       — LLM extraction output for one attraction (instructor Mode.Tools)
   - ContactResult        — ContactFinderAgent output (Places Details + site/IG/email)
   - SignalResult         — SignalAgent output (business_status / weekday_text / reviews)
-  - ConversationExtractionResult — DeepSeek extraction of owner WhatsApp responses
   - WhatsAppNumberDiscovery — LLM-discovered phone/WhatsApp number (Phase F number-discovery)
+
+ConversationExtractionResult (owner WhatsApp reply extraction) moved to
+``brave.shared.whatsapp.schemas`` in Phase G so the shared WhatsApp agent can
+validate extractions without ``brave.shared`` importing ``brave.lanes`` (D-18).
 
 Every Field has a description= kwarg for instructor Mode.Tools tool-calling compliance.
 Literal types are used for constrained fields; `| None` for optional extraction outputs.
@@ -174,60 +177,6 @@ class SignalResult(BaseModel):
     reviews_recent_count: int = Field(
         default=0,
         description="Quantidade de reviews com publishTime nos últimos 30 dias.",
-    )
-
-
-# ---------------------------------------------------------------------------
-# ConversationExtractionResult — DeepSeek extraction of WhatsApp owner replies
-# ---------------------------------------------------------------------------
-
-
-class ConversationExtractionResult(BaseModel):
-    """Structured extraction of owner WhatsApp conversation answers.
-
-    Extracted by DeepSeek via instructor Mode.Tools (D-08, D-09).
-    All answer fields are optional — a partial conversation may not yield all answers.
-    confidence represents the overall extraction confidence (0.0–1.0).
-
-    Used by WhatsAppAgent finalize node to drive re-score + Mar/DLQ routing (D-10).
-    """
-
-    existe: Literal["sim", "nao"] | None = Field(
-        default=None,
-        description=(
-            "O negócio/atrativo existe? Resposta normalizada: 'sim' ou 'nao'. "
-            "None se o proprietário não respondeu claramente."
-        ),
-    )
-    funcionando: Literal["sim", "nao", "temporariamente_fechado"] | None = Field(
-        default=None,
-        description=(
-            "Está funcionando atualmente? Valores: 'sim', 'nao', 'temporariamente_fechado'. "
-            "None se inconclusivo."
-        ),
-    )
-    horarios: str | None = Field(
-        default=None,
-        description=(
-            "Horários de funcionamento confirmados pelo proprietário (texto livre). "
-            "None se não informado."
-        ),
-    )
-    valor: str | None = Field(
-        default=None,
-        description=(
-            "Valor de entrada ou faixa de preço confirmado pelo proprietário (texto livre). "
-            "None se gratuito ou não informado."
-        ),
-    )
-    confidence: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "Confiança geral da extração (0.0–1.0). Estimado pelo DeepSeek com base "
-            "na clareza e coerência das respostas do proprietário."
-        ),
     )
 
 

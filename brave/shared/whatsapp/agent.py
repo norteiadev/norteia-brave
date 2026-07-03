@@ -4,6 +4,18 @@ Implements the WhatsApp outreach conversation as a LangGraph StateGraph with
 AsyncPostgresSaver checkpoint. Persists conversation state across worker restarts
 so a multi-day conversation (owner doesn't reply for 24h+) survives Celery restarts.
 
+Phase G: moved from ``brave.lanes.atrativos.whatsapp_agent`` to ``brave.shared.whatsapp``.
+The pure conversation state / opt-out / routing primitives live in the sibling
+``conversation`` module; this module holds the I/O-bearing graph nodes,
+``_compliant_send``, and ``build_graph``.
+
+D-18 note: ``brave.shared`` must not import ``brave.domains`` or ``brave.tasks``.
+The former ``push_attraction_task`` dispatch inside ``_finalize_node`` has been
+inverted to an injected ``push_confirmed_fn`` callback supplied by the caller, so
+no ``brave.tasks`` import remains. (``_finalize_node`` still imports
+``brave.core.models`` / ``brave.core.rio.routing`` and reaches ``brave.core`` via
+``brave.compliance`` — tracked follow-up; see the package docstring.)
+
 Architecture:
   - Sonnet 4.5 via native Anthropic SDK generates PT-BR turns (asks questions,
     identifies Norteia, states opt-out option). D-08.
@@ -14,7 +26,7 @@ Architecture:
   - Opt-out keywords (SAIR, PARAR, etc.) detected in recv_reply_node → record_opt_out
     → state["opted_out"] = True → graph routes to finalize_node → DLQ. COMP-01/02.
   - Owner-validation success (existe=sim, funcionando=sim) triggers re-score:
-    finalize_node → reprocess_record → promote_to_mar → push_attraction_task. D-10.
+    finalize_node → reprocess_record → promote_to_mar → push_confirmed_fn (injected). D-10.
 
 thread_id = f"atrativo:{rio_id}" (keyed by UUID, never by phone). RESEARCH Pitfall 2.
 max_turns guard prevents infinite loops (configurable, default 3). T-03-04-04.
@@ -57,13 +69,23 @@ KNOWN LIMITATION — sync session across the asyncio boundary (WR-06):
 from __future__ import annotations
 
 import functools
-import re
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from brave.shared.whatsapp.conversation import (
+    ALL_OPT_OUT_KEYWORDS,
+    OPT_OUT_KEYWORDS,
+    ConversationState,
+    _after_extract_answers,
+    _after_recv_reply,
+    _detect_opt_out_keyword,
+)
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from redis import Redis
     from sqlalchemy.orm import Session
 
@@ -73,93 +95,18 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# ---------------------------------------------------------------------------
-# Opt-out keyword set (COMP-02, D-11, recv_reply node)
-# ---------------------------------------------------------------------------
-
-# BSP-standard opt-out keywords (COMP-02). A contact opts out by replying with
-# the bare command word. CR-01: matching is anchored to the *whole message* —
-# the stripped reply must consist solely of the keyword (or a short keyword
-# phrase) — NOT an unanchored substring and NOT a keyword token buried in a
-# longer sentence. This is what BSPs (Twilio/Meta) treat as a valid opt-out and
-# avoids false positives on common PT-BR words ("não", "parar", "cancelar")
-# that appear inside legitimate replies:
-#   "NÃO sei o horário"               → not opt-out
-#   "Não vamos parar de funcionar"    → not opt-out
-#   "Pode cancelar minha dúvida"      → not opt-out
-#   "SAIR" / "parar" / "  NÃO. "      → opt-out (message IS the keyword)
-OPT_OUT_KEYWORDS: frozenset[str] = frozenset(
-    {"SAIR", "PARAR", "CANCELAR", "REMOVER", "STOP", "NÃO", "NAO"}
-)
-
-# Public set documented in COMP-02 (kept stable for callers/tests). "NAO" is an
-# accent-less spelling normalized to "NÃO" on match.
-ALL_OPT_OUT_KEYWORDS: frozenset[str] = frozenset(
-    {"SAIR", "PARAR", "CANCELAR", "REMOVER", "STOP", "NÃO"}
-)
-
-# Tokenizer for opt-out detection. Accents are part of the token alphabet so a
-# keyword is never matched as a substring prefix of another word.
-_WORD_RE = re.compile(r"[0-9A-ZÀ-ÖØ-Þ]+", re.UNICODE)
-
-# A reply may carry a tiny amount of politeness around the bare command and
-# still count as an opt-out (e.g. "sair por favor", "quero sair"). We allow the
-# message to be the keyword alone, optionally surrounded by a few filler tokens,
-# but the keyword must be the dominant content. Keep this conservative.
-_OPT_OUT_FILLER: frozenset[str] = frozenset(
-    {"POR", "FAVOR", "QUERO", "ME", "QUER", "PFV", "PLEASE", "OBRIGADO", "OBRIGADA"}
-)
-
-
-def _detect_opt_out_keyword(message_text: str) -> str | None:
-    """Return the matched opt-out keyword, or None.
-
-    CR-01: message-anchored matching, not substring containment.
-
-    A reply opts the contact out only when, after dropping punctuation and a few
-    politeness filler tokens, the *only* meaningful token is an opt-out keyword.
-    This honors the BSP opt-out convention ("reply SAIR to stop") while never
-    triggering on common PT-BR words embedded in a real answer.
-    """
-    tokens = _WORD_RE.findall(message_text.upper())
-    if not tokens:
-        return None
-
-    meaningful = [t for t in tokens if t not in _OPT_OUT_FILLER]
-
-    # Exactly one meaningful token, and it is an opt-out keyword.
-    if len(meaningful) == 1 and meaningful[0] in OPT_OUT_KEYWORDS:
-        return "NÃO" if meaningful[0] in ("NÃO", "NAO") else meaningful[0]
-
-    return None
-
-# ---------------------------------------------------------------------------
-# Conversation state schema (TypedDict for LangGraph StateGraph)
-# ---------------------------------------------------------------------------
-
-
-class ConversationState(TypedDict):
-    """LangGraph state for the WhatsApp owner-validation conversation.
-
-    Persisted by AsyncPostgresSaver between invocations (multi-day conversations).
-    thread_id = f"atrativo:{rio_id}" — keyed by RioRecord UUID, never phone number.
-
-    message_text is a temporary field used by recv_reply_node to access the
-    latest inbound reply. It is set as a state update in resume_conversation_task
-    alongside the user turn appended to messages.
-    """
-
-    rio_id: str  # immutable — links to RioRecord UUID
-    contact_phone: str  # E.164 format (+55...); never passed to LLM (T-03-04-03)
-    messages: list[dict[str, Any]]  # full turn history [{role, content}]
-    extraction: dict[str, Any] | None  # ConversationExtractionResult dict or None
-    opted_out: bool  # True if opt-out keyword detected
-    window_open: bool  # True if within 24h of last inbound message
-    last_inbound_at: str | None  # ISO UTC timestamp of last inbound message
-    turns: int  # guards against infinite loops (T-03-04-04)
-    max_turns: int  # from config; default 3
-    outreach_template: str  # BSP-approved template name used for opening
-    message_text: str  # inbound message text for current turn (set by resume task)
+# Public surface. ALL_OPT_OUT_KEYWORDS / OPT_OUT_KEYWORDS / ConversationState are
+# re-exported from the sibling ``conversation`` module so callers and tests keep a
+# single import site (``brave.shared.whatsapp.agent``).
+__all__ = [
+    "ALL_OPT_OUT_KEYWORDS",
+    "OPT_OUT_KEYWORDS",
+    "ConversationState",
+    "build_graph",
+    "_compliant_send",
+    "_extract_answers_node",
+    "_recv_reply_node",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -429,7 +376,7 @@ async def _extract_answers_node(
     """
     from pydantic import ValidationError
 
-    from brave.lanes.atrativos.schemas import ConversationExtractionResult
+    from brave.shared.whatsapp.schemas import ConversationExtractionResult
 
     # Build a minimal prompt with only message text (no phone number — T-03-04-03)
     conversation_text = "\n".join(
@@ -595,17 +542,23 @@ async def _finalize_node(
     session: "Session",
     rio: "RioRecord",
     score_config: "ScoreConfig",
+    push_confirmed_fn: "Callable[[str], None] | None" = None,
 ) -> dict[str, Any]:
     """Node: apply extraction result to the record and trigger re-score.
 
     Owner-validation success (existe=sim, funcionando=sim):
       - Raises validacao_humana_value=100 on rio.normalized
-      - Calls reprocess_record → route_by_score → promote_to_mar → push_attraction
+      - Calls reprocess_record → route_by_score → promote_to_mar → push_confirmed_fn
       D-10: owner-validation feeds existing reprocess_record (no new scoring branch).
 
     Owner-validation failure or no-answer:
       - Sets rio.dlq_reason = "owner_no_answer" or "owner_opted_out"
       - Routes record to DLQ (routing="dlq")
+
+    push_confirmed_fn is the injected push dispatcher (D-18: keeps brave.tasks out
+    of brave.shared). When routing crosses to "mar" it is called with the rio_id;
+    the caller (tasks layer) owns the actual push_attraction_task.delay. None (the
+    default in unit build_graph) skips the push — the promotion still persists.
 
     Returns:
         Empty state update (finalize_node terminates; graph routes to END).
@@ -679,13 +632,15 @@ async def _finalize_node(
         score=float(reprocessed_rio.score or 0),
     )
 
-    # If routing crossed to "mar", dispatch push_attraction_task
-    if reprocessed_rio.routing == "mar":
+    # If routing crossed to "mar", dispatch via the injected push callback.
+    # push_confirmed_fn is supplied by the caller (tasks layer) so this shared
+    # module never imports brave.tasks (D-18). Best-effort: a missing broker
+    # (dev/test) or a None callback (unit build_graph) is not fatal — the Mar
+    # promotion already persisted and the push can be retried.
+    if reprocessed_rio.routing == "mar" and push_confirmed_fn is not None:
         try:
-            from brave.tasks.pipeline import push_attraction_task
-            push_attraction_task.delay(state["rio_id"])
+            push_confirmed_fn(state["rio_id"])
         except Exception as exc:
-            # No broker (dev/test) — not a fatal error; push_attraction can be retried
             logger.warning(
                 "push_attraction_dispatch_failed",
                 rio_id=state["rio_id"],
@@ -693,36 +648,6 @@ async def _finalize_node(
             )
 
     return {}
-
-
-# ---------------------------------------------------------------------------
-# Graph routing functions
-# ---------------------------------------------------------------------------
-
-
-def _after_recv_reply(state: ConversationState) -> str:
-    """Route after recv_reply_node: opted_out → finalize, else extract_answers."""
-    if state.get("opted_out"):
-        return "finalize"
-    return "extract_answers"
-
-
-def _after_extract_answers(state: ConversationState) -> str:
-    """Route after extract_answers: all present → finalize, missing → ask_followup or finalize."""
-    extraction = state.get("extraction") or {}
-    turns = state.get("turns", 0)
-    max_turns = state.get("max_turns", 3)
-
-    # All required answers present
-    if extraction.get("existe") and extraction.get("funcionando"):
-        return "finalize"
-
-    # Max turns reached — finalize with whatever we have
-    if turns >= max_turns:
-        return "finalize"
-
-    # Missing answers and turns remaining — ask follow-up
-    return "ask_followup"
 
 
 # ---------------------------------------------------------------------------
@@ -738,6 +663,7 @@ def build_graph(
     rio: "RioRecord",
     config: "ScoreConfig",
     settings: "WhatsAppConfig",
+    push_confirmed_fn: "Callable[[str], None] | None" = None,
     checkpointer: Any = None,
 ) -> Any:
     """Build and compile the WhatsAppAgent LangGraph StateGraph.
@@ -761,6 +687,9 @@ def build_graph(
         rio:          RioRecord being processed.
         config:       ScoreConfig for re-scoring in finalize_node.
         settings:     WhatsAppConfig with approved_templates + ramp_cap.
+        push_confirmed_fn: Injected callback invoked with rio_id when finalize
+                      promotes the record to Mar (D-18: keeps brave.tasks out of
+                      brave.shared). None skips the push (unit tests).
         checkpointer: LangGraph checkpointer (AsyncPostgresSaver or MemorySaver).
 
     Returns:
@@ -802,6 +731,7 @@ def build_graph(
         session=session,
         rio=rio,
         score_config=config,
+        push_confirmed_fn=push_confirmed_fn,
     )
 
     # Register nodes

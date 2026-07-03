@@ -5,7 +5,7 @@ Implements WhatsAppClientProtocol (structural typing — no inheritance required
 
 Architecture invariant (D-11, T-03-04-01):
   send_template is NEVER called directly. It is always called through the
-  compliance gate (_compliant_send in brave/lanes/atrativos/whatsapp_agent.py),
+  compliance gate (_compliant_send in brave/shared/whatsapp/agent.py),
   which calls send_path_gate first. This file implements the transport layer only —
   all compliance logic lives in brave/compliance/gate.py.
 
@@ -16,7 +16,7 @@ Production/offline boundary:
 
 Send path:
   outreach_task / resume_conversation_task
-    → _compliant_send (whatsapp_agent.py)
+    → _compliant_send (shared/whatsapp/agent.py)
       → send_path_gate (compliance/gate.py) — raises ComplianceError on failure
       → TwilioWhatsAppClient.send_template() ← HERE (transport only)
 
@@ -106,7 +106,7 @@ class TwilioWhatsAppClient:
         """Send an approved WhatsApp template message via Twilio.
 
         ARCHITECTURE INVARIANT: This method is ONLY called through _compliant_send()
-        in brave/lanes/atrativos/whatsapp_agent.py, which always invokes send_path_gate
+        in brave/shared/whatsapp/agent.py, which always invokes send_path_gate
         first. Never call this method directly from task or endpoint code.
 
         Args:

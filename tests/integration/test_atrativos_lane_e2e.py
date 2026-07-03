@@ -319,7 +319,7 @@ def test_sc1_discovery_happy_path(db_session: Session) -> None:
 
     # Set sub_state="discovered" — FSM initial state for the attraction pipeline (D-01/D-02)
     # (discover_atrativo_task output: NascenteRecord created + RioRecord at sub_state=discovered)
-    from brave.lanes.atrativos.state_machine import advance_sub_state
+    from brave.core.atrativos.state_machine import advance_sub_state
     advance_sub_state(
         session=db_session,
         rio=rio,
@@ -715,7 +715,7 @@ def test_sc4_full_pipeline_borderline_reaches_gate(db_session: Session) -> None:
     db_session.flush()
 
     # Set sub_state="discovered" (FSM initial state for attraction pipeline)
-    from brave.lanes.atrativos.state_machine import advance_sub_state
+    from brave.core.atrativos.state_machine import advance_sub_state
     advance_sub_state(
         session=db_session, rio=rio,
         expected_state=None, next_state="discovered",

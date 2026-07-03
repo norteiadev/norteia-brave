@@ -787,7 +787,7 @@ def advance_atrativo_state(
     if rio is None:
         raise HTTPException(status_code=404, detail="RioRecord not found")
 
-    from brave.lanes.atrativos.state_machine import advance_sub_state
+    from brave.core.atrativos.state_machine import advance_sub_state
 
     advanced = advance_sub_state(
         session=db,

@@ -1487,7 +1487,7 @@ def outreach_task(self, rio_id: str) -> None:
         rio_id: UUID string of the RioRecord to outreach.
     """
     from brave.clients.null_whatsapp import NullWhatsAppClient
-    from brave.lanes.atrativos.whatsapp_agent import build_graph
+    from brave.shared.whatsapp.agent import build_graph
 
     session, engine = _get_session()
     try:
@@ -1552,6 +1552,7 @@ def outreach_task(self, rio_id: str) -> None:
                 rio=rio,
                 config=config,
                 settings=settings,
+                push_confirmed_fn=push_attraction_task.delay,
                 checkpointer=saver,
             )
 
@@ -1678,7 +1679,7 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
         reply_text: Raw inbound message body from the owner (from n8n/Twilio webhook).
     """
     from brave.clients.null_whatsapp import NullWhatsAppClient
-    from brave.lanes.atrativos.whatsapp_agent import build_graph
+    from brave.shared.whatsapp.agent import build_graph
 
     session, engine = _get_session()
     try:
@@ -1745,6 +1746,7 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
                 rio=rio,
                 config=config,
                 settings=settings,
+                push_confirmed_fn=push_attraction_task.delay,
                 checkpointer=saver,
             )
 
@@ -1859,11 +1861,11 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
     """
     from sqlalchemy.orm.attributes import flag_modified
 
+    from brave.core.atrativos.state_machine import advance_sub_state
     from brave.core.models import whatsapp_candidate_from_phone
     from brave.core.quarantine import quarantine_poison as _quarantine
     from brave.lanes.atrativos.contact_finder_agent import _normalize_phone_e164
     from brave.lanes.atrativos.number_discovery import discover_number
-    from brave.lanes.atrativos.state_machine import advance_sub_state
 
     session, engine = _get_session()
     try:
