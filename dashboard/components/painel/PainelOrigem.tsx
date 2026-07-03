@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -137,6 +137,23 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
   const [source, setSource] = useState<OrigemSource>(initialSource ?? "mtur");
   const [curl, setCurl] = useState("");
   const [errorKind, setErrorKind] = useState<OrigemErrorKind>(null);
+
+  // Sync the picked source to the live engine source each time the modal OPENS.
+  // useState only latches `initialSource` on mount — but this component mounts
+  // (open=false) at app load, BEFORE the engine-status query resolves, so it
+  // captures the mount-time default ("mtur"). When the persisted source is
+  // tripadvisor the header (which reads the live prop) shows TripAdvisor while
+  // the picker stayed stuck on mtur. Re-sync on the `open` edge so the modal
+  // always reflects the current persisted source. Gate on `open` ONLY (not
+  // `initialSource`) so a 10s engine-status poll can't clobber an in-progress
+  // selection while the modal is open.
+  useEffect(() => {
+    if (open) {
+      setSource(initialSource ?? "mtur");
+      setErrorKind(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync on the open edge only
+  }, [open]);
 
   // TTL badge reads the real session status; only polled while the modal is open.
   const { data: sessionStatus } = useQuery({

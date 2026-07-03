@@ -1,8 +1,10 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { PainelOrigem } from "@/components/painel/PainelOrigem";
+import { PainelOrigem, type OrigemSource } from "@/components/painel/PainelOrigem";
+import { setOperatorToken } from "@/lib/api-client";
 import { engineSetSourceSuccess, taSessionStatus } from "@/mocks/handlers/engine";
 import { server } from "@/mocks/server";
 
@@ -35,6 +37,38 @@ describe("PainelOrigem", () => {
     expect(screen.getByTestId("origem-radio-tripadvisor")).toBeInTheDocument();
     // Google Places is ENRICHMENT, not a collection source — no radio row.
     expect(screen.queryByTestId("origem-radio-google_places")).toBeNull();
+  });
+
+  it("re-syncs the picker to the persisted source when the modal opens (initialSource resolves after mount)", async () => {
+    // Regression: the modal mounts (open=false) at app load BEFORE the engine
+    // status query resolves, so initialSource is the mount-time default "mtur".
+    // When the persisted source is tripadvisor, opening the modal must reflect it
+    // — useState alone latches "mtur" forever. The open-edge sync fixes this.
+    server.use(taSessionStatus());
+    setOperatorToken("test-operator-token");
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0 },
+        mutations: { retry: false },
+      },
+    });
+    const ui = (src: OrigemSource, open: boolean) => (
+      <QueryClientProvider client={client}>
+        <PainelOrigem open={open} onClose={() => {}} initialSource={src} />
+      </QueryClientProvider>
+    );
+
+    // Mount closed with the mount-time default (status not yet resolved → mtur).
+    const { rerender } = render(ui("mtur", false));
+    // Engine status resolves to tripadvisor and the operator opens the modal.
+    rerender(ui("tripadvisor", true));
+
+    const ta = await screen.findByTestId("origem-radio-tripadvisor");
+    expect(ta).toHaveAttribute("data-selected", "true");
+    expect(screen.getByTestId("origem-radio-mtur")).not.toHaveAttribute(
+      "data-selected",
+      "true",
+    );
   });
 
   it("renders nothing when closed", () => {
