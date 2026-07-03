@@ -258,6 +258,15 @@ def engine_start(
     # kernel engine module must not import the domains registry (D-18).
     collection_engine.set_source(redis, source, valid_sources=enabled_sources(cfg))
 
+    # A cold /start IS the LIGADO transition — the operator is turning collection ON.
+    # Without this the operator-mode axis stays at whatever it was (e.g. DESLIGADO
+    # after a fresh config_settings seed / DB reset), and engine_sweep_run's mode gate
+    # (`get_mode() != LIGADO → break`) aborts the run BEFORE dispatching any UF: the
+    # sweep "starts" (enabled=1, state=running) but collects nothing (dispatched=0).
+    # Persist LIGADO durably (config_settings) so the dispatch loop and the Kanban
+    # edit-lock agree. Mirrors the warm-resume path (POST /engine/mode LIGADO).
+    collection_engine.set_mode(redis, collection_engine.LIGADO, session=db)
+
     # Persist a durable runs_history row (UI-PAINEL-2 Varreduras trail). Pitfall 3:
     # this is reached ONLY after the depth/source 422 guards AND start_run() success
     # — a rejected start (422/409 raises above) never creates a phantom row. The id
