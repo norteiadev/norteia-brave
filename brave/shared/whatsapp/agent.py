@@ -69,7 +69,7 @@ KNOWN LIMITATION — sync session across the asyncio boundary (WR-06):
 from __future__ import annotations
 
 import functools
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -115,14 +115,14 @@ __all__ = [
 
 
 async def _compliant_send(
-    session: "Session",
-    redis_client: "Redis",
-    rio: "RioRecord",
-    wa_client: "WhatsAppClientProtocol",
+    session: Session,
+    redis_client: Redis,
+    rio: RioRecord,
+    wa_client: WhatsAppClientProtocol,
     contact_phone: str,
     template_name: str,
     params: dict[str, Any],
-    settings: "WhatsAppConfig",
+    settings: WhatsAppConfig,
 ) -> dict[str, Any]:
     """Gate-then-send wrapper — the single call site for wa_client.send_template.
 
@@ -175,11 +175,11 @@ async def _compliant_send(
 async def _send_opening_node(
     state: ConversationState,
     *,
-    session: "Session",
-    redis_client: "Redis",
-    rio: "RioRecord",
-    wa_client: "WhatsAppClientProtocol",
-    settings: "WhatsAppConfig",
+    session: Session,
+    redis_client: Redis,
+    rio: RioRecord,
+    wa_client: WhatsAppClientProtocol,
+    settings: WhatsAppConfig,
 ) -> dict[str, Any]:
     """Node: write consent record and send opening template.
 
@@ -262,7 +262,7 @@ async def _send_opening_node(
 
 
 def _persist_window_state(
-    rio: "RioRecord",
+    rio: RioRecord,
     *,
     window_open: bool,
     last_inbound_at: str,
@@ -287,8 +287,8 @@ def _persist_window_state(
 async def _recv_reply_node(
     state: ConversationState,
     *,
-    session: "Session",
-    rio: "RioRecord",
+    session: Session,
+    rio: RioRecord,
 ) -> dict[str, Any]:
     """Node: receive an inbound reply, detect opt-out, check 24h window.
 
@@ -311,7 +311,7 @@ async def _recv_reply_node(
 
     contact_phone = state["contact_phone"]
     message_text = state.get("message_text", "")
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
 
     # Opt-out keyword detection — whole-token match against known PT-BR / Meta
     # opt-out keywords. CR-01: NOT a substring match, so "NÃO sei o horário"
@@ -360,7 +360,7 @@ async def _recv_reply_node(
 async def _extract_answers_node(
     state: ConversationState,
     *,
-    llm_client: "LLMClientProtocol",
+    llm_client: LLMClientProtocol,
 ) -> dict[str, Any]:
     """Node: extract structured answers from the conversation using DeepSeek/instructor.
 
@@ -441,12 +441,12 @@ async def _extract_answers_node(
 async def _ask_followup_node(
     state: ConversationState,
     *,
-    session: "Session",
-    redis_client: "Redis",
-    rio: "RioRecord",
-    wa_client: "WhatsAppClientProtocol",
-    llm_client: "LLMClientProtocol",
-    settings: "WhatsAppConfig",
+    session: Session,
+    redis_client: Redis,
+    rio: RioRecord,
+    wa_client: WhatsAppClientProtocol,
+    llm_client: LLMClientProtocol,
+    settings: WhatsAppConfig,
 ) -> dict[str, Any]:
     """Node: generate a follow-up question via Sonnet and send it.
 
@@ -539,10 +539,10 @@ async def _ask_followup_node(
 async def _finalize_node(
     state: ConversationState,
     *,
-    session: "Session",
-    rio: "RioRecord",
-    score_config: "ScoreConfig",
-    push_confirmed_fn: "Callable[[str], None] | None" = None,
+    session: Session,
+    rio: RioRecord,
+    score_config: ScoreConfig,
+    push_confirmed_fn: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Node: apply extraction result to the record and trigger re-score.
 
@@ -656,14 +656,14 @@ async def _finalize_node(
 
 
 def build_graph(
-    wa_client: "WhatsAppClientProtocol",
-    llm_client: "LLMClientProtocol",
-    session: "Session",
-    redis_client: "Redis",
-    rio: "RioRecord",
-    config: "ScoreConfig",
-    settings: "WhatsAppConfig",
-    push_confirmed_fn: "Callable[[str], None] | None" = None,
+    wa_client: WhatsAppClientProtocol,
+    llm_client: LLMClientProtocol,
+    session: Session,
+    redis_client: Redis,
+    rio: RioRecord,
+    config: ScoreConfig,
+    settings: WhatsAppConfig,
+    push_confirmed_fn: Callable[[str], None] | None = None,
     checkpointer: Any = None,
 ) -> Any:
     """Build and compile the WhatsAppAgent LangGraph StateGraph.

@@ -63,7 +63,7 @@ def is_allowed_sub_state_edge(
 
 def advance_sub_state(
     session: Session,
-    rio: "RioRecord",
+    rio: RioRecord,
     expected_state: str | None,
     next_state: str | None,
     actor: str = "state_machine",
