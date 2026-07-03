@@ -46,9 +46,11 @@ export type PainelEntityType = "destino" | "atrativo";
 
 /**
  * Board column key. The 6 RENDERED stage columns are the ones in COLUMN_DEFS
- * (nascente, rio, whatsapp, mar, dlq, falha). `descarte` is kept as a valid,
- * NON-rendered key: a record with routing="descarte" maps here (so it never
- * appears as a standing column), and the drawer "Descartar" path targets it.
+ * (nascente, rio, whatsapp, mar, dlq, falha). A record with routing="descarte"
+ * now maps to the Falha column (phase H) so discarded records are visible.
+ * `descarte` is kept as a valid, NON-rendered TARGET key: it is the server
+ * column name the drawer "Descartar" path (and rio/dlq→descarte edges) transition
+ * to — never a standing board column.
  */
 export type PainelColumnKey =
   | "nascente"
@@ -86,6 +88,13 @@ export interface PainelCard {
   source: string | null;
   duplicate: boolean;
   error: string | null;
+  /**
+   * DLQ→WhatsApp eligibility (phase H) — only meaningful for a DLQ-column
+   * atrativo. False ⇒ the card already has horário/preço and its selection
+   * checkbox is disabled. Absent/true ⇒ selectable (the batch 422 is the
+   * authoritative atomic gate). Non-atrativo cards leave this true (unused).
+   */
+  whatsappEligible?: boolean;
 }
 
 // --- Constants ---
@@ -113,7 +122,9 @@ const ROUTING_TO_COLUMN: ReadonlyMap<string, PainelColumnKey> = new Map([
   ["in_progress", "rio"],
   ["mar", "mar"],
   ["dlq", "dlq"],
-  ["descarte", "descarte"],
+  // Phase H: descarte-routed records surface in the Falha column (alongside
+  // PoisonQuarantine failures) instead of being silently dropped.
+  ["descarte", "falha"],
 ]);
 
 /** The atrativo FSM sub_state that buckets a record into the WhatsApp column. */
@@ -195,6 +206,9 @@ export function toPainelCards(
     source: null,
     duplicate: a.validation_pending,
     error: null,
+    // Phase H DLQ→WhatsApp gate: absent from the list ⇒ eligible (the batch 422
+    // is authoritative); false ⇒ already has horário/preço → checkbox disabled.
+    whatsappEligible: a.whatsapp_eligible ?? true,
   }));
 
   const falhaCards = failures.map(failureToCard);

@@ -676,6 +676,11 @@ def list_atrativos(
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = list(db.scalars(stmt.offset(offset).limit(limit)).all())
 
+    # Phase F/H: WhatsApp eligibility (no horário AND no preço) — lets the Kanban
+    # disable the manual DLQ→WhatsApp move for ineligible cards. Server-side batch
+    # move (dlq.py) enforces it regardless; this projection just powers the UI.
+    from brave.api.routers.dlq import _is_whatsapp_eligible  # noqa: PLC0415
+
     items = [
         {
             "id": str(rio.id),
@@ -686,6 +691,7 @@ def list_atrativos(
             "score": float(rio.score) if rio.score is not None else None,
             "name": (rio.normalized or {}).get("name"),
             "validation_pending": rio.sub_state == "aguardando_consulta_whatsapp",
+            "whatsapp_eligible": _is_whatsapp_eligible(rio.normalized),
             "mar_id": None,  # atrativos don't have direct mar_id in normalized
             "parent_mar_id": (rio.normalized or {}).get("parent_mar_id"),
             # T-08-04 / CR-01: never expose raw contacts — allow-listed summary

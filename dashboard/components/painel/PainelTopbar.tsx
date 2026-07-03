@@ -13,14 +13,15 @@ import {
   engineKeys,
   fetchEngineStatus,
   fetchTASessionStatus,
+  setEngineMode,
   startEngine,
-  stopEngine,
   taSessionKeys,
   type EngineDepth,
   type EngineSource,
   type EngineState,
   type TASessionStatus,
 } from "@/lib/engine-api";
+import { ENGINE_MODE_LABELS, type EngineMode } from "@/lib/config-api";
 import { PainelLogs } from "@/components/painel/PainelLogs";
 import { PainelOrigem, type OrigemSource } from "@/components/painel/PainelOrigem";
 
@@ -43,10 +44,18 @@ interface PainelTopbarProps {
   subtitle: string;
 }
 
-const STATE_LABEL: Record<EngineState, string> = {
-  idle: "Desligado",
-  running: "Ligado",
-  stopping: "Parando…",
+/** The tri-state motor modes, in Ligar/Pausar/Desligar order. */
+const MOTOR_MODES: EngineMode[] = ["LIGADO", "PAUSADO", "DESLIGADO"];
+
+/**
+ * Per-mode button metadata: the imperative ACTION label/testid (Ligar/Pausar/
+ * Desligar) — distinct from the state adjective (Ligado/Pausado/Desligado) shown
+ * in the "Motor · …" label.
+ */
+const MOTOR_ACTION_META: Record<EngineMode, { label: string; testid: string }> = {
+  LIGADO: { label: "Ligar", testid: "painel-motor-ligar" },
+  PAUSADO: { label: "Pausar", testid: "painel-motor-pausar" },
+  DESLIGADO: { label: "Desligar", testid: "painel-motor-desligar" },
 };
 
 /** Depth options offered when starting the motor (order = least → most spend). */
@@ -145,16 +154,21 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     onSettled: invalidate,
   });
 
-  const stop = useMutation({
-    mutationFn: () => stopEngine(),
+  // Tri-state motor mode (phase H edit-lock) — POST /api/v1/engine/mode. Pausar /
+  // Desligar go straight through here; a warm Ligar (resume from Pausado) too. A
+  // cold Ligar (engine off) still runs the depth-picker start below.
+  const setMode = useMutation({
+    mutationFn: (mode: EngineMode) => setEngineMode(mode),
     onError: (err) => toast.error(explainError(err)),
-    onSuccess: () => toast.success("Parando — drenando a fila atual"),
+    onSuccess: (res) =>
+      toast.success(`Motor · ${ENGINE_MODE_LABELS[res.mode]}`),
     onSettled: invalidate,
   });
 
   const state: EngineState = data?.state ?? "idle";
   const source: EngineSource = data?.source ?? "default";
-  const pending = start.isPending || stop.isPending;
+  const mode: EngineMode = data?.mode ?? "DESLIGADO";
+  const pending = start.isPending || setMode.isPending;
   // motorOn is driven by the operator-intent latch (enabled), not the transient
   // dispatch state. This keeps the switch ON when state returns to "idle" mid-run
   // (workers still processing) and only clears it when /stop is explicitly called.
@@ -195,22 +209,30 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     prevEnabledRef.current = enabled;
   }, [data?.enabled]);
 
-  const onToggleMotor = () => {
-    if (pending) return;
+  const onLigar = () => {
+    if (pending || mode === "LIGADO") return;
     if (motorOn) {
-      // Engine is on (operator intent) — stop it.
-      stop.mutate();
-    } else {
-      // R2: block if source=tripadvisor and no valid session
-      if (taBlocked) {
-        toast.error(
-          "Injete uma sessão TripAdvisor válida antes de ligar o motor.",
-        );
-        return;
-      }
-      // Engine is off — open the depth picker to start.
-      setDepthMenuOpen((v) => !v);
+      // Warm resume (a run is still active, e.g. from PAUSADO) — just relock via mode.
+      setMode.mutate("LIGADO");
+      return;
     }
+    // Cold start: R2 gate — block if source=tripadvisor and no valid session.
+    if (taBlocked) {
+      toast.error("Injete uma sessão TripAdvisor válida antes de ligar o motor.");
+      return;
+    }
+    // Engine is off — open the depth picker to start a sweep.
+    setDepthMenuOpen((v) => !v);
+  };
+
+  const onPausar = () => {
+    if (pending || mode === "PAUSADO") return;
+    setMode.mutate("PAUSADO");
+  };
+
+  const onDesligar = () => {
+    if (pending || mode === "DESLIGADO") return;
+    setMode.mutate("DESLIGADO");
   };
 
   const onPickDepth = (depth: EngineDepth) => {
@@ -348,41 +370,60 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
           aria-hidden
         />
 
-        {/* Motor label + switch */}
+        {/* Motor tri-state: Ligar / Pausar / Desligar (POST /api/v1/engine/mode) */}
         <div className="flex items-center gap-[9px]">
           <span
             className="text-[12px] font-medium text-[var(--painel-muted)]"
             data-testid="painel-motor-state"
           >
-            {/* motorLabel is driven by motorOn (enabled latch), not state, so that
-                enabled=true + state=idle still renders "Ligado" rather than "Desligado". */}
-            Motor · {motorOn ? (state === "stopping" ? "Parando…" : "Ligado") : "Desligado"}
+            {/* Label is driven by the operator mode (edit-lock source of truth). */}
+            Motor · {ENGINE_MODE_LABELS[mode]}
           </span>
           <div className="relative">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={motorOn}
-              aria-label="Ligar/desligar motor"
-              data-testid="painel-motor-switch"
-              disabled={pending}
-              onClick={onToggleMotor}
-              className="relative h-[22px] w-[40px] flex-shrink-0 rounded-full transition-colors disabled:opacity-60"
+            <div
+              role="group"
+              aria-label="Modo do motor"
+              data-testid="painel-motor-modes"
+              className="inline-flex gap-0.5 rounded-[9px] border p-[3px]"
               style={{
-                background: motorOn
-                  ? "var(--painel-navy)"
-                  : "var(--painel-border-outer)",
+                borderColor: "var(--painel-border-outer)",
+                background: "var(--painel-chip)",
               }}
             >
-              <span
-                className="absolute top-[2px] h-[18px] w-[18px] rounded-full bg-white transition-all"
-                style={{ left: motorOn ? "20px" : "2px" }}
-                aria-hidden
-              />
-            </button>
+              {MOTOR_MODES.map((m) => {
+                const active = m === mode;
+                const onClick =
+                  m === "LIGADO"
+                    ? onLigar
+                    : m === "PAUSADO"
+                      ? onPausar
+                      : onDesligar;
+                const meta = MOTOR_ACTION_META[m];
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    data-testid={meta.testid}
+                    aria-pressed={active}
+                    disabled={pending}
+                    onClick={onClick}
+                    className="rounded-[6px] px-[10px] py-[4px] text-[12px] font-semibold transition-colors disabled:opacity-60"
+                    style={{
+                      background: active ? "var(--card)" : "transparent",
+                      color: active
+                        ? "var(--painel-navy)"
+                        : "var(--painel-muted)",
+                      boxShadow: active ? "0 1px 2px rgba(15,23,42,.10)" : "none",
+                    }}
+                  >
+                    {meta.label}
+                  </button>
+                );
+              })}
+            </div>
 
-            {/* Depth picker — START requires a depth (backend 422s without one).
-                Only shown when the engine is off (motorOn=false). */}
+            {/* Depth picker — a COLD Ligar (engine off) requires a depth (backend
+                422s without one). Only shown when the engine is off (motorOn=false). */}
             {depthMenuOpen && !motorOn && (
               <div
                 role="menu"

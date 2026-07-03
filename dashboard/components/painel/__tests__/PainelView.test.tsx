@@ -1,7 +1,9 @@
 import { fireEvent, waitFor, within } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PainelView } from "@/components/painel/PainelView";
+import type { AtrativoListItem } from "@/lib/atrativos-api";
 import {
   atrativosListSuccess,
   atrativoTransitionSuccess,
@@ -11,12 +13,38 @@ import {
   destinoTransitionSuccess,
   destinosListSuccess,
 } from "@/mocks/handlers/destinos";
+import {
+  dlqWhatsappBatchIneligible,
+  dlqWhatsappBatchSuccess,
+} from "@/mocks/handlers/dlq";
 import { engineStatus, nascenteEmpty, nascenteList } from "@/mocks/handlers/engine";
 import { failuresEmpty, failuresSuccess } from "@/mocks/handlers/workers";
 import type { FailuresData } from "@/lib/workers-api";
 import { server } from "@/mocks/server";
 
 import { renderWithClient } from "@/components/cms/__tests__/test-utils";
+
+/** A DLQ-column atrativo fixture for the WhatsApp multi-select flow. */
+function dlqAtrativo(
+  id: string,
+  eligible: boolean,
+  name = "Atrativo DLQ",
+): AtrativoListItem {
+  return {
+    id,
+    entity_type: "attraction",
+    uf: "BA",
+    routing: "dlq",
+    sub_state: null,
+    score: 42,
+    name,
+    validation_pending: false,
+    mar_id: null,
+    parent_mar_id: null,
+    contacts_summary: null,
+    whatsapp_eligible: eligible,
+  };
+}
 
 // Spy on sonner so unmapped-drop toasts can be asserted without a Toaster.
 vi.mock("sonner", () => ({
@@ -95,6 +123,8 @@ describe("PainelView", () => {
           uf: "BA",
           source: "places",
           name: "Praia do Forte",
+          municipio: null,
+          municipio_id: null,
           ingested_at: "2026-06-28T00:00:00Z",
         },
       ]),
@@ -236,5 +266,165 @@ describe("PainelView", () => {
     await waitFor(() =>
       expect(patchesTo(`/destinos/${FAILURE_ID}/reprocess`)).toBe(true),
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase H — DLQ→WhatsApp multi-select + edit-lock
+  // ---------------------------------------------------------------------------
+
+  it("multi-selects eligible DLQ atrativos (ineligible disabled) and moves them to WhatsApp with branch feedback", async () => {
+    let batchBody: { rio_ids: string[] } | null = null;
+    server.use(
+      destinosListSuccess([]),
+      atrativosListSuccess([
+        dlqAtrativo("atr-elig", true, "Elegível"),
+        dlqAtrativo("atr-inelig", false, "Inelegível"),
+      ]),
+      failuresEmpty(),
+      // PAUSADO ⇒ editing unlocked ⇒ checkboxes render.
+      engineStatus({ mode: "PAUSADO", editing_unlocked: true }),
+      nascenteEmpty(),
+      http.post(
+        "http://localhost:3000/api/api/v1/dlq/whatsapp-batch",
+        async ({ request }) => {
+          batchBody = (await request.json()) as { rio_ids: string[] };
+          return HttpResponse.json(
+            { status: "accepted", moved: 1, outreach: 1, discovery: 0 },
+            { status: 202 },
+          );
+        },
+      ),
+    );
+    const { container, findAllByTestId, getByTestId } = renderWithClient(
+      <PainelView />,
+    );
+    await findAllByTestId("record-card");
+
+    const eligBox = container.querySelector(
+      '[data-id="atr-elig"] input[type="checkbox"]',
+    ) as HTMLInputElement;
+    const ineligBox = container.querySelector(
+      '[data-id="atr-inelig"] input[type="checkbox"]',
+    ) as HTMLInputElement;
+    expect(eligBox).not.toBeNull();
+    expect(ineligBox).not.toBeNull();
+    // Ineligible (has horário/preço) → checkbox disabled; eligible → enabled.
+    expect(eligBox.disabled).toBe(false);
+    expect(ineligBox.disabled).toBe(true);
+
+    // Selecting the eligible card reveals the batch bar.
+    fireEvent.click(eligBox);
+    getByTestId("whatsapp-batch-bar");
+    fireEvent.click(getByTestId("whatsapp-batch-btn"));
+
+    // The POST carries the selected rio_id …
+    await waitFor(() => expect(batchBody).not.toBeNull());
+    expect(batchBody!.rio_ids).toEqual(["atr-elig"]);
+    // … and the outreach/discovery split is surfaced as branch feedback.
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringContaining("conversa(s) iniciada(s)"),
+      ),
+    );
+    // LGPD: no phone leaks onto the board.
+    expect(container.innerHTML).not.toContain("phone");
+  });
+
+  it("toasts the per-item ineligibility on a 422 batch (atomic — nothing moved)", async () => {
+    server.use(
+      destinosListSuccess([]),
+      atrativosListSuccess([dlqAtrativo("atr-1", true)]),
+      failuresEmpty(),
+      engineStatus({ mode: "PAUSADO", editing_unlocked: true }),
+      nascenteEmpty(),
+      dlqWhatsappBatchIneligible([
+        { rio_id: "atr-1", reason: "has_horario_or_preco" },
+      ]),
+    );
+    const { container, findAllByTestId, getByTestId } = renderWithClient(
+      <PainelView />,
+    );
+    await findAllByTestId("record-card");
+
+    const box = container.querySelector(
+      '[data-id="atr-1"] input[type="checkbox"]',
+    ) as HTMLInputElement;
+    fireEvent.click(box);
+    fireEvent.click(getByTestId("whatsapp-batch-btn"));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining("inelegível"),
+      ),
+    );
+    // Atomic: the reason is spelled out and nothing was moved.
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining("já tem horário/preço"),
+    );
+  });
+
+  it("edit-lock: a 423 from the transition reverts the optimistic move + toasts", async () => {
+    server.use(
+      destinosListSuccess(),
+      atrativosListSuccess([]),
+      failuresEmpty(),
+      // Client believes editing is unlocked (draggable), but the server 423s —
+      // the Motor Pausado backstop: revert + toast.
+      engineStatus({ mode: "PAUSADO", editing_unlocked: true }),
+      nascenteEmpty(),
+      http.patch(
+        "http://localhost:3000/api/api/v1/destinos/:id/transition",
+        () => HttpResponse.json({ detail: "Edição bloqueada" }, { status: 423 }),
+      ),
+    );
+    const { container, findAllByTestId, getByTestId } = renderWithClient(
+      <PainelView />,
+    );
+    await findAllByTestId("record-card");
+
+    const card = container.querySelector(`[data-id="${DESTINO_DLQ_ID}"]`);
+    fireEvent.dragStart(card as Element);
+    fireEvent.drop(getByTestId("painel-col-mar"));
+
+    // 423 arm of explainError.
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining("Motor ligado"),
+      ),
+    );
+    // Optimistic move reverted: Pelourinho back in DLQ, Mar stays at 1 (Copacabana).
+    await waitFor(() =>
+      expect(getByTestId("painel-col-count-dlq")).toHaveTextContent("1"),
+    );
+    await waitFor(() =>
+      expect(getByTestId("painel-col-count-mar")).toHaveTextContent("1"),
+    );
+  });
+
+  it("edit-lock: when LIGADO the cards are not draggable and a drop fires no mutation", async () => {
+    server.use(
+      destinosListSuccess(),
+      atrativosListSuccess([]),
+      failuresEmpty(),
+      engineStatus({ mode: "LIGADO", editing_unlocked: false }),
+      nascenteEmpty(),
+      destinoTransitionSuccess(),
+    );
+    const { container, findAllByTestId, getByTestId } = renderWithClient(
+      <PainelView />,
+    );
+    await findAllByTestId("record-card");
+
+    const card = container.querySelector(`[data-id="${DESTINO_DLQ_ID}"]`);
+    // Once the LIGADO status resolves the card locks (draggable=false).
+    await waitFor(() =>
+      expect(card?.getAttribute("draggable")).toBe("false"),
+    );
+
+    fireEvent.dragStart(card as Element);
+    fireEvent.drop(getByTestId("painel-col-mar"));
+    await new Promise((r) => setTimeout(r, 50));
+    // No transition escaped while locked.
+    expect(requests.some((r) => r.method === "PATCH")).toBe(false);
   });
 });

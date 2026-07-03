@@ -7,6 +7,7 @@ import { setOperatorToken } from "@/lib/api-client";
 import type { AtrativoListItem } from "@/lib/atrativos-api";
 import type { DestinoListItem } from "@/lib/destinos-api";
 import type { FailureItem } from "@/lib/engine-api";
+import type { NascenteListItem } from "@/lib/nascente-api";
 import {
   BR_UFS,
   COLUMN_DEFS,
@@ -92,9 +93,11 @@ const atrativos: AtrativoListItem[] = [
 // --- Pure selectors (RED-first) ---
 
 describe("routingToColumn", () => {
-  it("maps known routings to their column keys (in_progress → rio)", () => {
+  it("maps known routings to their column keys (in_progress → rio; descarte → falha)", () => {
     expect(routingToColumn("mar")).toBe("mar");
-    expect(routingToColumn("descarte")).toBe("descarte");
+    // Phase H: descarte-routed records surface in the Falha column, not a
+    // (non-existent) standalone descarte column.
+    expect(routingToColumn("descarte")).toBe("falha");
     expect(routingToColumn("dlq")).toBe("dlq");
     // 6-column model: the routing value `in_progress` is the "Rio · validação"
     // column (server twin: _ROUTING_TO_COLUMN in_progress → rio).
@@ -147,6 +150,48 @@ describe("toPainelCards", () => {
     expect(cards[0].column).toBe("whatsapp");
   });
 
+  it("maps a routing=descarte atrativo into the Falha column (phase H)", () => {
+    const descartado: AtrativoListItem = {
+      id: "a-descartado",
+      entity_type: "attraction",
+      uf: "MG",
+      routing: "descarte",
+      sub_state: null,
+      score: 20,
+      name: "Ponto Descartado",
+      validation_pending: false,
+      mar_id: null,
+      parent_mar_id: null,
+      contacts_summary: null,
+    };
+    const [card] = toPainelCards([], [descartado]);
+    expect(card.routing).toBe("descarte");
+    expect(card.column).toBe("falha");
+  });
+
+  it("projects whatsapp_eligible onto whatsappEligible (absent ⇒ eligible)", () => {
+    const base: Omit<AtrativoListItem, "id" | "whatsapp_eligible"> = {
+      entity_type: "attraction",
+      uf: "BA",
+      routing: "dlq",
+      sub_state: null,
+      score: 40,
+      name: "Atrativo DLQ",
+      validation_pending: false,
+      mar_id: null,
+      parent_mar_id: null,
+      contacts_summary: null,
+    };
+    const cards = toPainelCards([], [
+      { ...base, id: "a-elig", whatsapp_eligible: true },
+      { ...base, id: "a-inelig", whatsapp_eligible: false },
+      { ...base, id: "a-absent" }, // no flag → treated as eligible
+    ]);
+    expect(cards.find((c) => c.id === "a-elig")!.whatsappEligible).toBe(true);
+    expect(cards.find((c) => c.id === "a-inelig")!.whatsappEligible).toBe(false);
+    expect(cards.find((c) => c.id === "a-absent")!.whatsappEligible).toBe(true);
+  });
+
   it("projects FailureItem[] into real, draggable falha cards (column=falha, error=reason)", () => {
     const failures: FailureItem[] = [
       {
@@ -161,8 +206,12 @@ describe("toPainelCards", () => {
     expect(falha).toBeDefined();
     expect(falha.column).toBe("falha");
     expect(falha.error).toBe("ValidationError: origem field required");
-    // The falha column adds exactly one card on top of the 4 list cards.
-    expect(cards.filter((c) => c.column === "falha")).toHaveLength(1);
+    // Phase H: the Falha column holds BOTH the quarantine failure (f-1) AND the
+    // descarte-routed atrativo (a-descarte) — two cards on top of the 3 rendered
+    // list cards (d-mar, d-dlq, a-inprog).
+    const falhaCards = cards.filter((c) => c.column === "falha");
+    expect(falhaCards).toHaveLength(2);
+    expect(falhaCards.map((c) => c.id).sort()).toEqual(["a-descarte", "f-1"]);
   });
 
   it("projects NascenteListItem[] into read-only nascente-column cards", () => {
@@ -282,8 +331,8 @@ describe("buildColumns", () => {
     expect(byKey.whatsapp).toBe(0);
     expect(byKey.mar).toBe(1);
     expect(byKey.dlq).toBe(1);
-    expect(byKey.falha).toBe(0);
-    // a-descarte (routing=descarte) is NOT a standing column — never rendered.
+    // Phase H: a-descarte (routing=descarte) now lands in the Falha column.
+    expect(byKey.falha).toBe(1);
   });
 
   it("uses COLUMN_DEFS labels in order (6 columns)", () => {

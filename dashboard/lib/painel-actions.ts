@@ -130,6 +130,10 @@ function explainError(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 401) return "Sessão expirada ou token inválido.";
     if (err.status === 409) return "Ação não disponível neste estágio.";
+    // Edit-lock backstop (phase H): the server 423s every card mutation while the
+    // Motor is LIGADO. The optimistic move is reverted by onError → onRevert.
+    if (err.status === 423)
+      return "Motor ligado — pause o motor para editar os cards.";
     return err.message;
   }
   return "Falha ao atualizar o registro.";

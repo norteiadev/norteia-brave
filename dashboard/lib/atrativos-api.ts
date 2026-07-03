@@ -35,6 +35,13 @@ export interface AtrativoListItem {
     phone_masked: string | null; // NEVER phone_e164 — already masked by backend
     website: string | null;
   } | null;
+  /**
+   * Eligible for the manual DLQ→WhatsApp move (Phase H) — true iff the atrativo
+   * has NO horário AND NO preço (server rule `_is_whatsapp_eligible`). OPTIONAL:
+   * the list endpoint may omit it; absent is treated as eligible client-side and
+   * the batch endpoint's atomic 422 remains the authoritative gate.
+   */
+  whatsapp_eligible?: boolean;
 }
 
 /** A single audit log row from the AuditLog table. */

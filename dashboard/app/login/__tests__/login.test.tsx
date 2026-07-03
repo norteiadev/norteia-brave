@@ -52,7 +52,7 @@ describe("Login gate (DASH-06, UI-SPEC)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("persists the operator token and navigates home on submit", async () => {
+  it("persists the operator token and navigates to the painel on submit", async () => {
     const user = userEvent.setup();
     render(<LoginPage />);
 
@@ -63,6 +63,6 @@ describe("Login gate (DASH-06, UI-SPEC)", () => {
     await user.click(screen.getByRole("button", { name: "Entrar" }));
 
     expect(getOperatorToken()).toBe("my-operator-token");
-    expect(push).toHaveBeenCalledWith("/");
+    expect(push).toHaveBeenCalledWith("/painel");
   });
 });

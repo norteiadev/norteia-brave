@@ -16,10 +16,12 @@ interface PainelSidebarProps {
   onSelect: (key: PainelViewKey) => void;
 }
 
-/** Stable per-group test ids (also pins the two literal group labels here). */
+/** Stable per-group test ids (also pins the literal group labels here). */
 const GROUP_TESTID: Record<PainelNavGroup, string> = {
   "Processamento": "painel-nav-group-processamento",
   "Operação": "painel-nav-group-operacao",
+  "Observabilidade": "painel-nav-group-observabilidade",
+  "Sistema": "painel-nav-group-sistema",
 };
 
 /** Inline glyphs per view (reuse the design contract's 16px outline SVGs). */
@@ -62,6 +64,30 @@ const NAV_ICONS: Record<PainelViewKey, React.ReactNode> = {
       <rect x="4.5" y="7" width="2.2" height="4" fill="currentColor" />
       <rect x="8" y="4.5" width="2.2" height="6.5" fill="currentColor" />
       <rect x="11.5" y="8.5" width="2.2" height="2.5" fill="currentColor" />
+    </svg>
+  ),
+  revisao: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M3 2.5H10L13 5.5V13.5H3Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" fill="none" />
+      <path d="M5.5 9L7 10.5L10 7" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  monitor: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M2 8.5H4.5L6 4L8.5 12L10.5 7.5L11.8 8.5H14" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  logs: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M4.3 6L6 7.6L4.3 9.2" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M7.4 9.6H10.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  ),
+  config: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 1.6V3.4M8 12.6V14.4M14.4 8H12.6M3.4 8H1.6M12.5 3.5L11.3 4.7M4.7 11.3L3.5 12.5M12.5 12.5L11.3 11.3M4.7 4.7L3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   ),
 };

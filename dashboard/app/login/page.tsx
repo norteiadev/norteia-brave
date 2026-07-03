@@ -24,7 +24,9 @@ function LoginForm() {
     event.preventDefault();
     if (!token.trim()) return;
     setOperatorToken(token.trim());
-    router.push("/");
+    // Land directly on the single-shell painel (phase H removed the `/` hub;
+    // `/` now 307-redirects to `/painel` anyway — push there to skip the hop).
+    router.push("/painel");
   }
 
   return (

@@ -41,6 +41,14 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /**
+     * The raw `detail` field parsed from the error body. A STRING for most
+     * endpoints (mirrored into `message`), but an OBJECT/ARRAY for structured
+     * errors — e.g. the DLQ→WhatsApp batch 422 whose detail is
+     * `{ error, ineligible: [{ rio_id, reason }] }`. Callers that need the
+     * per-item breakdown read `detail`; `message` stays the human string.
+     */
+    public readonly detail?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -62,14 +70,18 @@ export async function apiFetch<T>(
 
   const res = await fetch(bff(fastApiPath), { ...init, headers });
   if (!res.ok) {
-    let detail = `Falha ao consultar a API (${res.status}).`;
+    let message = `Falha ao consultar a API (${res.status}).`;
+    let rawDetail: unknown;
     try {
-      const body = (await res.json()) as { detail?: string };
-      if (body?.detail) detail = body.detail;
+      const body = (await res.json()) as { detail?: unknown };
+      rawDetail = body?.detail;
+      // Only a STRING detail becomes the human message; structured (object/array)
+      // details are surfaced on ApiError.detail for the caller to parse.
+      if (typeof rawDetail === "string" && rawDetail) message = rawDetail;
     } catch {
       // non-JSON error body — keep the default message
     }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, message, rawDetail);
   }
   return (await res.json()) as T;
 }
