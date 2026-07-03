@@ -70,6 +70,50 @@ def _force_env(monkeypatch):
     monkeypatch.delenv("RUN_REAL_EXTERNALS", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _cleanup_committed_rows(db_engine):
+    """Delete rows this test COMMITS so they do not leak into the shared integration DB.
+
+    The batch endpoint commits records into aguardando_consulta_whatsapp/whatsapp_in_progress;
+    the module's db_session fixture only rollback()s, so committed rows would accumulate
+    across runs and (past the /gate endpoint's max limit) break unrelated queue tests.
+    Snapshot rio_record ids before the test and delete any new ones (plus their nascente
+    parents and audit/conversation children) afterward — cleaning ONLY what this test created.
+    """
+    from sqlalchemy import text
+
+    with db_engine.connect() as conn:
+        before = {r[0] for r in conn.execute(text("SELECT id FROM rio_records"))}
+    yield
+    with db_engine.begin() as conn:
+        after = {r[0] for r in conn.execute(text("SELECT id FROM rio_records"))}
+        new_ids = list(after - before)
+        if not new_ids:
+            return
+        conn.execute(
+            text("DELETE FROM conversation_message WHERE rio_id = ANY(:i)"), {"i": new_ids}
+        )
+        conn.execute(
+            text("DELETE FROM consent_log WHERE rio_id = ANY(:i)"), {"i": new_ids}
+        )
+        conn.execute(
+            text("DELETE FROM audit_log WHERE record_id = ANY(:i)"), {"i": new_ids}
+        )
+        nasc = [
+            r[0]
+            for r in conn.execute(
+                text(
+                    "SELECT nascente_id FROM rio_records "
+                    "WHERE id = ANY(:i) AND nascente_id IS NOT NULL"
+                ),
+                {"i": new_ids},
+            )
+        ]
+        conn.execute(text("DELETE FROM rio_records WHERE id = ANY(:i)"), {"i": new_ids})
+        if nasc:
+            conn.execute(text("DELETE FROM nascente_records WHERE id = ANY(:i)"), {"i": nasc})
+
+
 def _client_with_mode(mode: str | None) -> TestClient:
     """Build a TestClient whose get_redis is a fresh fakeredis pinned to `mode`.
 

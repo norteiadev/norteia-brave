@@ -67,6 +67,45 @@ def _force_env(monkeypatch):
     monkeypatch.setenv("BRAVE_WEBHOOK_SECRET", WEBHOOK_SECRET)
 
 
+@pytest.fixture(autouse=True)
+def _cleanup_committed_rows(db_engine):
+    """Delete rows this test COMMITS so they do not leak into the shared integration DB.
+
+    These gate tests commit RioRecords (some under real UFs); the db_session fixture only
+    rollback()s, so committed rows would otherwise persist among real pipeline data. Snapshot
+    rio_record ids before the test and delete any new ones (plus nascente parents and
+    audit/conversation children) afterward — cleaning ONLY what this test created.
+    """
+    from sqlalchemy import text
+
+    with db_engine.connect() as conn:
+        before = {r[0] for r in conn.execute(text("SELECT id FROM rio_records"))}
+    yield
+    with db_engine.begin() as conn:
+        after = {r[0] for r in conn.execute(text("SELECT id FROM rio_records"))}
+        new_ids = list(after - before)
+        if not new_ids:
+            return
+        conn.execute(
+            text("DELETE FROM conversation_message WHERE rio_id = ANY(:i)"), {"i": new_ids}
+        )
+        conn.execute(text("DELETE FROM consent_log WHERE rio_id = ANY(:i)"), {"i": new_ids})
+        conn.execute(text("DELETE FROM audit_log WHERE record_id = ANY(:i)"), {"i": new_ids})
+        nasc = [
+            r[0]
+            for r in conn.execute(
+                text(
+                    "SELECT nascente_id FROM rio_records "
+                    "WHERE id = ANY(:i) AND nascente_id IS NOT NULL"
+                ),
+                {"i": new_ids},
+            )
+        ]
+        conn.execute(text("DELETE FROM rio_records WHERE id = ANY(:i)"), {"i": new_ids})
+        if nasc:
+            conn.execute(text("DELETE FROM nascente_records WHERE id = ANY(:i)"), {"i": nasc})
+
+
 @pytest.fixture(scope="module")
 def client():
     """FastAPI TestClient (no default steward header — auth tests need bare client)."""
@@ -137,13 +176,21 @@ def _make_rio_record(
 @pytest.mark.integration
 def test_list_gate_queue_returns_only_awaiting_records(client, db_session: Session) -> None:
     """GET /gate returns only sub_state=aguardando_consulta_whatsapp + entity_type=attraction."""
+    # Isolate this assertion from the shared integration DB, which holds a large
+    # real gate queue (hundreds of aguardando attractions). Seed under a synthetic
+    # UF that no real data uses and query with ?uf=ZZ, so the endpoint's bounded
+    # page is scoped to this test's own records — deterministic regardless of how
+    # many real records exist globally.
+    ISOLATED_UF = "ZZ"
     # Seed 1 record in the right state
-    awaiting = _make_rio_record(db_session, sub_state="aguardando_consulta_whatsapp")
+    awaiting = _make_rio_record(
+        db_session, sub_state="aguardando_consulta_whatsapp", uf=ISOLATED_UF
+    )
     # Seed 1 record NOT in the gate queue (different sub_state)
-    discovered = _make_rio_record(db_session, sub_state="discovered")
+    discovered = _make_rio_record(db_session, sub_state="discovered", uf=ISOLATED_UF)
     db_session.commit()
 
-    r = client.get("/api/v1/atrativos/gate", headers=BEARER_HEADERS)
+    r = client.get(f"/api/v1/atrativos/gate?uf={ISOLATED_UF}", headers=BEARER_HEADERS)
     assert r.status_code == 200, f"Unexpected status: {r.status_code} — {r.text}"
 
     body = r.json()

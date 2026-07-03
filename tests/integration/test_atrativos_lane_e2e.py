@@ -639,7 +639,7 @@ def test_sc4_full_pipeline_borderline_reaches_gate(db_session: Session) -> None:
 
     This test exercises the full FSM path:
       discovered → contacts_found → signals_gathered → (§7.6 score) →
-      aguardando_consulta_whatsapp (DLQ sub_state, borderline)
+      routing=dlq, sub_state=None (borderline; NÃO auto-gate — manual move from DLQ)
 
     Score math (ensures borderline band score < 80):
       origem=60, completude=75, corroboracao=0 (constant; Apify retired), atualidade=100
@@ -793,13 +793,14 @@ def test_sc4_full_pipeline_borderline_reaches_gate(db_session: Session) -> None:
     db_session.expire_all()
     rio = db_session.get(RioRecord, rio_id)
 
-    # D-01/D-02: sub_state must be aguardando_consulta_whatsapp (borderline DLQ)
+    # Phase F (spec 2026-07-02): NÃO auto-gate — a borderline attraction settles in DLQ
+    # with sub_state=None; the operator moves it to WhatsApp manually from the DLQ.
     assert rio.routing == "dlq", (
         f"Expected routing='dlq' for borderline atrativo (score ~48), got '{rio.routing}' "
         f"(score={rio.score})"
     )
-    assert rio.sub_state == "aguardando_consulta_whatsapp", (
-        f"Expected sub_state='aguardando_consulta_whatsapp' after scoring borderline (D-06), "
+    assert rio.sub_state is None, (
+        f"Expected sub_state=None (borderline dlq stays in DLQ, no auto-enrollment), "
         f"got '{rio.sub_state}'"
     )
 

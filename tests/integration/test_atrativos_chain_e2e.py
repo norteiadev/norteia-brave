@@ -278,24 +278,26 @@ def _run_chain(db, monkeypatch):
 
 
 @pytest.mark.integration
-def test_chain_advances_to_gate(isolated_db, monkeypatch):
-    """The full auto chain drives a borderline attraction to the human WhatsApp gate.
+def test_chain_stops_at_dlq_no_auto_gate(isolated_db, monkeypatch):
+    """The full auto chain settles a borderline attraction in DLQ — NOT auto-enrolled (Phase F).
 
-    discovered → contacts_found → signals_gathered → aguardando_consulta_whatsapp.
+    discovered → contacts_found → signals_gathered → routing=dlq, sub_state=None.
+    Spec 2026-07-02: NÃO auto-gate. The operator moves it to WhatsApp manually from DLQ.
     """
     rio, read = _run_chain(isolated_db, monkeypatch)
 
     assert rio is not None, "the chain must create the attraction RioRecord"
-    assert rio.sub_state == "aguardando_consulta_whatsapp", (
-        f"chain must advance to the gate, got sub_state={rio.sub_state!r} "
+    assert rio.sub_state is None, (
+        f"borderline dlq must stay in DLQ (sub_state=None), never auto-enroll into the "
+        f"WhatsApp gate, got sub_state={rio.sub_state!r} "
         f"(routing={rio.routing!r}, score={rio.score!r})"
     )
     assert rio.routing == "dlq", (
-        f"a borderline (<85%) attraction must route dlq, got {rio.routing!r}"
+        f"a borderline (<80%) attraction must route dlq, got {rio.routing!r}"
     )
 
     # Every transition was audited (D-02): discovered, contacts_found, signals_gathered,
-    # aguardando_consulta_whatsapp → ≥ 3 sub_state_advanced rows for this record.
+    # and the terminal dlq/None advance → ≥ 3 sub_state_advanced rows for this record.
     advanced = read.scalars(
         select(AuditLog).where(
             AuditLog.record_id == rio.id,
@@ -310,11 +312,12 @@ def test_chain_advances_to_gate(isolated_db, monkeypatch):
 
 @pytest.mark.integration
 def test_chain_stops_at_gate(isolated_db, monkeypatch):
-    """The auto chain settles at the gate — it promotes nothing to Mar and goes no further."""
+    """The auto chain settles in DLQ — it promotes nothing to Mar and goes no further."""
     rio, read = _run_chain(isolated_db, monkeypatch)
 
-    assert rio.sub_state == "aguardando_consulta_whatsapp", (
-        "the auto chain must STOP at the gate, never advance to whatsapp_in_progress/validated"
+    assert rio.sub_state is None, (
+        "the auto chain must STOP in DLQ (sub_state=None), never auto-enroll into WhatsApp "
+        "nor advance to whatsapp_in_progress/validated"
     )
 
     # No Mar promotion by the auto chain — the attraction stays borderline awaiting the human.
@@ -347,7 +350,7 @@ def test_no_auto_outreach(isolated_db, monkeypatch):
 
     rio, _read = _run_chain(isolated_db, monkeypatch)
 
-    assert rio.sub_state == "aguardando_consulta_whatsapp"
+    assert rio.sub_state is None
     assert len(delay_calls) == 0, (
         f"the auto chain must NOT dispatch outreach_task.delay (D-07), got {len(delay_calls)}"
     )
@@ -367,7 +370,7 @@ def test_replay_is_noop(isolated_db, monkeypatch):
     from brave.tasks import pipeline
 
     rio, read = _run_chain(isolated_db, monkeypatch)
-    assert rio.sub_state == "aguardando_consulta_whatsapp"
+    assert rio.sub_state is None
     rio_id = rio.id
 
     advanced_before = read.scalar(
@@ -385,7 +388,7 @@ def test_replay_is_noop(isolated_db, monkeypatch):
 
     read2 = isolated_db.fresh()
     rio = read2.get(RioRecord, rio_id)
-    assert rio.sub_state == "aguardando_consulta_whatsapp", (
+    assert rio.sub_state is None, (
         f"replay must be a no-op, sub_state changed to {rio.sub_state!r}"
     )
 
