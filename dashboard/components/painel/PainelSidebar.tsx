@@ -136,7 +136,7 @@ export function PainelSidebar({ active, onSelect }: PainelSidebarProps) {
                   className={`flex items-center gap-[10px] rounded-[8px] px-[10px] py-[8px] text-left text-[13px] font-medium transition-colors ${
                     isActive
                       ? "bg-[var(--painel-chip)] text-[var(--painel-navy)]"
-                      : "text-[var(--painel-text)] hover:bg-[var(--painel-chip)]"
+                      : "text-[var(--painel-text)] hover:bg-[var(--painel-chip-hover)]"
                   }`}
                 >
                   <span className="flex-shrink-0">{NAV_ICONS[item.key]}</span>

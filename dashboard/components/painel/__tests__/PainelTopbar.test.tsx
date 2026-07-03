@@ -359,14 +359,14 @@ describe("PainelTopbar", () => {
       });
     });
 
-    it("shows 'Motor parado' when motor is idle", async () => {
+    it("shows 'Execução parada' when the runtime is idle", async () => {
       server.use(
         engineStatus({ enabled: false, state: "idle" }),
         taSessionStatus(),
       );
       renderWithClient(<PainelTopbar title="P" subtitle="s" />);
       const ind = await screen.findByTestId("sync-indicator");
-      await waitFor(() => expect(ind).toHaveTextContent("Motor parado"));
+      await waitFor(() => expect(ind).toHaveTextContent("Execução parada"));
     });
   });
 });

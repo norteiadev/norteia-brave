@@ -8,6 +8,7 @@ import { PainelShell } from "@/components/painel/PainelShell";
 import { PainelView } from "@/components/painel/PainelView";
 import { atrativosListSuccess } from "@/mocks/handlers/atrativos";
 import { destinosListSuccess } from "@/mocks/handlers/destinos";
+import { dedupPairsEmpty } from "@/mocks/handlers/dedup";
 import { engineStatus } from "@/mocks/handlers/engine";
 import { server } from "@/mocks/server";
 
@@ -21,7 +22,14 @@ function renderShell(ui: ReactNode) {
 }
 
 beforeEach(() => {
-  server.use(destinosListSuccess(), atrativosListSuccess(), engineStatus());
+  // usePainelBoard (mounted via <PainelView/>) now fires a dedup-pairs query for
+  // the "possível duplicado" badge — register it so no request escapes the mock.
+  server.use(
+    destinosListSuccess(),
+    atrativosListSuccess(),
+    engineStatus(),
+    dedupPairsEmpty(),
+  );
 });
 
 describe("PainelShell", () => {

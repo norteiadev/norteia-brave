@@ -25,7 +25,8 @@ import {
   sampleAtrativos,
 } from "@/mocks/handlers/atrativos";
 import { destinosListSuccess, sampleDestinos } from "@/mocks/handlers/destinos";
-import { nascenteEmpty, nascenteList } from "@/mocks/handlers/engine";
+import { dedupPairsEmpty } from "@/mocks/handlers/dedup";
+import { nascenteList } from "@/mocks/handlers/engine";
 import { failuresEmpty } from "@/mocks/handlers/workers";
 import { server } from "@/mocks/server";
 
@@ -259,12 +260,22 @@ describe("toPainelCards", () => {
     expect(cards.filter((c) => c.column === "nascente")).toHaveLength(2);
   });
 
-  it("derives `duplicate` from validation_pending for BOTH entity types", () => {
-    const cards = toPainelCards(destinos, atrativos);
-    expect(cards.find((c) => c.id === "d-dlq")!.duplicate).toBe(true);
-    expect(cards.find((c) => c.id === "d-mar")!.duplicate).toBe(false);
-    expect(cards.find((c) => c.id === "a-descarte")!.duplicate).toBe(true);
-    expect(cards.find((c) => c.id === "a-inprog")!.duplicate).toBe(false);
+  it("derives `duplicate` from the dedup-candidate id set (a REAL dedup signal), NOT validation_pending", () => {
+    // d-dlq and a-descarte have validation_pending=true but are NOT dedup
+    // candidates. The old code blanket-flagged them ("possível duplicado" on the
+    // whole DLQ column); the fix flags a card ONLY when its rio id is a pending
+    // candidate↔Mar dedup pair (the same source the Duplicados view reads).
+    const dedupCandidateIds = new Set(["d-mar", "a-inprog"]);
+    const cards = toPainelCards(destinos, atrativos, [], [], dedupCandidateIds);
+    expect(cards.find((c) => c.id === "d-mar")!.duplicate).toBe(true);
+    expect(cards.find((c) => c.id === "a-inprog")!.duplicate).toBe(true);
+    // validation_pending=true but not a dedup candidate ⇒ NOT flagged.
+    expect(cards.find((c) => c.id === "d-dlq")!.duplicate).toBe(false);
+    expect(cards.find((c) => c.id === "a-descarte")!.duplicate).toBe(false);
+    // No dedup set passed (default empty) ⇒ nothing is flagged.
+    expect(
+      toPainelCards(destinos, atrativos).every((c) => !c.duplicate),
+    ).toBe(true);
   });
 
   it("sets source and error to null this slice", () => {
@@ -394,7 +405,7 @@ describe("usePainelBoard", () => {
       destinosListSuccess(),
       atrativosListSuccess(),
       failuresEmpty(),
-      nascenteEmpty(),
+      dedupPairsEmpty(),
     );
     const { result } = renderHook(() => usePainelBoard(), {
       wrapper: hookWrapper(),

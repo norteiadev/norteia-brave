@@ -161,7 +161,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     mutationFn: (mode: EngineMode) => setEngineMode(mode),
     onError: (err) => toast.error(explainError(err)),
     onSuccess: (res) =>
-      toast.success(`Motor · ${ENGINE_MODE_LABELS[res.mode]}`),
+      toast.success(`Modo · ${ENGINE_MODE_LABELS[res.mode]}`),
     onSettled: invalidate,
   });
 
@@ -295,9 +295,10 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
           Origem <strong className="font-semibold">{SOURCE_LABELS[source]}</strong>
         </button>
 
-        {/* Sync status indicator — reads from the existing engine/status query (no second poll).
-            Shows Sincronizando + UF progress when motor is ON; muted "Motor parado" when idle.
-            aria-live polite so screen readers announce state changes. */}
+        {/* Runtime (execução) indicator — reads from the existing engine/status query (no second poll).
+            Shows Sincronizando + UF progress while a sweep runs; muted "Execução parada" when idle.
+            This is the RUNTIME axis (is a sweep dispatching now) — distinct from the "Modo · …"
+            operator-mode label below. aria-live polite so screen readers announce state changes. */}
         <div
           data-testid="sync-indicator"
           className="flex min-w-[160px] flex-col items-end gap-[3px]"
@@ -342,7 +343,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
               className="whitespace-nowrap text-[11.5px]"
               style={{ color: "var(--painel-muted)" }}
             >
-              Motor parado
+              Execução parada
             </span>
           )}
         </div>
@@ -376,8 +377,9 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
             className="text-[12px] font-medium text-[var(--painel-muted)]"
             data-testid="painel-motor-state"
           >
-            {/* Label is driven by the operator mode (edit-lock source of truth). */}
-            Motor · {ENGINE_MODE_LABELS[mode]}
+            {/* Operator-MODE axis (edit-lock source of truth), orthogonal to the
+                runtime "Execução …" indicator above — hence "Modo · …", not "Motor · …". */}
+            Modo · {ENGINE_MODE_LABELS[mode]}
           </span>
           <div className="relative">
             <div

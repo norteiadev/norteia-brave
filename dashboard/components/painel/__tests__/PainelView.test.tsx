@@ -17,6 +17,7 @@ import {
   dlqWhatsappBatchIneligible,
   dlqWhatsappBatchSuccess,
 } from "@/mocks/handlers/dlq";
+import { dedupPairsEmpty } from "@/mocks/handlers/dedup";
 import { engineStatus, nascenteEmpty, nascenteList } from "@/mocks/handlers/engine";
 import { failuresEmpty, failuresSuccess } from "@/mocks/handlers/workers";
 import type { FailuresData } from "@/lib/workers-api";
@@ -84,6 +85,7 @@ function useDefaultHandlers() {
     atrativosListSuccess(),
     failuresEmpty(),
     engineStatus(),
+    dedupPairsEmpty(),
     // Nascente column count now comes from the /nascente envelope total, not
     // engine counts — seed total=12 (no cards needed for the count assertion).
     nascenteList([], 12),
@@ -110,37 +112,26 @@ describe("PainelView", () => {
     await waitFor(() => expect(nascente).toHaveTextContent("12"));
   });
 
-  it("renders raw Nascente records as read-only (non-draggable) cards in the Nascente column", async () => {
+  it("Nascente is a COUNT-ONLY column: shows the /nascente envelope total but renders no raw cards (F2 double-count fix)", async () => {
     server.use(
       destinosListSuccess([]),
       atrativosListSuccess([]),
       failuresEmpty(),
       engineStatus(),
-      nascenteList([
-        {
-          id: "n-1",
-          entity_type: "destination",
-          uf: "BA",
-          source: "places",
-          name: "Praia do Forte",
-          municipio: null,
-          municipio_id: null,
-          ingested_at: "2026-06-28T00:00:00Z",
-        },
-      ]),
+      dedupPairsEmpty(),
+      // Envelope total=7 drives the pill; the raw rows are intentionally NOT
+      // surfaced as cards — they duplicate the routed (DLQ/Rio/Mar) layer.
+      nascenteList([], 7),
     );
-    const { findByTestId, getByTestId } = renderWithClient(<PainelView />);
+    const { getByTestId, queryByTestId } = renderWithClient(<PainelView />);
 
-    // The card lands inside the Nascente column body…
-    const col = getByTestId("painel-col-nascente");
-    const card = await findByTestId("record-card");
-    expect(col.contains(card)).toBe(true);
-    // …and it is READ-ONLY: not draggable.
-    expect(card.getAttribute("draggable")).toBe("false");
-    // The column header count reflects the one ingested record.
+    // The Nascente header count reflects the envelope total (usePainelMetrics)…
     await waitFor(() =>
-      expect(getByTestId("painel-col-count-nascente")).toHaveTextContent("1"),
+      expect(getByTestId("painel-col-count-nascente")).toHaveTextContent("7"),
     );
+    // …and NO raw nascente card is rendered: the board no longer feeds the raw
+    // ingest layer, so each record appears exactly once in its routed column.
+    expect(queryByTestId("record-card")).toBeNull();
   });
 
   it("mapped drop (destino dlq → Mar) fires the generic transition PATCH and optimistically moves the card", async () => {
@@ -233,6 +224,7 @@ describe("PainelView", () => {
       failuresSuccess(falhaSeed),
       engineStatus(),
       nascenteEmpty(),
+      dedupPairsEmpty(),
       destinoReprocessSuccess(),
     );
 
@@ -255,6 +247,7 @@ describe("PainelView", () => {
       failuresSuccess(falhaSeed),
       engineStatus(),
       nascenteEmpty(),
+      dedupPairsEmpty(),
       destinoReprocessSuccess(),
     );
 
@@ -284,6 +277,7 @@ describe("PainelView", () => {
       // PAUSADO ⇒ editing unlocked ⇒ checkboxes render.
       engineStatus({ mode: "PAUSADO", editing_unlocked: true }),
       nascenteEmpty(),
+      dedupPairsEmpty(),
       http.post(
         "http://localhost:3000/api/api/v1/dlq/whatsapp-batch",
         async ({ request }) => {
@@ -337,6 +331,7 @@ describe("PainelView", () => {
       failuresEmpty(),
       engineStatus({ mode: "PAUSADO", editing_unlocked: true }),
       nascenteEmpty(),
+      dedupPairsEmpty(),
       dlqWhatsappBatchIneligible([
         { rio_id: "atr-1", reason: "has_horario_or_preco" },
       ]),
@@ -372,6 +367,7 @@ describe("PainelView", () => {
       // the Motor Pausado backstop: revert + toast.
       engineStatus({ mode: "PAUSADO", editing_unlocked: true }),
       nascenteEmpty(),
+      dedupPairsEmpty(),
       http.patch(
         "http://localhost:3000/api/api/v1/destinos/:id/transition",
         () => HttpResponse.json({ detail: "Edição bloqueada" }, { status: 423 }),
@@ -408,6 +404,7 @@ describe("PainelView", () => {
       failuresEmpty(),
       engineStatus({ mode: "LIGADO", editing_unlocked: false }),
       nascenteEmpty(),
+      dedupPairsEmpty(),
       destinoTransitionSuccess(),
     );
     const { container, findAllByTestId, getByTestId } = renderWithClient(

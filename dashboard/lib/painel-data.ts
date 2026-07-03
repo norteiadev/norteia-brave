@@ -39,6 +39,7 @@ import {
   nascenteKeys,
   type NascenteListItem,
 } from "@/lib/nascente-api";
+import { dedupKeys, fetchDedupPairs } from "@/lib/dedup-api";
 
 // --- Types ---
 
@@ -150,15 +151,18 @@ function municipalityFromCanonicalKey(canonicalKey: string | null): string | nul
  *
  * PII guard (T-17-02-01): explicit allow-list — only the fields below are read.
  * phone_e164 / phone_masked / contacts_summary are NEVER copied.
- * `duplicate = validation_pending` for BOTH entity types (destinos have no
- * atrativo-style dedup flag, so the validation-pending flag IS the slice-1
- * "possível duplicado" hint — explicit + uniform).
+ * `duplicate` is a REAL dedup signal (F3): a card is flagged "possível duplicado"
+ * ONLY when its rio id is in `dedupCandidateIds` — the pending candidate↔Mar pairs
+ * from GET /api/v1/dedup/pairs (the exact source the Duplicados view uses). It is
+ * NOT derived from `validation_pending` (which only means "DLQ pending review" /
+ * the WhatsApp gate — unrelated to dedup, so it blanket-flagged the whole DLQ column).
  */
 export function toPainelCards(
   destinos: DestinoListItem[],
   atrativos: AtrativoListItem[],
   failures: FailureItem[] = [],
   nascente: NascenteListItem[] = [],
+  dedupCandidateIds: ReadonlySet<string> = new Set(),
 ): PainelCard[] {
   // Nascente cards: the raw immutable ingest layer, READ-ONLY (no routing yet).
   // entity_type is the backend's "destination"/"attraction" — map to the board's
@@ -187,7 +191,7 @@ export function toPainelCards(
     column: routingToColumn(d.routing),
     score: d.score,
     source: null,
-    duplicate: d.validation_pending,
+    duplicate: dedupCandidateIds.has(d.id),
     error: null,
   }));
 
@@ -204,7 +208,7 @@ export function toPainelCards(
       a.sub_state === WHATSAPP_SUB_STATE ? "whatsapp" : routingToColumn(a.routing),
     score: a.score,
     source: null,
-    duplicate: a.validation_pending,
+    duplicate: dedupCandidateIds.has(a.id),
     error: null,
     // Phase H DLQ→WhatsApp gate: absent from the list ⇒ eligible (the batch 422
     // is authoritative); false ⇒ already has horário/preço → checkbox disabled.
@@ -307,13 +311,19 @@ export function usePainelBoard(): {
     queryFn: () => fetchFailures(),
     refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
-  // Nascente column: raw ingest cards (read-only). The board still loads if
-  // /nascente fails — the column just renders empty (additive, like falha).
-  const nascenteQuery = useQuery({
-    queryKey: nascenteKeys.list({ board: true }),
-    queryFn: () => fetchNascenteList({ limit: 500 }),
+  // Dedup pairs (F3): the REAL "possível duplicado" signal — the same
+  // compute-on-read candidate↔Mar pairs the Duplicados view shows (shared query
+  // cache key). A card is flagged ONLY when its rio id is a pending dedup
+  // candidate, never as a blanket flag on the whole DLQ column. The board still
+  // loads if this fails — the candidate set just stays empty (no badges).
+  const dedupQuery = useQuery({
+    queryKey: dedupKeys.pairs(),
+    queryFn: () => fetchDedupPairs(),
     refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
+  const dedupCandidateIds = new Set(
+    (dedupQuery.data?.items ?? []).map((p) => p.candidate_rio_id),
+  );
 
   const cards =
     destinosQuery.data && atrativosQuery.data
@@ -321,7 +331,13 @@ export function usePainelBoard(): {
           destinosQuery.data.items,
           atrativosQuery.data.items,
           failuresQuery.data?.items ?? [],
-          nascenteQuery.data?.items ?? [],
+          // F2: Nascente is a COUNT-ONLY column — its pill is fed by
+          // usePainelMetrics().nascenteCount (the /nascente envelope total, the
+          // same aggregate Monitor uses). Raw /nascente rows are NOT surfaced as
+          // cards: nascente→rio is immediate, so every raw row already has a
+          // routed twin (DLQ/Rio/Mar) and feeding both double-counted the board.
+          [],
+          dedupCandidateIds,
         )
       : [];
 
@@ -379,7 +395,9 @@ export function usePainelMetrics(): {
   });
 
   // Nascente count from the nascente list ENVELOPE total (current versions
-  // only) so the column header matches the rendered Nascente cards exactly.
+  // only). The Nascente column is count-only (QA F2): it renders no cards —
+  // every record shows once in its routed column — so this pill is the true
+  // server total (same aggregate semantics as the Monitor view).
   const nascenteTotal = useQuery({
     queryKey: nascenteKeys.list({ count: "total" }),
     queryFn: () => fetchNascenteList({ limit: 1 }),
