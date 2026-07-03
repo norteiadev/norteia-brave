@@ -62,9 +62,6 @@ export function PainelView() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const dragged = useRef<PainelCard | null>(null);
 
-  const { cards, isPending } = usePainelBoard();
-  const metrics = usePainelMetrics();
-
   // Edit-lock: read the live engine status. Default UNLOCKED while the status is
   // unknown/loading so the board is interactive immediately (the server 423 is
   // the authoritative backstop); it only locks once a LIGADO status resolves.
@@ -75,6 +72,14 @@ export function PainelView() {
     refetchOnWindowFocus: false,
   });
   const editingUnlocked = engine?.editing_unlocked ?? true;
+
+  // Bug 3: while a sweep runs the board polls fast (3s) so cards land in near
+  // real time; idle it falls back to the shared 10s cadence.
+  const boardIntervalMs =
+    engine?.state === "running" ? 3000 : ENGINE_REFETCH_INTERVAL_MS;
+
+  const { cards, isPending, nascenteCount } = usePainelBoard(boardIntervalMs);
+  const metrics = usePainelMetrics();
 
   const actions = usePainelMutations({
     onOptimistic: (card, target) =>
@@ -172,7 +177,7 @@ export function PainelView() {
 
       <PainelBoard
         cards={scoped}
-        nascenteCount={metrics.nascenteCount}
+        nascenteCount={nascenteCount}
         isPending={isPending}
         editingUnlocked={editingUnlocked}
         selectedIds={selectedIds}

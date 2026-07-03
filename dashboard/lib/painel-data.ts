@@ -289,27 +289,40 @@ export function computeMetric(
  * Load destinos + atrativos lists (board scope) and build the unified card[].
  * Uses a generous limit so the board shows all in-scope records this slice.
  */
-export function usePainelBoard(): {
+export function usePainelBoard(
+  intervalMs: number = ENGINE_REFETCH_INTERVAL_MS,
+): {
   cards: PainelCard[];
+  nascenteCount: number;
   isPending: boolean;
   isError: boolean;
 } {
   const destinosQuery = useQuery({
     queryKey: destinoKeys.list({ board: true }),
     queryFn: () => fetchDestinoList({ limit: 500 }),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
   });
   const atrativosQuery = useQuery({
     queryKey: atrativoKeys.list({ board: true }),
     queryFn: () => fetchAtrativoList({ limit: 500 }),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
   });
   // Falha column: real PoisonQuarantine records (draggable for reprocess). The
   // board still loads if /failures fails — falha just renders empty (additive).
   const failuresQuery = useQuery({
     queryKey: engineKeys.failures,
     queryFn: () => fetchFailures(),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
+  });
+  // Nascente column (bug 4): the REAL unrouted records — nascente rows with no
+  // RioRecord twin yet. These are genuine "just ingested, not yet routed" cards
+  // (the LEFT JOIN … IS NULL slice), so they no longer double-count the routed
+  // layer. The board still builds if this is pending (?? []); nascenteCount is
+  // the server ENVELOPE total (the true unrouted count for the column pill).
+  const nascenteQuery = useQuery({
+    queryKey: nascenteKeys.list({ board: true }),
+    queryFn: () => fetchNascenteList({ unrouted: true, limit: 500 }),
+    refetchInterval: intervalMs,
   });
   // Dedup pairs (F3): the REAL "possível duplicado" signal — the same
   // compute-on-read candidate↔Mar pairs the Duplicados view shows (shared query
@@ -319,7 +332,7 @@ export function usePainelBoard(): {
   const dedupQuery = useQuery({
     queryKey: dedupKeys.pairs(),
     queryFn: () => fetchDedupPairs(),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
   });
   const dedupCandidateIds = new Set(
     (dedupQuery.data?.items ?? []).map((p) => p.candidate_rio_id),
@@ -331,18 +344,19 @@ export function usePainelBoard(): {
           destinosQuery.data.items,
           atrativosQuery.data.items,
           failuresQuery.data?.items ?? [],
-          // F2: Nascente is a COUNT-ONLY column — its pill is fed by
-          // usePainelMetrics().nascenteCount (the /nascente envelope total, the
-          // same aggregate Monitor uses). Raw /nascente rows are NOT surfaced as
-          // cards: nascente→rio is immediate, so every raw row already has a
-          // routed twin (DLQ/Rio/Mar) and feeding both double-counted the board.
-          [],
+          // Bug 4: feed the REAL unrouted nascente rows as Nascente-column cards.
+          // Guard: the board still builds once destinos+atrativos resolve even if
+          // the nascente query is still pending (?? []).
+          nascenteQuery.data?.items ?? [],
           dedupCandidateIds,
         )
       : [];
 
   return {
     cards,
+    // The Nascente pill shows the TRUE unrouted total (server envelope), not the
+    // loaded-array length.
+    nascenteCount: nascenteQuery.data?.total ?? 0,
     isPending: destinosQuery.isPending || atrativosQuery.isPending,
     isError: destinosQuery.isError || atrativosQuery.isError,
   };

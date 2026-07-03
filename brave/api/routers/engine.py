@@ -135,6 +135,7 @@ def engine_status(
 def list_nascente(
     uf: str | None = Query(None),
     entity_type: str | None = Query(None, description="destination | attraction"),
+    unrouted: bool = Query(False, description="only Nascente records with no Rio twin"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
@@ -153,7 +154,20 @@ def list_nascente(
     APPROVED PUBLIC-GEO fields — NOT PII, same class as name/uf (público,
     geo-territorial). Returns paginated {items, total, offset, limit}.
     """
-    stmt = select(NascenteRecord).where(NascenteRecord.superseded_by_id.is_(None))
+    if unrouted:
+        # Bug 4: only Nascente records with NO Rio twin (LEFT JOIN → NULL). Keeps
+        # the current-version filter so the NASCENTE Kanban column shows only cards
+        # that have not yet been routed into Rio.
+        stmt = (
+            select(NascenteRecord)
+            .outerjoin(RioRecord, RioRecord.nascente_id == NascenteRecord.id)
+            .where(
+                NascenteRecord.superseded_by_id.is_(None),
+                RioRecord.id.is_(None),
+            )
+        )
+    else:
+        stmt = select(NascenteRecord).where(NascenteRecord.superseded_by_id.is_(None))
     if uf:
         stmt = stmt.where(NascenteRecord.uf == uf)
     if entity_type:

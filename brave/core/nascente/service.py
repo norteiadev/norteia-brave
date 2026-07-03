@@ -12,10 +12,13 @@ import json
 import uuid
 from typing import Any
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.core.models import NascenteRecord
+
+logger = structlog.get_logger(__name__)
 
 
 def store_raw(
@@ -93,6 +96,19 @@ def store_raw(
     if latest is not None:
         latest.superseded_by_id = new_record.id
         session.flush()
+
+    # Per-entity sync log — emitted only when a NEW or SUPERSEDED record is
+    # created (the idempotent early-return above stays silent to avoid re-ingest
+    # log spam). LGPD: public-geo fields only (name, uf, municipio, source).
+    canonical = payload.get("canonical") or {}
+    logger.info(
+        "nascente_ingerido",
+        source=source,
+        entity_type=entity_type,
+        uf=uf,
+        name=(payload.get("name") or source_ref),
+        municipio=canonical.get("municipio"),
+    )
 
     return new_record
 

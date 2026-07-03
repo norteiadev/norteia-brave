@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import structlog
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
@@ -20,6 +21,8 @@ from brave.core.rio.label import label_entity
 from brave.core.rio.normalize import normalize_address, normalize_coordinates, normalize_name
 from brave.core.score.engine import compute_score
 from brave.core.score.schemas import ScoreInput
+
+logger = structlog.get_logger(__name__)
 
 # Stateless data-access seam (Phase A). The Session is passed per call and the
 # caller still owns the transaction — this repo flushes but never commits.
@@ -189,6 +192,13 @@ def process_nascente_record(
         embedding=embedding,
     )
     if duplicate is not None:
+        # Duplicate-detected return — minimal public-geo log (LGPD-safe).
+        logger.info(
+            "registro_deduplicado",
+            entity_type=duplicate.entity_type,
+            uf=duplicate.uf,
+            name=((duplicate.normalized or {}).get("name")),
+        )
         return duplicate
 
     # Create RioRecord
@@ -208,6 +218,17 @@ def process_nascente_record(
     # Apply §7.6 scoring and routing
     route_by_score(session, rio, config)
     session.flush()
+
+    # Per-entity sync log at the PRIMARY routed return — rio.routing is now final
+    # (mar/dlq/in_progress). LGPD: public-geo fields only (name, uf, routing, score).
+    logger.info(
+        "registro_roteado",
+        entity_type=rio.entity_type,
+        uf=rio.uf,
+        name=((rio.normalized or {}).get("name")),
+        routing=rio.routing,
+        score=(float(rio.score) if rio.score is not None else None),
+    )
 
     return rio
 

@@ -48,6 +48,8 @@ export function fetchNascenteList(params: {
   entity_type?: string;
   offset?: number;
   limit?: number;
+  /** When true, returns ONLY nascente records with no RioRecord twin (unrouted). */
+  unrouted?: boolean;
 }): Promise<{
   items: NascenteListItem[];
   total: number;
@@ -60,6 +62,7 @@ export function fetchNascenteList(params: {
       entity_type: params.entity_type,
       offset: params.offset,
       limit: params.limit,
+      unrouted: params.unrouted ? "true" : undefined,
     })}`,
   );
 }

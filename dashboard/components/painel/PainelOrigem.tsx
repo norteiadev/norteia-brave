@@ -18,7 +18,8 @@ import {
 /**
  * PainelOrigem — the "Origem dos dados" source-pick modal (Painel light theme).
  *
- * The operator picks the collection source (mTur / TripAdvisor / Google Places).
+ * The operator picks the collection source (mTur / TripAdvisor). Google Places
+ * is ENRICHMENT, not a collection source, so it is not offered here.
  * For TripAdvisor the modal (re)establishes the scraper session: the operator
  * pastes the authenticated cURL captured in DevTools, which an in-modal parser
  * converts into the strict `SessionInjectBody` shape (cookies, query_ids,
@@ -33,7 +34,7 @@ import {
  * literals are used only where no token exists (overlay, badges).
  */
 
-export type OrigemSource = "mtur" | "tripadvisor" | "google_places";
+export type OrigemSource = "mtur" | "tripadvisor";
 
 /** Inline error kind surfaced after an inject attempt (distinct copy per status). */
 type OrigemErrorKind = "422" | "503" | "other" | null;
@@ -52,17 +53,11 @@ const SOURCE_ROWS: { key: OrigemSource; label: string; desc: string }[] = [
     label: "TripAdvisor",
     desc: "Scraper GraphQL · avaliações e popularidade",
   },
-  {
-    key: "google_places",
-    label: "Google Places",
-    desc: "Places API (New) · contatos e geolocalização",
-  },
 ];
 
 const SOURCE_LABEL: Record<OrigemSource, string> = {
   mtur: "mTur",
   tripadvisor: "TripAdvisor",
-  google_places: "Google Places",
 };
 
 interface PainelOrigemProps {

@@ -22,6 +22,7 @@ import {
   type TASessionStatus,
 } from "@/lib/engine-api";
 import { ENGINE_MODE_LABELS, type EngineMode } from "@/lib/config-api";
+import { BR_UFS } from "@/lib/painel-data";
 import { PainelLogs } from "@/components/painel/PainelLogs";
 import { PainelOrigem, type OrigemSource } from "@/components/painel/PainelOrigem";
 
@@ -125,6 +126,9 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   const [origemOpen, setOrigemOpen] = useState(false);
   const [depthMenuOpen, setDepthMenuOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
+  // Bug 2: cold-start UF scope. "" = Todo o Brasil (backend uses all 27 UFs when
+  // ufs is omitted); a UF code scopes the sweep to a single UF. Source-independent.
+  const [startUf, setStartUf] = useState<string>("");
 
   const { data } = useQuery({
     queryKey: engineKeys.status,
@@ -148,7 +152,8 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   // source is already in scope from line below (data?.source ?? "default") and
   // is passed so the selected origem lane actually reaches the sweep orchestrator.
   const start = useMutation({
-    mutationFn: (depth: EngineDepth) => startEngine({ depth, source }),
+    mutationFn: (vars: { depth: EngineDepth; ufs?: string[] }) =>
+      startEngine({ depth: vars.depth, source, ufs: vars.ufs }),
     onError: (err) => toast.error(explainError(err)),
     onSuccess: () => toast.success("Motor ligado — varredura iniciada"),
     onSettled: invalidate,
@@ -237,7 +242,8 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
 
   const onPickDepth = (depth: EngineDepth) => {
     setDepthMenuOpen(false);
-    start.mutate(depth);
+    // Bug 2: scope the sweep to the picked UF, or omit ufs for Todo o Brasil.
+    start.mutate({ depth, ufs: startUf ? [startUf] : undefined });
   };
 
   return (
@@ -433,6 +439,24 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
                 className="absolute right-0 top-[30px] z-[20] w-[208px] rounded-[10px] border bg-[var(--card)] p-[6px] shadow-lg"
                 style={{ borderColor: "var(--painel-border-outer)" }}
               >
+                {/* Bug 2: UF scope — source-independent. "" ⇒ all 27 UFs. */}
+                <div className="px-[8px] pb-[3px] pt-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
+                  Abrangência
+                </div>
+                <select
+                  data-testid="painel-uf-select"
+                  value={startUf}
+                  onChange={(e) => setStartUf(e.target.value)}
+                  className="mb-[6px] block w-full rounded-[7px] border bg-[var(--card)] px-[8px] py-[6px] text-[12.5px] font-medium text-[var(--painel-text)]"
+                  style={{ borderColor: "var(--painel-border-outer)" }}
+                >
+                  <option value="">Todo o Brasil (27 UFs)</option>
+                  {BR_UFS.map((uf) => (
+                    <option key={uf} value={uf}>
+                      {uf}
+                    </option>
+                  ))}
+                </select>
                 <div className="px-[8px] py-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
                   Profundidade da varredura
                 </div>

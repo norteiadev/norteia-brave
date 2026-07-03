@@ -721,3 +721,46 @@ def test_list_nascente_entity_type_filter(client, db_session: Session):
     ids = [i["id"] for i in r.json()["items"]]
     assert str(attr.id) in ids
     assert str(dest.id) not in ids
+
+
+@pytest.mark.integration
+def test_list_nascente_unrouted_excludes_rio_twin(client, db_session: Session):
+    """unrouted=true lists only Nascente records with NO RioRecord twin (Bug 4).
+
+    A Nascente WITH a Rio twin is excluded; one WITHOUT is included. The default
+    (unrouted=false) returns both.
+    """
+    from brave.core.models import RioRecord  # noqa: PLC0415
+
+    # Nascente with a Rio twin (routed) — must be excluded when unrouted=true.
+    routed = _make_nascente(db_session, uf="SE", entity_type="destination")
+    rio = RioRecord(
+        id=uuid.uuid4(),
+        nascente_id=routed.id,
+        entity_type="destination",
+        uf="SE",
+        routing="mar",
+        score=90.0,
+        canonical_key=f"destino:SE:{uuid.uuid4().hex[:8]}",
+        normalized={"name": "Roteado"},
+    )
+    db_session.add(rio)
+
+    # Nascente WITHOUT a Rio twin — must be included when unrouted=true.
+    unrouted = _make_nascente(db_session, uf="SE", entity_type="destination")
+    db_session.commit()
+
+    r = client.get(
+        "/api/v1/nascente?uf=SE&unrouted=true&limit=500", headers=BEARER_HEADERS
+    )
+    assert r.status_code == 200, r.text
+    ids = [i["id"] for i in r.json()["items"]]
+    assert str(unrouted.id) in ids
+    assert str(routed.id) not in ids
+
+    # Default (unrouted=false) returns both.
+    r2 = client.get("/api/v1/nascente?uf=SE&limit=500", headers=BEARER_HEADERS)
+    assert r2.status_code == 200, r2.text
+    ids2 = [i["id"] for i in r2.json()["items"]]
+    assert str(unrouted.id) in ids2
+    assert str(routed.id) in ids2

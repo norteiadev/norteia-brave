@@ -147,6 +147,57 @@ describe("PainelTopbar", () => {
     expect(startBody).toMatchObject({ depth: "nascente_rio" });
   });
 
+  it("cold Ligar defaults to Todo o Brasil — no ufs in the /start body", async () => {
+    let startBody: Record<string, unknown> | null = null;
+    server.use(
+      engineStatus({ mode: "DESLIGADO", editing_unlocked: true, state: "idle", enabled: false }),
+      taSessionStatus(),
+      http.post(START_URL, async ({ request }) => {
+        startBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(
+          { status: "started", ufs_total: 27 },
+          { status: 202 },
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+    const ligar = await screen.findByTestId("painel-motor-ligar");
+    await user.click(ligar);
+    await screen.findByTestId("painel-depth-menu");
+    // Abrangência defaults to "" (Todo o Brasil) → ufs omitted (backend uses 27).
+    expect(screen.getByTestId("painel-uf-select")).toHaveValue("");
+    await user.click(screen.getByTestId("painel-depth-nascente"));
+    await waitFor(() => expect(startBody).not.toBeNull());
+    expect(startBody).not.toHaveProperty("ufs");
+  });
+
+  it("cold Ligar scoped to a UF fires POST /start with ufs=[UF] (source-independent)", async () => {
+    let startBody: { depth?: string; ufs?: string[] } | null = null;
+    server.use(
+      engineStatus({ mode: "DESLIGADO", editing_unlocked: true, state: "idle", enabled: false }),
+      taSessionStatus(),
+      http.post(START_URL, async ({ request }) => {
+        startBody = (await request.json()) as { depth?: string; ufs?: string[] };
+        return HttpResponse.json(
+          { status: "started", ufs_total: 1 },
+          { status: 202 },
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+    const ligar = await screen.findByTestId("painel-motor-ligar");
+    await user.click(ligar);
+    await screen.findByTestId("painel-depth-menu");
+    await user.selectOptions(screen.getByTestId("painel-uf-select"), "SP");
+    await user.click(screen.getByTestId("painel-depth-nascente_rio"));
+    await waitFor(() => expect(startBody).not.toBeNull());
+    expect(startBody).toMatchObject({ depth: "nascente_rio", ufs: ["SP"] });
+  });
+
   it("opening the depth menu without picking does NOT fire POST /start", async () => {
     let startCalled = false;
     server.use(

@@ -400,12 +400,28 @@ function hookWrapper() {
 }
 
 describe("usePainelBoard", () => {
-  it("loads destinos + atrativos lists and builds a unified card[]", async () => {
+  it("loads destinos + atrativos + unrouted nascente and builds a unified card[]", async () => {
+    // Bug 4: unrouted nascente rows now feed the Nascente column as real cards.
+    // The envelope total (5) drives the column pill independently of the loaded
+    // slice (1 row) — the TRUE unrouted count, not the loaded-array length.
+    const nascente: NascenteListItem[] = [
+      {
+        id: "n-board-1",
+        entity_type: "destination",
+        uf: "BA",
+        source: "places",
+        name: "Praia do Forte",
+        municipio: "Mata de São João",
+        municipio_id: "2919926",
+        ingested_at: "2026-06-28T00:00:00Z",
+      },
+    ];
     server.use(
       destinosListSuccess(),
       atrativosListSuccess(),
       failuresEmpty(),
       dedupPairsEmpty(),
+      nascenteList(nascente, 5),
     );
     const { result } = renderHook(() => usePainelBoard(), {
       wrapper: hookWrapper(),
@@ -413,12 +429,18 @@ describe("usePainelBoard", () => {
 
     await waitFor(() => expect(result.current.isPending).toBe(false));
     expect(result.current.isError).toBe(false);
-    // sampleDestinos (2) + sampleAtrativos (2)
+    // sampleDestinos (2) + sampleAtrativos (2) + 1 unrouted nascente card
     expect(result.current.cards).toHaveLength(
-      sampleDestinos.length + sampleAtrativos.length,
+      sampleDestinos.length + sampleAtrativos.length + nascente.length,
     );
-    const types = result.current.cards.map((c: PainelCard) => c.type).sort();
-    expect(types).toEqual(["atrativo", "atrativo", "destino", "destino"]);
+    // The unrouted nascente row is fed into the Nascente column.
+    const nascenteCards = result.current.cards.filter(
+      (c: PainelCard) => c.column === "nascente",
+    );
+    expect(nascenteCards).toHaveLength(1);
+    expect(nascenteCards[0].id).toBe("n-board-1");
+    // nascenteCount reflects the server ENVELOPE total, not the loaded slice.
+    expect(result.current.nascenteCount).toBe(5);
   });
 });
 

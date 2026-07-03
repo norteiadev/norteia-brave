@@ -27,13 +27,14 @@ afterEach(() => {
 });
 
 describe("PainelOrigem", () => {
-  it("renders a radio row per source", async () => {
+  it("renders a radio row per source (mtur + tripadvisor only — Places is enrichment)", async () => {
     server.use(taSessionStatus());
     renderWithClient(<PainelOrigem open onClose={() => {}} />);
 
     expect(await screen.findByTestId("origem-radio-mtur")).toBeInTheDocument();
     expect(screen.getByTestId("origem-radio-tripadvisor")).toBeInTheDocument();
-    expect(screen.getByTestId("origem-radio-google_places")).toBeInTheDocument();
+    // Google Places is ENRICHMENT, not a collection source — no radio row.
+    expect(screen.queryByTestId("origem-radio-google_places")).toBeNull();
   });
 
   it("renders nothing when closed", () => {
