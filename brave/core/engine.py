@@ -162,16 +162,25 @@ def get_depth(redis: Any) -> str | None:
     return raw if raw in _VALID_DEPTHS else None
 
 
-def set_source(redis: Any, source: str) -> None:
+def set_source(
+    redis: Any, source: str, *, valid_sources: Any = None
+) -> None:
     """Persist the chosen ingest source lane. Rejects anything outside the contract.
 
     Invalid values raise ValueError and are never written — the engine must not
     silently dispatch an unrecognized (possibly expensive or unknown) lane.
-    Mirrors set_depth exactly.
+
+    Validation set (import posture / D-18): ``brave.core`` is kernel and must NOT
+    import the ``brave.domains`` registry, so the caller INJECTS the allowed set via
+    ``valid_sources`` — the API edge passes the REGISTERED-AND-ENABLED lanes
+    (``enabled_sources(config)``) so a disabled/unknown source is rejected here too.
+    When ``valid_sources`` is ``None`` the legacy in-kernel ``_VALID_SOURCES`` literal
+    is used (back-compat for direct callers/tests). Mirrors set_depth otherwise.
     """
-    if source not in _VALID_SOURCES:
+    allowed = _VALID_SOURCES if valid_sources is None else frozenset(valid_sources)
+    if source not in allowed:
         raise ValueError(
-            f"invalid source {source!r}; expected one of {sorted(_VALID_SOURCES)}"
+            f"invalid source {source!r}; expected one of {sorted(allowed)}"
         )
     redis.set(_SOURCE_KEY, source)
 

@@ -2007,6 +2007,17 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
 # Collection engine — operator-controlled start/stop sweep orchestrator
 # ---------------------------------------------------------------------------
 
+# Maps a domain's SweepDispatch.task_name (stable public celery name) to the
+# producer task's ATTRIBUTE in THIS module. The dispatch loop resolves the producer
+# via ``globals()[attr]`` (not the celery registry) so a test that monkeypatches
+# ``pipeline.sweep_uf`` / ``pipeline.sweep_tripadvisor`` / ``pipeline.discover_atrativo_task``
+# still intercepts the ``.delay`` — the registry indirection stays transparent.
+_PRODUCER_ATTR_BY_TASK_NAME: dict[str, str] = {
+    "brave.sweep_uf": "sweep_uf",
+    "brave.discover_atrativo": "discover_atrativo_task",
+    "brave.sweep_tripadvisor": "sweep_tripadvisor",
+}
+
 
 @shared_task(
     bind=True,
@@ -2052,7 +2063,13 @@ def engine_sweep_run(
     import redis as redis_lib
 
     from brave.core import engine as collection_engine
+    from brave.domains import get_domain
     from brave.tasks.beat_schedule import UF_LIST
+
+    # Resolve the domain ONCE per run — single-source-per-run (brave:engine:source is
+    # read once at /start and threaded in as ``source``). The domain owns its
+    # lane→producer routing; this loop never names a source.
+    domain = get_domain(source)
 
     redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
     rc = redis_lib.from_url(redis_url)
@@ -2077,20 +2094,15 @@ def engine_sweep_run(
             if collection_engine.get_mode(rc) != collection_engine.LIGADO:
                 logger.info("engine_mode_pause_drain", at_uf=uf, dispatched=dispatched)
                 break
-            if source == "tripadvisor":
-                # TripAdvisor lane — atrativos-only per oa3 fix; parent destinos must be
-                # seeded via Mtur sweep first. Depth gate still applies:
-                # nascente-only is run_rio=False inside sweep_tripadvisor.
-                sweep_tripadvisor.delay(uf, depth=effective_depth)
-            elif nascente_only:
-                # Free path: Mtur-only seed regardless of lane (atrativos = Places,
-                # no free source). Threaded depth makes sweep_uf skip Rio + LLM.
-                sweep_uf.delay(uf, depth=effective_depth)
-            else:
-                if lane in ("destinos", "both"):
-                    sweep_uf.delay(uf, depth=effective_depth)
-                if lane in ("atrativos", "both"):
-                    discover_atrativo_task.delay(uf, depth=effective_depth)
+            # Registry-driven dispatch: the domain returns which producer task(s) to
+            # fan out for this UF+depth+lane (the former ``if source == ...`` ladder now
+            # lives in each domain's ``sweep_plan``). Each producer still ``.delay()``s
+            # onto the single 'celery' queue; behavior is byte-identical per source.
+            for _spec in domain.sweep_plan(
+                uf, depth=effective_depth, lane=lane, nascente_only=nascente_only
+            ):
+                _producer = globals()[_PRODUCER_ATTR_BY_TASK_NAME[_spec.task_name]]
+                _producer.delay(*_spec.args, **_spec.kwargs)
             collection_engine.mark_uf_dispatched(rc, uf)
             dispatched += 1
             logger.info(

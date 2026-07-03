@@ -239,7 +239,10 @@ def engine_start(
         )
 
     collection_engine.set_depth(redis, depth)
-    collection_engine.set_source(redis, source)
+    # Persist the source under the SAME registered-and-enabled contract just validated
+    # above (source ∈ cfg.sources ∧ source ∈ enabled_sources) — injected because the
+    # kernel engine module must not import the domains registry (D-18).
+    collection_engine.set_source(redis, source, valid_sources=enabled_sources(cfg))
 
     # Persist a durable runs_history row (UI-PAINEL-2 Varreduras trail). Pitfall 3:
     # this is reached ONLY after the depth/source 422 guards AND start_run() success
@@ -300,20 +303,24 @@ def engine_set_source(
 ) -> dict:
     """Persist the active collection source without starting a run.
 
-    Validates the source against the known-valid set and writes it to the
-    Redis source key (brave:engine:source). The next /start will read this
-    key and route to the correct sweep lane.
+    Validates the source against the REGISTERED-AND-ENABLED lanes and writes it to
+    the Redis source key (brave:engine:source). The next /start will read this key
+    and route to the correct sweep lane.
 
-    Invalid source → 422 before any Redis write (mirrors the /start guard).
-    No RunHistory row — this is a configuration write, not a dispatch.
+    Registry-driven (Phase G STEP 3): the allowed set is ``enabled_sources`` of the
+    env-effective ``AppConfig`` — no hardcoded ``'default'/'tripadvisor'`` literal, and
+    no DB dependency (this configuration write stays DB-free, unlike /start which reads
+    the config_settings overlay). Invalid source → 422 before any Redis write. No
+    RunHistory row — this is a configuration write, not a dispatch.
     """
     source = body.get("source", "default")
-    if source not in collection_engine._VALID_SOURCES:
+    valid = enabled_sources(AppConfig())
+    if source not in valid:
         raise HTTPException(
             status_code=422,
-            detail="source must be 'default' or 'tripadvisor'",
+            detail=f"source must be one of {sorted(valid)}",
         )
-    collection_engine.set_source(redis, source)
+    collection_engine.set_source(redis, source, valid_sources=valid)
     logger.info("engine_source_set", source=source)
     return {"source": source}
 

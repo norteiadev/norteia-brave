@@ -23,9 +23,6 @@ sweep_atrativos_by_uf:
 """
 
 import os
-from datetime import timedelta
-
-from celery.schedules import crontab
 
 from brave.tasks.celery_app import app
 
@@ -52,43 +49,30 @@ UF_LIST = [
 def build_beat_schedule(enabled: list[str]) -> dict:
     """Build the beat schedule for exactly the ENABLED collection lanes.
 
-    - ``default`` in ``enabled`` → the per-UF Mtur/Discovery sweep entries
-      (sweep-{uf}-daily @ 2 AM UTC + sweep-atrativos-{uf}-daily @ 3 AM UTC).
-    - ``tripadvisor`` in ``enabled`` → the TA session keep-alive beat (the TA lane's
-      only scheduled task; TA sweeps are dispatched on-demand via /engine/start).
+    Registry-driven (Phase G STEP 3): this no longer names a source. It resolves each
+    enabled lane to its :class:`~brave.domains.base.SourceDomain` via the registry and
+    unions the entries the domain contributes (``beat_entries``). Adding a source's
+    schedule is therefore a change in that domain only, never here.
 
-    Pure + import-safe: takes the enabled list, reads only env config
+      - ``default`` → the Mtur/Discovery domain's per-UF sweep entries
+        (sweep-{uf}-daily @ 2 AM UTC + sweep-atrativos-{uf}-daily @ 3 AM UTC).
+      - ``tripadvisor`` → the TA session keep-alive beat (its only scheduled task;
+        TA sweeps are dispatched on-demand via /engine/start).
+
+    Pure + import-safe: each domain's ``beat_entries`` reads only env config
     (TripAdvisorConfig is pydantic-settings, no DB). No options.queue on any entry.
+    An unknown lane name (not registered) is skipped rather than raising, so a stale
+    config overlay can never wedge beat import.
     """
+    from brave.domains import get_domain  # noqa: PLC0415
+
     schedule: dict = {}
-
-    if "default" in enabled:
-        for _uf in UF_LIST:
-            schedule[f"sweep-{_uf.lower()}-daily"] = {
-                "task": "brave.sweep_uf",
-                "schedule": crontab(hour=2, minute=0),  # 2 AM UTC daily
-                "args": (_uf,),
-                "kwargs": {},
-            }
-            # Atrativos discovery sweep — fan-out per UF, staggered 1h after sweep_uf.
-            schedule[f"sweep-atrativos-{_uf.lower()}-daily"] = {
-                "task": "brave.discover_atrativo",
-                "schedule": crontab(hour=3, minute=0),  # 3 AM UTC daily
-                "args": (_uf,),
-                "kwargs": {},
-            }
-
-    if "tripadvisor" in enabled:
-        # Keep-alive beat — maintains the sliding TTL on active TA sessions (260629-p2v).
-        # Fires every BRAVE_TA_KEEPALIVE_INTERVAL_SECONDS (default 600s / 10 min).
-        # TripAdvisorConfig() is safe at import time: pydantic-settings env-only, no DB.
-        from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
-
-        schedule["ta-keepalive"] = {
-            "task": "brave.ta_keepalive",
-            "schedule": timedelta(seconds=TripAdvisorConfig().keepalive_interval_seconds),
-        }
-
+    for name in enabled:
+        try:
+            domain = get_domain(name)
+        except KeyError:
+            continue
+        schedule.update(domain.beat_entries(UF_LIST))
     return schedule
 
 
