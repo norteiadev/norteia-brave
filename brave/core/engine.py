@@ -52,6 +52,10 @@ _DEPTH_KEY = "brave:engine:depth"
 _SOURCE_KEY = "brave:engine:source"
 _ENABLED_KEY = "brave:engine:enabled"
 _MODE_KEY = "brave:engine:mode"
+# Sync marker (BUG 6/7): "1" iff the most recent run finished draining. Cleared at
+# run START (a fresh run is not "synced" yet) and set at run END (mark_run_ended).
+# Drives get_status's derived "sync_phase" for the dashboard sync badge.
+_LAST_RUN_ENDED_KEY = "brave:engine:last_run_ended"
 
 # Source selects which ingest lane the orchestrator dispatches:
 #   default      — existing Mtur/Discovery lane (sweep_uf + discover_atrativo_task)
@@ -118,6 +122,7 @@ def start_run(redis: Any, ufs_total: int) -> bool:
     redis.set(_UFS_TOTAL_KEY, int(ufs_total))
     redis.set(_UFS_DONE_KEY, 0)
     redis.delete(_CURRENT_UF_KEY)
+    redis.delete(_LAST_RUN_ENDED_KEY)  # a fresh run is not "synced" yet
     return True
 
 
@@ -133,6 +138,16 @@ def mark_idle(redis: Any) -> None:
     """Orchestrator calls this when the loop exits (completed or drained)."""
     redis.set(_STATE_KEY, IDLE)
     redis.delete(_CURRENT_UF_KEY)
+
+
+def mark_run_ended(redis: Any) -> None:
+    """Set the sync marker: the most recent run finished draining (→ 'synced').
+
+    Called from the orchestrator's finally block (engine_sweep_run) after the motor is
+    turned OFF. Paired with start_run, which clears this marker so an in-flight run
+    never reads as synced.
+    """
+    redis.set(_LAST_RUN_ENDED_KEY, "1")
 
 
 def mark_uf_dispatched(redis: Any, uf: str) -> None:
@@ -294,15 +309,31 @@ def get_status(redis: Any, *, session: Any = None) -> dict[str, Any]:
     after a Redis flush re-seeds the live mode from the durable ``config_settings``
     row (Phase D self-heal). Every other field stays Redis-only; callers that pass
     no session get byte-identical Phase-C behavior.
+
+    ``sync_phase`` (BUG 6/7) is a DERIVED tri-state for the dashboard sync badge:
+      - "syncing" while a run is active (state RUNNING) or the operator-intent latch
+        is set (is_enabled) — work is in flight.
+      - "synced"  once a run has finished draining (the last_run_ended marker == "1").
+      - "idle"    otherwise (fresh/flushed base, never run since the marker was cleared).
     """
+    state = get_state(redis)
+    enabled = is_enabled(redis)
+    run_ended = _decode(redis.get(_LAST_RUN_ENDED_KEY)) == "1"
+    if state == RUNNING or enabled:
+        sync_phase = "syncing"
+    elif run_ended:
+        sync_phase = "synced"
+    else:
+        sync_phase = "idle"
     return {
-        "state": get_state(redis),
+        "state": state,
         "current_uf": _decode(redis.get(_CURRENT_UF_KEY)) or None,
         "ufs_done": int(_decode(redis.get(_UFS_DONE_KEY)) or 0),
         "ufs_total": int(_decode(redis.get(_UFS_TOTAL_KEY)) or 0),
         "depth": get_depth(redis),
         "source": get_source(redis),
-        "enabled": is_enabled(redis),
+        "enabled": enabled,
         "mode": get_mode(redis, session=session),
         "editing_unlocked": is_editing_unlocked(redis, session=session),
+        "sync_phase": sync_phase,
     }

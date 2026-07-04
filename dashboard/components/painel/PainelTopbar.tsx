@@ -179,6 +179,13 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   // (workers still processing) and only clears it when /stop is explicitly called.
   const motorOn = data?.enabled ?? (state !== "idle");
 
+  // Tri-state sync phase for the topbar indicator. Prefer the backend-computed
+  // sync_phase (idle | syncing | synced); fall back to deriving from motorOn
+  // (syncing while the motor is on, else idle) so a status payload without the
+  // field still renders a sensible two-state indicator.
+  const syncPhase: "idle" | "syncing" | "synced" =
+    data?.sync_phase ?? (motorOn ? "syncing" : "idle");
+
   // R2 client gate: when source is tripadvisor, require a valid session before
   // enabling the depth menu. Reuses the sessionStatus query (present && expires_in > 0).
   const taBlocked =
@@ -302,25 +309,28 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
         </button>
 
         {/* Runtime (execução) indicator — reads from the existing engine/status query (no second poll).
-            Shows Sincronizando + UF progress while a sweep runs; muted "Execução parada" when idle.
-            This is the RUNTIME axis (is a sweep dispatching now) — distinct from the "Modo · …"
-            operator-mode label below. aria-live polite so screen readers announce state changes. */}
+            Tri-state sync_phase: syncing (yellow, Sincronizando + UF progress) · synced (green,
+            "Sincronizado") · idle (muted "Execução parada"). This is the RUNTIME axis (is a sweep
+            dispatching / has one just completed) — distinct from the "Modo · …" operator-mode label
+            below. aria-live polite so screen readers announce state changes. */}
         <div
           data-testid="sync-indicator"
           className="flex min-w-[160px] flex-col items-end gap-[3px]"
         >
-          {motorOn ? (
+          {syncPhase === "syncing" && (
             <>
               <div className="flex items-center gap-[6px]">
                 <span
                   className="h-[7px] w-[7px] flex-shrink-0 animate-pulse rounded-full"
-                  style={{ background: "var(--status-mar)" }}
+                  style={{ background: "var(--status-dlq)" }}
                   aria-hidden
                 />
                 <span
                   aria-live="polite"
+                  data-testid="sync-indicator-label"
+                  data-phase={syncPhase}
                   className="whitespace-nowrap text-[11.5px] font-medium"
-                  style={{ color: "var(--painel-text)" }}
+                  style={{ color: "var(--status-dlq)" }}
                 >
                   Sincronizando {SOURCE_LABELS[source]} · UF{" "}
                   {data?.ufs_done ?? 0}/{data?.ufs_total ?? 0}
@@ -336,16 +346,37 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
                   <div
                     className="h-full rounded-full transition-[width]"
                     style={{
-                      background: "var(--status-mar)",
+                      background: "var(--status-dlq)",
                       width: `${Math.min(100, Math.round(((data?.ufs_done ?? 0) / (data?.ufs_total ?? 1)) * 100))}%`,
                     }}
                   />
                 </div>
               )}
             </>
-          ) : (
+          )}
+          {syncPhase === "synced" && (
+            <div className="flex items-center gap-[6px]">
+              <span
+                className="h-[7px] w-[7px] flex-shrink-0 rounded-full"
+                style={{ background: "var(--status-mar)" }}
+                aria-hidden
+              />
+              <span
+                aria-live="polite"
+                data-testid="sync-indicator-label"
+                data-phase={syncPhase}
+                className="whitespace-nowrap text-[11.5px] font-medium"
+                style={{ color: "var(--status-mar)" }}
+              >
+                Sincronizado
+              </span>
+            </div>
+          )}
+          {syncPhase === "idle" && (
             <span
               aria-live="polite"
+              data-testid="sync-indicator-label"
+              data-phase={syncPhase}
               className="whitespace-nowrap text-[11.5px]"
               style={{ color: "var(--painel-muted)" }}
             >

@@ -105,3 +105,21 @@ def test_runtime_state_drain_still_breaks_independent_of_mode(monkeypatch, runni
     out = _run(ufs=("BA", "RJ"))
     assert out["dispatched"] == 0
     assert len(uf_calls) == 0
+
+
+def test_sweep_finally_turns_motor_off_and_marks_synced(monkeypatch, running_engine):
+    """BUG 2: at sweep end the finally block turns the motor OFF and flips to synced.
+
+    After a normal LIGADO run drains, the finally block runs set_mode(DESLIGADO)
+    (mark_idle + enabled False + mode off, redis-only) then mark_run_ended, so the
+    engine lands: mode DESLIGADO, enabled False, state IDLE, sync_phase "synced".
+    """
+    collection_engine.set_mode(running_engine, collection_engine.LIGADO)
+    uf_calls, _disc, _ta = _patch_producers(monkeypatch)
+    out = _run()
+    assert out["dispatched"] == 3  # the run fanned out normally under LIGADO
+    status = collection_engine.get_status(running_engine)
+    assert status["mode"] == collection_engine.DESLIGADO
+    assert status["enabled"] is False
+    assert status["state"] == collection_engine.IDLE
+    assert status["sync_phase"] == "synced"

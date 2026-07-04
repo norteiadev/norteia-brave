@@ -90,10 +90,11 @@ class TripAdvisorAtrativosIngest:
     Mirrors TripAdvisorDestinosIngest in class structure. Resolves the parent
     destino RioRecord from destino_rio_map (built by sweep_tripadvisor
     from authoritative destination RioRecords already in Rio — Mtur/IBGE, origem=100).
-    Caller must ensure Mtur destinos exist in Rio before running the TA atrativos sweep,
-    or every atrativo will quarantine with 'parent_destino_absent'.
-    Quarantines with "parent_destino_absent" when no parent is found in the map
-    (deliberately diverges from discovery_agent.py's Mar-only resolution — see
+    When the parent destino is absent from the map, it is CREATED on demand from the
+    resolved IBGE município (source="ibge", origem=100) via _ensure_destino and the
+    atrativo is linked to it (destino-first) — there is NO parent_destino_absent
+    quarantine. The synthesized destino is cached in destino_rio_map for the rest of
+    the sweep (diverges from discovery_agent.py's Mar-only resolution — see
     CONTEXT.md TA-03).
 
     Args:
@@ -102,8 +103,9 @@ class TripAdvisorAtrativosIngest:
         config:          ScoreConfig with §7.6 weights and thresholds.
         ibge_records:    Pre-loaded IBGE municipality records (from load_ibge_csv).
         destino_rio_map: Optional mapping from ibge_code → (rio_id, source_ref) for
-                         destinos produced in the same sweep. None or empty dict
-                         causes "parent_destino_absent" quarantine per atrativo.
+                         destinos produced in the same sweep. None or empty dict is
+                         fine — missing parents are auto-created via _ensure_destino
+                         and cached back into the map.
     """
 
     def __init__(
@@ -152,6 +154,61 @@ class TripAdvisorAtrativosIngest:
                     error=str(exc),
                     payload={"uf": uf, "locationId": location_id, "error": str(exc)},
                 )
+
+    def _ensure_destino(self, ibge_match: IbgeMunicipio) -> tuple[uuid.UUID, str]:
+        """Create the parent destino for an IBGE município on demand (destino-first).
+
+        Replaces the old ``parent_destino_absent`` quarantine: when a TA per-UF
+        atrativo's parent destino is missing from ``destino_rio_map``, this
+        synthesizes an authoritative IBGE destino (source="ibge", origem=100) so the
+        atrativo can be linked immediately rather than dropped.
+
+        Idempotent + safe to call repeatedly for the same município: ``store_raw``
+        dedups by (source, source_ref, content_hash) and ``process_nascente_record``
+        is idempotent. The caller caches the result in ``destino_rio_map`` for the
+        rest of the sweep.
+
+        Args:
+            ibge_match: The resolved IBGE municipality record.
+
+        Returns:
+            (rio_id, source_ref) for the created (or existing) destino RioRecord.
+        """
+        source_ref = f"ibge:{ibge_match.uf}:{ibge_match.ibge_code}"
+        payload: dict[str, Any] = {
+            "name": ibge_match.nome,
+            "municipio_id": ibge_match.ibge_code,
+            "uf": ibge_match.uf,
+            "origem_value": 100.0,
+            "completude_value": 40.0,
+            "corroboracao_value": 0.0,
+            "atualidade_value": 0.0,
+            "validacao_humana_value": 0.0,
+            "canonical": {
+                "name": ibge_match.nome,
+                "uf": ibge_match.uf,
+                "municipio": ibge_match.nome,
+                "ibge_code": ibge_match.ibge_code,
+            },
+        }
+        nascente = store_raw(
+            session=self._session,
+            source="ibge",
+            source_ref=source_ref,
+            entity_type="destination",
+            uf=ibge_match.uf,
+            payload=payload,
+        )
+        # The parent linkage contract needs a rio_id, and there is none without Rio —
+        # so the synthesized destino is ALWAYS promoted to Rio, even when the atrativo
+        # sweep runs Nascente-only (run_rio=False). This is intentional: a parent
+        # destino must exist for the atrativo to reference. Idempotent per município.
+        rio = process_nascente_record(
+            session=self._session,
+            nascente=nascente,
+            config=self._config,
+        )
+        return (rio.id, source_ref)
 
     async def _ingest_one(self, uf: str, entity: dict[str, Any], *, run_rio: bool) -> None:
         """Ingest a single TripAdvisor attraction entity."""
@@ -252,26 +309,13 @@ class TripAdvisorAtrativosIngest:
             )
             return
 
-        # Resolve parent destino from same-sweep map (TA-03)
+        # Resolve parent destino from same-sweep map (TA-03). When the destino is
+        # absent, create it on demand from the IBGE município (destino-first), cache
+        # it for the rest of the sweep, then link the atrativo — NO quarantine.
         map_entry = self._destino_rio_map.get(ibge_match.ibge_code)
         if map_entry is None:
-            # No parent destino RioRecord found in this sweep → quarantine
-            quarantine_poison(
-                session=self._session,
-                nascente_id=None,
-                task_name="brave.ta.atrativos.parent_destino_absent",
-                error=(
-                    f"parent_destino_absent: no destino RioRecord for "
-                    f"ibge_code={ibge_match.ibge_code} (name='{name}', UF={uf})"
-                ),
-                payload={
-                    "uf": uf,
-                    "locationId": location_id,
-                    "name": name,
-                    "ibge_code": ibge_match.ibge_code,
-                },
-            )
-            return
+            map_entry = self._ensure_destino(ibge_match)
+            self._destino_rio_map[ibge_match.ibge_code] = map_entry
 
         parent_rio_id, parent_source_ref = map_entry
 

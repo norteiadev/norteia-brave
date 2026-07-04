@@ -419,5 +419,64 @@ describe("PainelTopbar", () => {
       const ind = await screen.findByTestId("sync-indicator");
       await waitFor(() => expect(ind).toHaveTextContent("Execução parada"));
     });
+
+    // -------------------------------------------------------------------------
+    // Tri-state sync_phase (idle · syncing · synced), driven by /engine/status.
+    // Asserted via the sync-indicator-label span + its data-phase attribute.
+    // -------------------------------------------------------------------------
+
+    it("sync_phase='idle' → gray 'Execução parada' label with data-phase=idle", async () => {
+      server.use(
+        engineStatus({ sync_phase: "idle", enabled: false, state: "idle" }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      // Re-query INSIDE waitFor: each phase is a separate JSX branch, so when the
+      // status query resolves React unmounts the pre-resolution span and mounts a
+      // new one — a reference captured before resolution goes stale.
+      await waitFor(() => {
+        const label = screen.getByTestId("sync-indicator-label");
+        expect(label).toHaveAttribute("data-phase", "idle");
+        expect(label).toHaveTextContent("Execução parada");
+        expect(label).toHaveStyle({ color: "var(--painel-muted)" });
+      });
+    });
+
+    it("sync_phase='syncing' → yellow 'Sincronizando' label with data-phase=syncing", async () => {
+      server.use(
+        engineStatus({
+          sync_phase: "syncing",
+          enabled: true,
+          state: "running",
+          source: "tripadvisor",
+          ufs_done: 3,
+          ufs_total: 27,
+          current_uf: "SP",
+        }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      await waitFor(() => {
+        const label = screen.getByTestId("sync-indicator-label");
+        expect(label).toHaveAttribute("data-phase", "syncing");
+        expect(label).toHaveTextContent("Sincronizando");
+        expect(label).toHaveTextContent("3/27");
+        expect(label).toHaveStyle({ color: "var(--status-dlq)" });
+      });
+    });
+
+    it("sync_phase='synced' → green 'Sincronizado' label with data-phase=synced", async () => {
+      server.use(
+        engineStatus({ sync_phase: "synced", enabled: false, state: "idle" }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      await waitFor(() => {
+        const label = screen.getByTestId("sync-indicator-label");
+        expect(label).toHaveAttribute("data-phase", "synced");
+        expect(label).toHaveTextContent("Sincronizado");
+        expect(label).toHaveStyle({ color: "var(--status-mar)" });
+      });
+    });
   });
 });

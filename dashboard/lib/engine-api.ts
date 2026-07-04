@@ -91,6 +91,8 @@ export interface EngineStatus {
    * drag/selection affordances.
    */
   editing_unlocked: boolean;
+  /** Tri-state sync phase for the topbar indicator: idle (gray) | syncing (yellow) | synced (green). */
+  sync_phase?: "idle" | "syncing" | "synced";
 }
 
 export interface EngineActionResult {

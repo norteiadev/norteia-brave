@@ -233,3 +233,37 @@ def test_get_status_includes_mode_and_editing_unlocked(redis):
     status = engine.get_status(redis)
     assert status["mode"] == engine.PAUSADO
     assert status["editing_unlocked"] is True
+
+
+# --- sync_phase (BUG 6/7) ---------------------------------------------------
+
+
+def test_sync_phase_idle_on_fresh_redis(redis):
+    """Fresh fakeredis: never run, latch off, no marker → idle."""
+    assert engine.get_status(redis)["sync_phase"] == "idle"
+
+
+def test_sync_phase_syncing_during_run(redis):
+    """start_run sets state RUNNING + enabled latch → syncing (and clears the marker)."""
+    engine.start_run(redis, ufs_total=3)
+    assert engine.get_status(redis)["sync_phase"] == "syncing"
+
+
+def test_sync_phase_synced_after_run_end(redis):
+    """Simulated run END (motor OFF via DESLIGADO + mark_run_ended) → synced."""
+    engine.start_run(redis, ufs_total=3)
+    # Run end, exactly as engine_sweep_run's finally does it:
+    engine.set_mode(redis, engine.DESLIGADO)  # mark_idle + enabled False + mode off
+    engine.mark_run_ended(redis)
+    status = engine.get_status(redis)
+    assert status["sync_phase"] == "synced"
+    assert status["state"] == engine.IDLE
+    assert status["enabled"] is False
+
+
+def test_start_run_clears_synced_marker(redis):
+    """A synced base that starts a fresh run flips back to syncing (marker cleared)."""
+    engine.mark_run_ended(redis)
+    assert engine.get_status(redis)["sync_phase"] == "synced"
+    engine.start_run(redis, ufs_total=2)
+    assert engine.get_status(redis)["sync_phase"] == "syncing"

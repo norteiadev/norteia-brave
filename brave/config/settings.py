@@ -366,10 +366,13 @@ class NominatimConfig(BaseSettings):
 class EngineConfig(BaseModel):
     """Engine operator-mode overlay (Phase D, config_settings key ``engine.mode``).
 
-    ``mode`` default LIGADO mirrors brave.core.engine.get_mode's default. This is a
-    plain BaseModel (not BaseSettings): it has no env precedent and is populated
-    only by the config_settings overlay (brave.config.runtime.load_effective_config)
-    or its code default.
+    ``mode`` default DESLIGADO makes the clean/seeded base start with the motor OFF:
+    on a fresh "carga inicial" base seed_default_config writes this into the
+    ``config_settings`` engine.mode row, and get_status(session=...) self-heals Redis
+    from it, so no sweep auto-dispatches until an operator turns the engine on. This is
+    a plain BaseModel (not BaseSettings): it has no env precedent and is populated only
+    by the config_settings overlay (brave.config.runtime.load_effective_config) or its
+    code default.
 
     IMPORTANT: the LIVE operator mode remains Redis-authoritative
     (brave.core.engine get_mode/set_mode drives dispatch + the Kanban card
@@ -377,7 +380,7 @@ class EngineConfig(BaseModel):
     snapshot; it is NOT wired into dispatch in this phase (behavior-neutral).
     """
 
-    mode: str = "LIGADO"
+    mode: str = "DESLIGADO"
 
 
 def _default_sources() -> dict[str, bool]:

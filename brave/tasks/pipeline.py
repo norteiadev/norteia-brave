@@ -2118,7 +2118,11 @@ def engine_sweep_run(
         # Read the engine state BEFORE mark_idle to detect a mid-run Stop (the same
         # signal the loop reads at the top): STOPPING ⇒ the run drained early ⇒ parcial.
         final_state = collection_engine.get_state(rc)
-        collection_engine.mark_idle(rc)
+        # Motor turns OFF at the end of every run (BUG 2): DESLIGADO does mark_idle +
+        # enabled False + mode off in one redis-only call (no session= so a DB hiccup
+        # can't break the drain/finalize), then mark_run_ended flips sync_phase → synced.
+        collection_engine.set_mode(rc, collection_engine.DESLIGADO)
+        collection_engine.mark_run_ended(rc)
         logger.info("engine_run_complete", dispatched=dispatched, depth=effective_depth)
         # Finalize the durable runs_history row (UI-PAINEL-2 Varreduras trail).
         # BEST-EFFORT: a runs-history write failure must NEVER abort the sweep
