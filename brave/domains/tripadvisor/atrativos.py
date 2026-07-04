@@ -166,6 +166,11 @@ class TripAdvisorAtrativosIngest:
                         error=str(exc),
                         payload={"uf": uf, "locationId": location_id, "error": str(exc)},
                     )
+            # Live kanban: commit each page's ingested rows immediately so they become
+            # visible in the /painel board WHILE the sweep is still running (mirrors
+            # produce_paginated's per-page commit). Without this the per-UF producer
+            # committed only once at the very end and nothing showed mid-processing.
+            self._session.commit()
 
     def _ensure_destino(self, ibge_match: IbgeMunicipio) -> tuple[uuid.UUID, str]:
         """Create the parent destino for an IBGE município on demand (destino-first).

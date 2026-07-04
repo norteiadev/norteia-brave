@@ -168,7 +168,20 @@ def running_engine(monkeypatch):
 
 
 class _FakeTask:
+    """Stand-in for a dispatched producer under the producer-completes model.
+
+    engine_sweep_run now incr_inflight()s before each .delay and the run only finalizes
+    once the in-flight counter drains to 0. A real producer decrements in its outermost
+    finally; this fake simulates an INSTANTLY-completing producer by decrementing on
+    .delay, so engine_sweep_run's own finally observes inflight==0 and finalizes the run.
+    """
+
+    def __init__(self, rc=None):
+        self._rc = rc
+
     def delay(self, *args, **kwargs):
+        if self._rc is not None:
+            collection_engine.decr_inflight(self._rc)
         return None
 
 
@@ -176,10 +189,11 @@ def test_finalize_swallows_write_error_and_completes(monkeypatch, running_engine
     """A raised finalize-UPDATE error is swallowed; the sweep still returns normally."""
     from brave.tasks import pipeline
 
-    # Faked producer tasks so the loop dispatches without real work.
-    monkeypatch.setattr(pipeline, "sweep_uf", _FakeTask())
-    monkeypatch.setattr(pipeline, "discover_atrativo_task", _FakeTask())
-    monkeypatch.setattr(pipeline, "sweep_tripadvisor", _FakeTask())
+    # Faked producer tasks so the loop dispatches without real work. They decrement
+    # inflight on .delay (instant completion) so the orchestrator finally finalizes.
+    monkeypatch.setattr(pipeline, "sweep_uf", _FakeTask(running_engine))
+    monkeypatch.setattr(pipeline, "discover_atrativo_task", _FakeTask(running_engine))
+    monkeypatch.setattr(pipeline, "sweep_tripadvisor", _FakeTask(running_engine))
 
     # _get_session returns a session whose commit RAISES on the finalize UPDATE.
     raising_session = MagicMock()
@@ -206,9 +220,9 @@ def test_finalize_skipped_when_no_run_id(monkeypatch, running_engine):
     """When run_id is None (no DB trail), finalize is skipped entirely (no _get_session)."""
     from brave.tasks import pipeline
 
-    monkeypatch.setattr(pipeline, "sweep_uf", _FakeTask())
-    monkeypatch.setattr(pipeline, "discover_atrativo_task", _FakeTask())
-    monkeypatch.setattr(pipeline, "sweep_tripadvisor", _FakeTask())
+    monkeypatch.setattr(pipeline, "sweep_uf", _FakeTask(running_engine))
+    monkeypatch.setattr(pipeline, "discover_atrativo_task", _FakeTask(running_engine))
+    monkeypatch.setattr(pipeline, "sweep_tripadvisor", _FakeTask(running_engine))
 
     sentinel = MagicMock(side_effect=AssertionError("_get_session must not be called"))
     monkeypatch.setattr(pipeline, "_get_session", sentinel)

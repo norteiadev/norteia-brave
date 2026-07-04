@@ -53,9 +53,21 @@ _SOURCE_KEY = "brave:engine:source"
 _ENABLED_KEY = "brave:engine:enabled"
 _MODE_KEY = "brave:engine:mode"
 # Sync marker (BUG 6/7): "1" iff the most recent run finished draining. Cleared at
-# run START (a fresh run is not "synced" yet) and set at run END (mark_run_ended).
-# Drives get_status's derived "sync_phase" for the dashboard sync badge.
+# run START (a fresh run is not "synced" yet) and set at run END (mark_run_ended, or
+# — new producer-completes model — atomically inside maybe_complete when the LAST
+# producer finishes). Drives get_status's derived "sync_phase" for the dashboard badge.
 _LAST_RUN_ENDED_KEY = "brave:engine:last_run_ended"
+# run_id of the durable runs_history row for the CURRENT run (set at engine /start so
+# a producer's finally can finalize the row when it completes the run). Read-only here.
+_RUN_ID_KEY = "brave:engine:run_id"
+# Producer-completes lifecycle (live-kanban fix): the run stays RUNNING while any
+# producer task is in flight and only flips to synced when the LAST producer finishes.
+#   _INFLIGHT_KEY      count of dispatched producer tasks still running (>=0)
+#   _DISPATCH_DONE_KEY "1" once the orchestrator's dispatch loop has fanned out every
+#                      producer for this run (absent = still dispatching). A run may
+#                      only complete AFTER dispatch is done AND inflight has drained.
+_INFLIGHT_KEY = "brave:engine:producers_inflight"
+_DISPATCH_DONE_KEY = "brave:engine:dispatch_done"
 
 # Source selects which ingest lane the orchestrator dispatches:
 #   default      — existing Mtur/Discovery lane (sweep_uf + discover_atrativo_task)
@@ -123,6 +135,14 @@ def start_run(redis: Any, ufs_total: int) -> bool:
     redis.set(_UFS_DONE_KEY, 0)
     redis.delete(_CURRENT_UF_KEY)
     redis.delete(_LAST_RUN_ENDED_KEY)  # a fresh run is not "synced" yet
+    # Producer-completes lifecycle: a fresh run starts with zero producers in flight
+    # and dispatch not yet done, so it cannot be spuriously "completed" by a stale key.
+    redis.set(_INFLIGHT_KEY, "0")
+    redis.delete(_DISPATCH_DONE_KEY)
+    # Clear any stale run_id so a producer that completes this run before the API edge
+    # re-writes brave:engine:run_id can never finalize a PREVIOUS run's runs_history row
+    # (the /start edge sets it again immediately after this call).
+    redis.delete(_RUN_ID_KEY)
     return True
 
 
@@ -154,6 +174,83 @@ def mark_uf_dispatched(redis: Any, uf: str) -> None:
     """Record that one UF was fanned out (for the progress feedback)."""
     redis.set(_CURRENT_UF_KEY, uf)
     redis.incr(_UFS_DONE_KEY)
+
+
+# ---------------------------------------------------------------------------
+# Producer-completes lifecycle (live-kanban fix)
+# ---------------------------------------------------------------------------
+#
+# The orchestrator (engine_sweep_run) only *dispatches* producer tasks; those tasks
+# run for minutes AFTER the dispatch loop returns. The old finally marked the run
+# "synced" the moment dispatch finished — so the badge read synced while work was
+# still landing. These primitives move completion to the LAST producer: the
+# orchestrator increments the counter before each dispatch and latches dispatch_done
+# in its finally; every producer decrements in its own finally; whoever brings the
+# counter to zero (with dispatch already done) atomically claims completion.
+
+
+def incr_inflight(redis: Any) -> int:
+    """Increment the in-flight producer counter (called before each producer dispatch)."""
+    return int(redis.incr(_INFLIGHT_KEY))
+
+
+def decr_inflight(redis: Any) -> int:
+    """Decrement the in-flight producer counter, clamped at zero.
+
+    A best-effort producer finally may run more times than there were increments
+    (retries, direct invocations, the standalone bulk path), so a negative counter is
+    normalized back to 0 rather than allowed to underflow (which would wedge the run
+    from ever completing).
+    """
+    n = int(redis.decr(_INFLIGHT_KEY))
+    if n < 0:
+        redis.set(_INFLIGHT_KEY, "0")
+        n = 0
+    return n
+
+
+def get_inflight(redis: Any) -> int:
+    """Current in-flight producer count. Absent/corrupt → 0."""
+    return int(_decode(redis.get(_INFLIGHT_KEY)) or 0)
+
+
+def set_dispatch_done(redis: Any, done: bool) -> None:
+    """Latch (or clear) the 'orchestrator finished dispatching' flag ('1' / absent)."""
+    if done:
+        redis.set(_DISPATCH_DONE_KEY, "1")
+    else:
+        redis.delete(_DISPATCH_DONE_KEY)
+
+
+def is_dispatch_done(redis: Any) -> bool:
+    """True once the orchestrator's dispatch loop has fanned out every producer."""
+    return _decode(redis.get(_DISPATCH_DONE_KEY)) == "1"
+
+
+def maybe_complete(redis: Any) -> bool:
+    """Complete the run iff dispatch is done and no producer is still in flight.
+
+    RACE-SAFE single-winner: two producers can decrement the counter to zero and BOTH
+    observe get_inflight()==0 concurrently. The atomic ``GETSET`` on the sync marker is
+    the claim — it sets it to "1" and returns the OLD value in one round-trip, so
+    exactly one caller sees the old value != "1" and performs the (idempotent) motor-off
+    side effects + returns True. Every other racer (and every later caller) sees "1"
+    already there and returns False. This mirrors set_mode(DESLIGADO)'s effects
+    (mark_idle + enabled False + mode off) but stays REDIS-ONLY (no session=) so a DB
+    hiccup can never break run completion, and does NOT import brave.tasks (D-18): the
+    run_history finalize stays in the caller (pipeline.py).
+
+    Returns True exactly once per run (the winning completion), False otherwise.
+    """
+    if get_inflight(redis) > 0 or not is_dispatch_done(redis):
+        return False
+    # Atomically CLAIM completion: set last_run_ended="1" and read the prior value.
+    if _decode(redis.getset(_LAST_RUN_ENDED_KEY, "1")) == "1":
+        return False  # another caller already completed this run
+    mark_idle(redis)
+    set_enabled(redis, False)
+    redis.set(_MODE_KEY, DESLIGADO)  # redis-only DESLIGADO (no session side effects)
+    return True
 
 
 def set_depth(redis: Any, depth: str) -> None:
@@ -311,15 +408,17 @@ def get_status(redis: Any, *, session: Any = None) -> dict[str, Any]:
     no session get byte-identical Phase-C behavior.
 
     ``sync_phase`` (BUG 6/7) is a DERIVED tri-state for the dashboard sync badge:
-      - "syncing" while a run is active (state RUNNING) or the operator-intent latch
-        is set (is_enabled) — work is in flight.
+      - "syncing" while a run is active (state RUNNING), the operator-intent latch is
+        set (is_enabled), OR any producer task is still in flight (get_inflight > 0) —
+        the last keeps the badge syncing even after the orchestrator's dispatch loop
+        has returned but its fanned-out producers are still landing rows (live kanban).
       - "synced"  once a run has finished draining (the last_run_ended marker == "1").
       - "idle"    otherwise (fresh/flushed base, never run since the marker was cleared).
     """
     state = get_state(redis)
     enabled = is_enabled(redis)
     run_ended = _decode(redis.get(_LAST_RUN_ENDED_KEY)) == "1"
-    if state == RUNNING or enabled:
+    if state == RUNNING or enabled or get_inflight(redis) > 0:
         sync_phase = "syncing"
     elif run_ended:
         sync_phase = "synced"

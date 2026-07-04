@@ -727,6 +727,45 @@ class TestAtrativosPaginatedGql:
         # No review enrichment when enrich_reviews defaults off.
         assert client.recent_review_calls == []
 
+    @pytest.mark.asyncio
+    async def test_produce_commits_once_per_page_for_live_kanban(self) -> None:
+        """produce() COMMITS after each yielded page so ingested rows show in the /painel
+        board WHILE the per-UF sweep is still running (live kanban).
+
+        Drive the gql client with 2 pages → the session must be committed exactly twice
+        (once per page). Before the fix the per-UF producer committed only once at the
+        very end, so nothing was visible mid-processing.
+        """
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        page1 = [_ub_card(100_000 + i) for i in range(3)]
+        page2 = [_ub_card(200_000 + i) for i in range(2)]
+        client = _GqlListingClient(
+            geo_id=_GEO_ID_MG, pages=[(0, page1), (30, page2)]
+        )
+
+        session = MagicMock()
+
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
+
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=client,
+                session=session,
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=_DESTINO_RIO_MAP,
+            )
+            await ingest.produce("MG", run_rio=False)
+
+        assert session.commit.call_count == 2, (
+            "produce() must commit once per yielded page (2 pages → 2 commits) so each "
+            f"page's rows become visible immediately; got {session.commit.call_count}"
+        )
+
 
 class TestAtrativosReviewEnrichment:
     """enrich_reviews wiring: fetch_recent_review fills atualidade only when enabled."""

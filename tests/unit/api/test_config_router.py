@@ -104,7 +104,10 @@ def test_get_returns_effective_snapshot(db, redis):
     assert snap["score"]["threshold_mar"] == 80.0
     assert snap["score"]["weight_origem"] == 30.0
     assert snap["sources"] == {"default": True, "tripadvisor": True}
-    assert snap["engine"]["mode"] == "LIGADO"
+    # Clean base default is motor OFF (EngineConfig.mode default DESLIGADO — bug-1 fix,
+    # commit a94eec4). db here is an EMPTY FakeConfigSession, so the snapshot is the pure
+    # env default with no overlay.
+    assert snap["engine"]["mode"] == "DESLIGADO"
 
 
 def test_get_redacts_secrets(db, redis, monkeypatch):

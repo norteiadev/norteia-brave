@@ -761,6 +761,10 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
                 q_engine.dispose()
 
     finally:
+        # Producer-completes lifecycle: dispatched by engine_sweep_run
+        # (incr_inflight before .delay); decrement so the LAST producer completes the
+        # run. Best-effort, never breaks the task (single outermost finally).
+        _producer_finally_lifecycle()
         session.close()
         engine.dispose()
 
@@ -863,6 +867,10 @@ def sweep_uf(self, uf: str, depth: str | None = None) -> None:
                 q_engine.dispose()
 
     finally:
+        # Producer-completes lifecycle: this producer was dispatched by engine_sweep_run
+        # (incr_inflight before .delay); decrement here so the LAST producer completes
+        # the run. Best-effort, never breaks the task (single outermost finally).
+        _producer_finally_lifecycle()
         session.close()
         engine.dispose()
 
@@ -992,6 +1000,15 @@ def sweep_tripadvisor(
                 os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
             )
 
+            # Standalone bulk runs are dispatched directly (scripts/ta_bulk_sweep.py),
+            # NOT via engine_sweep_run/start_run, so reset the producer-lifecycle keys to
+            # a clean baseline. A stale positive inflight (or a claimed last_run_ended)
+            # from a prior orchestrator run would otherwise make this run's maybe_complete
+            # return False and the badge would never flip to "synced".
+            rc.set(collection_engine._INFLIGHT_KEY, "0")
+            rc.delete(collection_engine._DISPATCH_DONE_KEY)
+            rc.delete(collection_engine._LAST_RUN_ENDED_KEY)
+
             # Resume: when a prior run recorded progress, continue from the page AFTER
             # the last completed offset (offset//30 + 2). Otherwise start a fresh run at
             # the operator-supplied start_page (default page 1 / offset 0).
@@ -1029,6 +1046,23 @@ def sweep_tripadvisor(
             sweep_progress.mark_done(rc)
             # Terminal commit (produce_paginated already commits per page).
             session.commit()
+            # Standalone completion: the bulk run is dispatched directly (scripts/
+            # ta_bulk_sweep.py), NOT via engine_sweep_run, so it never went through the
+            # incr_inflight/dispatch_done lifecycle. Latch dispatch_done and complete the
+            # run inline so the badge flips DESLIGADO + "synced" (race-safe GETSET claim;
+            # the shared outermost finally then no-ops on the already-claimed marker).
+            _bulk_final_state = collection_engine.get_state(rc)
+            collection_engine.set_dispatch_done(rc, True)
+            if collection_engine.maybe_complete(rc):
+                _bulk_run_id = (
+                    collection_engine._decode(rc.get(collection_engine._RUN_ID_KEY))
+                    or None
+                )
+                if _bulk_run_id:
+                    _bulk_dispatched = sweep_progress.get_progress(rc).get("pages_done", 0)
+                    _finalize_run_history(
+                        _bulk_run_id, _bulk_dispatched, _bulk_final_state
+                    )
             return
 
         # Build destino_rio_map: keyed by municipio_id (IBGE code) → (rio_id, source_ref)
@@ -1141,6 +1175,13 @@ def sweep_tripadvisor(
                 q_engine.dispose()
 
     finally:
+        # Producer-completes lifecycle: the per-UF TA producer is dispatched by
+        # engine_sweep_run (incr_inflight before .delay). Decrement here so the LAST
+        # producer completes the run. Best-effort, never breaks the task. The bulk_national
+        # branch is dispatched standalone (not via engine_sweep_run) so it never
+        # incremented — decr clamps at 0 and its own inline maybe_complete already
+        # completed the run (idempotent: the GETSET claim makes this a no-op).
+        _producer_finally_lifecycle()
         session.close()
         engine.dispose()
 
@@ -2107,6 +2148,10 @@ def engine_sweep_run(
                 uf, depth=effective_depth, lane=lane, nascente_only=nascente_only
             ):
                 _producer = globals()[_PRODUCER_ATTR_BY_TASK_NAME[_spec.task_name]]
+                # Producer-completes lifecycle: count this producer BEFORE dispatch so
+                # the run stays RUNNING/syncing until its finally decrements. The
+                # matching decrement lives in each producer's OUTERMOST finally.
+                collection_engine.incr_inflight(rc)
                 _producer.delay(*_spec.args, **_spec.kwargs)
             collection_engine.mark_uf_dispatched(rc, uf)
             dispatched += 1
@@ -2120,21 +2165,34 @@ def engine_sweep_run(
             if per_uf_delay > 0:
                 _time.sleep(per_uf_delay)
     finally:
-        # Read the engine state BEFORE mark_idle to detect a mid-run Stop (the same
+        # Read the engine state BEFORE any completion to detect a mid-run Stop (the same
         # signal the loop reads at the top): STOPPING ⇒ the run drained early ⇒ parcial.
+        # NB the state may still be RUNNING/STOPPING here — the dispatch loop is done but
+        # the fanned-out producers keep running (live kanban), so the motor is NOT turned
+        # off here anymore. It flips off only when the LAST producer's finally drains
+        # inflight to 0 (or immediately below when nothing/everything is already done).
         final_state = collection_engine.get_state(rc)
-        # Motor turns OFF at the end of every run (BUG 2): DESLIGADO does mark_idle +
-        # enabled False + mode off in one redis-only call (no session= so a DB hiccup
-        # can't break the drain/finalize), then mark_run_ended flips sync_phase → synced.
-        collection_engine.set_mode(rc, collection_engine.DESLIGADO)
-        collection_engine.mark_run_ended(rc)
-        logger.info("engine_run_complete", dispatched=dispatched, depth=effective_depth)
-        # Finalize the durable runs_history row (UI-PAINEL-2 Varreduras trail).
-        # BEST-EFFORT: a runs-history write failure must NEVER abort the sweep
-        # (T-17.1-02-02) — wrapped so any exception is swallowed. Skipped entirely
-        # when the start never persisted a row (run_id is None).
-        if run_id:
-            _finalize_run_history(run_id, dispatched, final_state)
+        # Latch dispatch_done, then attempt completion. maybe_complete only fires when
+        # dispatch is done AND no producer is in flight — i.e. the fast paths where the
+        # loop dispatched nothing (paused/stopped before the first UF) or every producer
+        # already finished. In the common case producers are still in flight → this
+        # returns False and the LAST producer completes the run. Redis-only + race-safe
+        # (single-winner GETSET claim); D-18: the run_history finalize stays HERE.
+        collection_engine.set_dispatch_done(rc, True)
+        if collection_engine.maybe_complete(rc):
+            logger.info("engine_run_complete", dispatched=dispatched, depth=effective_depth)
+            # Finalize the durable runs_history row (UI-PAINEL-2 Varreduras trail).
+            # BEST-EFFORT: a runs-history write failure must NEVER abort the sweep
+            # (T-17.1-02-02). Skipped when the start never persisted a row (run_id None).
+            if run_id:
+                _finalize_run_history(run_id, dispatched, final_state)
+        else:
+            logger.info(
+                "engine_dispatch_complete_producers_inflight",
+                dispatched=dispatched,
+                inflight=collection_engine.get_inflight(rc),
+                depth=effective_depth,
+            )
 
     return {"dispatched": dispatched, "lane": lane, "depth": effective_depth, "source": source}
 
@@ -2172,6 +2230,61 @@ def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> Non
         logger.warning(
             "engine_run_history_finalize_failed", run_id=run_id, error=str(exc)
         )
+
+
+def _producer_finally_lifecycle() -> None:
+    """Producer-completes lifecycle decrement — called ONCE in a producer's outermost finally.
+
+    The orchestrator (engine_sweep_run) only DISPATCHES the producer tasks; they run for
+    minutes afterward. To keep the engine "syncing" until real work stops, each dispatched
+    producer decrements the shared in-flight counter here and, when it is the LAST to
+    finish (dispatch already latched done + counter drained to 0), completes the run:
+    race-safe motor-off via engine.maybe_complete (single-winner GETSET claim) plus a
+    best-effort runs_history finalize.
+
+    BEST-EFFORT + idempotent: wrapped so a Redis/DB hiccup can NEVER break the producer's
+    own result or error handling. Placed in the SINGLE outermost finally (not per-except)
+    so exactly one decrement runs per dispatch regardless of the retry/quarantine branch.
+    D-18 stays intact — engine.maybe_complete is redis-only; only this pipeline layer
+    touches runs_history.
+    """
+    # A Celery Retry unwinding through the producer's finally is NOT a terminal
+    # completion — self.retry() raises Retry, Celery re-queues, and the RE-RUN hits
+    # this finally again. incr_inflight fires ONCE per logical dispatch (orchestrator),
+    # so the decrement must fire ONCE per TERMINAL outcome — not per execution. Skip
+    # the decrement while a Retry is in flight; the eventual terminal run (success,
+    # PermanentError→quarantine, MaxRetriesExceeded→quarantine, or fail-fast return)
+    # decrements exactly once. Without this, N retries decrement N+1 times → counter
+    # drains early → premature "synced" while the retried producer is still running.
+    import sys  # noqa: PLC0415
+
+    try:
+        from celery.exceptions import Retry  # noqa: PLC0415
+
+        if isinstance(sys.exc_info()[1], Retry):
+            return
+    except Exception:  # noqa: BLE001 — never let the guard itself break the producer
+        pass
+
+    try:
+        import redis as _r  # noqa: PLC0415
+
+        from brave.core import engine as _ce  # noqa: PLC0415
+
+        _rc = _r.from_url(
+            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        )
+        # Snapshot BEFORE completion — maybe_complete flips state to IDLE, and the
+        # runs_history status hinges on a mid-run Stop (STOPPING → parcial).
+        _final_state = _ce.get_state(_rc)
+        _dispatched = int(_ce._decode(_rc.get(_ce._UFS_DONE_KEY)) or 0)
+        _ce.decr_inflight(_rc)
+        if _ce.maybe_complete(_rc):
+            _run_id = _ce._decode(_rc.get(_ce._RUN_ID_KEY)) or None
+            if _run_id:
+                _finalize_run_history(_run_id, _dispatched, _final_state)
+    except Exception:  # noqa: BLE001 — best-effort; never break the producer
+        pass
 
 
 @shared_task(
