@@ -356,3 +356,67 @@ class TestFetchAttractionsPaginated:
             assert not (kw_names & forbidden), (
                 f"logger call leaks secret kwargs: {kw_names & forbidden}"
             )
+
+
+# ---------------------------------------------------------------------------
+# GraphQL pagination transport (qid 79aaeeb847e55e58) — replaces the HTML SSR path
+# ---------------------------------------------------------------------------
+
+
+def _pagee_from_body(request) -> str:
+    import json
+
+    body = json.loads(request.content)
+    return body[0]["variables"]["request"]["routeParameters"]["pagee"]
+
+
+def _flex_card(detail_id: int, name: str) -> dict:
+    return {
+        "__typename": "WebPresentation_SingleFlexCardSection",
+        "singleFlexCardContent": {
+            "cardTitle": {"text": name},
+            "cardLink": {"webRoute": {"typedParams": {"detailId": detail_id}}},
+            "bubbleRating": {"rating": 4.5, "reviewCount": 100},
+            "primaryInfo": {"text": "Nature"},
+        },
+    }
+
+
+def _gql_envelope(sections: list) -> list:
+    return [{"data": {"Result": [{"sections": sections}]}}]
+
+
+class TestFetchAttractionsPaginatedGql:
+    @pytest.mark.asyncio
+    async def test_gql_yields_offsets_sends_pagee_and_stops_on_empty(self):
+        """GraphQL pagination: pagee='0' on page 1, yields per offset, stops on empty."""
+        client = _make_client()
+        client._config.page_throttle_seconds = 0.0  # type: ignore[attr-defined]
+
+        pagees: list[str] = []
+
+        def handler(request):
+            pagee = _pagee_from_body(request)
+            pagees.append(pagee)
+            if pagee == "0":
+                return httpx.Response(200, json=_gql_envelope([_flex_card(1, "Alpha")]))
+            if pagee == "30":
+                return httpx.Response(200, json=_gql_envelope([_flex_card(2, "Beta")]))
+            return httpx.Response(200, json=_gql_envelope([]))  # oa60 empty → stop
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=handler
+            )
+            pages = [
+                (offset, cards)
+                async for offset, cards in client.fetch_attractions_paginated_gql(
+                    geo_id=294280, start_page=1, max_pages=5
+                )
+            ]
+
+        assert [offset for offset, _ in pages] == [0, 30]
+        assert pagees == ["0", "30", "60"]
+        assert pagees[0] == "0"
+        assert pages[0][1][0]["name"] == "Alpha"
+        assert pages[1][1][0]["locationId"] == 2

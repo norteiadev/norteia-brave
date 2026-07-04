@@ -39,6 +39,8 @@ class FakeTripAdvisorClient:
         | None = None,
         fixture_details: dict[int, dict[str, Any] | None] | None = None,
         fixture_geo: dict[int, dict[str, Any] | None] | None = None,
+        gql_pages: list[tuple[int, list[dict[str, Any]]]] | None = None,
+        recent_review: dict[str, Any] | None = None,
     ) -> None:
         """Initialize with optional fixture data.
 
@@ -58,6 +60,11 @@ class FakeTripAdvisorClient:
             fixture_geo:          Dict mapping locationId -> geo dict (or None).
                                   Returned by fetch_attraction_geo().
                                   Keys absent from the dict return None.
+            gql_pages:            Flat list of (offset, cards) tuples yielded, in
+                                  order, by fetch_attractions_paginated_gql()
+                                  regardless of geo_id.
+            recent_review:        Dict (or None) returned by fetch_recent_review()
+                                  for any location_id.
         """
         self._fixture_destinations = fixture_destinations or {}
         self._fixture_attractions = fixture_attractions or {}
@@ -65,14 +72,18 @@ class FakeTripAdvisorClient:
         self._fixture_pages = fixture_pages or {}
         self._fixture_details: dict[int, dict[str, Any] | None] = fixture_details or {}
         self._fixture_geo: dict[int, dict[str, Any] | None] = fixture_geo or {}
+        self._gql_pages: list[tuple[int, list[dict[str, Any]]]] = gql_pages or []
+        self._recent_review: dict[str, Any] | None = recent_review
 
         # Call recording lists for test assertions
         self.destinations_calls: list[dict[str, Any]] = []
         self.attractions_calls: list[dict[str, Any]] = []
         self.paginated_calls: list[dict[str, Any]] = []
+        self.paginated_gql_calls: list[dict[str, Any]] = []
         self.resolve_calls: list[str] = []
         self.detail_calls: list[int] = []
         self.geo_calls: list[int] = []
+        self.recent_review_calls: list[int] = []
 
     async def fetch_destinations(self, uf: str) -> list[dict[str, Any]]:
         """Return fixture destinations for the given UF.
@@ -123,6 +134,41 @@ class FakeTripAdvisorClient:
         )
         for offset, cards in self._fixture_pages.get(geo_id, []):
             yield offset, cards
+
+    async def fetch_attractions_paginated_gql(
+        self, geo_id: int, start_page: int = 1, max_pages: int = 334
+    ) -> AsyncIterator[tuple[int, list[dict[str, Any]]]]:
+        """Record the call and yield the configured gql_pages (offset, cards) tuples.
+
+        Mirrors fetch_attractions_paginated's call-recording posture but streams the
+        flat self._gql_pages list (not keyed by geo_id) so lane tests can drive the
+        GraphQL pagination path directly.
+
+        Args:
+            geo_id: TripAdvisor geoId (recorded).
+            start_page: Resume page (recorded but does not slice the fixture).
+            max_pages: Page cap (recorded but does not slice the fixture).
+
+        Yields:
+            (offset, cards) tuples from self._gql_pages; nothing if empty.
+        """
+        self.paginated_gql_calls.append(
+            {"geo_id": geo_id, "start_page": start_page, "max_pages": max_pages}
+        )
+        for offset, cards in self._gql_pages:
+            yield offset, cards
+
+    async def fetch_recent_review(self, location_id: int) -> dict[str, Any] | None:
+        """Record the call and return the configured recent_review dict (or None).
+
+        Args:
+            location_id: TripAdvisor integer locationId.
+
+        Returns:
+            The configured self._recent_review dict, or None if unset.
+        """
+        self.recent_review_calls.append(location_id)
+        return self._recent_review
 
     async def resolve_geo_id(self, uf: str) -> int:
         """Return configured geoId or 0 (offline default).

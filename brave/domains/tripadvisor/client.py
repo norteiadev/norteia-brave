@@ -34,6 +34,8 @@ import asyncio
 import json
 import re
 import uuid
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
 
@@ -80,6 +82,16 @@ _MAX_PAGES: int = 50
 # Set to None until captured from a real session; override via
 # BRAVE_TA_QUERY_ID_OVERRIDE={"destinations":"<qid>"}.
 _DESTINATIONS_QID: str | None = None
+
+# AttractionsFusion GraphQL paginated-listing persisted query id (POC-confirmed
+# live against real TripAdvisor — see docs/poc/ta-graphql-pagination.md). The
+# GraphQL listing DOES paginate via request.routeParameters.pagee, so this
+# REPLACES the single-page fetch_attractions AND the fragile HTML-SSR path.
+_LISTING_QID_GQL: str = "79aaeeb847e55e58"
+
+# Review-list persisted query id: powers §7.6 review recency (atualidade + precise
+# corroboração) via fetch_recent_review. POC-confirmed live.
+_REVIEWS_QID: str = "ef1a9f94012220d3"
 
 
 class SessionExpiredError(SourceSessionError):
@@ -441,6 +453,11 @@ class TripAdvisorClient:
     ) -> list[dict[str, Any]]:
         """Fetch TripAdvisor attractions (ATTRACTION entities) for a geoId.
 
+        DEPRECATED (kept for back-compat; NO LONGER used by the atrativos lane —
+        superseded by fetch_attractions_paginated_gql, which paginates via the same
+        AttractionsFusion query). Existing tests keep this method green; do not call
+        it from new code.
+
         Uses the live-validated AttractionsFusion listing query (qid a5cb7fa004b5e4b5)
         with the real request.routeParameters variables shape (Phase 13).
 
@@ -735,6 +752,11 @@ class TripAdvisorClient:
     ):
         """Stream attractions page-by-page over the HTML SSR transport (Phase 15).
 
+        DEPRECATED (kept for back-compat; NO LONGER used by the atrativos lane —
+        superseded by fetch_attractions_paginated_gql, which paginates the same
+        AttractionsFusion query over the GraphQL transport, removing the fragile
+        HTML-SSR island extraction). Existing tests keep this method green.
+
         Separate transport from the single-page GraphQL ``fetch_attractions`` (which
         cannot paginate): each page is the server-rendered ``-oa{offset}-`` HTML
         variant. The embedded FlexCard JSON island is recovered by
@@ -843,6 +865,249 @@ class TripAdvisorClient:
             # Throttle between pages only — not after the final page.
             if throttle > 0 and page < last_page - 1:
                 await asyncio.sleep(throttle)
+
+    async def fetch_attractions_paginated_gql(
+        self, geo_id: int, start_page: int = 1, max_pages: int = _TA_MAX_PAGE
+    ) -> AsyncIterator[tuple[int, list[dict]]]:
+        """Stream AttractionsFusion attractions page-by-page over GraphQL (POC-confirmed).
+
+        REPLACES both the single-page ``fetch_attractions`` and the fragile HTML-SSR
+        ``fetch_attractions_paginated``: the AttractionsFusion persisted query
+        (qid ``79aaeeb847e55e58``) DOES paginate via ``request.routeParameters.pagee``.
+        Each page POSTs the same batch-array shape as ``fetch_attractions`` with an
+        explicit ``pagee=str(offset)`` (offset = (page-1)*30). Page 1 MUST send
+        ``pagee="0"`` — an absent ``pagee`` returns 0 cards (POC finding). Parses each
+        page with the UNCHANGED ``_parse_attractions_page`` (same FlexCard shape,
+        LGPD aggregate-only) and yields ``(offset, cards)``.
+
+        Reuses the exact cookie/UA/proxy wiring, ``persist_rotated_cookies``
+        write-back and 403/429 → ``SessionExpiredError`` fail-fast of the other
+        transports. Throttles ``page_throttle_seconds`` between pages (never after
+        the last). The loop is CLAMPED to the 334-page / oa9990 cap regardless of
+        ``start_page + max_pages``.
+
+        Args:
+            geo_id: TripAdvisor integer geoId (294280 = all Brazil). MUST be an int
+                (SSRF guard, mirrors ``fetch_attractions_paginated``).
+            start_page: 1-based page to start from (resume support; page 1 = offset 0).
+            max_pages: Number of pages to attempt from start_page (clamped to cap).
+
+        Yields:
+            ``(offset, cards)`` per page — ``offset = (page-1)*30``, ``cards`` the
+            normalized attraction-dict list. STOPS when a page yields 0 cards.
+
+        Raises:
+            SessionMissingError: When no session is in Redis (operator gate).
+            SessionExpiredError: On 403 or 429 HTTP status (no retry, stops).
+            TypeError: When ``geo_id`` is not an int (raised before any POST).
+        """
+        # SSRF guard (mirror fetch_attractions_paginated): reject a non-int geo_id
+        # BEFORE any request. bool is an int subclass — reject it too.
+        if not isinstance(geo_id, int) or isinstance(geo_id, bool):
+            raise TypeError(
+                f"geo_id must be an int (SSRF guard); got {type(geo_id).__name__}"
+            )
+
+        from brave.domains.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
+
+        session = self._get_session()
+        # session_id is a TASID cookie value — NEVER logged (T-13-01-01).
+        session_id: str = session.get("session_id", "")
+        cookies = session.get("cookies", {})
+        user_agent = session.get("user_agent", "")
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if user_agent:
+            headers["User-Agent"] = user_agent
+        # CR-02 / T-11-01-01: proxy routed but NEVER logged.
+        proxy = self._config.proxy_url or None
+        throttle = self._config.page_throttle_seconds
+
+        def _build_payload(offset: int) -> list:
+            pageview_uid = str(uuid.uuid4())
+            return [
+                {
+                    "variables": {
+                        "request": {
+                            "tracking": {
+                                "screenName": "AttractionsFusion",
+                                "pageviewUid": pageview_uid,
+                            },
+                            "routeParameters": {
+                                "geoId": geo_id,
+                                "filters": [],
+                                "contentType": "attraction",
+                                "webVariant": "AttractionsFusion",
+                                # Page 1 sends pagee="0" — MUST be explicit (absent → 0 cards).
+                                "pagee": str(offset),
+                            },
+                            "updateToken": None,
+                        },
+                        "commerce": {
+                            "attractionCommerce": {
+                                "pax": [{"ageBand": "ADULT", "count": 2}]
+                            }
+                        },
+                        "tracking": {
+                            "screenName": "AttractionsFusion",
+                            "pageviewUid": pageview_uid,
+                        },
+                        "sessionId": session_id,
+                        "unitLength": "MILES",
+                        "currency": "USD",
+                        "currentGeoPoint": None,
+                        "mapSurface": False,
+                        "debug": False,
+                        "polling": False,
+                    },
+                    "extensions": {"preRegisteredQueryId": _LISTING_QID_GQL},
+                }
+            ]
+
+        # Clamp to the 334-page / oa9990 cap regardless of start_page + max_pages.
+        start = max(1, start_page)
+        last_page = min(start + max_pages, _TA_MAX_PAGE + 1)
+
+        for page in range(start, last_page):
+            offset = (page - 1) * 30
+            if offset > _TA_MAX_OFFSET:
+                break  # defensive — clamp already guarantees this
+
+            payload = _build_payload(offset)
+            async with httpx.AsyncClient(
+                cookies=cookies, follow_redirects=True, proxy=proxy
+            ) as hc:
+                resp = await hc.post(_TA_GRAPHQL_URL, json=payload, headers=headers)
+
+            if resp.status_code in (403, 429):
+                logger.warning(
+                    "ta_paginated_gql_session_expired",
+                    offset=offset,
+                    page=page,
+                    status=resp.status_code,
+                )
+                raise SessionExpiredError(
+                    f"TripAdvisor GraphQL returned {resp.status_code} — "
+                    "DataDome session expired or queryId rotated. Re-inject required."
+                )
+
+            resp.raise_for_status()
+            # Write-back: merge rotated cookies into Redis + local jar (260629-p2v).
+            rotated = dict(resp.cookies)
+            if rotated:
+                cookies = {**cookies, **rotated}  # update local var for next page
+                try:
+                    persist_rotated_cookies(self._redis, rotated, self._config)
+                except Exception:  # noqa: BLE001
+                    pass  # best-effort guard
+
+            data = resp.json()
+            # Same FlexCard shape as fetch_attractions — guard IndexError/KeyError/TypeError.
+            try:
+                sections = data[0]["data"]["Result"][0]["sections"] or []
+            except (IndexError, KeyError, TypeError):
+                sections = []
+            cards = self._parse_attractions_page(sections)
+            logger.info(
+                "ta_paginated_gql_page",
+                offset=offset,
+                page=page,
+                card_count=len(cards),
+            )
+
+            if not cards:
+                break  # STOP when a page yields 0 cards (end of listing).
+            yield offset, cards
+
+            # Throttle between pages only — never after the final page.
+            if throttle > 0 and page < last_page - 1:
+                await asyncio.sleep(throttle)
+
+    async def fetch_recent_review(self, location_id: int) -> dict | None:
+        """Fetch review recency for one attraction (qid ef1a9f94012220d3), §7.6.
+
+        Powers ``atualidade_from_recency`` (review recency lifts the score) plus a
+        precise corroboração review_count/rating. The review list is sorted
+        SERVER_DETERMINED (newest-first), so ``reviews[0]`` is the NEWEST review.
+
+        LGPD (CRITICAL): reads ONLY ``totalCount`` + ``reviews[0].publishedDate`` +
+        ``reviews[0].rating``. NEVER reads/logs/returns review text, title, username,
+        userProfile, photos, photoIds, or reviewTip.
+
+        Args:
+            location_id: TripAdvisor integer locationId of the attraction.
+
+        Returns:
+            ``{"review_count": int, "rating": float | None, "most_recent_review_at":
+            datetime}`` on success, or ``None`` on empty reviews / any parse error
+            (never raises on data shape).
+
+        Raises:
+            SessionMissingError: When no session is in Redis (operator gate).
+            SessionExpiredError: On 403 or 429 HTTP status.
+        """
+        from brave.domains.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
+
+        session = self._get_session()
+        cookies = session.get("cookies", {})
+        user_agent = session.get("user_agent", "")
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if user_agent:
+            headers["User-Agent"] = user_agent
+        proxy = self._config.proxy_url or None
+        payload = [
+            {
+                "variables": {
+                    "locationId": location_id,
+                    "filters": [],
+                    "limit": 1,
+                    "offset": 0,
+                    "sortType": None,
+                    "sortBy": "SERVER_DETERMINED",
+                    "language": "pt",
+                    "doMachineTranslation": False,
+                    "photosPerReviewLimit": 0,
+                },
+                "extensions": {"preRegisteredQueryId": _REVIEWS_QID},
+            }
+        ]
+        async with httpx.AsyncClient(
+            cookies=cookies, follow_redirects=True, proxy=proxy
+        ) as hc:
+            resp = await hc.post(_TA_GRAPHQL_URL, json=payload, headers=headers)
+
+        if resp.status_code in (403, 429):
+            raise SessionExpiredError(
+                f"TripAdvisor reviews returned {resp.status_code} — session expired."
+            )
+        resp.raise_for_status()
+        rotated = dict(resp.cookies)
+        if rotated:
+            try:
+                persist_rotated_cookies(self._redis, rotated, self._config)
+            except Exception:  # noqa: BLE001
+                pass  # best-effort guard
+
+        try:
+            data = resp.json()
+            container = data[0]["data"]["ReviewsProxy_getReviewListPageForLocation"][0]
+            reviews = container["reviews"]
+            if not reviews:
+                return None
+            newest = reviews[0]
+            # LGPD: touch ONLY publishedDate + rating (+ totalCount) — no PII fields.
+            most_recent_at = datetime.strptime(
+                newest["publishedDate"], "%Y-%m-%d"
+            ).replace(tzinfo=UTC)
+            rating_raw = newest.get("rating")
+            # `float(x) or None`: a 0/absent rating collapses to None (contract).
+            rating = float(rating_raw) if rating_raw else None
+            return {
+                "review_count": int(container["totalCount"]),
+                "rating": rating,
+                "most_recent_review_at": most_recent_at,
+            }
+        except (IndexError, KeyError, TypeError, ValueError):
+            return None
 
     async def resolve_geo_id(self, uf: str) -> int:
         """Resolve a Brazilian UF code to its TripAdvisor integer geoId.

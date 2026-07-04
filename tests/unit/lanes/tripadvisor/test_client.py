@@ -1563,3 +1563,390 @@ class TestFakeTripAdvisorClientGeo:
         await fake.fetch_attraction_geo(312332)
         await fake.fetch_attraction_geo(999)
         assert fake.geo_calls == [312332, 999]
+
+
+# ---------------------------------------------------------------------------
+# TestFetchAttractionsPaginatedGql — new GraphQL paginated listing (qid 79aaeeb847e55e58)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchAttractionsPaginatedGql:
+    """Verify fetch_attractions_paginated_gql: pagee, per-page yield, stop-on-empty, 403."""
+
+    @pytest.mark.asyncio
+    async def test_yields_parsed_cards_and_sends_pagee_zero_first(self):
+        """Page 1 sends pagee='0'; yields parsed cards per offset; stops on empty page."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        config.page_throttle_seconds = 0.0  # no real sleeps
+        redis = fakeredis.FakeRedis()
+        _make_session_redis(redis)
+
+        second_card = {
+            "__typename": "WebPresentation_SingleFlexCardSection",
+            "singleFlexCardContent": {
+                "cardTitle": {"text": "Cristo Redentor"},
+                "cardLink": {"webRoute": {"typedParams": {"detailId": 303536}}},
+                "bubbleRating": {"rating": 4.7, "reviewCount": 140000},
+                "primaryInfo": {"text": "Monuments"},
+            },
+        }
+
+        captured_pagees: list[str] = []
+        captured_qids: list[str] = []
+
+        with respx.mock:
+            def handler(request):
+                body = json.loads(request.content)
+                item = body[0]
+                captured_qids.append(item["extensions"]["preRegisteredQueryId"])
+                pagee = item["variables"]["request"]["routeParameters"]["pagee"]
+                captured_pagees.append(pagee)
+                if pagee == "0":
+                    return httpx.Response(200, json=_make_ta_response([_IGUAZU_FLEX_CARD]))
+                if pagee == "30":
+                    return httpx.Response(200, json=_make_ta_response([second_card]))
+                return httpx.Response(200, json=_make_ta_response([]))  # empty → stop
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=handler
+            )
+            pages = [
+                (offset, cards)
+                async for offset, cards in TripAdvisorClient(
+                    config=config, redis=redis
+                ).fetch_attractions_paginated_gql(geo_id=294280, start_page=1, max_pages=5)
+            ]
+
+        assert [offset for offset, _ in pages] == [0, 30]
+        assert pages[0][1][0]["name"] == "Iguazu Falls"
+        assert pages[0][1][0]["locationId"] == 312332
+        assert pages[1][1][0]["name"] == "Cristo Redentor"
+        # Page 1 MUST send pagee="0" (absent → 0 cards); loop stopped after empty oa60.
+        assert captured_pagees == ["0", "30", "60"]
+        assert captured_pagees[0] == "0"
+        # Every page uses the paginated-GraphQL qid.
+        assert all(q == "79aaeeb847e55e58" for q in captured_qids)
+
+    @pytest.mark.asyncio
+    async def test_empty_first_page_yields_nothing(self):
+        """An empty first page yields nothing and issues exactly one POST."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        config.page_throttle_seconds = 0.0
+        redis = fakeredis.FakeRedis()
+        _make_session_redis(redis)
+
+        call_count = 0
+
+        with respx.mock:
+            def handler(request):
+                nonlocal call_count
+                call_count += 1
+                return httpx.Response(200, json=_make_ta_response([]))
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=handler
+            )
+            pages = [
+                p
+                async for p in TripAdvisorClient(
+                    config=config, redis=redis
+                ).fetch_attractions_paginated_gql(geo_id=294280, start_page=1, max_pages=5)
+            ]
+
+        assert pages == []
+        assert call_count == 1, f"empty page must stop after 1 POST, got {call_count}"
+
+    @pytest.mark.asyncio
+    async def test_403_raises_session_expired(self):
+        """A 403 on the first page raises SessionExpiredError."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        config.page_throttle_seconds = 0.0
+        redis = fakeredis.FakeRedis()
+        _make_session_redis(redis)
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                return_value=httpx.Response(403, json={"error": "forbidden"})
+            )
+            with pytest.raises(SessionExpiredError):
+                async for _ in TripAdvisorClient(
+                    config=config, redis=redis
+                ).fetch_attractions_paginated_gql(geo_id=294280, start_page=1, max_pages=5):
+                    pass
+
+    @pytest.mark.asyncio
+    async def test_non_int_geoid_raises_before_any_post(self):
+        """SSRF guard: a non-int geo_id raises before any POST."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        _make_session_redis(redis)
+
+        posted = 0
+
+        with respx.mock:
+            def handler(request):
+                nonlocal posted
+                posted += 1
+                return httpx.Response(200, json=_make_ta_response([]))
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=handler
+            )
+            with pytest.raises(TypeError):
+                async for _ in TripAdvisorClient(
+                    config=config, redis=redis
+                ).fetch_attractions_paginated_gql(
+                    geo_id="294280; DROP",  # type: ignore[arg-type]
+                    start_page=1,
+                    max_pages=2,
+                ):
+                    pass
+
+        assert posted == 0, "no POST may be issued for a non-int geo_id"
+
+
+# ---------------------------------------------------------------------------
+# TestFetchRecentReview — review recency (qid ef1a9f94012220d3), §7.6 + LGPD
+# ---------------------------------------------------------------------------
+
+
+class TestFetchRecentReview:
+    """Verify fetch_recent_review parses recency/count/rating and leaks NO PII."""
+
+    @staticmethod
+    def _review_response(
+        *,
+        total_count: int = 1234,
+        rating=5,
+        published_date: str = "2026-06-15",
+    ) -> list:
+        """Build a review-list envelope with newest-first reviews[0] + PII decoys."""
+        return [
+            {
+                "data": {
+                    "ReviewsProxy_getReviewListPageForLocation": [
+                        {
+                            "totalCount": total_count,
+                            "reviews": [
+                                {
+                                    "rating": rating,
+                                    "publishedDate": published_date,
+                                    # PII decoys — MUST NOT be read/returned (LGPD).
+                                    "text": "SECRET_REVIEW_BODY",
+                                    "title": "SECRET_TITLE",
+                                    "username": "SECRET_USER",
+                                    "userProfile": {"userId": "SECRET_UID"},
+                                    "photoIds": [1, 2, 3],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_returns_recency_count_rating_and_correct_qid(self, monkeypatch):
+        """Parses review_count/rating/most_recent_review_at + POSTs the reviews qid."""
+        from datetime import UTC, datetime
+
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        client = TripAdvisorClient(config=config, redis=redis)
+        monkeypatch.setattr(
+            client,
+            "_get_session",
+            lambda: {"cookies": {"datadome": "abc"}, "user_agent": "UA"},
+        )
+
+        captured_body = None
+
+        with respx.mock:
+            def capture(request):
+                nonlocal captured_body
+                captured_body = json.loads(request.content)
+                return httpx.Response(200, json=self._review_response())
+
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                side_effect=capture
+            )
+            result = await client.fetch_recent_review(312332)
+
+        assert result == {
+            "review_count": 1234,
+            "rating": 5.0,
+            "most_recent_review_at": datetime(2026, 6, 15, tzinfo=UTC),
+        }
+        assert captured_body[0]["extensions"]["preRegisteredQueryId"] == "ef1a9f94012220d3"
+        assert captured_body[0]["variables"]["locationId"] == 312332
+        assert captured_body[0]["variables"]["limit"] == 1
+
+    @pytest.mark.asyncio
+    async def test_result_contains_no_pii_keys_or_values(self, monkeypatch):
+        """LGPD: returned dict has ONLY the 3 aggregate keys; no PII key or value leaks."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        client = TripAdvisorClient(config=config, redis=redis)
+        monkeypatch.setattr(
+            client, "_get_session", lambda: {"cookies": {"datadome": "abc"}, "user_agent": ""}
+        )
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                return_value=httpx.Response(200, json=self._review_response())
+            )
+            result = await client.fetch_recent_review(312332)
+
+        assert set(result.keys()) == {"review_count", "rating", "most_recent_review_at"}
+        for pii_key in ("text", "title", "username", "userProfile", "photoIds", "reviewTip"):
+            assert pii_key not in result
+        blob = repr(result)
+        for pii_value in ("SECRET_REVIEW_BODY", "SECRET_TITLE", "SECRET_USER", "SECRET_UID"):
+            assert pii_value not in blob, f"PII value leaked into result: {pii_value}"
+
+    @pytest.mark.asyncio
+    async def test_empty_reviews_returns_none(self, monkeypatch):
+        """Empty reviews[] → None (no crash on shape)."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        client = TripAdvisorClient(config=config, redis=redis)
+        monkeypatch.setattr(
+            client, "_get_session", lambda: {"cookies": {"datadome": "abc"}, "user_agent": ""}
+        )
+
+        empty = [
+            {"data": {"ReviewsProxy_getReviewListPageForLocation": [{"totalCount": 0, "reviews": []}]}}
+        ]
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                return_value=httpx.Response(200, json=empty)
+            )
+            result = await client.fetch_recent_review(999)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_malformed_response_returns_none(self, monkeypatch):
+        """A missing container → None, never raises."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        client = TripAdvisorClient(config=config, redis=redis)
+        monkeypatch.setattr(
+            client, "_get_session", lambda: {"cookies": {"datadome": "abc"}, "user_agent": ""}
+        )
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                return_value=httpx.Response(200, json=[{"data": {}}])
+            )
+            result = await client.fetch_recent_review(999)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_403_raises_session_expired(self, monkeypatch):
+        """403 → SessionExpiredError."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.lanes.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        redis = fakeredis.FakeRedis()
+        client = TripAdvisorClient(config=config, redis=redis)
+        monkeypatch.setattr(
+            client, "_get_session", lambda: {"cookies": {"datadome": "abc"}, "user_agent": ""}
+        )
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+                return_value=httpx.Response(403, json={"error": "forbidden"})
+            )
+            with pytest.raises(SessionExpiredError):
+                await client.fetch_recent_review(312332)
+
+
+# ---------------------------------------------------------------------------
+# TestFakeTripAdvisorClientGqlAndReview — fake drives the two new lane seams
+# ---------------------------------------------------------------------------
+
+
+class TestFakeTripAdvisorClientGqlAndReview:
+    @pytest.mark.asyncio
+    async def test_fake_paginated_gql_yields_configured_pages(self):
+        from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
+
+        pages = [(0, [{"name": "A", "locationId": 1}]), (30, [{"name": "B", "locationId": 2}])]
+        fake = FakeTripAdvisorClient(gql_pages=pages)
+        got = [
+            (offset, cards)
+            async for offset, cards in fake.fetch_attractions_paginated_gql(geo_id=294280)
+        ]
+        assert got == pages
+        assert fake.paginated_gql_calls == [
+            {"geo_id": 294280, "start_page": 1, "max_pages": 334}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_fake_recent_review_returns_configured_and_records(self):
+        from datetime import UTC, datetime
+
+        from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
+
+        review = {
+            "review_count": 10,
+            "rating": 4.5,
+            "most_recent_review_at": datetime(2026, 6, 1, tzinfo=UTC),
+        }
+        fake = FakeTripAdvisorClient(recent_review=review)
+        assert await fake.fetch_recent_review(312332) == review
+        assert await fake.fetch_recent_review(999) == review
+        assert fake.recent_review_calls == [312332, 999]
+
+    @pytest.mark.asyncio
+    async def test_fake_recent_review_default_none(self):
+        from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
+
+        fake = FakeTripAdvisorClient()
+        assert await fake.fetch_recent_review(312332) is None

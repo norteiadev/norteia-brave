@@ -64,6 +64,8 @@ def _make_fake_client() -> FakeTripAdvisorClient:
     return FakeTripAdvisorClient(
         fixture_destinations={"BA": [_FIXTURE_DESTINO]},
         fixture_attractions={303506: [_FIXTURE_ATRATIVO]},
+        # Atrativos produce() paginates via fetch_attractions_paginated_gql (reads gql_pages).
+        gql_pages=[(0, [_FIXTURE_ATRATIVO])],
         geo_ids={"BA": 303506},
     )
 

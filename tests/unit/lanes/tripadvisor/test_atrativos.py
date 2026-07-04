@@ -12,6 +12,8 @@ No DB connection required.
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -67,6 +69,7 @@ def _make_card(
 def _make_fake_client(card: dict[str, Any]) -> FakeTripAdvisorClient:
     return FakeTripAdvisorClient(
         fixture_attractions={_GEO_ID_MG: [card]},
+        gql_pages=[(0, [card])],  # produce() paginates via fetch_attractions_paginated_gql
         geo_ids={"MG": _GEO_ID_MG},
     )
 
@@ -349,6 +352,7 @@ class TestAtrativosGeoEnrichment:
         card = _make_coordless_card()
         fake_ta = FakeTripAdvisorClient(
             fixture_attractions={_GEO_ID_MG: [card]},
+            gql_pages=[(0, [card])],  # produce() paginates via fetch_attractions_paginated_gql
             geo_ids={"MG": _GEO_ID_MG},
         )
         # FakeGeocoderClient returns the Nominatim geocode result for this locationId
@@ -409,6 +413,7 @@ class TestAtrativosGeoEnrichment:
         card = _make_coordless_card()
         fake_ta = FakeTripAdvisorClient(
             fixture_attractions={_GEO_ID_MG: [card]},
+            gql_pages=[(0, [card])],  # produce() paginates via fetch_attractions_paginated_gql
             geo_ids={"MG": _GEO_ID_MG},
         )
         # Geocoder returns no match (all misses — both strategies fail)
@@ -499,6 +504,7 @@ class TestAtrativosGeoFallback:
         card = _make_coordless_card()  # name="Cachoeira do Tabuleiro" — no IBGE match
         fake_client = FakeTripAdvisorClient(
             fixture_attractions={_GEO_ID_MG: [card]},
+            gql_pages=[(0, [card])],  # produce() paginates via fetch_attractions_paginated_gql
             geo_ids={"MG": _GEO_ID_MG},
             fixture_geo={312332: {
                 "location_id": 312332,
@@ -551,6 +557,7 @@ class TestAtrativosGeoFallback:
         card = _make_coordless_card()
         fake_client = FakeTripAdvisorClient(
             fixture_attractions={_GEO_ID_MG: [card]},
+            gql_pages=[(0, [card])],  # produce() paginates via fetch_attractions_paginated_gql
             geo_ids={"MG": _GEO_ID_MG},
             fixture_geo={312332: {
                 "location_id": 312332,
@@ -591,6 +598,7 @@ class TestAtrativosGeoFallback:
         card = _make_coordless_card()
         fake_client = FakeTripAdvisorClient(
             fixture_attractions={_GEO_ID_MG: [card]},
+            gql_pages=[(0, [card])],  # produce() paginates via fetch_attractions_paginated_gql
             geo_ids={"MG": _GEO_ID_MG},
             fixture_geo={},  # geo returns None for all locationIds
         )
@@ -621,3 +629,198 @@ class TestAtrativosGeoFallback:
             f"Expected 1 ibge_unmatched quarantine when geo returns None; "
             f"got {len(quarantine_calls)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestAtrativosPaginatedGql + review enrichment (Phase G)
+#
+# produce() now paginates the GraphQL listing (fetch_attractions_paginated_gql,
+# replacing single-page fetch_attractions) and, under enrich_reviews=True, calls
+# fetch_recent_review per card so atualidade lifts the §7.6 score. These tests use
+# a self-contained local stub client so they do NOT couple to FakeTripAdvisorClient's
+# fixture attributes.
+# ---------------------------------------------------------------------------
+
+
+class _GqlListingClient:
+    """Local TA client stub implementing only the produce()/_ingest_one surface.
+
+    - resolve_geo_id(uf)                     → fixed geoId
+    - fetch_attractions_paginated_gql(geo)   → yields the configured (offset, cards) pages
+    - fetch_recent_review(location_id)       → configured recency dict or None (records calls)
+    - fetch_attraction_geo(location_id)      → None (geo fallback dormant; names IBGE-resolve)
+    """
+
+    def __init__(
+        self,
+        *,
+        geo_id: int,
+        pages: list[tuple[int, list[dict[str, Any]]]],
+        recent: dict[int, dict[str, Any] | None] | None = None,
+    ) -> None:
+        self._geo_id = geo_id
+        self._pages = pages
+        self._recent = recent or {}
+        self.recent_review_calls: list[int] = []
+
+    async def resolve_geo_id(self, uf: str) -> int:
+        return self._geo_id
+
+    async def fetch_attractions_paginated_gql(
+        self, geo_id: int, start_page: int = 1, max_pages: int = 334
+    ) -> AsyncIterator[tuple[int, list[dict[str, Any]]]]:
+        for offset, cards in self._pages:
+            yield offset, cards
+
+    async def fetch_recent_review(self, location_id: int) -> dict[str, Any] | None:
+        self.recent_review_calls.append(location_id)
+        return self._recent.get(location_id)
+
+    async def fetch_attraction_geo(self, location_id: int) -> dict[str, Any] | None:
+        return None
+
+
+def _ub_card(location_id: int) -> dict[str, Any]:
+    """A listing card whose name resolves to the Uberlândia IBGE fixture record."""
+    return {
+        "locationId": location_id,
+        "name": "Uberlândia",
+        "review_count": 100,
+        "rating": 4.0,
+        "category": "Parks",
+    }
+
+
+class TestAtrativosPaginatedGql:
+    """produce() paginates via fetch_attractions_paginated_gql across multiple pages."""
+
+    @pytest.mark.asyncio
+    async def test_produce_ingests_cards_across_multiple_pages(self) -> None:
+        """Two pages (30 + 15 cards) → all 45 reach Nascente (not capped at one page)."""
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        page1 = [_ub_card(100_000 + i) for i in range(30)]
+        page2 = [_ub_card(200_000 + i) for i in range(15)]
+        client = _GqlListingClient(
+            geo_id=_GEO_ID_MG, pages=[(0, page1), (30, page2)]
+        )
+
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
+
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=client,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=_DESTINO_RIO_MAP,
+            )
+            await ingest.produce("MG", run_rio=False)
+
+        assert mock_store_raw.call_count == 45, (
+            "all 45 cards across both gql pages must reach Nascente (not just the "
+            f"first page of 30); got {mock_store_raw.call_count}"
+        )
+        # No review enrichment when enrich_reviews defaults off.
+        assert client.recent_review_calls == []
+
+
+class TestAtrativosReviewEnrichment:
+    """enrich_reviews wiring: fetch_recent_review fills atualidade only when enabled."""
+
+    @pytest.mark.asyncio
+    async def test_enrich_reviews_true_populates_atualidade(self) -> None:
+        """enrich_reviews=True → most_recent_review_at from fetch_recent_review; atualidade > 0.
+
+        The recency container also overrides the card's review_count/rating with the
+        precise totalCount/rating from the reviews query.
+        """
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        loc_id = 312332
+        recent_dt = datetime.now(UTC) - timedelta(days=10)  # ≤30d → atualidade 100
+        client = _GqlListingClient(
+            geo_id=_GEO_ID_MG,
+            pages=[(0, [_ub_card(loc_id)])],
+            recent={
+                loc_id: {
+                    "review_count": 321,
+                    "rating": 4.6,
+                    "most_recent_review_at": recent_dt,
+                }
+            },
+        )
+
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
+
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=client,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=_DESTINO_RIO_MAP,
+            )
+            await ingest.produce("MG", run_rio=False, enrich_reviews=True)
+
+        assert client.recent_review_calls == [loc_id], (
+            "fetch_recent_review must be called once with the numeric locationId"
+        )
+        assert mock_store_raw.called
+        payload = mock_store_raw.call_args.kwargs["payload"]
+        assert payload["atualidade_value"] == 100.0, (
+            f"atualidade must lift from the fetched recency (≤30d → 100.0); "
+            f"got {payload.get('atualidade_value')}"
+        )
+        # Precise review container overrides the card aggregate.
+        assert payload["review_count"] == 321
+        assert payload["rating"] == 4.6
+
+    @pytest.mark.asyncio
+    async def test_enrich_reviews_false_leaves_atualidade_zero(self) -> None:
+        """enrich_reviews=False (default) → no review call; atualidade stays 0.0."""
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        loc_id = 312332
+        client = _GqlListingClient(
+            geo_id=_GEO_ID_MG,
+            pages=[(0, [_ub_card(loc_id)])],
+            recent={
+                loc_id: {
+                    "review_count": 321,
+                    "rating": 4.6,
+                    "most_recent_review_at": datetime.now(UTC),
+                }
+            },
+        )
+
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
+
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=client,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=_DESTINO_RIO_MAP,
+            )
+            await ingest.produce("MG", run_rio=False)  # enrich_reviews defaults False
+
+        assert client.recent_review_calls == [], (
+            "fetch_recent_review must NOT be called when enrich_reviews is off"
+        )
+        payload = mock_store_raw.call_args.kwargs["payload"]
+        assert payload["atualidade_value"] == 0.0, (
+            f"atualidade must stay 0.0 with enrichment off; got {payload.get('atualidade_value')}"
+        )
+        # Card aggregate untouched (no override).
+        assert payload["review_count"] == 100

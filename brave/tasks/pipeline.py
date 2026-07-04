@@ -1067,7 +1067,12 @@ def sweep_tripadvisor(
             geocoder=geocoder,
             ta_config=ta_config,
         )
-        _asyncio.run(atrativos_ingest.produce(uf, run_rio=run_rio))
+        # Per-UF path enriches review recency (fetch_recent_review per card) so
+        # atualidade lifts the §7.6 score. The bulk_national branch above leaves
+        # enrichment OFF (no per-card review calls at 10k scale).
+        _asyncio.run(
+            atrativos_ingest.produce(uf, run_rio=run_rio, enrich_reviews=True)
+        )
 
         session.commit()
 

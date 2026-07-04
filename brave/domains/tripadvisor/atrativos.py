@@ -126,34 +126,46 @@ class TripAdvisorAtrativosIngest:
         self._geocoder = geocoder
         self._ta_config = ta_config
 
-    async def produce(self, uf: str, *, run_rio: bool = True) -> None:
+    async def produce(
+        self, uf: str, *, run_rio: bool = True, enrich_reviews: bool = False
+    ) -> None:
         """Ingest one full UF sweep for TripAdvisor attractions.
 
-        Fetches all TripAdvisor attractions for all known geoIds in the UF,
-        validates each through TripAdvisorAtrativoPayload, resolves IBGE
-        municipality, resolves parent destino from destino_rio_map, writes
-        each to Nascente, then (when run_rio=True) triggers the Rio pipeline.
+        Paginates ALL TripAdvisor attractions for the UF's geoId via the GraphQL
+        paginated listing (``fetch_attractions_paginated_gql`` — replaces the
+        deprecated single-page ``fetch_attractions`` and the fragile HTML-SSR path),
+        validates each card through TripAdvisorAtrativoPayload, resolves IBGE
+        municipality, resolves parent destino from destino_rio_map, writes each to
+        Nascente, then (when run_rio=True) triggers the Rio pipeline.
 
         Args:
-            uf:      Two-letter Brazilian state code (e.g. "BA", "SP").
-            run_rio: When True, trigger process_nascente_record after store_raw.
+            uf:             Two-letter Brazilian state code (e.g. "BA", "SP").
+            run_rio:        When True, trigger process_nascente_record after store_raw.
+            enrich_reviews: When True, each card with a numeric locationId triggers ONE
+                            ``fetch_recent_review`` call so ``most_recent_review_at`` is
+                            populated and atualidade lifts the §7.6 score (per-UF path).
+                            Off (today's Nascente behavior) for bulk / Nascente-only.
         """
-        # Resolve geoId for this UF
+        # Resolve geoId for this UF, then paginate the GraphQL listing. Every page
+        # yields (offset, cards); _ingest_one per card keeps the per-entity
+        # try/quarantine so a single poison card never aborts the sweep.
         geo_id = await self._client.resolve_geo_id(uf)
-        attractions = await self._client.fetch_attractions(geo_id)
 
-        for entity in attractions:
-            try:
-                await self._ingest_one(uf, entity, run_rio=run_rio)
-            except Exception as exc:  # noqa: BLE001
-                location_id = str(entity.get("locationId", "unknown"))
-                quarantine_poison(
-                    session=self._session,
-                    nascente_id=None,
-                    task_name="brave.ta.atrativos.produce",
-                    error=str(exc),
-                    payload={"uf": uf, "locationId": location_id, "error": str(exc)},
-                )
+        async for _offset, cards in self._client.fetch_attractions_paginated_gql(geo_id):
+            for entity in cards:
+                try:
+                    await self._ingest_one(
+                        uf, entity, run_rio=run_rio, enrich_reviews=enrich_reviews
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    location_id = str(entity.get("locationId", "unknown"))
+                    quarantine_poison(
+                        session=self._session,
+                        nascente_id=None,
+                        task_name="brave.ta.atrativos.produce",
+                        error=str(exc),
+                        payload={"uf": uf, "locationId": location_id, "error": str(exc)},
+                    )
 
     def _ensure_destino(self, ibge_match: IbgeMunicipio) -> tuple[uuid.UUID, str]:
         """Create the parent destino for an IBGE município on demand (destino-first).
@@ -210,8 +222,22 @@ class TripAdvisorAtrativosIngest:
         )
         return (rio.id, source_ref)
 
-    async def _ingest_one(self, uf: str, entity: dict[str, Any], *, run_rio: bool) -> None:
-        """Ingest a single TripAdvisor attraction entity."""
+    async def _ingest_one(
+        self,
+        uf: str,
+        entity: dict[str, Any],
+        *,
+        run_rio: bool,
+        enrich_reviews: bool = False,
+    ) -> None:
+        """Ingest a single TripAdvisor attraction entity.
+
+        When ``enrich_reviews`` is True and the card carries a numeric locationId,
+        one ``fetch_recent_review`` call fills ``most_recent_review_at`` (LGPD-aggregate
+        only: totalCount + newest publishedDate + rating) so ``atualidade_from_recency``
+        lifts the §7.6 score; ``review_count``/``rating`` are overridden from that
+        precise container when present. Off → today's behavior (recency None).
+        """
         location_id = str(entity.get("locationId", ""))
         name = str(entity.get("name", ""))
         category = str(entity.get("category", ""))
@@ -222,7 +248,27 @@ class TripAdvisorAtrativosIngest:
         review_count = int(entity.get("review_count", 0))
         rating = float(entity.get("rating", 0.0))
         most_recent_dt: datetime | None = None
-        # most_recent_review_at: not in AttractionsFusion listing card — None at Nascente (Phase 13 decision)
+        # most_recent_review_at: NOT in the AttractionsFusion listing card. Off by
+        # default (bulk / Nascente-only) → None. Under enrich_reviews (per-UF sweep),
+        # fetch_recent_review supplies the newest review date (+ precise count/rating).
+
+        if enrich_reviews:
+            try:
+                loc_id_int = int(location_id) if location_id else None
+            except (ValueError, TypeError):
+                loc_id_int = None
+            if loc_id_int is not None:
+                # Mirror the geo-enrichment throttle: pace review calls when configured.
+                if self._ta_config is not None and self._ta_config.page_throttle_seconds > 0:
+                    await asyncio.sleep(self._ta_config.page_throttle_seconds)
+                recency = await self._client.fetch_recent_review(loc_id_int)
+                if recency is not None:
+                    most_recent_dt = recency.get("most_recent_review_at")
+                    # Prefer the precise review container over the card's aggregate.
+                    if recency.get("review_count") is not None:
+                        review_count = int(recency["review_count"])
+                    if recency.get("rating") is not None:
+                        rating = float(recency["rating"])
 
         review_signals = TripAdvisorReviewSignals(
             review_count=review_count,
@@ -576,10 +622,13 @@ class TripAdvisorAtrativosIngest:
         *,
         run_rio: bool = True,
     ) -> None:
-        """Drive the paginated HTML-SSR client and bulk-ingest each page (Phase 15).
+        """Drive the paginated GraphQL listing and bulk-ingest each page (Phase 15).
 
-        Streams ``(offset, cards)`` tuples from ``fetch_attractions_paginated``,
-        ingests every card via ``_ingest_one_bulk`` (parent-less national path),
+        Streams ``(offset, cards)`` tuples from ``fetch_attractions_paginated_gql``
+        (Phase G — replaces the deprecated fragile HTML-SSR ``fetch_attractions_paginated``;
+        same (offset, cards) yield shape), ingests every card via ``_ingest_one_bulk``
+        (parent-less national path — bulk stays enrich_reviews=False, no per-card review
+        calls at 10k scale),
         COMMITS once PER PAGE (Pitfall 3 — a mid-run 403 leaves durable records +
         an accurate resume point), then records progress + the live error counter.
 
@@ -601,7 +650,7 @@ class TripAdvisorAtrativosIngest:
             redis:      Sync Redis client for the live progress hash (fakeredis-safe).
             run_rio:    When True, trigger the Rio pipeline per ingested card.
         """
-        async for offset, cards in self._client.fetch_attractions_paginated(
+        async for offset, cards in self._client.fetch_attractions_paginated_gql(
             geo_id, start_page, max_pages
         ):
             ingested = 0

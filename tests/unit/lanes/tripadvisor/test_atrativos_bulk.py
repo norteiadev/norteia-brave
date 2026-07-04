@@ -240,12 +240,12 @@ class _RaisingPaginatedClient:
     def __init__(self, pages_before_raise: int = 1) -> None:
         self._pages_before_raise = pages_before_raise
 
-    async def fetch_attractions_paginated(
+    async def fetch_attractions_paginated_gql(
         self, geo_id: int, start_page: int = 1, max_pages: int = 334
     ) -> AsyncIterator[tuple[int, list[dict[str, Any]]]]:
         for i in range(self._pages_before_raise):
             yield i * 30, [_make_card(location_id=1000 + i)]
-        raise SessionExpiredError("TripAdvisor HTML returned 403 — session expired.")
+        raise SessionExpiredError("TripAdvisor GraphQL returned 403 — session expired.")
 
 
 class TestProducePaginated:
@@ -261,7 +261,7 @@ class TestProducePaginated:
         page2 = [_make_card(location_id=20_000 + i) for i in range(30)]
         all_ids = [str(c["locationId"]) for c in page1 + page2]
         fake_client = FakeTripAdvisorClient(
-            fixture_pages={_GEO_ID_BR: [(0, page1), (30, page2)]}
+            gql_pages=[(0, page1), (30, page2)]
         )
         fake_geo = FakeGeocoderClient(
             fixture_national_results=_resolvable_geo_fixture(all_ids)
@@ -306,7 +306,7 @@ class TestProducePaginated:
         page2 = [_make_card(location_id=30_001)]
         all_ids = ["30000", "30001"]
         fake_client = FakeTripAdvisorClient(
-            fixture_pages={_GEO_ID_BR: [(0, page1), (30, page2)]}
+            gql_pages=[(0, page1), (30, page2)]
         )
         fake_geo = FakeGeocoderClient(
             fixture_national_results=_resolvable_geo_fixture(all_ids)
@@ -385,7 +385,7 @@ class TestProducePaginated:
         good = _make_card(location_id=40_000)
         bad = _make_card(location_id=40_001)
         fake_client = FakeTripAdvisorClient(
-            fixture_pages={_GEO_ID_BR: [(0, [good, bad])]}
+            gql_pages=[(0, [good, bad])]
         )
         # Only the good id resolves; the bad id is a national-geocode miss.
         fake_geo = FakeGeocoderClient(
