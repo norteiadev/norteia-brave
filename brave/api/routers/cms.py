@@ -693,6 +693,9 @@ def list_atrativos(
             "validation_pending": rio.sub_state == "aguardando_consulta_whatsapp",
             "whatsapp_eligible": _is_whatsapp_eligible(rio.normalized),
             "mar_id": None,  # atrativos don't have direct mar_id in normalized
+            # Público-geo município (nome) resolved at ingest — NOT PII (same class as uf).
+            "municipio": (rio.normalized or {}).get("municipio"),
+            "municipio_id": (rio.normalized or {}).get("municipio_id"),
             "parent_mar_id": (rio.normalized or {}).get("parent_mar_id"),
             # T-08-04 / CR-01: never expose raw contacts — allow-listed summary
             # (website + phone_masked only; email/ig_handle dropped as owner PII)

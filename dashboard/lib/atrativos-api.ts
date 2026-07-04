@@ -28,6 +28,8 @@ export interface AtrativoListItem {
   sub_state: string | null;
   score: number | null;
   name: string | null;
+  municipio?: string | null; // público-geo município nome (resolved at ingest)
+  municipio_id?: string | null; // IBGE code
   validation_pending: boolean; // sub_state === 'aguardando_consulta_whatsapp'
   mar_id: string | null;
   parent_mar_id: string | null;

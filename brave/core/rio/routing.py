@@ -153,6 +153,18 @@ def process_nascente_record(
         "validacao_humana_value": float(payload.get("validacao_humana_value", 0.0)),
     }
 
+    # Preserve público-geo município (nome + IBGE code) into normalized so board cards
+    # can show it without a nascente JOIN. Entity-agnostic (destino + atrativo payloads
+    # both carry canonical.municipio + municipio_id). município nome/UF/IBGE are PUBLIC
+    # geo-territorial fields — NOT PII (same class as name/uf).
+    _canonical = payload.get("canonical") or {}
+    _municipio = _canonical.get("municipio")
+    if _municipio:
+        normalized["municipio"] = _municipio
+    _municipio_id = payload.get("municipio_id") or _canonical.get("ibge_code")
+    if _municipio_id:
+        normalized["municipio_id"] = _municipio_id
+
     # Attraction-specific: preserve place_id_cache so ContactFinderAgent and SignalAgent
     # can look up Place Details without repeating text_search (D-04, COMP-03).
     # This cache key is written by DiscoveryAgent into the nascente payload; copying it

@@ -200,7 +200,7 @@ export function toPainelCards(
     type: "atrativo" as const,
     name: a.name,
     uf: a.uf,
-    municipality: null, // atrativo município is a later detail slice
+    municipality: a.municipio ?? null, // público-geo município resolved at ingest
     routing: a.routing,
     // An atrativo awaiting WhatsApp contact lives in its own column regardless
     // of routing (the gate sub_state wins over the rio routing value).
