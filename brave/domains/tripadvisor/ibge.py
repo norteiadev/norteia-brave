@@ -162,6 +162,12 @@ def resolve_municipio(
     Returns:
         Matching IbgeMunicipio record, or None if unresolvable.
     """
+    # Step 0: guard falsy/non-str names. TA geo fallbacks (e.g. fetch_attraction_geo
+    # cityName) can be None — feeding that to _fold_accents → unicodedata.normalize
+    # raised "argument 2 must be str, not None". Treat as unmatched → caller quarantines
+    # as ibge_unmatched instead of crashing the whole produce task.
+    if not isinstance(name, str) or not name.strip():
+        return None
     # Step 1: filter by UF
     uf_records = [r for r in records if r.uf == uf]
     if not uf_records:

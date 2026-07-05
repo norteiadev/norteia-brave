@@ -79,6 +79,15 @@ class TestStateNameToUf:
         """'State of Distrito Federal' (extra robustness) → 'DF'."""
         assert state_name_to_uf("State of Distrito Federal") == "DF"
 
+    @pytest.mark.parametrize("bad", [None, "", "   "])
+    def test_none_or_blank_returns_none(self, bad) -> None:
+        """Falsy/non-str stateName → None, never an AttributeError/normalize crash.
+
+        Regression: TA fetch_attraction_geo can return stateName=None; the old
+        `state_name.strip()` raised AttributeError before reaching the dict lookup.
+        """
+        assert state_name_to_uf(bad) is None
+
     # (c) "State of " strip ------------------------------------------------
 
     def test_state_of_sao_paulo_ascii(self) -> None:

@@ -328,7 +328,7 @@ class TripAdvisorAtrativosIngest:
                 geo = await self._client.fetch_attraction_geo(loc_id_int)
                 if geo is not None:
                     derived_uf = state_name_to_uf(geo["state_name"])
-                    if derived_uf:
+                    if derived_uf and geo.get("city_name"):
                         ibge_match = resolve_municipio(
                             geo["city_name"],
                             derived_uf,

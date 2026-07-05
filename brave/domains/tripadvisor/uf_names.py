@@ -68,6 +68,8 @@ def state_name_to_uf(state_name: str) -> str | None:
 
     ToS/LGPD: aggregate geo only — no PII in this mapping.
     """
+    if not isinstance(state_name, str) or not state_name.strip():
+        return None
     text = state_name.strip()
     # Conditional strip: only remove "State of " when the prefix is present.
     # The 9-character prefix is lowercase-checked to be case-insensitive safe.
