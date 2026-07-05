@@ -212,11 +212,11 @@ class TestClientWriteBack:
         monkeypatch.setattr("brave.lanes.tripadvisor.geo.resolve_geo_id", lambda uf, r, c: 303380)
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(
                     200,
                     json=[{"data": {"locations": []}}],
-                    headers={"Set-Cookie": "__vt=newvt; Path=/; Domain=.tripadvisor.com"},
+                    headers={"Set-Cookie": "__vt=newvt; Path=/; Domain=.tripadvisor.com.br"},
                 )
             )
             await client.fetch_destinations(uf="BA")
@@ -245,11 +245,11 @@ class TestClientWriteBack:
         monkeypatch.setattr(client, "_get_session", lambda: session_data)
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(
                     200,
                     json=[{"data": {"Result": [{"sections": []}]}}],
-                    headers={"Set-Cookie": "__vt=newvt; Path=/; Domain=.tripadvisor.com"},
+                    headers={"Set-Cookie": "__vt=newvt; Path=/; Domain=.tripadvisor.com.br"},
                 )
             )
             await client.fetch_attractions(geo_id=303380)
@@ -329,7 +329,7 @@ class TestClientWriteBack:
 
         # Return a response with Set-Cookie to trigger the write-back code path
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(
                     200,
                     json=[{"data": {"locations": [{"name": "Salvador", "locationId": 12345}]}}],

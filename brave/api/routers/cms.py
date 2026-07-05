@@ -239,6 +239,9 @@ def list_destinos(
             "name": (rio.normalized or {}).get("name") or (
                 (mar.canonical or {}).get("name") if mar else None
             ),
+            # Público-geo município (nome) resolved at ingest — NOT PII.
+            "municipio": (rio.normalized or {}).get("municipio"),
+            "municipio_id": (rio.normalized or {}).get("municipio_id"),
             "validation_pending": rio.routing == "dlq",
             "mar_id": str(mar.id) if mar else None,
             "published_at": mar.published_at.isoformat() if mar and mar.published_at else None,

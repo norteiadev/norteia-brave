@@ -53,8 +53,13 @@ logger = structlog.get_logger(__name__)
 # TTL is set by the injection endpoint (config.session_ttl, default 1800s / 30 min).
 BRAVE_TA_SESSION_KEY: str = "brave:ta:session"
 
-# GraphQL endpoint — all persisted-query POSTs target this URL
-_TA_GRAPHQL_URL: str = "https://www.tripadvisor.com/data/graphql/ids"
+# GraphQL endpoint — all persisted-query POSTs target this URL. The .com.br TLD is
+# what makes TripAdvisor return pt-BR attraction NAMES (verified live: ".com" →
+# "Camburi Beach"/"...Convent"; ".com.br" → "Praia De Camburi"/"Convento Nossa
+# Senhora da Penha"). The Accept-Language header alone does NOT localize the listing;
+# the TLD does. Session cookies (domain=.tripadvisor.com) are passed explicitly and
+# work on .com.br too — and .com.br matches the operator's Copy-as-cURL capture domain.
+_TA_GRAPHQL_URL: str = "https://www.tripadvisor.com.br/data/graphql/ids"
 
 # HTML SSR listing page (Phase 15 pagination transport). The GraphQL listing query
 # cannot paginate, so each page is fetched as the server-rendered -oa{offset}- HTML
@@ -92,6 +97,12 @@ _LISTING_QID_GQL: str = "79aaeeb847e55e58"
 # Review-list persisted query id: powers §7.6 review recency (atualidade + precise
 # corroboração) via fetch_recent_review. POC-confirmed live.
 _REVIEWS_QID: str = "ef1a9f94012220d3"
+
+# Locale headers so TripAdvisor returns pt-BR attraction names (else it leaks English
+# names like "Camburi Beach"/"...Convent"). The HTML-SSR path already sends this; the
+# GraphQL surfaces must too. Paired with currency=BRL / unitLength=KILOMETERS in the
+# listing variables (pt-BR context signals).
+_TA_ACCEPT_LANGUAGE: str = "pt-BR,pt;q=0.9,en;q=0.8"
 
 
 class SessionExpiredError(SourceSessionError):
@@ -915,7 +926,10 @@ class TripAdvisorClient:
         session_id: str = session.get("session_id", "")
         cookies = session.get("cookies", {})
         user_agent = session.get("user_agent", "")
-        headers: dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+            "Accept-Language": _TA_ACCEPT_LANGUAGE,  # pt-BR attraction names
+        }
         if user_agent:
             headers["User-Agent"] = user_agent
         # CR-02 / T-11-01-01: proxy routed but NEVER logged.
@@ -952,8 +966,8 @@ class TripAdvisorClient:
                             "pageviewUid": pageview_uid,
                         },
                         "sessionId": session_id,
-                        "unitLength": "MILES",
-                        "currency": "USD",
+                        "unitLength": "KILOMETERS",
+                        "currency": "BRL",
                         "currentGeoPoint": None,
                         "mapSurface": False,
                         "debug": False,
@@ -1050,7 +1064,10 @@ class TripAdvisorClient:
         session = self._get_session()
         cookies = session.get("cookies", {})
         user_agent = session.get("user_agent", "")
-        headers: dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+            "Accept-Language": _TA_ACCEPT_LANGUAGE,
+        }
         if user_agent:
             headers["User-Agent"] = user_agent
         proxy = self._config.proxy_url or None

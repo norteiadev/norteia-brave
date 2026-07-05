@@ -164,7 +164,7 @@ class TestTripAdvisorClientOffline:
         monkeypatch.setattr(client, "_get_session", lambda: stub_session)
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(403, json={"error": "forbidden"})
             )
             with pytest.raises(SessionExpiredError):
@@ -192,7 +192,7 @@ class TestTripAdvisorClientOffline:
         monkeypatch.setattr(client, "_get_session", lambda: stub_session)
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(429, json={"error": "rate_limited"})
             )
             with pytest.raises(SessionExpiredError):
@@ -378,7 +378,7 @@ class TestTripAdvisorClientPayloadShape:
                 captured_body = json.loads(request.content)
                 return httpx.Response(200, json=[{"data": {"locations": []}}])
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=capture_request
             )
             await client.fetch_destinations(uf="BA")
@@ -423,7 +423,7 @@ class TestTripAdvisorClientPayloadShape:
                     json=[{"data": {"Result": [{"sections": []}]}}],
                 )
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=capture_request
             )
             await client.fetch_attractions(geo_id=303513)
@@ -469,7 +469,7 @@ class TestTripAdvisorClientPayloadShape:
                 captured_headers = dict(request.headers)
                 return httpx.Response(200, json=[{"data": {"locations": []}}])
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=capture_request
             )
             await client.fetch_destinations(uf="BA")
@@ -553,7 +553,7 @@ class TestTripAdvisorClientProxyAndPaging:
                 return httpx.Response(
                     200,
                     json=[{"data": {"locations": []}}],
-                    request=httpx.Request("POST", "https://www.tripadvisor.com/data/graphql/ids"),
+                    request=httpx.Request("POST", "https://www.tripadvisor.com.br/data/graphql/ids"),
                 )
 
         monkeypatch.setattr(client_mod.httpx, "AsyncClient", _FakeClient)
@@ -592,7 +592,7 @@ class TestTripAdvisorClientProxyAndPaging:
                 return httpx.Response(
                     200,
                     json=[{"data": {"locations": []}}],
-                    request=httpx.Request("POST", "https://www.tripadvisor.com/data/graphql/ids"),
+                    request=httpx.Request("POST", "https://www.tripadvisor.com.br/data/graphql/ids"),
                 )
 
         monkeypatch.setattr(client_mod.httpx, "AsyncClient", _FakeClient)
@@ -623,7 +623,7 @@ class TestTripAdvisorClientProxyAndPaging:
                 call_count += 1
                 return httpx.Response(200, json=[{"data": {"locations": full_page}}])
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=handler
             )
             results = await TripAdvisorClient(config=config, redis=redis).fetch_destinations(
@@ -720,7 +720,7 @@ class TestTripAdvisorAttractionsFusionContract:
                 captured_body = json.loads(request.content)
                 return httpx.Response(200, json=_make_ta_response([]))
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=capture
             )
             await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
@@ -753,7 +753,7 @@ class TestTripAdvisorAttractionsFusionContract:
         sections = [_IGUAZU_FLEX_CARD, _AD_PLACEHOLDER, _PAGINATION_LINKS]
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(200, json=_make_ta_response(sections))
             )
             result = await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
@@ -788,7 +788,7 @@ class TestTripAdvisorAttractionsFusionContract:
                 call_count += 1
                 return httpx.Response(200, json=_make_ta_response([]))
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=handler
             )
             result = await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
@@ -835,7 +835,7 @@ class TestTripAdvisorAttractionsFusionContract:
                     ),
                 )
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=handler
             )
             result = await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
@@ -871,7 +871,7 @@ class TestTripAdvisorAttractionsFusionContract:
                     json=_make_ta_response_with_status([], success=True, total_results=0),
                 )
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=handler
             )
             result = await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
@@ -908,7 +908,7 @@ class TestTripAdvisorAttractionsFusionContract:
                     ),
                 )
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=handler
             )
             result = await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
@@ -952,7 +952,7 @@ class TestTripAdvisorAttractionsFusionContract:
                 call_count += 1
                 return httpx.Response(200, json=_make_ta_response(sections))
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=handler
             )
             result = await TripAdvisorClient(config=config, redis=redis).fetch_attractions(
@@ -989,7 +989,7 @@ class TestBootstrapQueryIdRejectList:
         spec.loader.exec_module(ta_bootstrap)
 
         curl_str = (
-            "curl 'https://www.tripadvisor.com/data/graphql/ids' "
+            "curl 'https://www.tripadvisor.com.br/data/graphql/ids' "
             "-H 'Cookie: datadome=abc; TASID=E75FBE95' "
             "-H 'User-Agent: Mozilla/5.0' "
             "--data-raw '[{\"variables\":{},\"extensions\":{\"preRegisteredQueryId\":\"46dcf3e69ea8ba5a\"}}]'"
@@ -1020,7 +1020,7 @@ class TestBootstrapQueryIdRejectList:
         spec.loader.exec_module(ta_bootstrap)
 
         curl_str = (
-            "curl 'https://www.tripadvisor.com/data/graphql/ids' "
+            "curl 'https://www.tripadvisor.com.br/data/graphql/ids' "
             "-H 'Cookie: datadome=abc; TASID=E75FBE95; TASession=xyz' "
             "-H 'User-Agent: Mozilla/5.0' "
             "--data-raw '[{\"variables\":{},\"extensions\":{\"preRegisteredQueryId\":\"a5cb7fa004b5e4b5\"}}]'"
@@ -1046,7 +1046,7 @@ class TestBootstrapQueryIdRejectList:
         spec.loader.exec_module(ta_bootstrap)
 
         curl_str = (
-            "curl 'https://www.tripadvisor.com/data/graphql/ids' "
+            "curl 'https://www.tripadvisor.com.br/data/graphql/ids' "
             "-H 'Cookie: datadome=abc' "
             "-H 'User-Agent: Mozilla/5.0' "
             "--data-raw '[{\"variables\":{},\"extensions\":{\"preRegisteredQueryId\":\"a5cb7fa004b5e4b5\"}}]'"
@@ -1120,7 +1120,7 @@ class TestFetchDestinationsQid:
                 captured_body = json.loads(request.content)
                 return httpx.Response(200, json=[{"data": {"locations": []}}])
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=capture
             )
             await TripAdvisorClient(config=config, redis=redis).fetch_destinations(uf="SP")
@@ -1279,7 +1279,7 @@ class TestFetchAttractionDetail:
                     json=[{"data": {"locations": [{"parents": [], "locationId": 312332}]}}],
                 )
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=capture
             )
             result = await TripAdvisorClient(config=config, redis=redis).fetch_attraction_detail(312332)
@@ -1307,7 +1307,7 @@ class TestFetchAttractionDetail:
         _seed_ta_session(redis)
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(200, json=[{"data": {"locations": []}}])
             )
             result = await TripAdvisorClient(config=config, redis=redis).fetch_attraction_detail(99999)
@@ -1365,7 +1365,7 @@ class TestFetchAttractionGeo:
         monkeypatch.setattr(client, "_get_session", lambda: stub_session)
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(200, json=self._FOZ_RESPONSE)
             )
             result = await client.fetch_attraction_geo(312332)
@@ -1405,7 +1405,7 @@ class TestFetchAttractionGeo:
                 captured_body = json.loads(request.content)
                 return httpx.Response(200, json=self._FOZ_RESPONSE)
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=capture
             )
             await client.fetch_attraction_geo(312332)
@@ -1436,7 +1436,7 @@ class TestFetchAttractionGeo:
         monkeypatch.setattr(client, "_get_session", lambda: stub_session)
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(200, json=[{"data": {}}])
             )
             result = await client.fetch_attraction_geo(999)
@@ -1467,7 +1467,7 @@ class TestFetchAttractionGeo:
         }}}}]
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(200, json=non_brazil)
             )
             result = await client.fetch_attraction_geo(111)
@@ -1490,7 +1490,7 @@ class TestFetchAttractionGeo:
         monkeypatch.setattr(client, "_get_session", lambda: stub_session)
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(403, json={"error": "forbidden"})
             )
             with pytest.raises(SessionExpiredError):
@@ -1512,7 +1512,7 @@ class TestFetchAttractionGeo:
         monkeypatch.setattr(client, "_get_session", lambda: stub_session)
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(429, json={"error": "rate_limited"})
             )
             with pytest.raises(SessionExpiredError):
@@ -1612,7 +1612,7 @@ class TestFetchAttractionsPaginatedGql:
                     return httpx.Response(200, json=_make_ta_response([second_card]))
                 return httpx.Response(200, json=_make_ta_response([]))  # empty → stop
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=handler
             )
             pages = [
@@ -1653,7 +1653,7 @@ class TestFetchAttractionsPaginatedGql:
                 call_count += 1
                 return httpx.Response(200, json=_make_ta_response([]))
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=handler
             )
             pages = [
@@ -1680,7 +1680,7 @@ class TestFetchAttractionsPaginatedGql:
         _make_session_redis(redis)
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(403, json={"error": "forbidden"})
             )
             with pytest.raises(SessionExpiredError):
@@ -1709,7 +1709,7 @@ class TestFetchAttractionsPaginatedGql:
                 posted += 1
                 return httpx.Response(200, json=_make_ta_response([]))
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=handler
             )
             with pytest.raises(TypeError):
@@ -1792,7 +1792,7 @@ class TestFetchRecentReview:
                 captured_body = json.loads(request.content)
                 return httpx.Response(200, json=self._review_response())
 
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=capture
             )
             result = await client.fetch_recent_review(312332)
@@ -1822,7 +1822,7 @@ class TestFetchRecentReview:
         )
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(200, json=self._review_response())
             )
             result = await client.fetch_recent_review(312332)
@@ -1854,7 +1854,7 @@ class TestFetchRecentReview:
         ]
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(200, json=empty)
             )
             result = await client.fetch_recent_review(999)
@@ -1877,7 +1877,7 @@ class TestFetchRecentReview:
         )
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(200, json=[{"data": {}}])
             )
             result = await client.fetch_recent_review(999)
@@ -1900,7 +1900,7 @@ class TestFetchRecentReview:
         )
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(403, json={"error": "forbidden"})
             )
             with pytest.raises(SessionExpiredError):

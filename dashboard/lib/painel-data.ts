@@ -186,7 +186,9 @@ export function toPainelCards(
     type: "destino" as const,
     name: d.name,
     uf: d.uf,
-    municipality: municipalityFromCanonicalKey(d.canonical_key),
+    // Prefer the resolved município NOME; fall back to the canonical_key segment
+    // (IBGE code) only for legacy records ingested before município was preserved.
+    municipality: d.municipio ?? municipalityFromCanonicalKey(d.canonical_key),
     routing: d.routing,
     column: routingToColumn(d.routing),
     score: d.score,

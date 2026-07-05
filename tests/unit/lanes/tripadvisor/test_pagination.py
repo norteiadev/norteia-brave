@@ -405,7 +405,7 @@ class TestFetchAttractionsPaginatedGql:
             return httpx.Response(200, json=_gql_envelope([]))  # oa60 empty → stop
 
         with respx.mock:
-            respx.post("https://www.tripadvisor.com/data/graphql/ids").mock(
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 side_effect=handler
             )
             pages = [
