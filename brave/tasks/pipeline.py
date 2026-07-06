@@ -262,6 +262,8 @@ def _get_session() -> tuple[Session, Any]:
 # (e.g. producers under brave/lanes/) can import it from core
 # without depending on the tasks layer.  This re-export keeps existing callers
 # working without any change.
+from datetime import UTC
+
 from brave.core.quarantine import quarantine_poison  # noqa: F401 (re-export)
 
 # ---------------------------------------------------------------------------
@@ -958,8 +960,9 @@ def sweep_tripadvisor(
         ta_config = None
         if app_config.run_real_externals:
             import redis as _redis_lib
-            from brave.lanes.tripadvisor.client import TripAdvisorClient
+
             from brave.config.settings import TripAdvisorConfig
+            from brave.lanes.tripadvisor.client import TripAdvisorClient
             _ta_redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
             ta_config = TripAdvisorConfig()
             ta_client = TripAdvisorClient(
@@ -1071,8 +1074,11 @@ def sweep_tripadvisor(
         # Operator must run a destinos/default sweep (Mtur seed) before a TA atrativos
         # sweep, or atrativos will quarantine with parent_destino_absent per record.
         import asyncio as _asyncio
+
         from sqlalchemy import select as _select
-        from brave.core.models import RioRecord as _RioRecord, NascenteRecord as _NascenteRecord
+
+        from brave.core.models import NascenteRecord as _NascenteRecord
+        from brave.core.models import RioRecord as _RioRecord
         session.flush()
         destino_rows = session.execute(
             _select(_RioRecord.id, _NascenteRecord.source_ref, _RioRecord.municipio_id)
@@ -2205,7 +2211,7 @@ def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> Non
     DB unavailable, session error, missing row — is swallowed and logged; this
     function NEVER raises into the sweep's finally block (T-17.1-02-02).
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from brave.core import engine as collection_engine
     from brave.core.models import RunHistory
@@ -2215,7 +2221,7 @@ def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> Non
         try:
             run = session.get(RunHistory, uuid.UUID(run_id))
             if run is not None:
-                run.ended_at = datetime.now(timezone.utc)
+                run.ended_at = datetime.now(UTC)
                 run.ufs_dispatched = dispatched
                 run.status = (
                     "parcial"
@@ -2331,12 +2337,12 @@ def ta_keepalive() -> None:
         return
 
     from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
+    from brave.core import engine as collection_engine  # noqa: PLC0415
     from brave.lanes.tripadvisor.client import (  # noqa: PLC0415
         SessionExpiredError,
         SessionMissingError,
         TripAdvisorClient,
     )
-    from brave.core import engine as collection_engine  # noqa: PLC0415
 
     ta_config = TripAdvisorConfig()
     ta_client = TripAdvisorClient(config=ta_config, redis=rc)
@@ -2374,4 +2380,74 @@ def ta_keepalive() -> None:
             "ta_keepalive_error",
             error_type=type(exc).__name__,
         )
+
+
+# ---------------------------------------------------------------------------
+# RecordEvent retention — nightly prune (Log tab, Decisão C)
+# ---------------------------------------------------------------------------
+
+
+@shared_task(
+    bind=True,
+    name="brave.prune_record_events",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=300,
+)
+def prune_record_events_task(self, retention_days: int = 90) -> int:
+    """Nightly prune of aged RecordEvent rows (retention Decisão C).
+
+    Deletes RecordEvent rows with ``status IN ('ok', 'skip')`` and
+    ``created_at < now() - retention_days``. Rows with ``status='fail'``
+    (quarantine / incident records) are PRESERVED indefinitely — they are the
+    record of the failure and must never age out.
+
+    Single-queue model: dispatched onto the default 'celery' queue (no
+    options.queue on the beat entry). Idempotent: re-running only deletes rows
+    that still exceed the retention window, so a replay is a no-op once the
+    aged 'ok'/'skip' rows are gone.
+
+    Args:
+        retention_days: Age threshold in days (default 90). Rows older than
+                        now() - retention_days AND status IN ('ok','skip') go.
+
+    Returns:
+        The number of rows deleted.
+    """
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import delete
+
+    from brave.core.models import RecordEvent
+
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+
+    session, engine = _get_session()
+    try:
+        result = session.execute(
+            delete(RecordEvent).where(
+                RecordEvent.status.in_(("ok", "skip")),
+                RecordEvent.created_at < cutoff,
+            )
+        )
+        session.commit()
+        deleted = result.rowcount or 0
+        logger.info(
+            "prune_record_events_ok",
+            deleted=deleted,
+            retention_days=retention_days,
+        )
+        return deleted
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        # Retention prune is best-effort maintenance — a failure must not crash
+        # the beat scheduler; the next nightly run retries the same window.
+        logger.warning(
+            "prune_record_events_error",
+            error_type=type(exc).__name__,
+        )
+        return 0
+    finally:
+        session.close()
+        engine.dispose()
 

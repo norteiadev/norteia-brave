@@ -106,6 +106,36 @@ def _enabled_sources_best_effort() -> list[str]:
     return enabled_sources(AppConfig())
 
 
+# ---------------------------------------------------------------------------
+# Maintenance beat entries (lane-independent)
+# ---------------------------------------------------------------------------
+
+
+def maintenance_beat_entries() -> dict:
+    """Beat rows that run regardless of which collection lanes are enabled.
+
+    These are not tied to a source lane, so they are unioned in unconditionally
+    (never gated by ``enabled_sources``). Single-queue model: NO options.queue —
+    the entry lands on the default 'celery' queue (guarded by
+    tests/unit/test_celery_queue_routing.py).
+
+      - ``prune-record-events-daily`` → RecordEvent retention prune @ 4 AM UTC
+        (offset from the 2/3 AM sweep entries to avoid DB contention). Deletes
+        aged status='ok'/'skip' events; PRESERVES status='fail' (Decisão C).
+    """
+    from celery.schedules import crontab  # noqa: PLC0415
+
+    return {
+        "prune-record-events-daily": {
+            "task": "brave.prune_record_events",
+            "schedule": crontab(hour=4, minute=0),  # 4 AM UTC daily
+            "args": (),
+            "kwargs": {},
+        },
+    }
+
+
 # Build once at import and apply to the Celery app config.
 BRAVE_BEAT_SCHEDULE: dict = build_beat_schedule(_enabled_sources_best_effort())
+BRAVE_BEAT_SCHEDULE.update(maintenance_beat_entries())
 app.conf.beat_schedule = BRAVE_BEAT_SCHEDULE

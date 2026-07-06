@@ -383,6 +383,80 @@ class PoisonQuarantine(Base):
 
 
 # ---------------------------------------------------------------------------
+# RecordEvent — append-only per-record Brave timeline (Log tab)
+# ---------------------------------------------------------------------------
+
+
+class RecordEvent(Base):
+    """Append-only per-record event log powering the drawer "Log" tab timeline.
+
+    One row per pipeline stage a record passes through (TripAdvisor synced →
+    município resolved → validated → ingested → deduped → scored → routed, or a
+    terminal ``quarantined`` on failure). Written by
+    ``brave.observability.record_events.record_event`` alongside the existing
+    emission points, ALWAYS behind the idempotency early-returns (``store_raw``
+    content_hash / ``process_nascente_record`` canonical_key) so a re-sweep of an
+    already-ingested record does not re-emit DB-stage events.
+
+    ``source_ref`` is the universal drawer key and exists from the first stage,
+    before any Nascente/Rio row (for a TA attraction:
+    ``tripadvisor:attraction:{locationId}`` == ``RioRecord.canonical_key``), so a
+    ``ibge_unmatched`` failure that returns before ``store_raw`` still has a stable
+    identity to group its terminal event under.
+
+    LGPD (T): stores ONLY public-geo + engineering fields — score, routing,
+    dlq_reason, IBGE reason, name/uf (public-geo), locationId. NEVER a phone, PII,
+    review text, or a username. The ``data`` JSON column carries only those fields.
+    """
+
+    __tablename__ = "record_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_ref: Mapped[str] = mapped_column(String(256), nullable=False)
+    entity_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    uf: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    nascente_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    rio_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    stage: Mapped[str] = mapped_column(String(48), nullable=False)
+    # 'ok' | 'fail' | 'skip'
+    status: Mapped[str] = mapped_column(String(8), nullable=False)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # clock_timestamp() (not now()): now() returns the TRANSACTION start time, so the
+    # ~7 events of one atrativo (all in one per-atrativo commit) would share an identical
+    # created_at and the ASC-ordered Log timeline would be ambiguous. clock_timestamp()
+    # advances within a txn (real wall-clock) so intra-transaction order is preserved.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.clock_timestamp()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<RecordEvent id={self.id} stage={self.stage!r} "
+            f"status={self.status!r} source_ref={self.source_ref!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# RecordEvent indexes — drawer lookup by source_ref + Rio-card lookup by rio_id
+# ---------------------------------------------------------------------------
+Index(
+    "ix_record_events_source_ref",
+    RecordEvent.source,
+    RecordEvent.source_ref,
+)
+Index(
+    "ix_record_events_rio_id",
+    RecordEvent.rio_id,
+)
+
+
+# ---------------------------------------------------------------------------
 # Composite index for territorial-key dedup blocking (D-07)
 # ---------------------------------------------------------------------------
 Index(
