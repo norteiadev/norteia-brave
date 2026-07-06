@@ -20,7 +20,7 @@ import uuid
 from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -32,7 +32,15 @@ from brave.api.deps import (
     require_editing_unlocked,
     require_steward_or_bearer,
 )
-from brave.core.models import AuditLog, MarRecord, NascenteRecord, RioRecord, mask_phone
+from brave.api.routers.workers import _scrub_event_data, _scrub_event_text
+from brave.core.models import (
+    AuditLog,
+    MarRecord,
+    NascenteRecord,
+    RecordEvent,
+    RioRecord,
+    mask_phone,
+)
 from brave.observability.audit import write_audit
 
 logger = structlog.get_logger(__name__)
@@ -186,6 +194,42 @@ def _safe_normalized(normalized: dict | None) -> dict:
     return n
 
 
+def _record_events_for(db: Session, canonical_key: str | None) -> list[dict]:
+    """Return the append-only Log-tab timeline for a record, oldest→newest.
+
+    Queries RecordEvent by ``source_ref == rio.canonical_key`` (the universal
+    drawer key, e.g. ``tripadvisor:attraction:{locationId}``) ordered by
+    ``created_at`` ascending. Returns [] when the record has no canonical_key
+    (nothing to key on) so callers can always spread the field unconditionally.
+
+    LGPD: RecordEvent.data is written with public-geo + engineering fields ONLY
+    (score, routing, dlq_reason, IBGE reason, name/uf, locationId) — never PII. The
+    write side is the minimization boundary; as defense-in-depth the free-text
+    message + data["error"] are additionally scrubbed on the read side here.
+    """
+    if not canonical_key:
+        return []
+    rows = list(
+        db.scalars(
+            select(RecordEvent)
+            .where(RecordEvent.source_ref == canonical_key)
+            .order_by(RecordEvent.created_at.asc())
+        ).all()
+    )
+    return [
+        {
+            "stage": e.stage,
+            "status": e.status,
+            # LGPD defense-in-depth: scrub free-text message + data["error"] before
+            # surfacing (str(exc) at write sites can echo input carrying a phone).
+            "message": _scrub_event_text(e.message),
+            "data": _scrub_event_data(e.data),
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in rows
+    ]
+
+
 # ===========================================================================
 # DESTINOS SECTION — 6 endpoints (D-03)
 # ===========================================================================
@@ -318,8 +362,15 @@ def get_destino_detail(
         "score": float(rio.score) if rio.score is not None else None,
         "score_breakdown": rio.score_breakdown or {},
         "canonical_key": rio.canonical_key,
-        "normalized": rio.normalized or {},
+        # LGPD: _safe_normalized masks phone_e164 → phone_masked and drops owner PII,
+        # mirroring get_atrativo_detail — a destino carrying enrichment contacts must
+        # never leak phone/email/ig_handle on the detail path.
+        "normalized": _safe_normalized(rio.normalized),
         "source": nascente.source if nascente else None,
+        "dlq_reason": rio.dlq_reason,
+        "processed_at": rio.processed_at.isoformat() if rio.processed_at else None,
+        "score_version": rio.score_version,
+        "events": _record_events_for(db, rio.canonical_key),
         "audit_log": [
             {
                 "action": row.action,
@@ -728,6 +779,8 @@ def get_atrativo_detail(
             status_code=status.HTTP_404_NOT_FOUND, detail="RioRecord not found"
         )
 
+    nascente = db.get(NascenteRecord, rio.nascente_id) if rio.nascente_id else None
+
     audit_rows = list(
         db.scalars(
             select(AuditLog)
@@ -761,6 +814,11 @@ def get_atrativo_detail(
         "canonical_key": rio.canonical_key,
         # T-08-04: _safe_normalized masks phone_e164 → phone_masked
         "normalized": _safe_normalized(rio.normalized),
+        "source": nascente.source if nascente else None,
+        "dlq_reason": rio.dlq_reason,
+        "processed_at": rio.processed_at.isoformat() if rio.processed_at else None,
+        "score_version": rio.score_version,
+        "events": _record_events_for(db, rio.canonical_key),
         "audit_log": [
             {
                 "action": row.action,
