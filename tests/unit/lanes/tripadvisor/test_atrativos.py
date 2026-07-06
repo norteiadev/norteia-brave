@@ -863,3 +863,327 @@ class TestAtrativosReviewEnrichment:
         )
         # Card aggregate untouched (no override).
         assert payload["review_count"] == 100
+
+
+# ---------------------------------------------------------------------------
+# TestAtrativosEnrichCommitGranularity (Phase — per-atrativo enrich commit)
+#
+# On the enrich path (enrich_reviews=True) produce() commits PER-ATRATIVO:
+#   - one commit per SUCCESSFUL _ingest_one (durability)
+#   - one commit per poison (rollback → cache eviction → poison → commit)
+# and NEVER a page-level commit. The bulk path (enrich_reviews=False) stays
+# per-page (verified by TestAtrativosPaginatedGql above; unchanged).
+# ---------------------------------------------------------------------------
+
+
+class TestAtrativosEnrichCommitGranularity:
+    """enrich_reviews=True → per-atrativo commit + failure isolation (rollback/evict/poison)."""
+
+    @pytest.mark.asyncio
+    async def test_enrich_commits_once_per_successful_atrativo(self) -> None:
+        """enrich_reviews=True, 5 atrativos across 2 pages → 5 commits (one per success).
+
+        No page-level commit on the enrich path — every SUCCESSFUL _ingest_one is
+        committed immediately for per-atrativo durability. All 5 cards resolve to the
+        pre-cached Uberlândia destino, so none fail → exactly 5 commits, 0 rollbacks.
+        """
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        page1 = [_ub_card(100_000 + i) for i in range(3)]
+        page2 = [_ub_card(200_000 + i) for i in range(2)]
+        client = _GqlListingClient(
+            geo_id=_GEO_ID_MG, pages=[(0, page1), (30, page2)]
+        )
+        session = MagicMock()
+
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
+
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=client,
+                session=session,
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=_DESTINO_RIO_MAP,
+            )
+            await ingest.produce("MG", run_rio=False, enrich_reviews=True)
+
+        assert mock_store_raw.call_count == 5, (
+            f"all 5 cards must reach Nascente; got {mock_store_raw.call_count}"
+        )
+        assert session.commit.call_count == 5, (
+            "enrich path must commit once per SUCCESSFUL atrativo (5 successes → 5 "
+            f"commits, no page-level commit); got {session.commit.call_count}"
+        )
+        assert session.rollback.call_count == 0, (
+            f"no failures → no rollback; got {session.rollback.call_count}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_enrich_failure_rolls_back_evicts_cache_and_persists_poison(self) -> None:
+        """enrich_reviews=True + a failing atrativo → rollback, poison persisted, cache evicted.
+
+        Core regression: with a FRESH empty destino_rio_map, _ingest_one caches the
+        Uberlândia destino via _ensure_destino, then the atrativo's own store_raw
+        raises. produce() must:
+          1. rollback() the failed atrativo's partial writes,
+          2. EVICT the destino cached during this rolled-back iteration (so the next
+             same-município atrativo re-creates it — no dangling parent rio),
+          3. quarantine_poison(task_name="brave.ta.atrativos.produce"),
+          4. commit() the poison row independently.
+        """
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        loc_id = 555_001
+        client = _GqlListingClient(
+            geo_id=_GEO_ID_MG, pages=[(0, [_ub_card(loc_id)])]
+        )
+        session = MagicMock()
+        # Fresh, empty map so _ensure_destino fires for Uberlândia (3170107) and caches it.
+        fresh_map: dict[str, tuple[uuid.UUID, str]] = {}
+
+        # store_raw: first call (destino inside _ensure_destino) succeeds; second call
+        # (the atrativo itself) raises → drives the failure AFTER the map was cached.
+        calls = {"n": 0}
+
+        def _store_raw_side_effect(*args: Any, **kwargs: Any) -> Any:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return MagicMock(id=uuid.uuid4())  # destino nascente
+            raise RuntimeError("boom: atrativo store_raw failed")
+
+        with (
+            patch(
+                "brave.lanes.tripadvisor.atrativos.store_raw",
+                side_effect=_store_raw_side_effect,
+            ),
+            patch(
+                "brave.lanes.tripadvisor.atrativos.process_nascente_record",
+                return_value=MagicMock(id=uuid.uuid4()),
+            ),
+            patch(
+                "brave.lanes.tripadvisor.atrativos.quarantine_poison"
+            ) as mock_quarantine,
+        ):
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=client,
+                session=session,
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=fresh_map,
+            )
+            await ingest.produce("MG", run_rio=False, enrich_reviews=True)
+
+        # 1. The failed atrativo's partial writes were rolled back.
+        assert session.rollback.call_count == 1, (
+            f"the failing atrativo must trigger exactly one rollback; "
+            f"got {session.rollback.call_count}"
+        )
+
+        # 2. Cache coherence: the Uberlândia destino cached during the rolled-back
+        #    iteration must be EVICTED so the next same-município atrativo re-creates it.
+        #    Assert on the INGEST's own map — `destino_rio_map or {}` makes an empty passed
+        #    dict fall through to a fresh internal dict, so the external `fresh_map` would
+        #    never observe the cache and the assertion would pass vacuously.
+        assert "3170107" not in ingest._destino_rio_map, (
+            "the destino cached during the rolled-back iteration must be evicted; "
+            f"stale map still has it: {ingest._destino_rio_map}"
+        )
+
+        # 3. Poison quarantined under the produce task_name.
+        produce_poison = [
+            c for c in mock_quarantine.call_args_list
+            if c.kwargs.get("task_name") == "brave.ta.atrativos.produce"
+        ]
+        assert len(produce_poison) == 1, (
+            f"exactly one produce-level poison expected; got {len(produce_poison)}"
+        )
+
+        # 4. Poison row persisted independently (commit after quarantine). No success
+        #    ran, so the single commit is the poison-durability commit.
+        assert session.commit.call_count == 1, (
+            "the poison row must be committed independently on the enrich path; "
+            f"got {session.commit.call_count}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_enrich_interleaved_success_failure_isolates(self) -> None:
+        """enrich=True, 3 cards, middle fails → prior/later successes survive its rollback.
+
+        All 3 cards resolve to the PRE-CACHED Uberlândia destino (no _ensure_destino), so each
+        _ingest_one does exactly one atrativo store_raw; store_raw raises on the 2nd only. The
+        durability contract: card 1 (committed before the failure) and card 3 (committed after)
+        are NOT lost when card 2 rolls back → 2 success commits + 1 poison commit, exactly one
+        rollback, and card 1's commit is ordered BEFORE card 2's rollback (survival).
+        """
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        cards = [_ub_card(700_000 + i) for i in range(3)]
+        client = _GqlListingClient(geo_id=_GEO_ID_MG, pages=[(0, cards)])
+        session = MagicMock()
+        n = {"i": 0}
+
+        def _store_raw_side_effect(*args: Any, **kwargs: Any) -> Any:
+            n["i"] += 1
+            if n["i"] == 2:  # the middle atrativo
+                raise RuntimeError("boom: middle atrativo failed")
+            return MagicMock(id=uuid.uuid4())
+
+        with (
+            patch(
+                "brave.lanes.tripadvisor.atrativos.store_raw",
+                side_effect=_store_raw_side_effect,
+            ),
+            patch(
+                "brave.lanes.tripadvisor.atrativos.process_nascente_record",
+                return_value=MagicMock(id=uuid.uuid4()),
+            ),
+            patch(
+                "brave.lanes.tripadvisor.atrativos.quarantine_poison"
+            ) as mock_quarantine,
+        ):
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=client,
+                session=session,
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=dict(_DESTINO_RIO_MAP),  # copy: pre-cached, no _ensure_destino
+            )
+            await ingest.produce("MG", run_rio=False, enrich_reviews=True)
+
+        assert session.rollback.call_count == 1, (
+            f"one failure → one rollback; got {session.rollback.call_count}"
+        )
+        assert session.commit.call_count == 3, (
+            "2 successful atrativos + 1 poison → 3 commits (no page-level commit); "
+            f"got {session.commit.call_count}"
+        )
+        assert mock_quarantine.call_count == 1
+        # Survival ordering: card 1 commits BEFORE card 2 rolls back — a committed atrativo
+        # is durable and cannot be undone by a later atrativo's rollback.
+        names = [c[0] for c in session.mock_calls]
+        assert names.index("commit") < names.index("rollback"), (
+            f"card 1 must commit before card 2 rolls back; call order was {names}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_enrich_eviction_forces_destino_recreation(self) -> None:
+        """After a failed atrativo evicts its destino, the NEXT same-município card re-creates it.
+
+        Two Uberlândia cards, FRESH empty map. Card 1: _ensure_destino caches 3170107, then the
+        atrativo store_raw raises → rollback evicts 3170107. Card 2 (same município) therefore
+        finds the map empty and _ensure_destino fires AGAIN → the destino (source='ibge') is
+        stored twice total, proving eviction forced re-creation (no dangling parent rio).
+        """
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        cards = [_ub_card(800_001), _ub_card(800_002)]
+        client = _GqlListingClient(geo_id=_GEO_ID_MG, pages=[(0, cards)])
+        session = MagicMock()
+        fresh_map: dict[str, tuple[uuid.UUID, str]] = {}
+        ta = {"n": 0}
+
+        def _store_raw_side_effect(*args: Any, **kwargs: Any) -> Any:
+            if kwargs.get("source") == "tripadvisor":
+                ta["n"] += 1
+                if ta["n"] == 1:  # card 1's atrativo fails AFTER the destino was cached
+                    raise RuntimeError("boom: first atrativo failed")
+            return MagicMock(id=uuid.uuid4())
+
+        with (
+            patch(
+                "brave.lanes.tripadvisor.atrativos.store_raw",
+                side_effect=_store_raw_side_effect,
+            ) as mock_store_raw,
+            patch(
+                "brave.lanes.tripadvisor.atrativos.process_nascente_record",
+                return_value=MagicMock(id=uuid.uuid4()),
+            ),
+            patch("brave.lanes.tripadvisor.atrativos.quarantine_poison"),
+        ):
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=client,
+                session=session,
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=fresh_map,
+            )
+            await ingest.produce("MG", run_rio=False, enrich_reviews=True)
+
+        ibge_stores = [
+            c for c in mock_store_raw.call_args_list if c.kwargs.get("source") == "ibge"
+        ]
+        assert len(ibge_stores) == 2, (
+            "the destino must be RE-CREATED for card 2 after card 1's rollback evicted it "
+            f"(2 ibge-source store_raw expected); got {len(ibge_stores)}"
+        )
+        # Card 2 succeeded → its re-created destino is cached again (no dangling parent).
+        # Assert on the ingest's internal map (empty passed dict → fresh internal dict).
+        assert "3170107" in ingest._destino_rio_map, (
+            "card 2 must re-cache the re-created destino; "
+            f"map={ingest._destino_rio_map}"
+        )
+        assert session.rollback.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_enrich_eviction_spares_prior_committed_municipio(self) -> None:
+        """A failed atrativo evicts ONLY its own iteration's destino — a prior município survives.
+
+        Card 1 (município A = Belo Horizonte) succeeds and caches A. Card 2 (município B =
+        Uberlândia) fails after caching B → the set-difference eviction must drop ONLY B, leaving
+        A cached (A's rio rows are already committed and valid). A too-broad eviction that dropped
+        A would dangle the next A-atrativo's parent rio — this guards the boundary at
+        atrativos.py `set(self._destino_rio_map) - keys_before`.
+        """
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        ibge = [
+            IbgeMunicipio("3106200", "Belo Horizonte", "MG", -19.9167, -43.9345),
+            IbgeMunicipio("3170107", "Uberlândia", "MG", -18.9186, -48.2772),
+        ]
+        card_a = {**_ub_card(900_001), "name": "Belo Horizonte"}  # município A (succeeds)
+        card_b = {**_ub_card(900_002), "name": "Uberlândia"}  # município B (fails)
+        client = _GqlListingClient(geo_id=_GEO_ID_MG, pages=[(0, [card_a, card_b])])
+        session = MagicMock()
+        fresh_map: dict[str, tuple[uuid.UUID, str]] = {}
+        ta = {"n": 0}
+
+        def _store_raw_side_effect(*args: Any, **kwargs: Any) -> Any:
+            if kwargs.get("source") == "tripadvisor":
+                ta["n"] += 1
+                if ta["n"] == 2:  # card B's atrativo fails (A already committed)
+                    raise RuntimeError("boom: municipio B atrativo failed")
+            return MagicMock(id=uuid.uuid4())
+
+        with (
+            patch(
+                "brave.lanes.tripadvisor.atrativos.store_raw",
+                side_effect=_store_raw_side_effect,
+            ),
+            patch(
+                "brave.lanes.tripadvisor.atrativos.process_nascente_record",
+                return_value=MagicMock(id=uuid.uuid4()),
+            ),
+            patch("brave.lanes.tripadvisor.atrativos.quarantine_poison"),
+        ):
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=client,
+                session=session,
+                config=_make_config(),
+                ibge_records=ibge,
+                destino_rio_map=fresh_map,
+            )
+            await ingest.produce("MG", run_rio=False, enrich_reviews=True)
+
+        # Assert on the ingest's internal map (empty passed dict → fresh internal dict).
+        assert "3106200" in ingest._destino_rio_map, (
+            "município A (prior committed) must remain cached — eviction must not drop it; "
+            f"map={ingest._destino_rio_map}"
+        )
+        assert "3170107" not in ingest._destino_rio_map, (
+            "município B (failed iteration) must be evicted"
+        )
+        assert session.rollback.call_count == 1

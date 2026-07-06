@@ -138,6 +138,16 @@ class TripAdvisorAtrativosIngest:
         municipality, resolves parent destino from destino_rio_map, writes each to
         Nascente, then (when run_rio=True) triggers the Rio pipeline.
 
+        Commit granularity depends on ``enrich_reviews``:
+            - enrich_reviews=False (bulk / Nascente-only): PER-PAGE commit — each yielded
+              page's rows are committed once at page end (live kanban, mirrors
+              produce_paginated). This is the historical behavior and is unchanged.
+            - enrich_reviews=True (per-UF enrich path): PER-ATRATIVO commit — every
+              SUCCESSFUL _ingest_one is committed immediately for durability, and every
+              failure is isolated (rollback → cache eviction → poison → commit) so one
+              poison card neither loses prior atrativos' work nor corrupts the
+              destino_rio_map cache.
+
         Args:
             uf:             Two-letter Brazilian state code (e.g. "BA", "SP").
             run_rio:        When True, trigger process_nascente_record after store_raw.
@@ -153,11 +163,28 @@ class TripAdvisorAtrativosIngest:
 
         async for _offset, cards in self._client.fetch_attractions_paginated_gql(geo_id):
             for entity in cards:
+                # Snapshot the destino cache keys BEFORE the attempt so that, on the
+                # enrich path, a rollback can evict any destino cached by _ensure_destino
+                # during THIS (now discarded) iteration — otherwise the map would point
+                # the next same-município atrativo at a parent rio whose rows no longer
+                # exist. Snapshot only when enrich_reviews (per-atrativo rollback path).
+                keys_before = set(self._destino_rio_map) if enrich_reviews else None
                 try:
                     await self._ingest_one(
                         uf, entity, run_rio=run_rio, enrich_reviews=enrich_reviews
                     )
+                    if enrich_reviews:
+                        # Per-atrativo durability: persist this atrativo's rows now.
+                        self._session.commit()
                 except Exception as exc:  # noqa: BLE001
+                    if enrich_reviews:
+                        # Isolate the failed atrativo: discard its partial writes and
+                        # clear any aborted-transaction state before writing poison.
+                        self._session.rollback()
+                        # Cache coherence: evict destinos cached this iteration but now
+                        # rolled back, so the next same-município atrativo re-creates them.
+                        for k in set(self._destino_rio_map) - keys_before:  # type: ignore[operator]
+                            del self._destino_rio_map[k]
                     location_id = str(entity.get("locationId", "unknown"))
                     quarantine_poison(
                         session=self._session,
@@ -166,11 +193,15 @@ class TripAdvisorAtrativosIngest:
                         error=str(exc),
                         payload={"uf": uf, "locationId": location_id, "error": str(exc)},
                     )
-            # Live kanban: commit each page's ingested rows immediately so they become
-            # visible in the /painel board WHILE the sweep is still running (mirrors
-            # produce_paginated's per-page commit). Without this the per-UF producer
-            # committed only once at the very end and nothing showed mid-processing.
-            self._session.commit()
+                    if enrich_reviews:
+                        # Persist the poison row independently (durable per-atrativo).
+                        self._session.commit()
+            if not enrich_reviews:
+                # Live kanban: commit each page's ingested rows immediately so they become
+                # visible in the /painel board WHILE the sweep is still running (mirrors
+                # produce_paginated's per-page commit). Without this the per-UF producer
+                # committed only once at the very end and nothing showed mid-processing.
+                self._session.commit()
 
     def _ensure_destino(self, ibge_match: IbgeMunicipio) -> tuple[uuid.UUID, str]:
         """Create the parent destino for an IBGE município on demand (destino-first).
