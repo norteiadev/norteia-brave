@@ -21,7 +21,9 @@ import { useQuery } from "@tanstack/react-query";
 import {
   atrativoKeys,
   fetchAtrativoList,
+  fetchFailureCards,
   type AtrativoListItem,
+  type FailureCard,
 } from "@/lib/atrativos-api";
 import {
   destinoKeys,
@@ -31,7 +33,6 @@ import {
 import {
   ENGINE_REFETCH_INTERVAL_MS,
   engineKeys,
-  fetchFailures,
   type FailureItem,
 } from "@/lib/engine-api";
 import {
@@ -79,6 +80,14 @@ export interface EntityMetric {
  */
 export interface PainelCard {
   id: string;
+  /**
+   * The universal Brave drawer/log key (`tripadvisor:attraction:{locationId}` for
+   * TA atrativos). Present on Falha-column cards sourced from the RecordEvent
+   * fail-timeline (they have no Rio row, so `id` == `source_ref`); the drawer Log
+   * tab routes to `fetchFailureCardLog(sourceRef)` when set. Absent/undefined on
+   * ordinary rio/nascente cards, whose Log reads via `fetchAtrativoDetail(id)`.
+   */
+  sourceRef?: string | null;
   type: PainelEntityType;
   name: string | null;
   uf: string | null;
@@ -160,7 +169,10 @@ function municipalityFromCanonicalKey(canonicalKey: string | null): string | nul
 export function toPainelCards(
   destinos: DestinoListItem[],
   atrativos: AtrativoListItem[],
-  failures: FailureItem[] = [],
+  // Accepts BOTH the new RecordEvent-backed FailureCard[] (GET /failures/cards —
+  // real name/uf identity, source_ref drawer key) AND the legacy PoisonQuarantine
+  // FailureItem[] (task_name/error_message), discriminated in `failureToCard`.
+  failures: (FailureCard | FailureItem)[] = [],
   nascente: NascenteListItem[] = [],
   dedupCandidateIds: ReadonlySet<string> = new Set(),
 ): PainelCard[] {
@@ -222,19 +234,43 @@ export function toPainelCards(
   return [...nascenteCards, ...destinoCards, ...atrativoCards, ...falhaCards];
 }
 
-/** Infer the entity type of a quarantined task from its task_name. */
+/** Infer the entity type of a quarantined task from its task_name (legacy path). */
 function failureEntityType(taskName: string): PainelEntityType {
   return /attraction|atrativo/i.test(taskName) ? "atrativo" : "destino";
 }
 
 /**
- * Project a PoisonQuarantine FailureItem (GET /api/v1/failures) into a real,
- * draggable falha card. PII guard (T-17.1-06-03): only the quarantine id, task
- * name, and truncated error reason are read — no payload, no phone.
+ * Project a Falha row into a real, draggable falha card.
+ *
+ * Two shapes are accepted and discriminated on `source_ref`:
+ *   - NEW FailureCard (GET /api/v1/failures/cards): carries the REAL atrativo
+ *     name/uf and the universal `source_ref` drawer/log key (fixing the old
+ *     opaque `name = task_name`). `entity_type` (e.g. "attraction") maps to the
+ *     board's atrativo/destino.
+ *   - LEGACY FailureItem (GET /api/v1/failures): only the quarantine id, task
+ *     name, and truncated error reason.
+ * PII guard: no payload, no phone — only público-geo + engineering fields.
  */
-function failureToCard(f: FailureItem): PainelCard {
+function failureToCard(f: FailureCard | FailureItem): PainelCard {
+  if ("source_ref" in f) {
+    return {
+      id: f.source_ref,
+      sourceRef: f.source_ref,
+      type: f.entity_type === "attraction" ? "atrativo" : "destino",
+      name: f.name,
+      uf: f.uf,
+      municipality: null,
+      routing: "falha",
+      column: "falha",
+      score: null,
+      source: null,
+      duplicate: false,
+      error: f.error,
+    };
+  }
   return {
     id: f.id,
+    sourceRef: null,
     type: failureEntityType(f.task_name),
     name: f.task_name,
     uf: null,
@@ -309,11 +345,13 @@ export function usePainelBoard(
     queryFn: () => fetchAtrativoList({ limit: 500 }),
     refetchInterval: intervalMs,
   });
-  // Falha column: real PoisonQuarantine records (draggable for reprocess). The
-  // board still loads if /failures fails — falha just renders empty (additive).
+  // Falha column: the RecordEvent fail-timeline cards (GET /failures/cards) —
+  // real name/uf identity + the source_ref drawer/log key (replaces the opaque
+  // PoisonQuarantine task_name). The board still loads if this fails — falha just
+  // renders empty (additive).
   const failuresQuery = useQuery({
     queryKey: engineKeys.failures,
-    queryFn: () => fetchFailures(),
+    queryFn: () => fetchFailureCards(),
     refetchInterval: intervalMs,
   });
   // Nascente column (bug 4): the REAL unrouted records — nascente rows with no
@@ -345,7 +383,7 @@ export function usePainelBoard(
       ? toPainelCards(
           destinosQuery.data.items,
           atrativosQuery.data.items,
-          failuresQuery.data?.items ?? [],
+          failuresQuery.data ?? [],
           // Bug 4: feed the REAL unrouted nascente rows as Nascente-column cards.
           // Guard: the board still builds once destinos+atrativos resolve even if
           // the nascente query is still pending (?? []).

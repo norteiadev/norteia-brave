@@ -7,7 +7,9 @@ import type { AtrativoListItem } from "@/lib/atrativos-api";
 import {
   atrativosListSuccess,
   atrativoTransitionSuccess,
+  failureCardsSuccess,
 } from "@/mocks/handlers/atrativos";
+import type { FailureCard } from "@/lib/atrativos-api";
 import {
   destinoReprocessSuccess,
   destinoTransitionSuccess,
@@ -19,8 +21,7 @@ import {
 } from "@/mocks/handlers/dlq";
 import { dedupPairsEmpty } from "@/mocks/handlers/dedup";
 import { engineStatus, nascenteEmpty, nascenteList } from "@/mocks/handlers/engine";
-import { failuresEmpty, failuresSuccess } from "@/mocks/handlers/workers";
-import type { FailuresData } from "@/lib/workers-api";
+import { failuresEmpty } from "@/mocks/handlers/workers";
 import { server } from "@/mocks/server";
 
 import { renderWithClient } from "@/components/cms/__tests__/test-utils";
@@ -200,28 +201,28 @@ describe("PainelView", () => {
     );
   });
 
-  // A real falha card sourced from GET /api/v1/failures (PoisonQuarantine). Its
-  // task_name has no attraction marker → it projects as a destino falha card, so
-  // ↺ Reprocessar maps to reprocessDestino(failureId).
+  // A real falha card sourced from GET /api/v1/failures/cards (RecordEvent
+  // fail-timeline; legacy PoisonQuarantine rows are LEFT-merged server-side). A
+  // non-"attraction" entity_type projects as a destino falha card, so its id is
+  // the source_ref and ↺ Reprocessar maps to reprocessDestino(source_ref).
   const FAILURE_ID = "33333333-3333-3333-3333-333333333333";
-  const falhaSeed: FailuresData = {
-    total: 1,
-    by_task: { "brave.process_nascente": 1 },
-    items: [
-      {
-        id: FAILURE_ID,
-        task_name: "brave.process_nascente",
-        error_message: "ValidationError: origem field required",
-        quarantined_at: "2026-06-19T00:00:00Z",
-      },
-    ],
-  };
+  const falhaSeed: FailureCard[] = [
+    {
+      source_ref: FAILURE_ID,
+      name: "Registro com falha",
+      uf: null,
+      entity_type: "destination",
+      last_stage: "quarantined",
+      error: "ValidationError: origem field required",
+      quarantined_at: "2026-06-19T00:00:00Z",
+    },
+  ];
 
   it("↺ Reprocessar does NOT open the drawer (stopPropagation)", async () => {
     server.use(
       destinosListSuccess([]),
       atrativosListSuccess([]),
-      failuresSuccess(falhaSeed),
+      failureCardsSuccess(falhaSeed),
       engineStatus(),
       nascenteEmpty(),
       dedupPairsEmpty(),
@@ -244,7 +245,7 @@ describe("PainelView", () => {
     server.use(
       destinosListSuccess([]),
       atrativosListSuccess([]),
-      failuresSuccess(falhaSeed),
+      failureCardsSuccess(falhaSeed),
       engineStatus(),
       nascenteEmpty(),
       dedupPairsEmpty(),

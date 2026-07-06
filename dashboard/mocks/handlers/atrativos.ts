@@ -1,6 +1,11 @@
 import { http, HttpResponse } from "msw";
 
-import type { AtrativoDetail, AtrativoListItem } from "@/lib/atrativos-api";
+import type {
+  AtrativoDetail,
+  AtrativoListItem,
+  FailureCard,
+  FailureCardLog,
+} from "@/lib/atrativos-api";
 
 /**
  * MSW handlers for the Atrativos CMS slice (D-04, offline test harness).
@@ -20,6 +25,8 @@ import type { AtrativoDetail, AtrativoListItem } from "@/lib/atrativos-api";
  */
 
 const BASE = "http://localhost:3000/api/api/v1/atrativos";
+// Failure Log endpoints live under the same double-prefix BFF mount.
+const FAILURES_BASE = "http://localhost:3000/api/api/v1/failures";
 
 export const sampleAtrativos: AtrativoListItem[] = [
   {
@@ -106,6 +113,62 @@ export const sampleAtrativoDetail: AtrativoDetail = {
     },
   ],
   parent_destino: { mar_id: "11111111-1111-1111-1111-111111111111", name: "Salvador" },
+  // Append-only Brave pipeline timeline (RecordEvent rows, canonical_key-keyed).
+  events: [
+    {
+      stage: "tripadvisor_synced",
+      status: "ok",
+      message: "Mercado Modelo",
+      data: null,
+      created_at: "2026-06-10T09:00:00Z",
+    },
+    {
+      stage: "municipio_resolved",
+      status: "ok",
+      message: null,
+      data: { ibge_code: "2927408" },
+      created_at: "2026-06-10T09:00:01Z",
+    },
+    {
+      stage: "parent_destino_linked",
+      status: "ok",
+      message: null,
+      data: { parent_rio_id: "11111111-1111-1111-1111-111111111111" },
+      created_at: "2026-06-10T09:00:02Z",
+    },
+    {
+      stage: "validated",
+      status: "ok",
+      message: null,
+      data: null,
+      created_at: "2026-06-10T09:00:03Z",
+    },
+    {
+      stage: "ingested",
+      status: "ok",
+      message: null,
+      data: null,
+      created_at: "2026-06-10T09:00:04Z",
+    },
+    {
+      stage: "scored",
+      status: "ok",
+      message: null,
+      data: { score: 61.0, score_version: "v1" },
+      created_at: "2026-06-10T09:00:05Z",
+    },
+    {
+      stage: "routed",
+      status: "ok",
+      message: null,
+      data: { routing: "in_progress", dlq_reason: null },
+      created_at: "2026-06-10T09:00:06Z",
+    },
+  ],
+  dlq_reason: null,
+  source: "tripadvisor",
+  processed_at: "2026-06-10T09:00:06Z",
+  score_version: "v1",
 };
 
 /** GET list — success. Supports sub_state + uf + parent_mar_id query param filtering. */
@@ -185,6 +248,60 @@ export function atrativoTransitionSuccess() {
   return http.patch(`${BASE}/:id/transition`, () =>
     HttpResponse.json({ status: "ok", routing: "dlq" }),
   );
+}
+
+/**
+ * Sample Falha-column cards (GET /api/v1/failures/cards) — a bare JSON list.
+ * Carries the REAL atrativo identity (name/uf) instead of an opaque task_name.
+ */
+export const sampleFailureCards: FailureCard[] = [
+  {
+    source_ref: "tripadvisor:attraction:99999",
+    name: "Praia Do Bosque",
+    uf: "ES",
+    entity_type: "attraction",
+    last_stage: "quarantined",
+    error: "ibge_unmatched: 'Praia Do Bosque'",
+    quarantined_at: "2026-06-30T12:00:00Z",
+  },
+];
+
+/**
+ * Sample failure log (GET /api/v1/failures/cards/log?source_ref=…) — a single
+ * terminal quarantine event (status=fail) + accumulated identity. LGPD: only
+ * público-geo + engineering fields (locationId/name/uf/reason).
+ */
+export const sampleFailureCardLog: FailureCardLog = {
+  events: [
+    {
+      stage: "quarantined",
+      status: "fail",
+      message: "ibge_unmatched: 'Praia Do Bosque'",
+      data: {
+        locationId: "99999",
+        name: "Praia Do Bosque",
+        uf: "ES",
+        reason: "ibge_unmatched",
+      },
+      created_at: "2026-06-30T12:00:00Z",
+    },
+  ],
+  identity: {
+    name: "Praia Do Bosque",
+    uf: "ES",
+    entity_type: "attraction",
+    last_error: "ibge_unmatched: 'Praia Do Bosque'",
+  },
+};
+
+/** GET /failures/cards — success (bare list). */
+export function failureCardsSuccess(cards: FailureCard[] = sampleFailureCards) {
+  return http.get(`${FAILURES_BASE}/cards`, () => HttpResponse.json(cards));
+}
+
+/** GET /failures/cards/log — success (events + identity). */
+export function failureCardLogSuccess(log: FailureCardLog = sampleFailureCardLog) {
+  return http.get(`${FAILURES_BASE}/cards/log`, () => HttpResponse.json(log));
 }
 
 /** Catch-all 401 for any atrativos route (session-expired path). */

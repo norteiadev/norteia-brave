@@ -8,6 +8,10 @@ import {
   conversationDetailSuccess,
   conversationDetailNotFound,
 } from "@/mocks/handlers/conversations";
+import {
+  atrativoDetailSuccess,
+  failureCardLogSuccess,
+} from "@/mocks/handlers/atrativos";
 import { server } from "@/mocks/server";
 
 import { renderWithClient } from "@/components/cms/__tests__/test-utils";
@@ -40,6 +44,39 @@ const destinoRioCard: PainelCard = {
   ...destinoCard,
   routing: "in_progress",
   column: "rio",
+};
+
+// A rio-stage atrativo — the Log tab reads its timeline off the atrativo detail
+// (events[]) via fetchAtrativoDetail(id).
+const atrativoRioCard: PainelCard = {
+  id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  type: "atrativo",
+  name: "Mercado Modelo",
+  uf: "BA",
+  municipality: "Salvador",
+  routing: "in_progress",
+  column: "rio",
+  score: 61.0,
+  source: null,
+  duplicate: false,
+  error: null,
+};
+
+// A Falha-column card without a Rio row — its Log timeline comes from the
+// source_ref-keyed failure log (fetchFailureCardLog(sourceRef)).
+const falhaCard: PainelCard = {
+  id: "tripadvisor:attraction:99999",
+  sourceRef: "tripadvisor:attraction:99999",
+  type: "atrativo",
+  name: "Praia Do Bosque",
+  uf: "ES",
+  municipality: null,
+  routing: "falha",
+  column: "falha",
+  score: null,
+  source: null,
+  duplicate: false,
+  error: "ibge_unmatched: 'Praia Do Bosque'",
 };
 
 /** Every request the suite observes (method + url), for PATCH assertions. */
@@ -142,5 +179,42 @@ describe("PainelDrawer", () => {
     expect(await findByTestId("drawer-convo-empty")).toHaveTextContent(
       "Nenhuma conversa de WhatsApp iniciada para este registro ainda.",
     );
+  });
+
+  it("Log tab renders the JSON block + PT-BR pipeline timeline for a rio card", async () => {
+    server.use(atrativoDetailSuccess());
+    const { getByTestId, findByTestId, findAllByTestId } = renderWithClient(
+      <PainelDrawer card={atrativoRioCard} onClose={vi.fn()} />,
+    );
+
+    fireEvent.click(getByTestId("drawer-tab-log"));
+
+    // (1) legible JSON block mirrors the atrativo detail projection.
+    expect(await findByTestId("drawer-log-json")).toBeInTheDocument();
+    // (2) one timeline row per RecordEvent (sampleAtrativoDetail has 7).
+    const steps = await findAllByTestId("drawer-log-step");
+    expect(steps).toHaveLength(7);
+    // PT-BR stage labels (not raw slugs).
+    expect(steps[0]).toHaveTextContent("Sincronizado do TripAdvisor");
+    expect(steps.some((s) => s.textContent?.includes("Pontuado (§7.6)"))).toBe(
+      true,
+    );
+    expect(steps.some((s) => s.textContent?.includes("Roteado"))).toBe(true);
+  });
+
+  it("Log tab (falha card) renders the ibge_unmatched reason + a fail step", async () => {
+    server.use(failureCardLogSuccess());
+    const { getByTestId, findAllByTestId } = renderWithClient(
+      <PainelDrawer card={falhaCard} onClose={vi.fn()} />,
+    );
+
+    fireEvent.click(getByTestId("drawer-tab-log"));
+
+    const steps = await findAllByTestId("drawer-log-step");
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toHaveTextContent("Quarentena (falha)");
+    expect(steps[0]).toHaveTextContent(/ibge_unmatched/);
+    // Failure timeline rows carry the fail status (drives the ✕ glyph color).
+    expect(steps[0]).toHaveAttribute("data-status", "fail");
   });
 });

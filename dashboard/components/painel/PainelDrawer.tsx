@@ -27,13 +27,52 @@ import {
   conversationKeys,
   fetchConversationDetail,
 } from "@/lib/conversations-api";
+import {
+  fetchAtrativoDetail,
+  fetchFailureCardLog,
+  type AtrativoDetail,
+  type FailureCardLog,
+  type RecordEvent,
+} from "@/lib/atrativos-api";
 import { usePainelMutations } from "@/lib/painel-actions";
 import { COLUMN_DEFS, type PainelCard } from "@/lib/painel-data";
 
 /** Atrativo accent has no token (design literal); destino uses the navy var. */
 const ATRATIVO_ACCENT = "#b65a2e";
 
-type DrawerTab = "dados" | "conversa";
+type DrawerTab = "dados" | "conversa" | "log";
+
+/**
+ * PT-BR labels per Brave pipeline stage (RecordEvent.stage) — the Log tab's
+ * timeline rows read these instead of the raw stage slug.
+ */
+const STAGE_LABELS: Record<string, string> = {
+  tripadvisor_synced: "Sincronizado do TripAdvisor",
+  review_enriched: "Avaliações enriquecidas",
+  municipio_resolved: "Município resolvido",
+  geo_enriched: "Geolocalização complementada",
+  parent_destino_linked: "Destino-pai vinculado",
+  validated: "Validado",
+  ingested: "Ingerido (Nascente)",
+  deduped: "Duplicado",
+  scored: "Pontuado (§7.6)",
+  routed: "Roteado",
+  quarantined: "Quarentena (falha)",
+};
+
+/** Status glyph (ok ✓ / fail ✕ / skip ◦) for a Log timeline row. */
+function statusGlyph(status: string): string {
+  if (status === "ok") return "✓";
+  if (status === "fail") return "✕";
+  return "◦";
+}
+
+/** Status color token for a Log timeline row's glyph. */
+function statusColor(status: string): string {
+  if (status === "ok") return "var(--status-mar)";
+  if (status === "fail") return "var(--status-descarte)";
+  return "var(--painel-muted-2)";
+}
 
 export interface PainelDrawerProps {
   card: PainelCard | null;
@@ -68,6 +107,40 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
   });
   const messages = convo.data?.messages ?? [];
   const convoEmpty = convo.isError || (convo.isSuccess && messages.length === 0);
+
+  // Log tab source (Decision B): a Falha-column card has no Rio row, so its
+  // timeline comes from the source_ref-keyed failure log; every other card reads
+  // events[] off the atrativo detail. Gated on tab==="log" so it only fires when
+  // the operator opens the Log tab.
+  const isFailureCard = card?.column === "falha";
+  const log = useQuery<AtrativoDetail | FailureCardLog>({
+    queryKey: ["record-events", cardId, isFailureCard],
+    queryFn: () =>
+      isFailureCard && card?.sourceRef
+        ? fetchFailureCardLog(card.sourceRef)
+        : fetchAtrativoDetail(cardId),
+    enabled: tab === "log" && isOpen,
+    retry: false,
+  });
+  // Normalize both response shapes into an event list + a legible JSON block.
+  // FailureCardLog (falha card) → { identity, events }; AtrativoDetail →
+  // { normalized, score_breakdown, dlq_reason, source, processed_at } + events.
+  const logEvents: RecordEvent[] = log.data?.events ?? [];
+  let logJson: Record<string, unknown> = {};
+  if (log.data) {
+    if (isFailureCard) {
+      logJson = { identity: (log.data as FailureCardLog).identity };
+    } else {
+      const d = log.data as AtrativoDetail;
+      logJson = {
+        normalized: d.normalized,
+        score_breakdown: d.score_breakdown,
+        dlq_reason: d.dlq_reason,
+        source: d.source,
+        processed_at: d.processed_at,
+      };
+    }
+  }
 
   function handleDescartar() {
     if (!card) return;
@@ -155,6 +228,7 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
             [
               { key: "dados", label: "Dados" },
               { key: "conversa", label: "Conversa" },
+              { key: "log", label: "Log" },
             ] as const
           ).map((t) => (
             <button
@@ -235,7 +309,7 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
               </div>
             </div>
           </div>
-        ) : (
+        ) : tab === "conversa" ? (
           <div className="flex flex-1 flex-col overflow-hidden bg-[#fbfaf8]">
             {convoEmpty ? (
               <div
@@ -311,6 +385,63 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
             ) : (
               <div className="grid flex-1 place-items-center p-10 text-center text-[12.5px] text-[var(--painel-muted-2)]">
                 Carregando conversa…
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-1 flex-col gap-4 overflow-y-auto bg-[#fbfaf8] px-5 py-[18px]">
+            {/* legible JSON block — mirrors the Dados <pre> shape */}
+            <pre
+              data-testid="drawer-log-json"
+              className="m-0 overflow-x-auto rounded-[7px] border border-[var(--painel-border-inner)] bg-[var(--card)] px-3 py-2.5 font-mono text-[10.5px] leading-[1.5] text-[#3a5a3f]"
+            >
+              {JSON.stringify(logJson, null, 2)}
+            </pre>
+
+            {/* per-stage timeline — mirrors PainelLogs log-line styling */}
+            {logEvents.length > 0 ? (
+              <div className="flex flex-col gap-1.5">
+                {logEvents.map((e, i) => (
+                  <div
+                    key={`${e.stage}-${i}`}
+                    data-testid="drawer-log-step"
+                    data-status={e.status}
+                    className="flex items-baseline gap-2 font-mono text-[11px] leading-[1.6]"
+                  >
+                    <span
+                      className="flex-shrink-0 select-none"
+                      style={{ color: statusColor(e.status) }}
+                    >
+                      {statusGlyph(e.status)}
+                    </span>
+                    <span
+                      className="font-semibold"
+                      style={{ color: "var(--painel-text)" }}
+                    >
+                      {STAGE_LABELS[e.stage] ?? e.stage}
+                    </span>
+                    {e.message ? (
+                      <span style={{ color: "var(--painel-muted-2)" }}>
+                        {e.message}
+                      </span>
+                    ) : null}
+                    {e.created_at ? (
+                      <span
+                        className="ml-auto flex-shrink-0"
+                        style={{ color: "var(--painel-muted-2)" }}
+                      >
+                        {e.created_at}
+                      </span>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div
+                data-testid="drawer-log-empty"
+                className="grid flex-1 place-items-center p-6 text-center text-[12.5px] text-[var(--painel-muted-2)]"
+              >
+                Nenhum evento de pipeline registrado para este registro ainda.
               </div>
             )}
           </div>

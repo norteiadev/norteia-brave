@@ -54,12 +54,71 @@ export interface AuditLogRow {
   created_at: string | null;
 }
 
+/**
+ * One append-only pipeline timeline event (RecordEvent table). Emitted at every
+ * Brave stage — success, skip, AND failure (quarantine). LGPD: `data` only ever
+ * carries público-geo + engineering fields (score, routing, dlq_reason, ibge
+ * motivo, name/uf, locationId) — NEVER phone/PII/review text.
+ */
+export interface RecordEvent {
+  stage: string;
+  status: "ok" | "fail" | "skip";
+  message: string | null;
+  data: Record<string, unknown> | null;
+  created_at: string | null;
+}
+
 /** Full Atrativo detail (GET /api/v1/atrativos/{id}). */
 export interface AtrativoDetail extends AtrativoListItem {
   score_breakdown: Record<string, unknown>;
   normalized: Record<string, unknown>; // _safe_normalized applied by backend — no phone_e164
   audit_log: AuditLogRow[];
   parent_destino: { mar_id: string; name: string } | null;
+  /** Append-only pipeline timeline (RecordEvent rows keyed on canonical_key). */
+  events: RecordEvent[];
+  /** DLQ routing reason (populated when routed to DLQ), else null. */
+  dlq_reason: string | null;
+  /** Ingest source of the backing Nascente record (rio.nascente.source). */
+  source: string | null;
+  /** ISO timestamp the record was last processed, else null. */
+  processed_at: string | null;
+  /** §7.6 score-engine version tag, else null. */
+  score_version: string | null;
+}
+
+/**
+ * One Falha-column card sourced from the RecordEvent fail-timeline
+ * (GET /api/v1/failures/cards). Unlike the legacy PoisonQuarantine FailureItem,
+ * this carries the REAL atrativo identity (name/uf) instead of the opaque
+ * task_name, plus the universal `source_ref` drawer key.
+ */
+export interface FailureCard {
+  source_ref: string;
+  name: string | null;
+  uf: string | null;
+  entity_type: string | null;
+  last_stage: string;
+  error: string | null;
+  quarantined_at: string | null;
+}
+
+/** Accumulated identity for a failure card's Log tab (no PII). */
+export interface FailureCardLogIdentity {
+  name: string | null;
+  uf: string | null;
+  entity_type: string | null;
+  last_error: string | null;
+}
+
+/**
+ * Log payload for a Falha card without a Rio row
+ * (GET /api/v1/failures/cards/log?source_ref=…): the append-only event timeline
+ * plus an accumulated identity block. Returns empty events + null identity when
+ * no events and no matching legacy poison row exist (HTTP 200, never 404).
+ */
+export interface FailureCardLog {
+  events: RecordEvent[];
+  identity: FailureCardLogIdentity;
 }
 
 /** Generic mutation result. */
@@ -110,6 +169,26 @@ export function fetchAtrativoList(params: {
 
 export function fetchAtrativoDetail(id: string): Promise<AtrativoDetail> {
   return apiFetch<AtrativoDetail>(`api/v1/atrativos/${id}`);
+}
+
+/**
+ * Load the Falha-column cards from the RecordEvent fail-timeline
+ * (GET /api/v1/failures/cards). Returns a bare JSON list (not an envelope).
+ * These feed the Painel Falha lane with real name/uf identity.
+ */
+export function fetchFailureCards(): Promise<FailureCard[]> {
+  return apiFetch<FailureCard[]>("api/v1/failures/cards");
+}
+
+/**
+ * Load the append-only Log timeline for a Falha card that has no Rio row
+ * (GET /api/v1/failures/cards/log?source_ref=…). Always 200 — empty events +
+ * null identity when the source_ref is unknown.
+ */
+export function fetchFailureCardLog(sourceRef: string): Promise<FailureCardLog> {
+  return apiFetch<FailureCardLog>(
+    `api/v1/failures/cards/log${qs({ source_ref: sourceRef })}`,
+  );
 }
 
 export function advanceAtrativo(
