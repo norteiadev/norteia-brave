@@ -60,6 +60,7 @@ from brave.domains.tripadvisor.scoring import (
     corroboracao_from_reviews,
 )
 from brave.domains.tripadvisor.uf_names import state_name_to_uf
+from brave.observability.record_events import record_event_once
 
 if TYPE_CHECKING:
     from brave.clients.base import GeocoderClientProtocol, TripAdvisorClientProtocol
@@ -185,13 +186,32 @@ class TripAdvisorAtrativosIngest:
                         # rolled back, so the next same-município atrativo re-creates them.
                         for k in set(self._destino_rio_map) - keys_before:  # type: ignore[operator]
                             del self._destino_rio_map[k]
-                    location_id = str(entity.get("locationId", "unknown"))
+                    # Unified locationId fallback (str(... or "")) so this failure
+                    # source_ref matches the success path's default and record_event_once
+                    # dedups correctly (no "unknown" vs "" identity split).
+                    location_id = str(entity.get("locationId") or "")
                     quarantine_poison(
                         session=self._session,
                         nascente_id=None,
                         task_name="brave.ta.atrativos.produce",
                         error=str(exc),
                         payload={"uf": uf, "locationId": location_id, "error": str(exc)},
+                    )
+                    # Terminal Log-tab event alongside the poison chip so the Falha
+                    # card carries a stable identity (source_ref) + the error. Idempotent
+                    # (record_event_once) so a persistently-failing card does not re-emit
+                    # its terminal event every sweep. LGPD: locationId + error string
+                    # only — never name/address/PII.
+                    record_event_once(
+                        self._session,
+                        source="tripadvisor",
+                        source_ref=f"tripadvisor:attraction:{location_id}",
+                        stage="quarantined",
+                        status="fail",
+                        message=str(exc),
+                        entity_type="attraction",
+                        uf=uf,
+                        data={"locationId": location_id, "error": str(exc)},
                     )
                     if enrich_reviews:
                         # Persist the poison row independently (durable per-atrativo).
@@ -280,6 +300,29 @@ class TripAdvisorAtrativosIngest:
         lat = entity.get("lat")
         lng = entity.get("lng")
 
+        # Universal drawer/Log key — exists from the first stage (before any row) and
+        # is shared by every success AND the terminal quarantine event below.
+        source_ref = f"tripadvisor:attraction:{location_id}"
+
+        # Success-stage Log events are BUFFERED here and flushed by store_raw ONLY when a
+        # NEW Nascente row is created (behind the content_hash early-return), so a re-sweep
+        # of an already-ingested card does not re-emit them. Each entry is record_event(...)
+        # kwargs MINUS session/nascente_id. Terminal quarantine events stay direct (below).
+        timeline: list[dict[str, Any]] = []
+
+        # Stage 1 — card synced from TripAdvisor. LGPD: name is public-geo.
+        timeline.append(
+            {
+                "source": "tripadvisor",
+                "source_ref": source_ref,
+                "stage": "tripadvisor_synced",
+                "status": "ok",
+                "message": name,
+                "entity_type": "attraction",
+                "uf": uf,
+            }
+        )
+
         # Build review signals (LGPD boundary)
         review_count = int(entity.get("review_count", 0))
         rating = float(entity.get("rating", 0.0))
@@ -312,6 +355,20 @@ class TripAdvisorAtrativosIngest:
             most_recent_review_at=most_recent_dt,
         )
 
+        # Stage 2 — review enrichment. ok when a recent-review date was fetched
+        # (enrich path), skip otherwise. LGPD: aggregate signals only, no review text.
+        timeline.append(
+            {
+                "source": "tripadvisor",
+                "source_ref": source_ref,
+                "stage": "review_enriched",
+                "status": ("ok" if (enrich_reviews and most_recent_dt is not None) else "skip"),
+                "entity_type": "attraction",
+                "uf": uf,
+                "data": {"review_count": review_count, "rating": rating},
+            }
+        )
+
         # Compute §7.6 criterion values
         corroboracao_value = corroboracao_from_reviews(review_count, rating)
         atualidade_value = atualidade_from_recency(most_recent_dt)
@@ -342,6 +399,20 @@ class TripAdvisorAtrativosIngest:
                     candidate_lng=lng,
                     max_distance_km=50.0,
                 )
+                if ibge_match is not None:
+                    # Stage — geolocation complemented via Nominatim (fallback A).
+                    timeline.append(
+                        {
+                            "source": "tripadvisor",
+                            "source_ref": source_ref,
+                            "stage": "geo_enriched",
+                            "status": "ok",
+                            "message": name,
+                            "entity_type": "attraction",
+                            "uf": uf,
+                            "data": {"via": "nominatim"},
+                        }
+                    )
 
         # TA-ftx: geo-linkage via d3d4987463b78a39 — single GraphQL query returns
         # cityName + stateName directly. Replaces the broken parents[0].localizedName
@@ -365,6 +436,20 @@ class TripAdvisorAtrativosIngest:
                             derived_uf,
                             self._ibge_records,
                         )
+                        if ibge_match is not None:
+                            # Stage — geolocation complemented via TA geo query (fallback B).
+                            timeline.append(
+                                {
+                                    "source": "tripadvisor",
+                                    "source_ref": source_ref,
+                                    "stage": "geo_enriched",
+                                    "status": "ok",
+                                    "message": name,
+                                    "entity_type": "attraction",
+                                    "uf": uf,
+                                    "data": {"via": "ta_geo"},
+                                }
+                            )
 
         # WR-01: the normalized AttractionsFusion card uses camelCase `locationId`
         # and carries no `uf`/`location_id`/`lat`/`lng`, so feeding the raw card to
@@ -389,7 +474,40 @@ class TripAdvisorAtrativosIngest:
                 error=f"ibge_unmatched: could not resolve '{name}' in UF={uf}",
                 payload={"uf": uf, "locationId": location_id, "name": name},
             )
+            # TERMINAL Log-tab event alongside the poison chip (kept). Idempotent
+            # (record_event_once) so a persistently-unmatched card does not re-emit its
+            # terminal event every sweep. LGPD: name is public-geo; reason + locationId
+            # only — never PII/review text.
+            record_event_once(
+                self._session,
+                source="tripadvisor",
+                source_ref=source_ref,
+                stage="quarantined",
+                status="fail",
+                message=f"ibge_unmatched: '{name}'",
+                entity_type="attraction",
+                uf=uf,
+                data={
+                    "reason": "ibge_unmatched",
+                    "name": name,
+                    "locationId": location_id,
+                },
+            )
             return
+
+        # Município resolved — public-geo (IBGE code + name).
+        timeline.append(
+            {
+                "source": "tripadvisor",
+                "source_ref": source_ref,
+                "stage": "municipio_resolved",
+                "status": "ok",
+                "message": ibge_match.nome,
+                "entity_type": "attraction",
+                "uf": uf,
+                "data": {"ibge_code": ibge_match.ibge_code, "municipio": ibge_match.nome},
+            }
+        )
 
         # Resolve parent destino from same-sweep map (TA-03). When the destino is
         # absent, create it on demand from the IBGE município (destino-first), cache
@@ -400,6 +518,19 @@ class TripAdvisorAtrativosIngest:
             self._destino_rio_map[ibge_match.ibge_code] = map_entry
 
         parent_rio_id, parent_source_ref = map_entry
+
+        # Parent destino linked (destino-first). LGPD: engineering id only.
+        timeline.append(
+            {
+                "source": "tripadvisor",
+                "source_ref": source_ref,
+                "stage": "parent_destino_linked",
+                "status": "ok",
+                "entity_type": "attraction",
+                "uf": uf,
+                "data": {"parent_rio_id": str(parent_rio_id)},
+            }
+        )
 
         # Validate through Pydantic payload model (LGPD enforcement at parse time)
         payload_model = TripAdvisorAtrativoPayload(
@@ -418,7 +549,18 @@ class TripAdvisorAtrativosIngest:
             parent_source_ref=parent_source_ref,
         )
 
-        source_ref = f"tripadvisor:attraction:{location_id}"
+        # Validated through the Pydantic payload model (LGPD enforced at parse time).
+        timeline.append(
+            {
+                "source": "tripadvisor",
+                "source_ref": source_ref,
+                "stage": "validated",
+                "status": "ok",
+                "message": payload_model.name,
+                "entity_type": "attraction",
+                "uf": uf,
+            }
+        )
 
         payload: dict[str, Any] = {
             "name": payload_model.name,
@@ -467,6 +609,10 @@ class TripAdvisorAtrativosIngest:
             entity_type="attraction",
             uf=uf,
             payload=payload,
+            # Flush the buffered success-stage Log events ONLY on a NEW Nascente row
+            # (behind store_raw's content_hash early-return) so a re-sweep of an
+            # already-ingested card does not duplicate the timeline.
+            timeline=timeline,
         )
 
         if run_rio:
@@ -555,6 +701,20 @@ class TripAdvisorAtrativosIngest:
                 error=f"ibge_unmatched: could not geo-resolve attraction locationId={location_id}",
                 # LGPD: locationId only — never name/address.
                 payload={"locationId": location_id},
+            )
+            # TERMINAL Log-tab event alongside the poison chip. Idempotent
+            # (record_event_once) so a persistently-unmatched card does not re-emit its
+            # terminal event every sweep. Bulk lane has no UF context here (ibge
+            # unresolved) → uf=None. LGPD: locationId only.
+            record_event_once(
+                self._session,
+                source="tripadvisor",
+                source_ref=f"tripadvisor:attraction:{location_id}",
+                stage="quarantined",
+                status="fail",
+                message=f"ibge_unmatched: locationId={location_id}",
+                entity_type="attraction",
+                data={"reason": "ibge_unmatched", "locationId": location_id},
             )
             return False
 
@@ -696,7 +856,10 @@ class TripAdvisorAtrativosIngest:
                     wrote_row = await self._ingest_one_bulk(card, run_rio=run_rio)
                 except Exception as exc:  # noqa: BLE001
                     wrote_row = False
-                    location_id = str(card.get("locationId", "unknown"))
+                    # Unified locationId fallback (str(... or "")) so this failure
+                    # source_ref matches the success path's default and record_event_once
+                    # dedups correctly (no "unknown" vs "" identity split).
+                    location_id = str(card.get("locationId") or "")
                     quarantine_poison(
                         session=self._session,
                         nascente_id=None,
@@ -704,6 +867,20 @@ class TripAdvisorAtrativosIngest:
                         error=str(exc),
                         # LGPD: offset + locationId + error-class only — never name/address.
                         payload={"offset": offset, "locationId": location_id, "error": str(exc)},
+                    )
+                    # TERMINAL Log-tab event alongside the poison chip. Idempotent
+                    # (record_event_once) so a persistently-failing card does not re-emit
+                    # its terminal event every sweep. LGPD: offset + locationId + error
+                    # string only — never name/address/PII.
+                    record_event_once(
+                        self._session,
+                        source="tripadvisor",
+                        source_ref=f"tripadvisor:attraction:{location_id}",
+                        stage="quarantined",
+                        status="fail",
+                        message=str(exc),
+                        entity_type="attraction",
+                        data={"offset": offset, "locationId": location_id, "error": str(exc)},
                     )
                 if wrote_row:
                     ingested += 1

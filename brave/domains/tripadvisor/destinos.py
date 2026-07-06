@@ -45,6 +45,7 @@ from brave.domains.tripadvisor.scoring import (
     completude_from_fields,
     corroboracao_from_reviews,
 )
+from brave.observability.record_events import record_event_once
 
 if TYPE_CHECKING:
     from brave.clients.base import TripAdvisorClientProtocol
@@ -124,6 +125,25 @@ class TripAdvisorDestinosIngest:
                     error=str(exc),
                     payload={"uf": uf, "locationId": location_id, "error": str(exc)},
                 )
+                # TERMINAL Log-tab event alongside the poison chip so the Falha card
+                # carries a stable identity + the error. Idempotent (record_event_once)
+                # so a persistently-failing card does not re-emit every sweep. LGPD:
+                # locationId + reason string + public-geo name/uf only — never PII.
+                record_event_once(
+                    session=self._session,
+                    source="tripadvisor",
+                    source_ref=f"tripadvisor:destination:{location_id}",
+                    stage="quarantined",
+                    status="fail",
+                    entity_type="destination",
+                    uf=uf,
+                    message=str(exc),
+                    data={
+                        "reason": "produce_error",
+                        "name": str(entity.get("name", "")),
+                        "locationId": location_id,
+                    },
+                )
 
     def _ingest_one(self, uf: str, entity: dict[str, Any], *, run_rio: bool) -> None:
         """Ingest a single TripAdvisor destination entity."""
@@ -189,6 +209,25 @@ class TripAdvisorDestinosIngest:
                 task_name="brave.ta.destinos.ibge_unmatched",
                 error=f"ibge_unmatched: could not resolve '{name}' in UF={uf}",
                 payload={"uf": uf, "locationId": location_id, "name": name},
+            )
+            # TERMINAL Log-tab event alongside the poison chip. Idempotent
+            # (record_event_once) so a persistently-unmatched card does not re-emit its
+            # terminal event every sweep. LGPD: name is public-geo; reason + locationId
+            # only — never PII/review text.
+            record_event_once(
+                session=self._session,
+                source="tripadvisor",
+                source_ref=f"tripadvisor:destination:{location_id}",
+                stage="quarantined",
+                status="fail",
+                entity_type="destination",
+                uf=uf,
+                message=f"ibge_unmatched: '{name}'",
+                data={
+                    "reason": "ibge_unmatched",
+                    "name": name,
+                    "locationId": location_id,
+                },
             )
             return
 

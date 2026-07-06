@@ -7,7 +7,7 @@ reprocess_record_inline: Pure in-memory reprocess (no DB session required; for u
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -21,6 +21,7 @@ from brave.core.rio.label import label_entity
 from brave.core.rio.normalize import normalize_address, normalize_coordinates, normalize_name
 from brave.core.score.engine import compute_score
 from brave.core.score.schemas import ScoreInput
+from brave.observability.record_events import record_event
 
 logger = structlog.get_logger(__name__)
 
@@ -75,7 +76,7 @@ def route_by_score(
         "atualidade": result.breakdown.atualidade,
         "validacao_humana": result.breakdown.validacao_humana,
     }
-    rio_record.processed_at = datetime.now(timezone.utc)
+    rio_record.processed_at = datetime.now(UTC)
 
     # Set dlq_reason when routing to DLQ
     if result.routing == "dlq":
@@ -211,6 +212,21 @@ def process_nascente_record(
             uf=duplicate.uf,
             name=((duplicate.normalized or {}).get("name")),
         )
+        # Append-only Log-tab timeline event (behind the canonical_key early-return).
+        # LGPD: public-geo fields only. Keyed by this record's source_ref so it shows
+        # under the same drawer even though it collapsed onto an existing Rio row.
+        record_event(
+            session,
+            source=nascente.source,
+            source_ref=canonical_key,
+            stage="deduped",
+            status="skip",
+            message=((duplicate.normalized or {}).get("name")),
+            entity_type=nascente.entity_type,
+            uf=nascente.uf,
+            nascente_id=nascente.id,
+            rio_id=duplicate.id,
+        )
         return duplicate
 
     # Create RioRecord
@@ -240,6 +256,40 @@ def process_nascente_record(
         name=((rio.normalized or {}).get("name")),
         routing=rio.routing,
         score=(float(rio.score) if rio.score is not None else None),
+    )
+
+    # Append-only Log-tab timeline events (behind the canonical_key early-return).
+    # LGPD: only §7.6 engineering fields (score, routing, dlq_reason, version).
+    _score = float(rio.score) if rio.score is not None else None
+    record_event(
+        session,
+        source=nascente.source,
+        source_ref=canonical_key,
+        stage="scored",
+        status="ok",
+        message=((rio.normalized or {}).get("name")),
+        entity_type=rio.entity_type,
+        uf=rio.uf,
+        nascente_id=nascente.id,
+        rio_id=rio.id,
+        data={"score": _score, "score_version": rio.score_version},
+    )
+    record_event(
+        session,
+        source=nascente.source,
+        source_ref=canonical_key,
+        stage="routed",
+        status=("fail" if rio.routing == "dlq" else "ok"),
+        message=rio.dlq_reason,
+        entity_type=rio.entity_type,
+        uf=rio.uf,
+        nascente_id=nascente.id,
+        rio_id=rio.id,
+        data={
+            "routing": rio.routing,
+            "dlq_reason": rio.dlq_reason,
+            "score": _score,
+        },
     )
 
     return rio
