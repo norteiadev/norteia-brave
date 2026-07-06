@@ -21,8 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tests.fakes.fake_places import FakePlacesClient, SIGNAL_FIXTURE_OPEN
-
+from tests.fakes.fake_places import SIGNAL_FIXTURE_OPEN, FakePlacesClient
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -84,8 +83,8 @@ async def test_discovery_skips_when_no_parent_destino() -> None:
     uf+municipio_ibge. store_raw must NOT be called; quarantine_poison MUST be called
     with an error containing 'parent_destino_absent'.
     """
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
     from brave.config.settings import ScoreConfig
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 
     places_result = _make_places_result()
 
@@ -134,9 +133,9 @@ async def test_discovery_stores_raw_with_place_id_only() -> None:
     - COMP-03 / D-04: no raw Places fields (addresses, names from Places) stored
       as canonical identity (only AtrativoResult extraction + place_id cache)
     """
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
     from brave.config.settings import ScoreConfig
     from brave.core.models import MarRecord
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 
     places_result = _make_places_result()
 
@@ -213,9 +212,9 @@ async def test_discovery_dedup_idempotent() -> None:
     We verify that store_raw is called again on the second produce (store_raw itself
     handles dedup internally), and no quarantine is triggered.
     """
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
     from brave.config.settings import ScoreConfig
     from brave.core.models import MarRecord
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 
     places_result = _make_places_result()
 
@@ -279,8 +278,8 @@ async def test_empty_ibge_guard_quarantines_without_db_query() -> None:
     (before calling session.scalar). The caller (produce()) then quarantines with
     error="parent_destino_absent". session.scalar MUST NOT be called at all.
     """
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
     from brave.config.settings import ScoreConfig
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 
     # Place result with empty municipio_ibge — triggers D-02 guard
     places_result = _make_places_result(municipio_ibge="", municipio_nome="")
@@ -335,8 +334,8 @@ async def test_produce_for_destino_links_to_known_parent() -> None:
     - session.scalar is NOT called (_resolve_parent_destino never invoked)
     - The targeted query "pontos turísticos em Porto Seguro BA" drives the search
     """
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
     from brave.config.settings import ScoreConfig
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 
     parent_mar_id = uuid.uuid4()
     mock_parent_mar = MagicMock()
@@ -409,8 +408,8 @@ async def test_produce_for_destino_derives_uf_ibge_from_source_ref() -> None:
     uf column — produce_for_destino must parse uf+ibge from source_ref
     'mtur:{UF}:{ibge}' so the targeted query is built and discovery is not a silent no-op.
     """
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
     from brave.config.settings import ScoreConfig
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 
     parent_mar_id = uuid.uuid4()
     mock_parent_mar = MagicMock()
@@ -463,8 +462,8 @@ async def test_produce_for_destino_returns_zero_on_missing_municipio() -> None:
     the method cannot build a valid search query. It must return 0 and must NOT
     call store_raw.
     """
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
     from brave.config.settings import ScoreConfig
+    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 
     mock_parent_mar = MagicMock()
     mock_parent_mar.id = uuid.uuid4()
@@ -502,8 +501,8 @@ def test_produce_for_destino_parent_link_in_normalized() -> None:
 
     Mirrors the place_id_cache copy pattern at lines 155-156 of routing.py.
     """
-    from brave.core.rio.routing import process_nascente_record
     from brave.config.settings import ScoreConfig
+    from brave.core.rio.routing import process_nascente_record
 
     parent_mar_id_str = "uuid-test-parent"
     place_id_str = "ChIJtest"
@@ -532,10 +531,20 @@ def test_produce_for_destino_parent_link_in_normalized() -> None:
     with patch("brave.core.rio.routing.find_duplicate", return_value=None), \
          patch("brave.core.rio.routing.compute_embedding", return_value=[0.0] * 1536), \
          patch("brave.core.rio.routing.label_entity", side_effect=lambda etype, norm: norm):
-        result = process_nascente_record(session_mock, nascente_mock, ScoreConfig())
+        process_nascente_record(session_mock, nascente_mock, ScoreConfig())
 
-    # The RioRecord passed to session.add must have parent_mar_id in normalized
-    assert session_mock.add.call_count == 1
-    rio_record = session_mock.add.call_args[0][0]
+    # The RioRecord passed to session.add must have parent_mar_id in normalized.
+    # process_nascente_record also appends RecordEvent rows (scored/routed Log-tab
+    # timeline) via session.add, so isolate the single RioRecord among the adds
+    # rather than asserting the total add count.
+    from brave.core.models import RioRecord  # noqa: PLC0415
+
+    added = [c.args[0] for c in session_mock.add.call_args_list]
+    rio_records = [obj for obj in added if isinstance(obj, RioRecord)]
+    assert len(rio_records) == 1, (
+        f"exactly one RioRecord must be added; got {len(rio_records)} "
+        f"(all adds: {[type(o).__name__ for o in added]})"
+    )
+    rio_record = rio_records[0]
     assert rio_record.normalized is not None
     assert rio_record.normalized.get("parent_mar_id") == parent_mar_id_str

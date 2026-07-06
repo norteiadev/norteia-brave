@@ -125,7 +125,7 @@ def _make_destino(
     normalized: dict | None = None,
 ) -> object:
     """Create a minimal RioRecord (entity_type=destination) for test data."""
-    from brave.core.models import NascenteRecord, RioRecord  # noqa: PLC0415
+    from brave.core.models import RioRecord  # noqa: PLC0415
 
     nascente = _make_nascente(db_session, uf=uf, entity_type="destination")
     n = normalized or {"name": f"Destino {uf} {uuid.uuid4().hex[:6]}"}
@@ -154,7 +154,7 @@ def _make_atrativo(
     normalized: dict | None = None,
 ) -> object:
     """Create a minimal RioRecord (entity_type=attraction) for test data."""
-    from brave.core.models import NascenteRecord, RioRecord  # noqa: PLC0415
+    from brave.core.models import RioRecord  # noqa: PLC0415
 
     nascente = _make_nascente(db_session, uf=uf, entity_type="attraction")
     n = normalized or {"name": f"Atrativo {uf} {uuid.uuid4().hex[:6]}"}
@@ -472,6 +472,77 @@ def test_get_atrativo_detail_contacts_masked(client, db_session: Session):
 
 
 @pytest.mark.integration
+def test_get_atrativo_detail_events_and_engineering_fields(client, db_session: Session):
+    """GET /api/v1/atrativos/{id} surfaces the Log-tab timeline + engineering fields.
+
+    The drawer Log tab reads ``events[]`` (RecordEvent timeline keyed by
+    rio.canonical_key) plus the scalar engineering fields ``dlq_reason``,
+    ``source`` (nascente.source), ``processed_at`` and ``score_version``. This
+    seeds two RecordEvents on the atrativo's canonical_key and asserts they come
+    back in the detail body, oldest→newest, alongside those fields.
+    """
+    from brave.observability.record_events import record_event  # noqa: PLC0415
+
+    rio = _make_atrativo(db_session, uf="AC", routing="dlq", score=42.0)
+    canonical_key = rio.canonical_key
+
+    # Two timeline events keyed by the universal drawer key (rio.canonical_key).
+    record_event(
+        db_session,
+        source="tripadvisor",
+        source_ref=canonical_key,
+        stage="ingested",
+        status="ok",
+        message="Atrativo Log Detail",
+        entity_type="attraction",
+        uf="AC",
+        nascente_id=rio.nascente_id,
+        data={"municipio": "Rio Branco", "version": 1},
+    )
+    record_event(
+        db_session,
+        source="tripadvisor",
+        source_ref=canonical_key,
+        stage="routed",
+        status="fail",
+        message="dlq: score below threshold",
+        entity_type="attraction",
+        uf="AC",
+        rio_id=rio.id,
+        data={"routing": "dlq", "score": 42.0},
+    )
+    db_session.commit()
+
+    r = client.get(f"/api/v1/atrativos/{rio.id}", headers=BEARER_HEADERS)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+    body = r.json()
+
+    # Engineering fields the Log tab / drawer header consume.
+    for field in ("dlq_reason", "source", "processed_at", "score_version"):
+        assert field in body, f"detail body must include {field!r} for the Log tab; keys={list(body)}"
+    # source is derived from the backing NascenteRecord (_make_nascente → 'mtur').
+    assert body["source"] == "mtur"
+
+    # events[] carries the RecordEvent timeline, oldest→newest, with the Log shape.
+    events = body["events"]
+    assert isinstance(events, list)
+    stages = [e["stage"] for e in events]
+    assert "ingested" in stages and "routed" in stages, (
+        f"seeded events must appear in detail events[]; got {stages}"
+    )
+    assert stages.index("ingested") < stages.index("routed"), (
+        f"events[] must be ordered oldest→newest; got {stages}"
+    )
+    for e in events:
+        assert set(e) >= {"stage", "status", "message", "data", "created_at"}, (
+            f"each event must expose the Log-line fields; got {list(e)}"
+        )
+    routed_event = next(e for e in events if e["stage"] == "routed")
+    assert routed_event["status"] == "fail"
+    assert routed_event["data"] == {"routing": "dlq", "score": 42.0}
+
+
+@pytest.mark.integration
 def test_atrativo_owner_email_never_leaked(client, db_session: Session):
     """CR-01: owner email (and ig_handle) must NOT appear in list or detail responses (LGPD R3)."""
     owner_email = "dono.secreto@example.com"
@@ -692,7 +763,6 @@ def test_list_nascente_with_bearer_shape_and_name(client, db_session: Session):
 @pytest.mark.integration
 def test_list_nascente_excludes_superseded(client, db_session: Session):
     """Superseded rows (superseded_by_id set) are NOT listed — current versions only."""
-    from brave.core.models import NascenteRecord  # noqa: PLC0415
 
     old = _make_nascente(db_session, uf="RR", entity_type="destination")
     new = _make_nascente(db_session, uf="RR", entity_type="destination")
