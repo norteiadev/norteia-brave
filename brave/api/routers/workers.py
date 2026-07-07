@@ -216,12 +216,18 @@ def get_failure_cards(db: Session = Depends(get_db)) -> list[dict]:
     Returns a list ordered by quarantined_at DESC (most recent incident first).
     """
     # --- Primary: latest fail RecordEvent per source_ref ---------------------
+    # Falha = TERMINAL failures only (stage='quarantined': ibge_unmatched,
+    # producer exceptions). A record routed to DLQ also emits a `routed`/fail
+    # event (the §7.6 gate coloring the Log timeline), but a below-threshold DLQ
+    # record is a REVIEW item, not a Falha — filtering on status='fail' alone made
+    # every DLQ record double-appear in the Falha column (and without a name).
+    _FALHA = and_(RecordEvent.status == "fail", RecordEvent.stage == "quarantined")
     latest = (
         select(
             RecordEvent.source_ref.label("source_ref"),
             func.max(RecordEvent.created_at).label("mx"),
         )
-        .where(RecordEvent.status == "fail")
+        .where(_FALHA)
         .group_by(RecordEvent.source_ref)
         .subquery()
     )
@@ -235,7 +241,7 @@ def get_failure_cards(db: Session = Depends(get_db)) -> list[dict]:
                     RecordEvent.created_at == latest.c.mx,
                 ),
             )
-            .where(RecordEvent.status == "fail")
+            .where(_FALHA)
         ).all()
     )
 

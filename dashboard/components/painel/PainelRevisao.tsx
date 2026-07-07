@@ -113,7 +113,15 @@ export function PainelRevisao() {
                 data-testid="revisao-dlq-row"
                 className="border-t border-[var(--painel-border-inner)]"
               >
-                <Td>{item.entity_type}</Td>
+                <Td>
+                  <div className="font-semibold text-[var(--painel-text)]">
+                    {item.name ?? "—"}
+                  </div>
+                  <div className="text-[11px] text-[var(--painel-muted-2)]">
+                    {item.entity_type === "attraction" ? "Atrativo" : "Destino"}
+                    {item.municipio ? ` · ${item.municipio}` : ""}
+                  </div>
+                </Td>
                 <Td>
                   <span className="font-mono font-semibold">{item.uf ?? "—"}</span>
                 </Td>

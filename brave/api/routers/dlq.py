@@ -145,6 +145,11 @@ def list_dlq(
             "nascente_id": str(r.nascente_id),
             "entity_type": r.entity_type,
             "uf": r.uf,
+            # público-geo identity so the DLQ/Revisão table names the failing record
+            # instead of showing only "destination"/"attraction" (LGPD: name +
+            # município are public-geo, never PII).
+            "name": (r.normalized or {}).get("name"),
+            "municipio": (r.normalized or {}).get("municipio"),
             "routing": r.routing,
             "dlq_reason": r.dlq_reason,
             "score": float(r.score) if r.score is not None else None,

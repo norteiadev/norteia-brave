@@ -28,6 +28,9 @@ export interface DlqListItem {
   nascente_id: string;
   entity_type: string;
   uf: string | null;
+  // público-geo identity for the Revisão table (may be null on legacy rows).
+  name: string | null;
+  municipio: string | null;
   routing: string;
   dlq_reason: string | null;
   score: number | null;
