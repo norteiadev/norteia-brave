@@ -343,3 +343,92 @@ class TestTripAdvisorAtrativosIngest:
         source_ref = mock_store_raw.call_args.kwargs["source_ref"]
         assert source_ref.startswith("tripadvisor:attraction:"), f"Bad source_ref: {source_ref}"
         assert "99999" in source_ref, f"Expected locationId '99999' in source_ref: {source_ref}"
+
+
+class TestProducerPauseHalt:
+    """A mid-run Motor Pausado/Desligado must stop an in-flight producer from
+    inserting the rest of its pages/records (engine.should_halt_producer)."""
+
+    @pytest.mark.asyncio
+    async def test_atrativos_produce_halts_when_paused(self) -> None:
+        """produce() with a PAUSADO redis breaks BEFORE ingesting the page → no store_raw."""
+        import fakeredis
+
+        from brave.core import engine as collection_engine
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        rc = fakeredis.FakeStrictRedis()
+        rc.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
+        collection_engine.set_mode(rc, collection_engine.PAUSADO)
+
+        fake_client = _make_fake_client()
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=fake_client,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map={"2927408": (uuid.uuid4(), "tripadvisor:destination:303506")},
+            )
+            await ingest.produce("BA", run_rio=True, redis=rc)
+
+        assert not mock_store_raw.called, "paused producer must not ingest"
+
+    @pytest.mark.asyncio
+    async def test_atrativos_produce_runs_when_ligado(self) -> None:
+        """Sanity: same producer with a LIGADO redis DOES ingest (gate is not always-on)."""
+        import fakeredis
+
+        from brave.core import engine as collection_engine
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        rc = fakeredis.FakeStrictRedis()
+        rc.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
+        collection_engine.set_mode(rc, collection_engine.LIGADO)
+
+        fake_client = _make_fake_client()
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=fake_client,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map={"2927408": (uuid.uuid4(), "tripadvisor:destination:303506")},
+            )
+            await ingest.produce("BA", run_rio=True, redis=rc)
+
+        assert mock_store_raw.called, "running producer must ingest"
+
+    @pytest.mark.asyncio
+    async def test_destinos_produce_halts_when_desligado(self) -> None:
+        """destinos produce() with a DESLIGADO redis breaks before ingesting → no store_raw."""
+        import fakeredis
+
+        from brave.core import engine as collection_engine
+        from brave.lanes.tripadvisor.destinos import TripAdvisorDestinosIngest
+
+        rc = fakeredis.FakeStrictRedis()
+        rc.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
+        collection_engine.set_mode(rc, collection_engine.DESLIGADO)
+
+        fake_client = _make_fake_client()
+        with (
+            patch("brave.lanes.tripadvisor.destinos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.destinos.process_nascente_record"),
+        ):
+            ingest = TripAdvisorDestinosIngest(
+                ta_client=fake_client,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+            )
+            await ingest.produce("BA", run_rio=True, redis=rc)
+
+        assert not mock_store_raw.called, "off producer must not ingest"

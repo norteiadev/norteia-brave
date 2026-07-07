@@ -22,15 +22,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
+from brave.core import engine as collection_engine
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
 from brave.core.rio.routing import process_nascente_record
 
 if TYPE_CHECKING:
     from brave.clients.base import MturClientProtocol
+
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -108,7 +112,9 @@ class MturSeedIngest:
         self._session = session
         self._config = config
 
-    async def produce(self, uf: str, *, run_rio: bool = True) -> None:
+    async def produce(
+        self, uf: str, *, run_rio: bool = True, redis: Any | None = None
+    ) -> None:
         """Ingest one full UF sweep for the Mtur lane.
 
         Fetches all Mtur-categorized municipalities for the given state,
@@ -138,6 +144,12 @@ class MturSeedIngest:
         municipalities = await self._client.fetch_municipalities(uf)
 
         for mun in municipalities:
+            # Mid-sweep pause/off/stop: stop inserting the rest of this UF's destinos
+            # when the operator paused/turned off the motor. Skipped when redis is None
+            # (direct unit-test calls) — behavior then unchanged.
+            if redis is not None and collection_engine.should_halt_producer(redis):
+                logger.info("mtur_producer_halt", uf=uf)
+                break
             ibge_code: str = mun.get("ibge_code", "")
             name: str = mun.get("name", "")
             categoria: str = mun.get("categoria", "")

@@ -227,9 +227,10 @@ def _patched_sweep_uf():
         def __init__(self, *_a, **_k):
             pass
 
-        async def produce(self, uf, *, run_rio=True):
+        async def produce(self, uf, *, run_rio=True, redis=None):
             seed_calls["run_rio"] = run_rio
             seed_calls["uf"] = uf
+            seed_calls["redis_passed"] = redis is not None
 
     with patch.object(pipeline, "_get_session", return_value=(fake_session, MagicMock())), patch(
         "brave.lanes.destinos.mtur.MturSeedIngest", _SpySeed

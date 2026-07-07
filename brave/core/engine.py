@@ -121,6 +121,24 @@ def is_running(redis: Any) -> bool:
     return get_state(redis) == RUNNING
 
 
+def should_halt_producer(redis: Any) -> bool:
+    """True when an in-flight producer must STOP mid-sweep (pause / off / stop).
+
+    The orchestrator's dispatch loop breaks on pause/off/stop, but each producer
+    it already fanned out (one per UF) keeps paginating and inserting until its
+    own list/pages are exhausted — so a mid-run Motor Pausado/Desligado leaves
+    destinos/atrativos still landing in Nascente. Each producer polls this between
+    pages/records and breaks when it fires.
+
+    Keyed on MODE (get_mode defaults LIGADO even on a flushed Redis) plus a Stop
+    (state == STOPPING), mirroring the orchestrator gate. It intentionally does
+    NOT treat state == IDLE as halt, so a directly-dispatched standalone bulk run
+    (scripts/ta_bulk_sweep.py — never went through start_run, so state stays IDLE)
+    is not falsely halted; it still honors a painel PAUSADO/DESLIGADO.
+    """
+    return get_mode(redis) != LIGADO or get_state(redis) == STOPPING
+
+
 def start_run(redis: Any, ufs_total: int) -> bool:
     """Mark the engine running for a fresh run.
 

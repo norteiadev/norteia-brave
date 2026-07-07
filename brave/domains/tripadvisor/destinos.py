@@ -32,9 +32,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
+from brave.core import engine as collection_engine
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
 from brave.core.rio.routing import process_nascente_record
@@ -49,6 +51,8 @@ from brave.observability.record_events import record_event_once
 
 if TYPE_CHECKING:
     from brave.clients.base import TripAdvisorClientProtocol
+
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +96,9 @@ class TripAdvisorDestinosIngest:
         self._config = config
         self._ibge_records = ibge_records
 
-    async def produce(self, uf: str, *, run_rio: bool = True) -> None:
+    async def produce(
+        self, uf: str, *, run_rio: bool = True, redis: Any | None = None
+    ) -> None:
         """Ingest one full UF sweep for TripAdvisor destinations.
 
         Fetches all TripAdvisor destinations for the given state, validates
@@ -113,6 +119,12 @@ class TripAdvisorDestinosIngest:
         destinations = await self._client.fetch_destinations(uf)
 
         for entity in destinations:
+            # Mid-sweep pause/off/stop: stop inserting the rest of this UF's destinos
+            # when the operator paused/turned off the motor. Skipped when redis is None
+            # (direct unit-test calls) — behavior then unchanged.
+            if redis is not None and collection_engine.should_halt_producer(redis):
+                logger.info("ta_destinos_producer_halt", uf=uf)
+                break
             try:
                 self._ingest_one(uf, entity, run_rio=run_rio)
             except Exception as exc:  # noqa: BLE001

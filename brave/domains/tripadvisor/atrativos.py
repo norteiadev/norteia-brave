@@ -43,6 +43,7 @@ import structlog
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig, TripAdvisorConfig
+from brave.core import engine as collection_engine
 from brave.core.models import whatsapp_candidate_from_phone
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
@@ -128,7 +129,12 @@ class TripAdvisorAtrativosIngest:
         self._ta_config = ta_config
 
     async def produce(
-        self, uf: str, *, run_rio: bool = True, enrich_reviews: bool = False
+        self,
+        uf: str,
+        *,
+        run_rio: bool = True,
+        enrich_reviews: bool = False,
+        redis: Any | None = None,
     ) -> None:
         """Ingest one full UF sweep for TripAdvisor attractions.
 
@@ -163,6 +169,14 @@ class TripAdvisorAtrativosIngest:
         geo_id = await self._client.resolve_geo_id(uf)
 
         async for _offset, cards in self._client.fetch_attractions_paginated_gql(geo_id):
+            # Mid-sweep pause/off/stop: this producer was fanned out per UF and keeps
+            # paginating after the orchestrator's dispatch loop broke. Poll the engine
+            # BEFORE ingesting each page so a Motor Pausado/Desligado stops new inserts
+            # (prior pages already committed). Gate skipped when redis is None (unit
+            # tests call produce() directly) — behavior then unchanged.
+            if redis is not None and collection_engine.should_halt_producer(redis):
+                logger.info("ta_atrativos_producer_halt", uf=uf, offset=_offset)
+                break
             for entity in cards:
                 # Snapshot the destino cache keys BEFORE the attempt so that, on the
                 # enrich path, a rollback can evict any destino cached by _ensure_destino
@@ -849,6 +863,13 @@ class TripAdvisorAtrativosIngest:
         async for offset, cards in self._client.fetch_attractions_paginated_gql(
             geo_id, start_page, max_pages
         ):
+            # Mid-sweep pause/off/stop honored at page granularity (prior pages are
+            # already committed + progress recorded, so the resume point is intact).
+            # Mode-keyed so a standalone bulk run (state IDLE) still runs but obeys a
+            # painel PAUSADO/DESLIGADO. See engine.should_halt_producer.
+            if collection_engine.should_halt_producer(redis):
+                logger.info("ta_bulk_producer_halt", offset=offset)
+                break
             ingested = 0
             errors = 0
             for card in cards:

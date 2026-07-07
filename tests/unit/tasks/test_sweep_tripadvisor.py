@@ -151,9 +151,11 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
 
     # Patch the atrativos produce() to actually call the stub client
     # and propagate its errors (destinos step removed — oa3).
-    async def _stub_produce(uf, run_rio=True, enrich_reviews=False):
+    async def _stub_produce(uf, run_rio=True, enrich_reviews=False, redis=None):
         # Errors originate from the atrativos path (no destinos step — oa3).
         # enrich_reviews accepted because the per-UF path now passes enrich_reviews=True.
+        # redis accepted because the per-UF path now passes redis= for the mid-run
+        # Motor Pausado/Desligado halt gate (engine.should_halt_producer).
         await stub_client.fetch_attractions(geo_id=0)
 
     mock_atrativos_ingest = MagicMock()
@@ -320,7 +322,7 @@ class TestSweepTripAdvisorPerUfDestinoBuild:
             def __init__(self, **kw):
                 captured["map"] = dict(kw.get("destino_rio_map") or {})
 
-            async def produce(self, uf, *, run_rio=True, enrich_reviews=False):
+            async def produce(self, uf, *, run_rio=True, enrich_reviews=False, redis=None):
                 pass  # no-op; constructor arg is what we assert
 
         mock_app_config = MagicMock()
@@ -715,11 +717,17 @@ class TestSweepTripAdvisorTaConfig:
                 captured.update(kw)
 
             async def produce(
-                self, uf: str, *, run_rio: bool = True, enrich_reviews: bool = False
+                self,
+                uf: str,
+                *,
+                run_rio: bool = True,
+                enrich_reviews: bool = False,
+                redis: Any = None,
             ) -> None:
                 # Record produce() kwargs so the per-UF enrich_reviews wiring is assertable.
                 captured["produce_enrich_reviews"] = enrich_reviews
                 captured["produce_run_rio"] = run_rio
+                captured["produce_redis_passed"] = redis is not None
 
         mock_app_config = MagicMock()
         mock_app_config.run_real_externals = real_externals

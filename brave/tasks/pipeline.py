@@ -825,8 +825,14 @@ def sweep_uf(self, uf: str, depth: str | None = None) -> None:
         try:
             # Mtur seed re-ingest (idempotent — store_raw dedups by content_hash).
             # run_rio=False under nascente: Nascente + §7.6 score only, no Rio.
+            # redis lets the producer honor a mid-run Motor Pausado/Desligado
+            # (engine.should_halt_producer) instead of inserting the whole UF.
+            import redis as _seed_redis_lib  # noqa: PLC0415
+            _seed_rc = _seed_redis_lib.from_url(
+                os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+            )
             seed = MturSeedIngest(MturClient(), session, config)
-            asyncio.run(seed.produce(uf, run_rio=run_rio))
+            asyncio.run(seed.produce(uf, run_rio=run_rio, redis=_seed_rc))
         except FileNotFoundError as exc:
             # A missing Mtur seed CSV is permanent — quarantine, never retry (T-05-03).
             raise PermanentError(f"Mtur seed CSV missing for sweep {uf}: {exc}") from exc
@@ -1110,8 +1116,17 @@ def sweep_tripadvisor(
         # Per-UF path enriches review recency (fetch_recent_review per card) so
         # atualidade lifts the §7.6 score. The bulk_national branch above leaves
         # enrichment OFF (no per-card review calls at 10k scale).
+        # redis=_prod_rc lets the per-UF producer honor a mid-run Motor Pausado/
+        # Desligado (engine.should_halt_producer) — otherwise the fanned-out producer
+        # keeps paginating + inserting atrativos/synthesized destinos after a pause.
+        import redis as _prod_redis_lib  # noqa: PLC0415
+        _prod_rc = _prod_redis_lib.from_url(
+            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        )
         _asyncio.run(
-            atrativos_ingest.produce(uf, run_rio=run_rio, enrich_reviews=True)
+            atrativos_ingest.produce(
+                uf, run_rio=run_rio, enrich_reviews=True, redis=_prod_rc
+            )
         )
 
         session.commit()

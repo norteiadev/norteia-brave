@@ -386,3 +386,29 @@ def test_start_run_resets_inflight_and_dispatch_done(redis):
     assert engine.is_dispatch_done(redis) is False
     # And a fresh run cannot be spuriously completed by a leftover marker.
     assert engine.maybe_complete(redis) is False
+
+
+def test_should_halt_producer_truth_table(redis):
+    """Producer halt gate: mode != LIGADO OR state == STOPPING. IDLE state alone
+    (standalone bulk, never start_run) must NOT halt."""
+    # Fresh redis: mode defaults LIGADO, state IDLE → standalone bulk keeps running.
+    assert engine.should_halt_producer(redis) is False
+
+    # Engine running normally → keep running.
+    engine.start_run(redis, ufs_total=1)
+    assert engine.should_halt_producer(redis) is False
+
+    # Pause → halt.
+    engine.set_mode(redis, engine.PAUSADO)
+    assert engine.should_halt_producer(redis) is True
+
+    # Back to LIGADO then Stop → halt via STOPPING state.
+    engine.set_mode(redis, engine.LIGADO)
+    engine.request_stop(redis)
+    assert engine.should_halt_producer(redis) is True
+
+    # Off (DESLIGADO) → halt.
+    fresh = fakeredis.FakeRedis()
+    fresh.set(engine._STATE_KEY, engine.RUNNING)
+    engine.set_mode(fresh, engine.DESLIGADO)
+    assert engine.should_halt_producer(fresh) is True

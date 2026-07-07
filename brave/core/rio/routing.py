@@ -137,7 +137,13 @@ def process_nascente_record(
         address = normalize_address(address)
 
     lat = payload.get("lat")
+    # Longitude key drift: TripAdvisor/Places payloads store longitude under "lng"
+    # (see atrativos/destinos payloads + places client), while geocoder/legacy
+    # payloads use "lon". Reading only "lon" left normalized["lon"] perpetually
+    # null for every TA/Places record — accept either key.
     lon = payload.get("lon")
+    if lon is None:
+        lon = payload.get("lng")
     lat, lon = normalize_coordinates(lat, lon)
 
     # Build normalized dict — preserve score input fields from payload
