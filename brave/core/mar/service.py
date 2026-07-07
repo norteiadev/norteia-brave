@@ -11,19 +11,54 @@ reopen_from_error_report (CNTR-02):
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.core.models import MarRecord, RioRecord
+from brave.core.repositories import SqlAlchemyMarRepository, SqlAlchemyRioRepository
+from brave.shared.dtos import FlatProvenance, MarPushPayload
+
+# Stateless data-access seam (Phase A). The Session is passed per call and the
+# caller still owns the transaction — these repos flush but never commit.
+_mar_repo = SqlAlchemyMarRepository()
+_rio_repo = SqlAlchemyRioRepository()
+
+# Attraction recency backstop window (Phase F). Mirrors the SignalAgent
+# no-recent-reviews rule: a review older than this (or missing) blocks promotion.
+_REVIEW_MAX_AGE_DAYS = 90
+
+
+def _attraction_review_recent(
+    normalized: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    max_age_days: int = _REVIEW_MAX_AGE_DAYS,
+) -> bool:
+    """Return True iff normalized carries a most-recent review within max_age_days.
+
+    Reads normalized["most_recent_review_at"] (ISO-8601 str, written by SignalAgent).
+    Missing / None / unparseable → False (route to DLQ). Deterministic + offline:
+    'now' is injectable so the 90-day boundary is pinnable in tests.
+    """
+    raw = normalized.get("most_recent_review_at")
+    if not raw or not isinstance(raw, str):
+        return False
+    try:
+        review_dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return False
+    if review_dt.tzinfo is None:
+        review_dt = review_dt.replace(tzinfo=timezone.utc)
+    reference = now or datetime.now(timezone.utc)
+    return (reference - review_dt) <= timedelta(days=max_age_days)
 
 
 def promote_to_mar(
     session: Session,
     rio_record: RioRecord,
-) -> MarRecord:
+) -> MarRecord | None:
     """Create or update a MarRecord for a scored RioRecord.
 
     Idempotent: If a MarRecord with the same source_ref already exists,
@@ -31,22 +66,43 @@ def promote_to_mar(
 
     Provenance carries full per-criterion §7.6 breakdown (D-06).
 
+    Attraction recency BACKSTOP (Phase F): a belt-and-suspenders guard behind the
+    SignalAgent no-recent-reviews rule. If an ATTRACTION reaches promotion but its
+    most-recent review is missing or older than 90 days (e.g. via a steward DLQ
+    validate, or the phoneless TripAdvisor lane whose date is always None), it is
+    NOT promoted — it is routed to DLQ (dlq_reason="no_recent_reviews") and this
+    returns None. Destinos have no reviews and are UNAFFECTED (entity_type guard).
+    Deterministic + offline: recency is read from normalized["most_recent_review_at"]
+    against an injectable 'now'.
+
     Args:
         session:    SQLAlchemy synchronous Session.
         rio_record: Scored RioRecord (must have routing='mar').
 
     Returns:
-        The MarRecord (existing updated, or newly created).
+        The MarRecord (existing updated, or newly created), or None when the
+        attraction recency backstop routes the record to DLQ instead of promoting.
     """
     source_ref = rio_record.canonical_key or str(rio_record.id)
     normalized = rio_record.normalized or {}
     entity_type = rio_record.entity_type
 
-    # Build canonical payload from normalized record
+    # Attraction recency BACKSTOP (Phase F) — attraction only, before any Mar write.
+    # Missing or >90-day-old most-recent review → route to DLQ instead of promoting.
+    if entity_type == "attraction" and not _attraction_review_recent(normalized):
+        rio_record.routing = "dlq"
+        rio_record.dlq_reason = "no_recent_reviews"
+        session.flush()
+        return None
+
+    # Build canonical payload from normalized record. most_recent_review_at and
+    # contact (Phase F) are internal/board-only fields — exclude them alongside the
+    # five §7.6 *_value criteria so the norteia-api Mar push shape stays byte-identical.
     canonical: dict[str, Any] = {
         k: v for k, v in normalized.items()
         if k not in ("origem_value", "completude_value", "corroboracao_value",
-                     "atualidade_value", "validacao_humana_value")
+                     "atualidade_value", "validacao_humana_value",
+                     "most_recent_review_at", "contact")
     }
 
     # Build provenance (D-06) — full per-criterion breakdown + score_version
@@ -61,12 +117,7 @@ def promote_to_mar(
     score_version = rio_record.score_version or "v1.0"
 
     # Check for existing active MarRecord (D-15)
-    existing = session.scalar(
-        select(MarRecord).where(
-            MarRecord.source_ref == source_ref,
-            MarRecord.superseded_by_id.is_(None),  # Active record
-        )
-    )
+    existing = _mar_repo.get_active_by_source_ref(session, source_ref)
 
     if existing is not None:
         # Idempotent no-op (D-15): re-promoting unchanged data (e.g. a CLI
@@ -95,9 +146,10 @@ def promote_to_mar(
             score_version=score_version,
             parent_mar_id=existing.id,
         )
-        existing.superseded_by_id = new_mar.id
-        session.add(new_mar)
-        session.flush()
+        # Assign superseded_by_id + add + single flush as one atomic step: at
+        # flush only the new row is active, so the partial unique index
+        # uq_mar_active_source_ref holds. Ordering preserved exactly.
+        _mar_repo.supersede(session, existing, new_mar)
         return new_mar
 
     # First-time creation
@@ -111,8 +163,7 @@ def promote_to_mar(
         reliability_score=reliability_score,
         score_version=score_version,
     )
-    session.add(mar)
-    session.flush()
+    _mar_repo.add(session, mar)
     return mar
 
 
@@ -132,16 +183,11 @@ def reopen_from_error_report(
     Returns:
         The DLQ'd RioRecord, or None if source_ref not found in Mar.
     """
-    mar = session.scalar(
-        select(MarRecord).where(
-            MarRecord.source_ref == source_ref,
-            MarRecord.superseded_by_id.is_(None),  # Active record
-        )
-    )
+    mar = _mar_repo.get_active_by_source_ref(session, source_ref)
     if mar is None:
         return None
 
-    rio = session.get(RioRecord, mar.rio_id)
+    rio = _rio_repo.get(session, mar.rio_id)
     if rio is None:
         return None
 
@@ -151,3 +197,66 @@ def reopen_from_error_report(
     session.flush()
 
     return rio
+
+
+def build_push_payload(
+    mar_record: MarRecord,
+    rio_record: RioRecord,
+) -> MarPushPayload:
+    """Build the flat-provenance Mar push payload (the D-16 Pact contract shape).
+
+    Moved out of ``brave.tasks.pipeline._build_push_payload`` (which now delegates
+    here via ``.model_dump()``) so the wire shape lives in one typed place. The
+    returned model's ``model_dump()`` is byte-identical to the dict the pipeline
+    shim used to build.
+
+    The Pact contract requires flat per-criterion provenance keys::
+
+        {"origem": float, "completude": float, "corroboracao": float,
+         "atualidade": float, "validacao_humana": float}
+
+    promote_to_mar stores provenance as::
+
+        {"score_breakdown": {...flat criteria...}, "score_version": str,
+         "nascente_id": str, "rio_id": str}
+
+    This flattens score_breakdown to the top-level provenance keys.
+
+    Args:
+        mar_record: MarRecord returned by promote_to_mar.
+        rio_record: Source RioRecord. Part of the historical signature and kept
+            for call-site compatibility; the payload derives entirely from
+            mar_record.
+
+    Returns:
+        MarPushPayload matching the Pact contract Mar push shape.
+    """
+    provenance_raw = mar_record.provenance or {}
+    score_breakdown = provenance_raw.get("score_breakdown", {})
+    score_version = provenance_raw.get("score_version", mar_record.score_version or "v1.0")
+
+    # Flat per-criterion provenance (the Pact contract shape, D-16)
+    flat_provenance = FlatProvenance(
+        origem=float(score_breakdown.get("origem", 0.0)),
+        completude=float(score_breakdown.get("completude", 0.0)),
+        corroboracao=float(score_breakdown.get("corroboracao", 0.0)),
+        atualidade=float(score_breakdown.get("atualidade", 0.0)),
+        validacao_humana=float(score_breakdown.get("validacao_humana", 0.0)),
+    )
+
+    # Extract source from source_ref (format "source:UF:id"): "mtur:BA:123" → "mtur"
+    source_ref = mar_record.source_ref or ""
+    source_parts = source_ref.split(":", 1)
+    source = source_parts[0] if source_parts else "unknown"
+
+    canonical = mar_record.canonical or {}
+
+    return MarPushPayload(
+        source=source,
+        source_ref=source_ref,
+        entity_type=mar_record.entity_type,
+        canonical=canonical,
+        reliability_score=float(mar_record.reliability_score),
+        score_version=score_version,
+        provenance=flat_provenance,
+    )

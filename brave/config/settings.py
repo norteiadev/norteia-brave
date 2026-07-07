@@ -15,16 +15,17 @@ CR-02: No Field(alias=...) on any field in any config class.
   All fields resolve ONLY from their exact prefixed env var name.
 """
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ScoreConfig(BaseSettings):
-    """§7.6 scoring weights and routing thresholds.
+    """§7.6 scoring weights and the single Mar routing threshold.
 
     All weight fields default to the §7.6 calibration values.
-    Thresholds (threshold_mar / threshold_dlq) are tunable knobs — treat
-    as starting points and calibrate on the first state before national fan-out
+    Routing is binary: score >= threshold_mar → "mar", else → "dlq"
+    (no descarte band). threshold_mar is a tunable knob — treat as a starting
+    point and calibrate on the first state before national fan-out
     (see D-14, PITFALLS §1).
     """
 
@@ -35,28 +36,12 @@ class ScoreConfig(BaseSettings):
     weight_atualidade: float = 15.0
     weight_validacao_humana: float = 15.0
 
-    # mar_ready promotion thresholds for TripAdvisor attractions (TA-05).
-    # Not TA-specific — they belong in ScoreConfig so route_by_score can read them
-    # from the same config object without importing TripAdvisorConfig.
-    # Env: BRAVE_SCORE_MAR_READY_ATUALIDADE_BAR, BRAVE_SCORE_MAR_READY_CORROB_BAR
-    # CR-02: no alias.
-    mar_ready_atualidade_bar: float = 70.0
-    mar_ready_corrob_bar: float = 60.0
-
-    # Routing thresholds
-    threshold_mar: float = 85.0
-    # Lowered from 51.0 to 40.0 in Phase 2 (D-05 calibration) so that
-    # DesmembramentoAgent cold-start records (origem=40, corroboração=0)
-    # land in DLQ instead of descarte, enabling steward review.
-    # The §7.6 math proves 51.0 routes ALL Desmembramento records to descarte
-    # (max cold-start score = 47.0 < 51.0 — descarte black-hole).
+    # Single routing threshold — binary Mar/DLQ gate (D-02).
+    # score >= threshold_mar → "mar"; everything below → "dlq" (no descarte band).
     # Re-calibrate on real BA data before national fan-out.
-    # Env override: BRAVE_SCORE_THRESHOLD_DLQ
-    threshold_dlq: float = 40.0
+    # Env override: BRAVE_SCORE_THRESHOLD_MAR
+    threshold_mar: float = 80.0
 
-    # Bumped to v1.1 in Phase 2 due to threshold_dlq calibration (40.0 from 51.0).
-    # Old scored records from Phase 1 tests remain valid — score values are
-    # unchanged; only the DLQ/descarte boundary moved.
     # Env override: BRAVE_SCORE_SCORE_VERSION
     score_version: str = "v1.1"
 
@@ -378,6 +363,35 @@ class NominatimConfig(BaseSettings):
     # CR-02: NO Field(alias=...) anywhere in this class.
 
 
+class EngineConfig(BaseModel):
+    """Engine operator-mode overlay (Phase D, config_settings key ``engine.mode``).
+
+    ``mode`` default DESLIGADO makes the clean/seeded base start with the motor OFF:
+    on a fresh "carga inicial" base seed_default_config writes this into the
+    ``config_settings`` engine.mode row, and get_status(session=...) self-heals Redis
+    from it, so no sweep auto-dispatches until an operator turns the engine on. This is
+    a plain BaseModel (not BaseSettings): it has no env precedent and is populated only
+    by the config_settings overlay (brave.config.runtime.load_effective_config) or its
+    code default.
+
+    IMPORTANT: the LIVE operator mode remains Redis-authoritative
+    (brave.core.engine get_mode/set_mode drives dispatch + the Kanban card
+    edit-lock). This field is the CONFIGURED default surfaced in the effective-config
+    snapshot; it is NOT wired into dispatch in this phase (behavior-neutral).
+    """
+
+    mode: str = "DESLIGADO"
+
+
+def _default_sources() -> dict[str, bool]:
+    """Both known collection lanes enabled by default (Phase D).
+
+    Kept as a module-level factory (not a lambda) so the mutable default is a fresh
+    dict per AppConfig instance and the two known lanes are documented in one place.
+    """
+    return {"default": True, "tripadvisor": True}
+
+
 class AppConfig(BaseSettings):
     """Composite application configuration.
 
@@ -391,6 +405,14 @@ class AppConfig(BaseSettings):
     ramp: RampConfig = Field(default_factory=RampConfig)
     tripadvisor: TripAdvisorConfig = Field(default_factory=TripAdvisorConfig)
     nominatim: NominatimConfig = Field(default_factory=NominatimConfig)
+
+    # Per-source enable flags (Phase D overlay key ``source.<name>.enabled``).
+    # Both known lanes enabled by default → effective config == pre-Phase-D behavior.
+    # brave.config.runtime.enabled_sources() reads this. The LIVE single-source
+    # *selector* stays Redis-authoritative (brave.core.engine get_source/set_source);
+    # this is the registered/enabled overlay only, consumed in a later phase.
+    sources: dict[str, bool] = Field(default_factory=_default_sources)
+    engine: EngineConfig = Field(default_factory=EngineConfig)
 
     # run_real_externals=True enables real API calls (tests and CI default to False)
     run_real_externals: bool = False

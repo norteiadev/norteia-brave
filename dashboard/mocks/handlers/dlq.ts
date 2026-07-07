@@ -182,6 +182,51 @@ export function dlqBatchSuccess(validated = 3) {
   });
 }
 
+// --- Manual DLQ→WhatsApp move (Phase H, POST /api/v1/dlq/whatsapp-batch) ---
+// NOTE: this is a POST to a LITERAL path, so it never collides with the GET/PATCH
+// `${BASE}/:rioId` param routes. When co-registered with dlqUnauthorized's
+// `${BASE}/*` catch-all, register this BEFORE it in the same server.use call.
+
+/** 202 accepted — the outreach/discovery split drives the branch-feedback toast. */
+export function dlqWhatsappBatchSuccess(
+  { moved = 2, outreach = 1, discovery = 1 }: {
+    moved?: number;
+    outreach?: number;
+    discovery?: number;
+  } = {},
+) {
+  return http.post(`${BASE}/whatsapp-batch`, () =>
+    HttpResponse.json(
+      { status: "accepted", moved, outreach, discovery },
+      { status: 202 },
+    ),
+  );
+}
+
+/** 422 atomic ineligibility — detail is an OBJECT ({ error, ineligible[] }). */
+export function dlqWhatsappBatchIneligible(
+  ineligible: { rio_id: string; reason: string }[] = [
+    { rio_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", reason: "has_horario_or_preco" },
+  ],
+) {
+  return http.post(`${BASE}/whatsapp-batch`, () =>
+    HttpResponse.json(
+      { detail: { error: "ineligible_records", ineligible } },
+      { status: 422 },
+    ),
+  );
+}
+
+/** 423 edit-lock — the Motor is LIGADO (require_editing_unlocked backstop). */
+export function dlqWhatsappBatchLocked() {
+  return http.post(`${BASE}/whatsapp-batch`, () =>
+    HttpResponse.json(
+      { detail: "Edição bloqueada — pause o motor." },
+      { status: 423 },
+    ),
+  );
+}
+
 /** Catch-all 401 for any DLQ route (session-expired path) — covers both the
  *  bare list endpoint and the per-record/detail/mutation sub-paths. */
 export function dlqUnauthorized() {
@@ -192,6 +237,7 @@ export function dlqUnauthorized() {
 
 /** Default barrel: list+detail success (suites override per state via server.use). */
 export const dlqHandlers = [
+  dlqWhatsappBatchSuccess(),
   dlqListSuccess(),
   dlqDetailSuccess(),
   dlqValidateSuccess(),

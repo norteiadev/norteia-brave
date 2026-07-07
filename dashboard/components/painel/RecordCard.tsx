@@ -24,6 +24,15 @@ export interface RecordCardProps {
   onDragEnd?: () => void;
   onRetry: (c: PainelCard) => void;
   onClick?: (c: PainelCard) => void;
+  /**
+   * Edit-lock (phase H): cards are draggable/selectable ONLY when true (engine
+   * mode PAUSADO/DESLIGADO). Defaults true so read-only callers/tests keep the
+   * prior always-draggable behavior; the board threads the real lock state.
+   */
+  editingUnlocked?: boolean;
+  /** DLQ→WhatsApp multi-select state (only rendered for DLQ-column atrativos). */
+  selected?: boolean;
+  onSelectToggle?: (c: PainelCard) => void;
 }
 
 export function RecordCard({
@@ -32,30 +41,64 @@ export function RecordCard({
   onDragEnd,
   onRetry,
   onClick,
+  editingUnlocked = true,
+  selected = false,
+  onSelectToggle,
 }: RecordCardProps) {
   // The error/quarantine column is "falha" in the 6-column model (17.1-06).
   const isFalha = card.column === "falha";
   // Nascente cards are the raw immutable ingest layer — READ-ONLY: no drag
   // (nascente → rio is automatic), only a click-through to the drawer.
   const isNascente = card.column === "nascente";
+  // Edit-lock: a card is only draggable when NOT nascente AND editing is unlocked.
+  const draggable = !isNascente && editingUnlocked;
+  // DLQ→WhatsApp multi-select: only DLQ-column atrativos, and only while editing
+  // is unlocked (the batch move is itself an edit-locked mutation).
+  const selectable =
+    card.column === "dlq" && card.type === "atrativo" && editingUnlocked && !!onSelectToggle;
+  const eligible = card.whatsappEligible !== false;
 
   return (
     <div
-      draggable={!isNascente}
+      draggable={draggable}
       data-id={card.id}
       data-testid="record-card"
-      onDragStart={isNascente ? undefined : () => onDragStart(card)}
-      onDragEnd={isNascente ? undefined : onDragEnd}
+      onDragStart={draggable ? () => onDragStart(card) : undefined}
+      onDragEnd={draggable ? onDragEnd : undefined}
       onClick={() => onClick?.(card)}
       className={`flex flex-col gap-2 rounded-lg border border-[var(--painel-border-inner)] bg-[var(--card)] p-3 ${
-        isNascente ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"
+        draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
       }`}
     >
-      {/* top row: type chip + score band */}
+      {/* top row: (select checkbox for DLQ atrativos) + type chip + score band */}
       <div className="flex items-center justify-between gap-2">
-        <span className="rounded-md bg-[var(--painel-chip)] px-2 py-0.5 text-[11px] font-semibold text-[var(--painel-navy)]">
-          {card.type === "destino" ? "Destino" : "Atrativo"}
-        </span>
+        <div className="flex min-w-0 items-center gap-2">
+          {selectable ? (
+            <input
+              type="checkbox"
+              data-testid="record-card-select"
+              aria-label={
+                eligible
+                  ? "Selecionar para WhatsApp"
+                  : "Inelegível para WhatsApp — já tem horário/preço"
+              }
+              checked={selected}
+              disabled={!eligible}
+              title={
+                eligible ? undefined : "Já tem horário/preço — nada a consultar"
+              }
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                e.stopPropagation();
+                onSelectToggle?.(card);
+              }}
+              className="h-[14px] w-[14px] flex-shrink-0 cursor-pointer accent-[var(--painel-navy)] disabled:cursor-not-allowed disabled:opacity-40"
+            />
+          ) : null}
+          <span className="rounded-md bg-[var(--painel-chip)] px-2 py-0.5 text-[11px] font-semibold text-[var(--painel-navy)]">
+            {card.type === "destino" ? "Destino" : "Atrativo"}
+          </span>
+        </div>
         {card.score != null ? <StageBadge score={card.score} /> : null}
       </div>
 

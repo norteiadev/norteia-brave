@@ -37,6 +37,11 @@ export interface PainelBoardProps {
   onCardRetry: (c: PainelCard) => void;
   onCardClick?: (c: PainelCard) => void;
   isPending?: boolean;
+  /** Edit-lock (phase H): forwarded to every card (draggable/selectable gate). */
+  editingUnlocked?: boolean;
+  /** DLQ→WhatsApp multi-select state, owned by the container. */
+  selectedIds?: ReadonlySet<string>;
+  onToggleSelect?: (c: PainelCard) => void;
 }
 
 const COLUMN_DOT: Record<PainelColumnKey, string> = {
@@ -63,6 +68,9 @@ interface PainelColumnProps {
   onCardRetry: (c: PainelCard) => void;
   onCardClick?: (c: PainelCard) => void;
   isPending?: boolean;
+  editingUnlocked?: boolean;
+  selectedIds?: ReadonlySet<string>;
+  onToggleSelect?: (c: PainelCard) => void;
 }
 
 /**
@@ -78,6 +86,9 @@ function PainelColumn({
   onCardRetry,
   onCardClick,
   isPending,
+  editingUnlocked,
+  selectedIds,
+  onToggleSelect,
 }: PainelColumnProps) {
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -159,6 +170,9 @@ function PainelColumn({
             onDragEnd={onCardDragEnd}
             onRetry={onCardRetry}
             onClick={onCardClick}
+            editingUnlocked={editingUnlocked}
+            selected={selectedIds?.has(card.id) ?? false}
+            onSelectToggle={onToggleSelect}
           />
         ))}
         {hasMore ? (
@@ -188,6 +202,9 @@ export function PainelBoard({
   onCardRetry,
   onCardClick,
   isPending,
+  editingUnlocked,
+  selectedIds,
+  onToggleSelect,
 }: PainelBoardProps) {
   const columns = buildColumns(cards);
 
@@ -204,6 +221,9 @@ export function PainelBoard({
           onCardRetry={onCardRetry}
           onCardClick={onCardClick}
           isPending={isPending}
+          editingUnlocked={editingUnlocked}
+          selectedIds={selectedIds}
+          onToggleSelect={onToggleSelect}
         />
       ))}
     </div>

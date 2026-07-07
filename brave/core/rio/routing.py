@@ -7,19 +7,27 @@ reprocess_record_inline: Pure in-memory reprocess (no DB session required; for u
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+import structlog
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
 from brave.core.models import NascenteRecord, RioRecord
+from brave.core.repositories import SqlAlchemyRioRepository
 from brave.core.rio.dedup import compute_embedding, find_duplicate
 from brave.core.rio.label import label_entity
 from brave.core.rio.normalize import normalize_address, normalize_coordinates, normalize_name
 from brave.core.score.engine import compute_score
 from brave.core.score.schemas import ScoreInput
+from brave.observability.record_events import record_event
+
+logger = structlog.get_logger(__name__)
+
+# Stateless data-access seam (Phase A). The Session is passed per call and the
+# caller still owns the transaction — this repo flushes but never commits.
+_rio_repo = SqlAlchemyRioRepository()
 
 
 def route_by_score(
@@ -68,7 +76,7 @@ def route_by_score(
         "atualidade": result.breakdown.atualidade,
         "validacao_humana": result.breakdown.validacao_humana,
     }
-    rio_record.processed_at = datetime.now(timezone.utc)
+    rio_record.processed_at = datetime.now(UTC)
 
     # Set dlq_reason when routing to DLQ
     if result.routing == "dlq":
@@ -77,19 +85,6 @@ def route_by_score(
         )
     else:
         rio_record.dlq_reason = None
-
-    # Set mar_ready flag for TA attractions meeting the promote bar (TA-05, T-11-02-02).
-    # Explicit False for ALL non-qualifying paths so that re-scoring always resets the flag
-    # (never leaves a stale True from a previous score run with different inputs).
-    # Security: flag only True when entity_type=="attraction" AND canonical_key starts with
-    # "tripadvisor:" AND atualidade≥bar AND corroboracao≥bar. This ensures mar_ready can
-    # never be set by mtur, places, or any other non-TA source.
-    rio_record.mar_ready = (
-        rio_record.entity_type == "attraction"
-        and (rio_record.canonical_key or "").startswith("tripadvisor:")
-        and score_input.atualidade_value >= config.mar_ready_atualidade_bar
-        and score_input.corroboracao_value >= config.mar_ready_corrob_bar
-    )
 
     return rio_record
 
@@ -111,7 +106,7 @@ def process_nascente_record(
     3. Normalize names/coordinates/addresses
     4. Label with Norteia taxonomy (Phase 1 stub)
     5. Score via §7.6 pure function
-    6. Route to mar/dlq/descarte
+    6. Route to mar/dlq (binary threshold_mar gate)
 
     Args:
         session:    SQLAlchemy synchronous Session.
@@ -125,9 +120,7 @@ def process_nascente_record(
     # Idempotency check: use canonical_key = source_ref from payload or nascente.source_ref
     canonical_key = nascente.source_ref
 
-    existing = session.scalar(
-        select(RioRecord).where(RioRecord.canonical_key == canonical_key)
-    )
+    existing = _rio_repo.get_by_canonical_key(session, canonical_key)
     if existing is not None:
         return existing
 
@@ -144,7 +137,13 @@ def process_nascente_record(
         address = normalize_address(address)
 
     lat = payload.get("lat")
+    # Longitude key drift: TripAdvisor/Places payloads store longitude under "lng"
+    # (see atrativos/destinos payloads + places client), while geocoder/legacy
+    # payloads use "lon". Reading only "lon" left normalized["lon"] perpetually
+    # null for every TA/Places record — accept either key.
     lon = payload.get("lon")
+    if lon is None:
+        lon = payload.get("lng")
     lat, lon = normalize_coordinates(lat, lon)
 
     # Build normalized dict — preserve score input fields from payload
@@ -161,6 +160,18 @@ def process_nascente_record(
         "validacao_humana_value": float(payload.get("validacao_humana_value", 0.0)),
     }
 
+    # Preserve público-geo município (nome + IBGE code) into normalized so board cards
+    # can show it without a nascente JOIN. Entity-agnostic (destino + atrativo payloads
+    # both carry canonical.municipio + municipio_id). município nome/UF/IBGE are PUBLIC
+    # geo-territorial fields — NOT PII (same class as name/uf).
+    _canonical = payload.get("canonical") or {}
+    _municipio = _canonical.get("municipio")
+    if _municipio:
+        normalized["municipio"] = _municipio
+    _municipio_id = payload.get("municipio_id") or _canonical.get("ibge_code")
+    if _municipio_id:
+        normalized["municipio_id"] = _municipio_id
+
     # Attraction-specific: preserve place_id_cache so ContactFinderAgent and SignalAgent
     # can look up Place Details without repeating text_search (D-04, COMP-03).
     # This cache key is written by DiscoveryAgent into the nascente payload; copying it
@@ -173,6 +184,14 @@ def process_nascente_record(
     # Mirrors the place_id_cache copy above (D-03 / G2 gap fix).
     if nascente.entity_type == "attraction" and "parent_mar_id" in payload:
         normalized["parent_mar_id"] = payload["parent_mar_id"]
+
+    # Attraction-specific: carry a lane-supplied MASKED WhatsApp candidate (Phase F)
+    # from payload["contact"] into normalized["contact"]. Value is already masked at
+    # the lane boundary (whatsapp_candidate_from_phone → mask_phone); it is excluded
+    # from the Mar `canonical` push in promote_to_mar so the norteia-api shape is
+    # unchanged. Mirrors the place_id_cache / parent_mar_id attraction-scoped copies.
+    if nascente.entity_type == "attraction" and "contact" in payload:
+        normalized["contact"] = payload["contact"]
 
     # Add taxonomy labels (Phase 1 stub)
     normalized = label_entity(nascente.entity_type, normalized)
@@ -192,6 +211,28 @@ def process_nascente_record(
         embedding=embedding,
     )
     if duplicate is not None:
+        # Duplicate-detected return — minimal public-geo log (LGPD-safe).
+        logger.info(
+            "registro_deduplicado",
+            entity_type=duplicate.entity_type,
+            uf=duplicate.uf,
+            name=((duplicate.normalized or {}).get("name")),
+        )
+        # Append-only Log-tab timeline event (behind the canonical_key early-return).
+        # LGPD: public-geo fields only. Keyed by this record's source_ref so it shows
+        # under the same drawer even though it collapsed onto an existing Rio row.
+        record_event(
+            session,
+            source=nascente.source,
+            source_ref=canonical_key,
+            stage="deduped",
+            status="skip",
+            message=((duplicate.normalized or {}).get("name")),
+            entity_type=nascente.entity_type,
+            uf=nascente.uf,
+            nascente_id=nascente.id,
+            rio_id=duplicate.id,
+        )
         return duplicate
 
     # Create RioRecord
@@ -206,12 +247,56 @@ def process_nascente_record(
         embedding=embedding,
         canonical_key=canonical_key,
     )
-    session.add(rio)
-    session.flush()
+    _rio_repo.add(session, rio)
 
     # Apply §7.6 scoring and routing
     route_by_score(session, rio, config)
     session.flush()
+
+    # Per-entity sync log at the PRIMARY routed return — rio.routing is now final
+    # (mar/dlq/in_progress). LGPD: public-geo fields only (name, uf, routing, score).
+    logger.info(
+        "registro_roteado",
+        entity_type=rio.entity_type,
+        uf=rio.uf,
+        name=((rio.normalized or {}).get("name")),
+        routing=rio.routing,
+        score=(float(rio.score) if rio.score is not None else None),
+    )
+
+    # Append-only Log-tab timeline events (behind the canonical_key early-return).
+    # LGPD: only §7.6 engineering fields (score, routing, dlq_reason, version).
+    _score = float(rio.score) if rio.score is not None else None
+    record_event(
+        session,
+        source=nascente.source,
+        source_ref=canonical_key,
+        stage="scored",
+        status="ok",
+        message=((rio.normalized or {}).get("name")),
+        entity_type=rio.entity_type,
+        uf=rio.uf,
+        nascente_id=nascente.id,
+        rio_id=rio.id,
+        data={"score": _score, "score_version": rio.score_version},
+    )
+    record_event(
+        session,
+        source=nascente.source,
+        source_ref=canonical_key,
+        stage="routed",
+        status=("fail" if rio.routing == "dlq" else "ok"),
+        message=rio.dlq_reason,
+        entity_type=rio.entity_type,
+        uf=rio.uf,
+        nascente_id=nascente.id,
+        rio_id=rio.id,
+        data={
+            "routing": rio.routing,
+            "dlq_reason": rio.dlq_reason,
+            "score": _score,
+        },
+    )
 
     return rio
 
@@ -238,7 +323,7 @@ def reprocess_record(
     Raises:
         ValueError: If no RioRecord with rio_id exists.
     """
-    rio = session.get(RioRecord, rio_id)
+    rio = _rio_repo.get(session, rio_id)
     if rio is None:
         raise ValueError(f"RioRecord {rio_id} not found")
 

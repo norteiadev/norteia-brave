@@ -20,14 +20,27 @@ import uuid
 from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from brave.api.deps import get_db, require_bearer, require_steward_or_bearer
-from brave.core.models import AuditLog, MarRecord, NascenteRecord, RioRecord, mask_phone
+from brave.api.deps import (
+    get_db,
+    require_bearer,
+    require_editing_unlocked,
+    require_steward_or_bearer,
+)
+from brave.api.routers.workers import _scrub_event_data, _scrub_event_text
+from brave.core.models import (
+    AuditLog,
+    MarRecord,
+    NascenteRecord,
+    RecordEvent,
+    RioRecord,
+    mask_phone,
+)
 from brave.observability.audit import write_audit
 
 logger = structlog.get_logger(__name__)
@@ -131,13 +144,33 @@ def _safe_contacts(contacts: dict | None) -> dict | None:
     return out or None
 
 
+def _safe_contact(contact: dict | None) -> dict | None:
+    """Return an allow-listed, MASKED view of normalized["contact"] (Phase F, LGPD R3).
+
+    The Phase F enrichment stores a WhatsApp candidate at
+    normalized["contact"]["whatsapp_candidate"] ALREADY masked (mask_phone). This is a
+    deny-by-default allow-list: only whatsapp_candidate is surfaced and it is passed
+    through mask_phone again as a defense-in-depth guarantee (mask_phone is idempotent
+    on the masked form) so a raw celular can NEVER transit the board even if some
+    future writer bypasses the write-time masking. Any other keys are dropped.
+    """
+    if not isinstance(contact, dict):
+        return None
+    out: dict = {}
+    if contact.get("whatsapp_candidate") is not None:
+        out["whatsapp_candidate"] = mask_phone(contact.get("whatsapp_candidate"))
+    return out or None
+
+
 def _safe_normalized(normalized: dict | None) -> dict:
     """Return a copy of the Rio normalized dict with the contacts sub-dict minimized.
 
     The Rio normalized payload stores the owner's raw contact data at
-    normalized["contacts"]. This function MUST be called on every atrativo response
-    path — owner PII (phone_e164, email, ig_handle) must never be returned to the
-    caller. Delegates to _safe_contacts for the allow-listed contacts summary.
+    normalized["contacts"] and a Phase F MASKED WhatsApp candidate at
+    normalized["contact"]["whatsapp_candidate"]. This function MUST be called on every
+    atrativo response path — owner PII (phone_e164, email, ig_handle) must never be
+    returned to the caller. Delegates to _safe_contacts / _safe_contact for the
+    allow-listed summaries.
 
     Mirrors atrativos_gate.py masking contract (phone masked) and additionally
     drops non-website contact PII (email, ig_handle) per CR-01.
@@ -150,7 +183,51 @@ def _safe_normalized(normalized: dict | None) -> dict:
             n.pop("contacts", None)
         else:
             n["contacts"] = safe
+    # Phase F: minimize the singular "contact" sub-dict (WhatsApp candidate) too.
+    contact = n.get("contact")
+    if "contact" in n:
+        safe_contact = _safe_contact(contact) if isinstance(contact, dict) else None
+        if safe_contact is None:
+            n.pop("contact", None)
+        else:
+            n["contact"] = safe_contact
     return n
+
+
+def _record_events_for(db: Session, canonical_key: str | None) -> list[dict]:
+    """Return the append-only Log-tab timeline for a record, oldest→newest.
+
+    Queries RecordEvent by ``source_ref == rio.canonical_key`` (the universal
+    drawer key, e.g. ``tripadvisor:attraction:{locationId}``) ordered by
+    ``created_at`` ascending. Returns [] when the record has no canonical_key
+    (nothing to key on) so callers can always spread the field unconditionally.
+
+    LGPD: RecordEvent.data is written with public-geo + engineering fields ONLY
+    (score, routing, dlq_reason, IBGE reason, name/uf, locationId) — never PII. The
+    write side is the minimization boundary; as defense-in-depth the free-text
+    message + data["error"] are additionally scrubbed on the read side here.
+    """
+    if not canonical_key:
+        return []
+    rows = list(
+        db.scalars(
+            select(RecordEvent)
+            .where(RecordEvent.source_ref == canonical_key)
+            .order_by(RecordEvent.created_at.asc())
+        ).all()
+    )
+    return [
+        {
+            "stage": e.stage,
+            "status": e.status,
+            # LGPD defense-in-depth: scrub free-text message + data["error"] before
+            # surfacing (str(exc) at write sites can echo input carrying a phone).
+            "message": _scrub_event_text(e.message),
+            "data": _scrub_event_data(e.data),
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in rows
+    ]
 
 
 # ===========================================================================
@@ -206,6 +283,9 @@ def list_destinos(
             "name": (rio.normalized or {}).get("name") or (
                 (mar.canonical or {}).get("name") if mar else None
             ),
+            # Público-geo município (nome) resolved at ingest — NOT PII.
+            "municipio": (rio.normalized or {}).get("municipio"),
+            "municipio_id": (rio.normalized or {}).get("municipio_id"),
             "validation_pending": rio.routing == "dlq",
             "mar_id": str(mar.id) if mar else None,
             "published_at": mar.published_at.isoformat() if mar and mar.published_at else None,
@@ -282,8 +362,15 @@ def get_destino_detail(
         "score": float(rio.score) if rio.score is not None else None,
         "score_breakdown": rio.score_breakdown or {},
         "canonical_key": rio.canonical_key,
-        "normalized": rio.normalized or {},
+        # LGPD: _safe_normalized masks phone_e164 → phone_masked and drops owner PII,
+        # mirroring get_atrativo_detail — a destino carrying enrichment contacts must
+        # never leak phone/email/ig_handle on the detail path.
+        "normalized": _safe_normalized(rio.normalized),
         "source": nascente.source if nascente else None,
+        "dlq_reason": rio.dlq_reason,
+        "processed_at": rio.processed_at.isoformat() if rio.processed_at else None,
+        "score_version": rio.score_version,
+        "events": _record_events_for(db, rio.canonical_key),
         "audit_log": [
             {
                 "action": row.action,
@@ -427,7 +514,10 @@ def descarte_destino(
 @router.patch(
     "/api/v1/destinos/{rio_id}/transition",
     status_code=200,
-    dependencies=[Depends(require_steward_or_bearer)],
+    dependencies=[
+        Depends(require_steward_or_bearer),
+        Depends(require_editing_unlocked),
+    ],
 )
 def transition_destino(
     rio_id: uuid.UUID,
@@ -478,10 +568,10 @@ def transition_destino(
         rio.dlq_reason = "steward_sent_to_review"
     elif edge == "reprocess":
         # Reopen: reset → re-score (§7.6). Reuses the routing helper, no new machinery.
-        from brave.config.settings import ScoreConfig
+        from brave.config.runtime import load_effective_config
         from brave.core.rio.routing import reprocess_record
 
-        reprocess_record(db, rio.id, ScoreConfig())
+        reprocess_record(db, rio.id, load_effective_config(db).score)
         db.refresh(rio)
 
     write_audit(
@@ -534,10 +624,10 @@ def reprocess_destino(
         dispatch_mode = "celery"
     except (KombuOperationalError, ConnectionError, OSError):
         # Broker unreachable (offline tests/dev) → run synchronously.
-        from brave.config.settings import ScoreConfig
+        from brave.config.runtime import load_effective_config
         from brave.core.rio.routing import reprocess_record
 
-        reprocess_record(db, rio_id, ScoreConfig())
+        reprocess_record(db, rio_id, load_effective_config(db).score)
         dispatch_mode = "synchronous"
 
     write_audit(
@@ -555,7 +645,10 @@ def reprocess_destino(
 @router.patch(
     "/api/v1/destinos/{rio_id}/edit",
     status_code=200,
-    dependencies=[Depends(require_steward_or_bearer)],
+    dependencies=[
+        Depends(require_steward_or_bearer),
+        Depends(require_editing_unlocked),
+    ],
 )
 def edit_destino(
     rio_id: uuid.UUID,
@@ -637,6 +730,11 @@ def list_atrativos(
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = list(db.scalars(stmt.offset(offset).limit(limit)).all())
 
+    # Phase F/H: WhatsApp eligibility (no horário AND no preço) — lets the Kanban
+    # disable the manual DLQ→WhatsApp move for ineligible cards. Server-side batch
+    # move (dlq.py) enforces it regardless; this projection just powers the UI.
+    from brave.api.routers.dlq import _is_whatsapp_eligible  # noqa: PLC0415
+
     items = [
         {
             "id": str(rio.id),
@@ -647,7 +745,11 @@ def list_atrativos(
             "score": float(rio.score) if rio.score is not None else None,
             "name": (rio.normalized or {}).get("name"),
             "validation_pending": rio.sub_state == "aguardando_consulta_whatsapp",
+            "whatsapp_eligible": _is_whatsapp_eligible(rio.normalized),
             "mar_id": None,  # atrativos don't have direct mar_id in normalized
+            # Público-geo município (nome) resolved at ingest — NOT PII (same class as uf).
+            "municipio": (rio.normalized or {}).get("municipio"),
+            "municipio_id": (rio.normalized or {}).get("municipio_id"),
             "parent_mar_id": (rio.normalized or {}).get("parent_mar_id"),
             # T-08-04 / CR-01: never expose raw contacts — allow-listed summary
             # (website + phone_masked only; email/ig_handle dropped as owner PII)
@@ -676,6 +778,8 @@ def get_atrativo_detail(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="RioRecord not found"
         )
+
+    nascente = db.get(NascenteRecord, rio.nascente_id) if rio.nascente_id else None
 
     audit_rows = list(
         db.scalars(
@@ -710,6 +814,11 @@ def get_atrativo_detail(
         "canonical_key": rio.canonical_key,
         # T-08-04: _safe_normalized masks phone_e164 → phone_masked
         "normalized": _safe_normalized(rio.normalized),
+        "source": nascente.source if nascente else None,
+        "dlq_reason": rio.dlq_reason,
+        "processed_at": rio.processed_at.isoformat() if rio.processed_at else None,
+        "score_version": rio.score_version,
+        "events": _record_events_for(db, rio.canonical_key),
         "audit_log": [
             {
                 "action": row.action,
@@ -726,7 +835,10 @@ def get_atrativo_detail(
 @router.patch(
     "/api/v1/atrativos/{rio_id}/advance",
     status_code=200,
-    dependencies=[Depends(require_steward_or_bearer)],
+    dependencies=[
+        Depends(require_steward_or_bearer),
+        Depends(require_editing_unlocked),
+    ],
 )
 def advance_atrativo_state(
     rio_id: uuid.UUID,
@@ -745,7 +857,7 @@ def advance_atrativo_state(
     if rio is None:
         raise HTTPException(status_code=404, detail="RioRecord not found")
 
-    from brave.lanes.atrativos.state_machine import advance_sub_state
+    from brave.core.atrativos.state_machine import advance_sub_state
 
     advanced = advance_sub_state(
         session=db,
@@ -804,7 +916,10 @@ def descarte_atrativo(
 @router.patch(
     "/api/v1/atrativos/{rio_id}/edit",
     status_code=200,
-    dependencies=[Depends(require_steward_or_bearer)],
+    dependencies=[
+        Depends(require_steward_or_bearer),
+        Depends(require_editing_unlocked),
+    ],
 )
 def edit_atrativo(
     rio_id: uuid.UUID,

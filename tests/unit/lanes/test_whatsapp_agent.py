@@ -29,14 +29,14 @@ import fakeredis
 import pytest
 
 from brave.compliance.gate import ComplianceError
-from brave.lanes.atrativos.schemas import ConversationExtractionResult
-from brave.lanes.atrativos.whatsapp_agent import (
+from brave.shared.whatsapp.agent import (
     OPT_OUT_KEYWORDS,
     ConversationState,
     _extract_answers_node,
     _recv_reply_node,
     build_graph,
 )
+from brave.shared.whatsapp.schemas import ConversationExtractionResult
 from tests.fakes.fake_llm import FakeLLMClient
 from tests.fakes.fake_whatsapp import FakeWhatsAppClient
 
@@ -238,7 +238,7 @@ async def test_norteia_not_in_params_raises_compliance_error() -> None:
     Calling _compliant_send with params["body"] lacking "Norteia" raises ComplianceError.
     FakeWhatsAppClient.sent_messages is empty (send_template never called).
     """
-    from brave.lanes.atrativos.whatsapp_agent import _compliant_send
+    from brave.shared.whatsapp.agent import _compliant_send
 
     wa_client = FakeWhatsAppClient()
     redis = fakeredis.FakeRedis()
@@ -420,7 +420,7 @@ def test_opt_out_keywords_constant() -> None:
     only as a full-message reply, so it lives in a separate set. The union
     (ALL_OPT_OUT_KEYWORDS) preserves the documented COMP-02 keyword list.
     """
-    from brave.lanes.atrativos.whatsapp_agent import ALL_OPT_OUT_KEYWORDS
+    from brave.shared.whatsapp.agent import ALL_OPT_OUT_KEYWORDS
 
     # Internal match set (includes the accent-less "NAO" spelling)
     assert OPT_OUT_KEYWORDS == {"SAIR", "PARAR", "CANCELAR", "REMOVER", "STOP", "NÃO", "NAO"}

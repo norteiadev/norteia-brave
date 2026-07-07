@@ -169,6 +169,9 @@
   --painel-border-outer: #e6e4e0;
   --painel-border-inner: #f0eee9;
   --painel-chip: #f0eee9;
+  /* Distinct, lighter hover so a parked pointer over an inactive nav item
+     never reads as the active state (which uses --painel-chip). QA F6. */
+  --painel-chip-hover: #f6f5f2;
   --painel-text: #18181b;
   --painel-muted: #6b7280;
   --painel-muted-2: #9ca3af;

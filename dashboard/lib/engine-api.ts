@@ -12,6 +12,9 @@
  */
 
 import { apiFetch } from "@/lib/api-client";
+import type { EngineMode } from "@/lib/config-api";
+
+export type { EngineMode } from "@/lib/config-api";
 
 // Reuse the canonical failures client + types (lib/workers-api.ts) rather than
 // re-declaring a second, drift-prone FailureItem here. Re-exported so the painel
@@ -74,6 +77,22 @@ export interface EngineStatus {
    * may still be processing. Only cleared when an operator POSTs /stop.
    */
   enabled: boolean;
+  /**
+   * Operator mode (Motor Pausado, phase C/H) — orthogonal to `state`/`enabled`:
+   *   LIGADO    — normal auto-collection; Kanban card editing LOCKED.
+   *   PAUSADO   — orchestrator drains; card editing UNLOCKED (manual steward edits).
+   *   DESLIGADO — hard off (also idles + clears `enabled`); card editing UNLOCKED.
+   */
+  mode: EngineMode;
+  /**
+   * True iff Kanban card mutations (drag transitions, DLQ→WhatsApp batch) are
+   * allowed — i.e. mode ∈ {PAUSADO, DESLIGADO}. The server backstops every card
+   * mutation with a 423 when this is false; the dashboard mirrors it to gate the
+   * drag/selection affordances.
+   */
+  editing_unlocked: boolean;
+  /** Tri-state sync phase for the topbar indicator: idle (gray) | syncing (yellow) | synced (green). */
+  sync_phase?: "idle" | "syncing" | "synced";
 }
 
 export interface EngineActionResult {
@@ -239,4 +258,24 @@ export function setEngineSource(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source }),
   });
+}
+
+/**
+ * Set the operator mode (Motor Pausado edit-lock — phase H tri-state topbar).
+ * Calls POST /api/v1/engine/mode; the backend validates the mode (422 otherwise),
+ * persists it durably, and echoes back the new mode + `editing_unlocked` so the
+ * dashboard can update the Kanban edit-lock indicator without waiting for the
+ * next status poll.
+ */
+export function setEngineMode(
+  mode: EngineMode,
+): Promise<{ mode: EngineMode; editing_unlocked: boolean }> {
+  return apiFetch<{ mode: EngineMode; editing_unlocked: boolean }>(
+    "api/v1/engine/mode",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    },
+  );
 }

@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw";
 
 import type {
+  EngineMode,
   EngineSource,
   EngineState,
   EngineStatus,
@@ -32,9 +33,28 @@ export function engineStatus(overrides: Partial<EngineStatus> = {}) {
     },
     depth: null,
     source: null,
+    // Default fixture = a stopped engine → DESLIGADO → Kanban editing UNLOCKED
+    // (so board drag/select tests interact freely). Edit-lock suites override
+    // with { mode: "LIGADO", editing_unlocked: false }.
+    mode: "DESLIGADO",
+    editing_unlocked: true,
     ...overrides,
   };
   return http.get(`${BASE}/status`, () => HttpResponse.json(status));
+}
+
+/**
+ * POST /engine/mode — echoes the posted mode + derived editing_unlocked
+ * (LIGADO ⇒ locked; PAUSADO/DESLIGADO ⇒ unlocked), matching the backend.
+ */
+export function engineModeSuccess() {
+  return http.post(`${BASE}/mode`, async ({ request }) => {
+    const body = (await request.json()) as { mode: EngineMode };
+    return HttpResponse.json({
+      mode: body.mode,
+      editing_unlocked: body.mode !== "LIGADO",
+    });
+  });
 }
 
 export function engineStartSuccess(
@@ -107,11 +127,12 @@ export function engineSetSourceSuccess() {
   });
 }
 
-/** Default barrel: idle status + start/stop success + TA session ready. */
+/** Default barrel: idle status + start/stop/mode success + TA session ready. */
 export const engineHandlers = [
   engineStatus(),
   engineStartSuccess(),
   engineStopSuccess(),
+  engineModeSuccess(),
   taSessionStatus(),
   nascenteEmpty(),
 ];

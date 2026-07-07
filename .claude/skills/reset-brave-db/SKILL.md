@@ -67,12 +67,33 @@ Useful variants:
 # Skip broker purge (keep queued tasks — rarely needed):
 .venv/bin/python .claude/skills/reset-brave-db/scripts/reset_db.py --yes --no-broker-purge
 
+# Preserve the operator config (thresholds/weights/source toggles/engine mode)
+# across the data wipe instead of resetting it to defaults:
+.venv/bin/python .claude/skills/reset-brave-db/scripts/reset_db.py --yes --keep config_settings
+
+# Skip the post-wipe config_settings default re-seed (leave the table empty):
+.venv/bin/python .claude/skills/reset-brave-db/scripts/reset_db.py --yes --no-seed
+
 # Interactive (prompts for a typed 'reset' confirmation):
 .venv/bin/python .claude/skills/reset-brave-db/scripts/reset_db.py
 ```
 
 The script prints per-table before→after row counts and the Redis key delete count,
 so report those back to the user as the proof of what was wiped.
+
+### config_settings (persisted operator config, Alembic 0009)
+
+The wipe truncates `config_settings` — the persisted overlay for the operator-tunable
+config (score weights/threshold, per-source enabled flags, and the engine **mode**).
+By default the script then **re-seeds the idempotent defaults** (`brave.config.runtime.
+seed_default_config`, values equal to the env-effective `AppConfig`, so no behavior
+change), so the painel **Config** view and the engine mode come up in a known clean
+state. Two knobs:
+
+- `--keep config_settings` — preserve the operator's tuned config across a data-only reset.
+- `--no-seed` — wipe it and leave it empty (effective config then falls back to env
+  defaults via `load_effective_config`; re-seed later with
+  `.venv/bin/python -m scripts.seed_config`).
 
 ## After a reset — cold-start note
 

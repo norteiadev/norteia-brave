@@ -45,14 +45,15 @@ class ScoreResult(BaseModel):
     """Result of the §7.6 pure score computation.
 
     score         — total reliability score (0–100, rounded to 2 decimal places)
-    routing       — destination: "mar" (≥85), "dlq" (51–84.9), "descarte" (≤50)
+    routing       — destination: "mar" (≥ threshold_mar) or "dlq" (below it).
+                    Binary gate — the score engine never emits "descarte".
     score_version — identity stamp of the weight set used (D-13)
     breakdown     — per-criterion point contributions for provenance (D-13)
     """
 
     score: float = Field(..., description="Total reliability score (0–100)")
-    routing: Literal["mar", "dlq", "descarte"] = Field(
-        ..., description="Routing destination based on score thresholds"
+    routing: Literal["mar", "dlq"] = Field(
+        ..., description="Routing destination based on the threshold_mar gate"
     )
     score_version: str = Field(..., description="Weight-set identity stamp (D-13)")
     breakdown: ScoreBreakdown = Field(..., description="Per-criterion point breakdown")

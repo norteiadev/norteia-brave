@@ -17,17 +17,17 @@ def test_simulate_distribution_keys():
     assert "total" in result
     assert "mar_pct" in result
     assert "dlq_pct" in result
-    assert "descarte_pct" in result
+    assert "descarte_pct" not in result  # binary gate — no descarte bucket
     assert "mean" in result
     assert "stdev" in result
 
 
 def test_simulate_distribution_totals_100_pct():
-    """mar_pct + dlq_pct + descarte_pct == 100.0 (within float rounding tolerance)."""
+    """mar_pct + dlq_pct == 100.0 (binary gate; within float rounding tolerance)."""
     config = ScoreConfig()
     samples = generate_cold_start_samples(50)
     result = simulate_distribution(config, samples)
-    total_pct = result["mar_pct"] + result["dlq_pct"] + result["descarte_pct"]
+    total_pct = result["mar_pct"] + result["dlq_pct"]
     assert total_pct == pytest.approx(100.0, abs=0.01)
 
 
@@ -43,8 +43,8 @@ def test_cold_start_landfill_effect():
     """Cold-start samples (validacao_humana=0, corroboracao=0) should show mar_pct == 0.
 
     Without human validation (15pts) and corroboração (20pts), cold-start records
-    cannot reach the Mar threshold (≥85). This is the DLQ landfill warning:
-    all cold-start records are trapped in descarte or DLQ, never reaching Mar.
+    cannot reach the Mar threshold (≥80). This is the DLQ landfill warning:
+    all cold-start records are trapped in DLQ, never reaching Mar.
 
     The harness makes this risk visible before wiring real intake.
     """
@@ -56,8 +56,8 @@ def test_cold_start_landfill_effect():
         f"Cold-start records should not reach Mar, but {result['mar_pct']}% did. "
         "Validate thresholds with simulate_distribution before wiring intake."
     )
-    # All records go to descarte or DLQ (not Mar)
-    assert result["descarte_pct"] + result["dlq_pct"] == pytest.approx(100.0, abs=0.01)
+    # All records go to DLQ (not Mar)
+    assert result["dlq_pct"] == pytest.approx(100.0, abs=0.01)
 
     # To demonstrate DLQ landfill with Mtur-origin records (origem=100):
     # Mtur records (origem=100) are better quality but still can't reach Mar without
@@ -150,4 +150,3 @@ def test_simulate_distribution_all_mar():
     result = simulate_distribution(config, samples)
     assert result["mar_pct"] == 100.0
     assert result["dlq_pct"] == 0.0
-    assert result["descarte_pct"] == 0.0

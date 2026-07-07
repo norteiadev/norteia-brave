@@ -13,7 +13,7 @@ class LaneProtocol(Protocol):
     """Minimal interface for a Brave data collection lane.
 
     A lane is responsible for ingesting raw data from a specific source
-    (Mtur, NotebookLM, Google Places, Apify, etc.) into Nascente records.
+    (Mtur, Google Places, TripAdvisor, etc.) into Nascente records.
     """
 
     async def produce(self, uf: str) -> None:

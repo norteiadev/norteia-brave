@@ -68,6 +68,30 @@ def client(app):
     return TestClient(app, raise_server_exceptions=False)
 
 
+@pytest.fixture
+def unlock_editing():
+    """Release the card edit-lock (phase C) so a lock-gated mutation reaches its handler.
+
+    require_editing_unlocked returns 423 while the engine mode is LIGADO (the default),
+    so the /advance (and /edit, /transition) endpoints need mode PAUSADO to exercise
+    their real 200/409 business logic. Sets PAUSADO on the same Redis the app resolves
+    via get_redis(), then restores the LIGADO default on teardown so the mode never
+    leaks to other tests.
+
+    Only lock-gated integration tests request this fixture — the 401 auth tests
+    short-circuit before the lock and must not require a live Redis.
+    """
+    from brave.api.deps import get_redis  # noqa: PLC0415
+    from brave.core import engine as collection_engine  # noqa: PLC0415
+
+    rc = get_redis()
+    collection_engine.set_mode(rc, collection_engine.PAUSADO)
+    try:
+        yield
+    finally:
+        rc.delete(collection_engine._MODE_KEY)  # restore default (LIGADO)
+
+
 # ---------------------------------------------------------------------------
 # Test-data factory helpers
 # ---------------------------------------------------------------------------
@@ -101,7 +125,7 @@ def _make_destino(
     normalized: dict | None = None,
 ) -> object:
     """Create a minimal RioRecord (entity_type=destination) for test data."""
-    from brave.core.models import NascenteRecord, RioRecord  # noqa: PLC0415
+    from brave.core.models import RioRecord  # noqa: PLC0415
 
     nascente = _make_nascente(db_session, uf=uf, entity_type="destination")
     n = normalized or {"name": f"Destino {uf} {uuid.uuid4().hex[:6]}"}
@@ -130,7 +154,7 @@ def _make_atrativo(
     normalized: dict | None = None,
 ) -> object:
     """Create a minimal RioRecord (entity_type=attraction) for test data."""
-    from brave.core.models import NascenteRecord, RioRecord  # noqa: PLC0415
+    from brave.core.models import RioRecord  # noqa: PLC0415
 
     nascente = _make_nascente(db_session, uf=uf, entity_type="attraction")
     n = normalized or {"name": f"Atrativo {uf} {uuid.uuid4().hex[:6]}"}
@@ -448,6 +472,77 @@ def test_get_atrativo_detail_contacts_masked(client, db_session: Session):
 
 
 @pytest.mark.integration
+def test_get_atrativo_detail_events_and_engineering_fields(client, db_session: Session):
+    """GET /api/v1/atrativos/{id} surfaces the Log-tab timeline + engineering fields.
+
+    The drawer Log tab reads ``events[]`` (RecordEvent timeline keyed by
+    rio.canonical_key) plus the scalar engineering fields ``dlq_reason``,
+    ``source`` (nascente.source), ``processed_at`` and ``score_version``. This
+    seeds two RecordEvents on the atrativo's canonical_key and asserts they come
+    back in the detail body, oldest→newest, alongside those fields.
+    """
+    from brave.observability.record_events import record_event  # noqa: PLC0415
+
+    rio = _make_atrativo(db_session, uf="AC", routing="dlq", score=42.0)
+    canonical_key = rio.canonical_key
+
+    # Two timeline events keyed by the universal drawer key (rio.canonical_key).
+    record_event(
+        db_session,
+        source="tripadvisor",
+        source_ref=canonical_key,
+        stage="ingested",
+        status="ok",
+        message="Atrativo Log Detail",
+        entity_type="attraction",
+        uf="AC",
+        nascente_id=rio.nascente_id,
+        data={"municipio": "Rio Branco", "version": 1},
+    )
+    record_event(
+        db_session,
+        source="tripadvisor",
+        source_ref=canonical_key,
+        stage="routed",
+        status="fail",
+        message="dlq: score below threshold",
+        entity_type="attraction",
+        uf="AC",
+        rio_id=rio.id,
+        data={"routing": "dlq", "score": 42.0},
+    )
+    db_session.commit()
+
+    r = client.get(f"/api/v1/atrativos/{rio.id}", headers=BEARER_HEADERS)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+    body = r.json()
+
+    # Engineering fields the Log tab / drawer header consume.
+    for field in ("dlq_reason", "source", "processed_at", "score_version"):
+        assert field in body, f"detail body must include {field!r} for the Log tab; keys={list(body)}"
+    # source is derived from the backing NascenteRecord (_make_nascente → 'mtur').
+    assert body["source"] == "mtur"
+
+    # events[] carries the RecordEvent timeline, oldest→newest, with the Log shape.
+    events = body["events"]
+    assert isinstance(events, list)
+    stages = [e["stage"] for e in events]
+    assert "ingested" in stages and "routed" in stages, (
+        f"seeded events must appear in detail events[]; got {stages}"
+    )
+    assert stages.index("ingested") < stages.index("routed"), (
+        f"events[] must be ordered oldest→newest; got {stages}"
+    )
+    for e in events:
+        assert set(e) >= {"stage", "status", "message", "data", "created_at"}, (
+            f"each event must expose the Log-line fields; got {list(e)}"
+        )
+    routed_event = next(e for e in events if e["stage"] == "routed")
+    assert routed_event["status"] == "fail"
+    assert routed_event["data"] == {"routing": "dlq", "score": 42.0}
+
+
+@pytest.mark.integration
 def test_atrativo_owner_email_never_leaked(client, db_session: Session):
     """CR-01: owner email (and ig_handle) must NOT appear in list or detail responses (LGPD R3)."""
     owner_email = "dono.secreto@example.com"
@@ -495,8 +590,12 @@ def test_atrativo_owner_email_never_leaked(client, db_session: Session):
 
 
 @pytest.mark.integration
-def test_advance_atrativo_conflict(client, db_session: Session):
-    """PATCH /api/v1/atrativos/{id}/advance → 409 when expected_state != actual sub_state."""
+def test_advance_atrativo_conflict(client, db_session: Session, unlock_editing):
+    """PATCH /api/v1/atrativos/{id}/advance → 409 when expected_state != actual sub_state.
+
+    Requires mode PAUSADO (unlock_editing) — the phase-C edit-lock otherwise 423s
+    this lock-gated endpoint before the conflict check runs.
+    """
     # actual sub_state is "contacts_found"; we send expected_state="discovered" → mismatch → 409
     rio = _make_atrativo(db_session, sub_state="contacts_found")
     db_session.commit()
@@ -512,8 +611,12 @@ def test_advance_atrativo_conflict(client, db_session: Session):
 
 
 @pytest.mark.integration
-def test_advance_atrativo_success(client, db_session: Session):
-    """PATCH /api/v1/atrativos/{id}/advance → 200; sub_state advanced when match."""
+def test_advance_atrativo_success(client, db_session: Session, unlock_editing):
+    """PATCH /api/v1/atrativos/{id}/advance → 200; sub_state advanced when match.
+
+    This is the genuine 200-under-PAUSADO path: unlock_editing sets mode PAUSADO so
+    the edit-lock releases and the real FSM advance runs against Postgres.
+    """
     rio = _make_atrativo(db_session, sub_state="discovered")
     db_session.commit()
 
@@ -660,7 +763,6 @@ def test_list_nascente_with_bearer_shape_and_name(client, db_session: Session):
 @pytest.mark.integration
 def test_list_nascente_excludes_superseded(client, db_session: Session):
     """Superseded rows (superseded_by_id set) are NOT listed — current versions only."""
-    from brave.core.models import NascenteRecord  # noqa: PLC0415
 
     old = _make_nascente(db_session, uf="RR", entity_type="destination")
     new = _make_nascente(db_session, uf="RR", entity_type="destination")
@@ -689,3 +791,46 @@ def test_list_nascente_entity_type_filter(client, db_session: Session):
     ids = [i["id"] for i in r.json()["items"]]
     assert str(attr.id) in ids
     assert str(dest.id) not in ids
+
+
+@pytest.mark.integration
+def test_list_nascente_unrouted_excludes_rio_twin(client, db_session: Session):
+    """unrouted=true lists only Nascente records with NO RioRecord twin (Bug 4).
+
+    A Nascente WITH a Rio twin is excluded; one WITHOUT is included. The default
+    (unrouted=false) returns both.
+    """
+    from brave.core.models import RioRecord  # noqa: PLC0415
+
+    # Nascente with a Rio twin (routed) — must be excluded when unrouted=true.
+    routed = _make_nascente(db_session, uf="SE", entity_type="destination")
+    rio = RioRecord(
+        id=uuid.uuid4(),
+        nascente_id=routed.id,
+        entity_type="destination",
+        uf="SE",
+        routing="mar",
+        score=90.0,
+        canonical_key=f"destino:SE:{uuid.uuid4().hex[:8]}",
+        normalized={"name": "Roteado"},
+    )
+    db_session.add(rio)
+
+    # Nascente WITHOUT a Rio twin — must be included when unrouted=true.
+    unrouted = _make_nascente(db_session, uf="SE", entity_type="destination")
+    db_session.commit()
+
+    r = client.get(
+        "/api/v1/nascente?uf=SE&unrouted=true&limit=500", headers=BEARER_HEADERS
+    )
+    assert r.status_code == 200, r.text
+    ids = [i["id"] for i in r.json()["items"]]
+    assert str(unrouted.id) in ids
+    assert str(routed.id) not in ids
+
+    # Default (unrouted=false) returns both.
+    r2 = client.get("/api/v1/nascente?uf=SE&limit=500", headers=BEARER_HEADERS)
+    assert r2.status_code == 200, r2.text
+    ids2 = [i["id"] for i in r2.json()["items"]]
+    assert str(unrouted.id) in ids2
+    assert str(routed.id) in ids2

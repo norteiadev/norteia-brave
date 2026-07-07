@@ -104,12 +104,9 @@ def test_harness_boost_does_not_touch_settings() -> None:
         f"weight_validacao_humana changed: expected 15.0, got {config.weight_validacao_humana}"
     )
 
-    # Routing thresholds
-    assert config.threshold_mar == 85.0, (
-        f"threshold_mar changed: expected 85.0, got {config.threshold_mar}"
-    )
-    assert config.threshold_dlq == 40.0, (
-        f"threshold_dlq changed: expected 40.0, got {config.threshold_dlq}"
+    # Routing threshold (binary Mar/DLQ gate)
+    assert config.threshold_mar == 80.0, (
+        f"threshold_mar changed: expected 80.0, got {config.threshold_mar}"
     )
 
     # Sanity: weights sum to 100

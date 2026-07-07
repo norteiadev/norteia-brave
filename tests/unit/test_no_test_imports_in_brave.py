@@ -10,9 +10,9 @@ an import STATEMENT matching `^\\s*(from|import)\\s+tests\\b` (anchored regex,
 not a bare substring). Docstrings and comments that mention "tests/" or
 "tests.fakes" are safe and must NOT trigger the assertion.
 
-See: INT-BLOCKER-01 (Phase 09, plan 01) — fixed by adding NullPlacesClient,
-NullLLMClient, NullApifyClient in brave/clients/ and rewiring the 8 offline-
-branch import sites in brave/tasks/pipeline.py.
+See: INT-BLOCKER-01 (Phase 09, plan 01) — fixed by adding NullPlacesClient and
+NullLLMClient in brave/clients/ and rewiring the offline-branch import sites in
+brave/tasks/pipeline.py.
 """
 
 import re

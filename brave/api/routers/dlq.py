@@ -1,10 +1,11 @@
-"""DLQ management endpoints (D-21, CORE-07, CORE-08, D-07, D-08).
+"""DLQ management endpoints (D-21, CORE-07, CORE-08, D-07, D-08, Phase F).
 
 GET  /api/v1/dlq                          — list DLQ records
 PATCH /api/v1/dlq/{rio_id}/reprocess      — trigger reprocess
 PATCH /api/v1/dlq/{rio_id}/descarte       — steward reject
 PATCH /api/v1/dlq/{rio_id}/validate       — steward validate: set validacao_humana=100 → re-score → Mar + push (D-07)
 POST  /api/v1/dlq/validate-batch          — batch validate all DLQ records for a UF (D-08)
+POST  /api/v1/dlq/whatsapp-batch          — manual DLQ→WhatsApp move for atrativos (Phase F)
 """
 
 import hmac
@@ -12,17 +13,28 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from sqlalchemy import select
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from brave.api.deps import get_db, get_steward_config, require_steward_or_bearer
+from brave.api.deps import (
+    get_db,
+    get_steward_config,
+    require_editing_unlocked,
+    require_steward_or_bearer,
+)
 from brave.config.settings import StewardConfig
+from brave.core.atrativos.state_machine import advance_sub_state
 from brave.core.dlq.service import validate_and_promote_rio
 from brave.core.models import RioRecord
+from brave.core.repositories import SqlAlchemyDlqRepository
 from brave.observability.audit import write_audit
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
+
+# Stateless data-access seam (Phase A). The Session is passed per call and the
+# endpoint still owns the transaction — this repo only reads.
+_dlq_repo = SqlAlchemyDlqRepository()
 
 
 def require_steward(
@@ -50,6 +62,70 @@ def require_steward(
         )
 
 
+# ---------------------------------------------------------------------------
+# Phase F — manual DLQ→WhatsApp move (atrativos): body + eligibility + dispatch
+# ---------------------------------------------------------------------------
+
+
+class WhatsAppBatchBody(BaseModel):
+    """Request body for POST /api/v1/dlq/whatsapp-batch.
+
+    rio_ids are atrativo RioRecord UUIDs currently in DLQ (routing="dlq", sub_state
+    None) to move into the WhatsApp column. min_length=1 → an empty list is a 422.
+    """
+
+    rio_ids: list[uuid.UUID] = Field(
+        ...,
+        min_length=1,
+        description="Atrativo rio_ids currently in DLQ to move to the WhatsApp column.",
+    )
+
+
+def _is_whatsapp_eligible(normalized: dict | None) -> bool:
+    """Eligible for the manual WhatsApp move iff the atrativo has NO horário AND NO preço.
+
+    Server-side eligibility gate (Phase F): a WhatsApp owner-consultation only makes
+    sense when we are still MISSING opening hours and price. A record that already
+    carries either is rejected (422) — there is nothing to ask the owner.
+
+    Horário sources:
+      - normalized["weekday_text"]   (list[str]) — Google Places opening hours (SignalAgent)
+      - normalized["owner_horarios"] (str)       — owner-confirmed schedule (post-outreach)
+    Preço source:
+      - normalized["owner_valor"]    (str)       — owner-confirmed price (the only price a
+        pre-outreach atrativo can carry; Places exposes no price today)
+
+    normalized may be None → treated as no horário / no preço → eligible.
+    """
+    n = normalized or {}
+    has_horario = bool(n.get("weekday_text")) or bool(n.get("owner_horarios"))
+    has_preco = bool(n.get("owner_valor"))
+    return not has_horario and not has_preco
+
+
+def _dispatch_or_inline(task, *args) -> None:
+    """Dispatch a Celery task with an inline-.run fallback (dispatch-then-inline-fallback).
+
+    Same idiom used elsewhere (reprocess endpoint above, the atrativos FSM chain):
+    .delay() on a live broker; on any dispatch error (no broker in tests/dev, or a
+    real broker-down) run the task body inline in-process. Callers commit the record
+    BEFORE calling this (WR-01) so the inline .run's own session sees the committed
+    state and can re-acquire the released row lock. An inline failure is logged, never
+    raised — the record move is already committed and the send/discovery is retryable.
+    """
+    try:
+        task.delay(*args)
+    except Exception:
+        try:
+            task.run(*args)
+        except Exception as exc:  # noqa: BLE001 — move committed; work retryable
+            logger.warning(
+                "dlq_whatsapp_dispatch_inline_failed",
+                task=getattr(task, "name", str(task)),
+                error=str(exc),
+            )
+
+
 @router.get("/api/v1/dlq")
 def list_dlq(
     uf: str | None = Query(None),
@@ -62,14 +138,7 @@ def list_dlq(
     Optional filters: uf, entity_type.
     Default limit: 50.
     """
-    query = select(RioRecord).where(RioRecord.routing == "dlq")
-    if uf:
-        query = query.where(RioRecord.uf == uf)
-    if entity_type:
-        query = query.where(RioRecord.entity_type == entity_type)
-    query = query.limit(limit)
-
-    rows = list(db.scalars(query).all())
+    rows = _dlq_repo.list_dlq(db, uf=uf, entity_type=entity_type, limit=limit)
     return [
         {
             "id": str(r.id),
@@ -111,10 +180,10 @@ def reprocess_dlq_record(
         reprocess_record_task.delay(str(rio_id))
     except Exception:
         # In tests/dev without Celery broker, fall back to synchronous reprocess
-        from brave.config.settings import ScoreConfig
+        from brave.config.runtime import load_effective_config
         from brave.core.rio.routing import reprocess_record
 
-        reprocess_record(db, rio_id, ScoreConfig())
+        reprocess_record(db, rio_id, load_effective_config(db).score)
 
     write_audit(
         session=db,
@@ -235,17 +304,7 @@ def validate_batch(
 
     Returns 202 with {status, uf, validated}.
     """
-    rows = list(
-        db.scalars(
-            select(RioRecord)
-            .where(
-                RioRecord.routing == "dlq",
-                RioRecord.uf == uf,
-                RioRecord.entity_type == entity_type,
-            )
-            .limit(limit)
-        ).all()
-    )
+    rows = _dlq_repo.list_dlq(db, uf=uf, entity_type=entity_type, limit=limit)
 
     validated = 0
     for rio in rows:
@@ -299,6 +358,138 @@ def validate_batch(
         validated += 1
 
     return {"status": "accepted", "uf": uf, "validated": validated}
+
+
+@router.post(
+    "/api/v1/dlq/whatsapp-batch",
+    status_code=202,
+    dependencies=[
+        Depends(require_steward_or_bearer),
+        Depends(require_editing_unlocked),
+    ],
+)
+def dlq_to_whatsapp_batch(
+    body: WhatsAppBatchBody,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Manually move DLQ atrativos into the WhatsApp column (Phase F — the single entry).
+
+    This REPLACES the old auto-gate approve/reject flow as the operator's way to send an
+    atrativo to WhatsApp outreach. It accepts a list of atrativo rio_ids currently in DLQ
+    and, for each ELIGIBLE record, moves it to sub_state="aguardando_consulta_whatsapp"
+    (off the DLQ column, routing="in_progress") and branches:
+
+      - has a captured celular (normalized["contact"]["whatsapp_candidate"] present) →
+        advance aguardando_consulta_whatsapp → whatsapp_in_progress and dispatch
+        outreach_task (the existing LangGraph consent/ramp/quality/Twilio path).
+      - no celular → dispatch discover_whatsapp_number_task (LLM number-discovery): on a
+        found number it proceeds to outreach; offline / not-found it bounces the record
+        back to DLQ with dlq_reason="no_contact_found".
+
+    ELIGIBILITY (server-side, 422): only atrativos with NO horário AND NO preço qualify —
+    a record that already has weekday_text / owner_horarios / owner_valor has nothing to
+    ask the owner. The batch is ATOMIC: if ANY id is ineligible or invalid (not found /
+    not an attraction / not in DLQ / already in WhatsApp), the whole request returns 422
+    with a per-item breakdown and NOTHING is moved.
+
+    Auth: require_steward_or_bearer (mutation) THEN require_editing_unlocked (Motor
+    Pausado edit-lock, Phase C) — auth-before-lock, so an unauthenticated caller gets 401,
+    never a 423 that would leak lock state. While the engine is LIGADO this returns 423.
+
+    WR-01: each eligible record's move + audit is committed BEFORE its Celery dispatch, so
+    a broker-down / inline fallback sees the committed state and the released row lock. The
+    dispatch uses the dispatch-then-inline-fallback idiom.
+
+    Returns 202 with {status, moved, outreach, discovery}.
+    """
+    # Pass 1 — validate every id up front (no mutation). Atomic: any failure → 422.
+    to_move_ids: list[uuid.UUID] = []
+    ineligible: list[dict] = []
+    for rid in body.rio_ids:
+        rio = db.get(RioRecord, rid)
+        reason: str | None = None
+        if rio is None:
+            reason = "not_found"
+        elif rio.entity_type != "attraction":
+            reason = "not_attraction"
+        elif rio.routing != "dlq":
+            reason = "not_in_dlq"
+        elif rio.sub_state is not None:
+            reason = "already_in_whatsapp"
+        elif not _is_whatsapp_eligible(rio.normalized):
+            reason = "has_horario_or_preco"
+
+        if reason is not None:
+            ineligible.append({"rio_id": str(rid), "reason": reason})
+        else:
+            to_move_ids.append(rid)
+
+    if ineligible:
+        # Atomic — one bad id fails the whole batch; nothing has been mutated yet.
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "ineligible_records", "ineligible": ineligible},
+        )
+
+    # Pass 2 — move each eligible record under a fresh row lock, commit, then dispatch.
+    outreach = 0
+    discovery = 0
+    for rid in to_move_ids:
+        # CR-04: re-lock per record (the first commit below releases prior locks).
+        rio = db.get(RioRecord, rid, with_for_update=True)
+        if rio is None or rio.routing != "dlq" or rio.sub_state is not None:
+            # Raced away between validation and move — skip defensively (no partial move).
+            continue
+
+        # dlq → aguardando_consulta_whatsapp (audited FSM edge; routing set separately).
+        advance_sub_state(
+            db, rio, None, "aguardando_consulta_whatsapp",
+            actor="steward", validate=True, lock=False,
+        )
+        # Move OFF the DLQ column while the WhatsApp consultation is in flight.
+        rio.routing = "in_progress"
+
+        candidate = ((rio.normalized or {}).get("contact") or {}).get("whatsapp_candidate")
+        branch = "outreach" if candidate else "discovery"
+
+        if candidate:
+            # Have a WhatsApp number → approve for outreach immediately.
+            advance_sub_state(
+                db, rio, "aguardando_consulta_whatsapp", "whatsapp_in_progress",
+                actor="steward", validate=True, lock=False,
+            )
+
+        write_audit(
+            session=db,
+            action="dlq_to_whatsapp",
+            entity_type=rio.entity_type,
+            record_id=rio.id,
+            before_state={"routing": "dlq", "sub_state": None},
+            after_state={"routing": rio.routing, "sub_state": rio.sub_state, "branch": branch},
+            actor="steward",
+        )
+
+        # WR-01: commit the move BEFORE dispatch (releases the row lock; the worker /
+        # inline .run sees the committed state).
+        db.commit()
+
+        if candidate:
+            from brave.tasks.pipeline import outreach_task
+
+            _dispatch_or_inline(outreach_task, str(rid))
+            outreach += 1
+        else:
+            from brave.tasks.pipeline import discover_whatsapp_number_task
+
+            _dispatch_or_inline(discover_whatsapp_number_task, str(rid))
+            discovery += 1
+
+    return {
+        "status": "accepted",
+        "moved": outreach + discovery,
+        "outreach": outreach,
+        "discovery": discovery,
+    }
 
 
 @router.patch(

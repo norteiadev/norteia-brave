@@ -18,6 +18,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from brave.config.settings import AppConfig, DashboardConfig, StewardConfig, WebhookConfig
+from brave.core import engine as collection_engine
 
 # ---------------------------------------------------------------------------
 # Config singletons (lazily initialized)
@@ -204,3 +205,36 @@ def get_redis() -> Redis:
         client.ping()  # let it raise in prod — do NOT swallow (CR-02)
         _redis_client = client
     return _redis_client
+
+
+# ---------------------------------------------------------------------------
+# Editing lock (Motor Pausado, phase C)
+# ---------------------------------------------------------------------------
+
+
+def require_editing_unlocked(rc: Redis = Depends(get_redis)) -> None:
+    """Gate card mutations behind the operator edit-lock (Motor Pausado, phase C).
+
+    The Kanban card edit-lock is RELEASED only when the operator has paused or shut
+    the engine down. While the mode is LIGADO (normal auto-collection) a steward must
+    not hand-edit records out from under an in-flight sweep, so the four card-mutation
+    endpoints (destino/atrativo edit + destino transition + atrativo advance) return
+    423 Locked. PAUSADO and DESLIGADO unlock editing (this dependency is then a no-op).
+
+    Orthogonal to auth — attach this AFTER require_steward_or_bearer on each route so
+    an unauthenticated caller still gets 401 (auth-before-lock), never a 423 that would
+    leak lock state to an anonymous request. Reads mode from the SAME real Redis the
+    orchestrator and engine-control endpoints share (get_redis), so the lock reflects
+    the live operator mode.
+
+    get_redis is fail-closed (CR-02): a Redis outage surfaces as a ping error (500),
+    not a silent unlock — editing stays gated when the mode cannot be read.
+    """
+    if collection_engine.get_mode(rc) == collection_engine.LIGADO:
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail=(
+                "Edição travada: o motor está LIGADO. Pause o motor (PAUSADO) para "
+                "editar cards."
+            ),
+        )

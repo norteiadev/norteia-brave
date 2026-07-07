@@ -1,4 +1,4 @@
-"""Client Protocol boundary definitions for all 10 external systems (D-09, D-18).
+"""Client Protocol boundary definitions for all 8 external systems (D-09, D-18).
 
 Every external system sits behind a typed typing.Protocol interface.
 Production code accepts these protocol types; tests inject fakes from tests/fakes/.
@@ -7,17 +7,15 @@ Protocols use structural typing — no isinstance() checks anywhere.
 Runtime-checkable is intentionally False: Protocol is the static boundary,
 not a runtime check.
 
-Ten protocols (CORE-11 + TA-01 + TA-14):
+Eight protocols (CORE-11 + TA-01 + TA-14):
   1. LLMClientProtocol          — LLM extraction (OpenRouter/DeepSeek + Anthropic)
   2. NorteiaApiClientProtocol   — Mar push to norteia-api
   3. PlacesClientProtocol       — Google Places (New API) search/details
   4. OTAClientProtocol          — OTA price check (ticketed attractions)
-  5. ApifyClientProtocol        — IG/X scraping (best-effort signal)
-  6. WhatsAppClientProtocol     — WhatsApp Business API template messages
-  7. MturClientProtocol         — Mtur municipality catalog
-  8. NotebookLMClientProtocol   — NotebookLM structured reports
-  9. TripAdvisorClientProtocol  — TripAdvisor GraphQL hybrid scraper (Phase 11)
- 10. GeocoderClientProtocol     — OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14)
+  5. WhatsAppClientProtocol     — WhatsApp Business API template messages
+  6. MturClientProtocol         — Mtur municipality catalog
+  7. TripAdvisorClientProtocol  — TripAdvisor GraphQL hybrid scraper (Phase 11)
+  8. GeocoderClientProtocol     — OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14)
 """
 
 from collections.abc import AsyncIterator
@@ -154,25 +152,6 @@ class OTAClientProtocol(Protocol):
         ...
 
 
-class ApifyClientProtocol(Protocol):
-    """Apify scraping client — IG/X social signals (Phase 3, best-effort).
-
-    Best-effort signal: Apify reads IG business profiles and recent posts.
-    Meta ToS gray area — read-only signal only (no automated DM).
-    """
-
-    async def scrape_ig(self, handle: str) -> dict[str, Any]:
-        """Scrape Instagram business profile for activity signals.
-
-        Args:
-            handle: IG handle (e.g. "@praiabonita_ba").
-
-        Returns:
-            Dict with follower count, last post date, post frequency, ...
-        """
-        ...
-
-
 class WhatsAppClientProtocol(Protocol):
     """WhatsApp Business API client — outreach messages (Phase 3).
 
@@ -214,25 +193,6 @@ class MturClientProtocol(Protocol):
 
         Returns:
             List of municipality dicts (ibge_code, name, category, ...).
-        """
-        ...
-
-
-class NotebookLMClientProtocol(Protocol):
-    """NotebookLM structured report client — Destinos lane (Phase 2).
-
-    Fetches structured tourism reports for destinos not covered by Mtur
-    (origem=80 for NotebookLM-sourced records).
-    """
-
-    async def fetch_report(self, municipio: str) -> dict[str, Any]:
-        """Fetch a structured NotebookLM tourism report for a municipality.
-
-        Args:
-            municipio: Municipality name (e.g. "Lençóis, BA").
-
-        Returns:
-            Structured report dict with tourism highlights, taxonomy labels, ...
         """
         ...
 
@@ -307,6 +267,52 @@ class TripAdvisorClientProtocol(Protocol):
             ``(offset, cards)`` tuples — one per page; ``offset`` is ``(page-1)*30``,
             ``cards`` is a list of attraction dicts with keys: name, locationId,
             rating, review_count, category.
+        """
+        ...
+
+    def fetch_attractions_paginated_gql(
+        self, geo_id: int, start_page: int = 1, max_pages: int = 334
+    ) -> AsyncIterator[tuple[int, list[dict[str, Any]]]]:
+        """Stream AttractionsFusion attractions page-by-page over GraphQL.
+
+        POC-confirmed replacement for the single-page ``fetch_attractions`` AND the
+        HTML-SSR ``fetch_attractions_paginated``: the AttractionsFusion persisted
+        query (qid ``79aaeeb847e55e58``) paginates via ``request.routeParameters.pagee``
+        (offset = (page-1)*30; page 1 sends ``pagee="0"`` explicitly). Each page is
+        parsed by the existing FlexCard parser (LGPD aggregate-only) and yielded as
+        an ``(offset, cards)`` tuple. Stops when a page yields 0 cards; clamped to the
+        334-page / oa9990 cap; 403/429 → SessionExpiredError.
+
+        Args:
+            geo_id: TripAdvisor integer geoId (294280 = all Brazil). MUST be int.
+            start_page: 1-based page to start from (resume support).
+            max_pages: Pages to attempt from start_page (default 334 = full cap).
+
+        Yields:
+            ``(offset, cards)`` tuples — ``offset = (page-1)*30``, ``cards`` a list of
+            attraction dicts with keys: name, locationId, rating, review_count, category.
+        """
+        ...
+
+    async def fetch_recent_review(self, location_id: int) -> dict | None:
+        """Fetch review recency for one attraction (qid ef1a9f94012220d3), §7.6.
+
+        Powers ``atualidade_from_recency`` plus a precise corroboração count/rating.
+        Reviews are newest-first (SERVER_DETERMINED), so ``reviews[0]`` is newest.
+
+        LGPD: reads ONLY ``totalCount`` + ``reviews[0].publishedDate`` +
+        ``reviews[0].rating`` — never review text/title/username/userProfile/photos.
+
+        Args:
+            location_id: TripAdvisor integer locationId.
+
+        Returns:
+            ``{"review_count": int, "rating": float | None, "most_recent_review_at":
+            datetime}`` on success, or ``None`` on empty reviews / any parse error.
+
+        Raises:
+            SessionMissingError: When no session is in Redis (real client).
+            SessionExpiredError: On 403 or 429 HTTP status (real client).
         """
         ...
 

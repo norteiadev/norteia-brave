@@ -244,7 +244,7 @@ from brave.api.routers.atrativos import (  # noqa: E402
 ATRATIVO_ALLOWED = {
     ("rio", "dlq"),       # force send-to-review
     ("dlq", "rio"),       # reprocess / reopen (NEW)
-    ("rio", "mar"),       # mar-ready promote-override
+    ("rio", "mar"),       # borderline promotion via the §7.6 gate
     ("rio", "descarte"),  # descarte
     ("whatsapp", "whatsapp"),  # into-whatsapp: delegate to the audited gate approve
 }
@@ -289,7 +289,7 @@ def test_transition_atrativo_mar_to_descarte_is_409_and_never_mutates():
     rio = _atr(routing="mar")
     db = _db_for(rio)
 
-    with patch("brave.core.promote.service.promote_override") as promote, patch(
+    with patch("brave.api.routers.atrativos.validate_and_promote_rio") as promote, patch(
         "brave.api.routers.atrativos.write_audit"
     ) as audit, pytest.raises(HTTPException) as exc:
         transition_atrativo(
@@ -325,11 +325,11 @@ def test_transition_atrativo_dlq_to_rio_reuses_reprocess_helper():
     assert result == {"status": "ok", "to": "rio"}
 
 
-def test_transition_atrativo_rio_to_mar_reuses_promote_override():
+def test_transition_atrativo_rio_to_mar_reuses_validate_and_promote():
     rio = _atr(routing="in_progress")
     db = _db_for(rio)
 
-    with patch("brave.api.routers.atrativos.promote_override") as promote, patch(
+    with patch("brave.api.routers.atrativos.validate_and_promote_rio") as promote, patch(
         "brave.api.routers.atrativos.write_audit"
     ) as audit:
         result = transition_atrativo(

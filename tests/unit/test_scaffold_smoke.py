@@ -3,7 +3,7 @@
 These tests prove:
 1. brave.config.settings imports and ScoreConfig() yields exact §7.6 defaults
 2. brave.core.models imports and table names match spec
-3. brave.clients.base imports and all 8 Protocol interfaces are defined
+3. brave.clients.base imports and the core Protocol interfaces are defined
 4. Layer boundary: NascenteRecord has no 'routing' column; RioRecord has 'routing'
 5. MarRecord.source_ref is UNIQUE (per D-15)
 6. LLMConfig.provider_data_collection defaults to 'deny' (security invariant)
@@ -48,12 +48,7 @@ class TestScoreConfig:
     def test_threshold_mar(self) -> None:
         from brave.config.settings import ScoreConfig
 
-        assert ScoreConfig().threshold_mar == 85.0
-
-    def test_threshold_dlq(self) -> None:
-        from brave.config.settings import ScoreConfig
-
-        assert ScoreConfig().threshold_dlq == 40.0  # calibrated in Phase 2 (D-05): descarte black-hole fix
+        assert ScoreConfig().threshold_mar == 80.0  # binary Mar/DLQ gate (Phase B)
 
     def test_weights_sum_to_100(self) -> None:
         from brave.config.settings import ScoreConfig
@@ -71,7 +66,7 @@ class TestScoreConfig:
     def test_score_version_default(self) -> None:
         from brave.config.settings import ScoreConfig
 
-        assert ScoreConfig().score_version == "v1.1"  # bumped in Phase 2 (D-05) with threshold_dlq recalibration
+        assert ScoreConfig().score_version == "v1.1"
 
 
 # ---------------------------------------------------------------------------
@@ -205,17 +200,15 @@ EXPECTED_PROTOCOLS = [
     "NorteiaApiClientProtocol",
     "PlacesClientProtocol",
     "OTAClientProtocol",
-    "ApifyClientProtocol",
     "WhatsAppClientProtocol",
     "MturClientProtocol",
-    "NotebookLMClientProtocol",
 ]
 
 
 class TestClientProtocols:
     @pytest.mark.parametrize("protocol_name", EXPECTED_PROTOCOLS)
     def test_protocol_exists(self, protocol_name: str) -> None:
-        """All 8 client Protocol interfaces must be importable from brave.clients.base."""
+        """Each listed client Protocol interface must be importable from brave.clients.base."""
         import brave.clients.base as base_module
 
         assert hasattr(base_module, protocol_name), (
@@ -224,7 +217,7 @@ class TestClientProtocols:
 
     @pytest.mark.parametrize("protocol_name", EXPECTED_PROTOCOLS)
     def test_protocol_is_class(self, protocol_name: str) -> None:
-        """All 8 client Protocols must be classes."""
+        """Each listed client Protocol must be a class."""
         import brave.clients.base as base_module
 
         cls = getattr(base_module, protocol_name)

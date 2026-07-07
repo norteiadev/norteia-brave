@@ -25,6 +25,8 @@ export interface DestinoListItem {
   score: number | null;
   name: string | null;
   canonical_key: string | null;
+  municipio?: string | null; // público-geo município nome (resolved at ingest)
+  municipio_id?: string | null; // IBGE code
   validation_pending: boolean;
   mar_id: string | null;
   published_at: string | null;

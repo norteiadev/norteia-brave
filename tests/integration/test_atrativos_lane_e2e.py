@@ -43,7 +43,7 @@ with pytest -m "not integration".
 import asyncio
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import fakeredis
 import pytest
@@ -65,7 +65,6 @@ from brave.core.nascente.service import store_raw
 from brave.core.rio.routing import process_nascente_record, reprocess_record
 from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 from brave.lanes.atrativos.signal_agent import SignalAgent
-from tests.fakes.fake_apify import FakeApifyClient
 from tests.fakes.fake_llm import FakeLLMClient
 from tests.fakes.fake_norteia_api import FakeNorteiaApiClient
 from tests.fakes.fake_places import (
@@ -89,16 +88,18 @@ from brave.lanes.atrativos.schemas import AtrativoResult
 # ---------------------------------------------------------------------------
 # Score constants (all tests must work with default ScoreConfig)
 # ---------------------------------------------------------------------------
-# threshold_dlq = 40.0, threshold_mar = 85.0
+# threshold_mar = 80.0 (binary Mar/DLQ gate)
 # weights: origem=30%, completude=20%, corroboracao=20%, atualidade=15%, validacao_humana=15%
 
-# Score for sc4 fixture (OPERATIONAL, recent review, Apify confirms, full fields):
-#   origem=60, completude=75, corroboracao=40, atualidade=100, validacao_humana=0
-#   → 60*0.3 + 75*0.2 + 40*0.2 + 100*0.15 + 0 = 18 + 15 + 8 + 15 = 56 → DLQ (40 ≤ 56 < 85)
+# Score for sc4 fixture (OPERATIONAL, recent review, full fields):
+#   corroboracao is now the fixed 0.0 constant (Apify IG source retired, Phase E).
+#   origem=60, completude=75, corroboracao=0, atualidade=100, validacao_humana=0
+#   → 60*0.3 + 75*0.2 + 0*0.2 + 100*0.15 + 0 = 18 + 15 + 0 + 15 = 48 → DLQ (48 < 80)
 
-# Score for sc7 fixture (same as sc4 but after owner validation):
+# Score for sc7 fixture (borderline seed → owner validation):
+#   corroboracao_value=40 is SEEDED directly on the record (not produced by the lane).
 #   origem=100, completude=100, corroboracao=40, atualidade=100, validacao_humana=100
-#   → 30 + 20 + 8 + 15 + 15 = 88 → Mar (≥ 85) ✓
+#   → 30 + 20 + 8 + 15 + 15 = 88 → Mar (≥ 80) ✓
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +319,7 @@ def test_sc1_discovery_happy_path(db_session: Session) -> None:
 
     # Set sub_state="discovered" — FSM initial state for the attraction pipeline (D-01/D-02)
     # (discover_atrativo_task output: NascenteRecord created + RioRecord at sub_state=discovered)
-    from brave.lanes.atrativos.state_machine import advance_sub_state
+    from brave.core.atrativos.state_machine import advance_sub_state
     advance_sub_state(
         session=db_session,
         rio=rio,
@@ -587,12 +588,10 @@ def test_sc3_signal_agent_hard_descarte_closed_place(db_session: Session) -> Non
     fake_places = FakePlacesClient(
         fixture_details={place_id: SIGNAL_FIXTURE_CLOSED}
     )
-    fake_apify = FakeApifyClient()
     config = ScoreConfig()
 
     agent = SignalAgent(
         places_client=fake_places,
-        apify_client=fake_apify,
         session=db_session,
         config=config,
     )
@@ -640,12 +639,12 @@ def test_sc4_full_pipeline_borderline_reaches_gate(db_session: Session) -> None:
 
     This test exercises the full FSM path:
       discovered → contacts_found → signals_gathered → (§7.6 score) →
-      aguardando_consulta_whatsapp (DLQ sub_state, borderline)
+      routing=dlq, sub_state=None (borderline; NÃO auto-gate — manual move from DLQ)
 
-    Score math (ensures borderline band 40 ≤ score < 85):
-      origem=60, completude=75, corroboracao=40 (Apify confirms), atualidade=100
+    Score math (ensures borderline band score < 80):
+      origem=60, completude=75, corroboracao=0 (constant; Apify retired), atualidade=100
       (recent review within 30 days), validacao_humana=0
-      → 18 + 15 + 8 + 15 + 0 = 56 → DLQ ✓
+      → 18 + 15 + 0 + 15 + 0 = 48 → DLQ ✓
 
     Approach:
       1. Seed parent destino in Mar
@@ -716,7 +715,7 @@ def test_sc4_full_pipeline_borderline_reaches_gate(db_session: Session) -> None:
     db_session.flush()
 
     # Set sub_state="discovered" (FSM initial state for attraction pipeline)
-    from brave.lanes.atrativos.state_machine import advance_sub_state
+    from brave.core.atrativos.state_machine import advance_sub_state
     advance_sub_state(
         session=db_session, rio=rio,
         expected_state=None, next_state="discovered",
@@ -764,8 +763,8 @@ def test_sc4_full_pipeline_borderline_reaches_gate(db_session: Session) -> None:
 
     # Step 4: Run SignalAgent (contacts_found → signals_gathered → score → aguardando)
     # SIGNAL_FIXTURE_OPEN has a recent review (2026-06-01) → atualidade_value=100
-    # Also configure Apify to confirm IG presence → corroboracao_value=40
-    # Score: 60*0.3 + 75*0.2 + 40*0.2 + 100*0.15 + 0 = 56 → DLQ
+    # corroboracao_value is the fixed 0.0 constant (Apify IG source retired, Phase E)
+    # Score: 60*0.3 + 75*0.2 + 0*0.2 + 100*0.15 + 0 = 48 → DLQ
     rio.normalized = {
         **(rio.normalized or {}),
         "place_id_cache": place_id,
@@ -783,12 +782,8 @@ def test_sc4_full_pipeline_borderline_reaches_gate(db_session: Session) -> None:
             }
         }
     )
-    fake_apify = FakeApifyClient(
-        fixture_data={"@morrodesaopaulo": {"followers": 5000, "last_post": "2026-06-10"}}
-    )
     signal_agent = SignalAgent(
         places_client=fake_places_signal,
-        apify_client=fake_apify,
         session=db_session,
         config=config,
     )
@@ -798,13 +793,14 @@ def test_sc4_full_pipeline_borderline_reaches_gate(db_session: Session) -> None:
     db_session.expire_all()
     rio = db_session.get(RioRecord, rio_id)
 
-    # D-01/D-02: sub_state must be aguardando_consulta_whatsapp (borderline DLQ)
+    # Phase F (spec 2026-07-02): NÃO auto-gate — a borderline attraction settles in DLQ
+    # with sub_state=None; the operator moves it to WhatsApp manually from the DLQ.
     assert rio.routing == "dlq", (
-        f"Expected routing='dlq' for borderline atrativo (score ~56), got '{rio.routing}' "
+        f"Expected routing='dlq' for borderline atrativo (score ~48), got '{rio.routing}' "
         f"(score={rio.score})"
     )
-    assert rio.sub_state == "aguardando_consulta_whatsapp", (
-        f"Expected sub_state='aguardando_consulta_whatsapp' after scoring borderline (D-06), "
+    assert rio.sub_state is None, (
+        f"Expected sub_state=None (borderline dlq stays in DLQ, no auto-enrollment), "
         f"got '{rio.sub_state}'"
     )
 
@@ -1021,7 +1017,7 @@ def test_sc7_owner_validation_reaches_mar(db_session: Session) -> None:
       Seed: origem=100, completude=100, corroboracao=40, atualidade=100,
             validacao_humana=0 → score = 30 + 20 + 8 + 15 + 0 = 73 → DLQ
       After adding validacao_humana=100:
-            score = 30 + 20 + 8 + 15 + 15 = 88 → Mar ✓ (≥ 85)
+            score = 30 + 20 + 8 + 15 + 15 = 88 → Mar ✓ (≥ 80)
 
     Approach:
       1. Seed RioRecord with DLQ routing and high initial scores (no validacao_humana)
@@ -1052,6 +1048,10 @@ def test_sc7_owner_validation_reaches_mar(db_session: Session) -> None:
             "corroboracao_value": 40.0,
             "atualidade_value": 100.0,
             "validacao_humana_value": 0.0,  # No validation yet
+            # Phase F: a recent review date so the promote_to_mar recency backstop
+            # (attraction: missing/>90d review → DLQ) does not block this owner-validated
+            # atrativo. In production SignalAgent threads this from Places reviews.
+            "most_recent_review_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
         },
     )
     db_session.flush()
@@ -1093,7 +1093,7 @@ def test_sc7_owner_validation_reaches_mar(db_session: Session) -> None:
         f"Expected routing='mar' after owner validation (validacao_humana=100). "
         f"Got '{updated_rio.routing}' with score={updated_rio.score}. "
         f"Score math: origem=100*0.3 + completude=100*0.2 + corroboracao=40*0.2 + "
-        f"atualidade=100*0.15 + validacao_humana=100*0.15 = 30+20+8+15+15 = 88 ≥ 85"
+        f"atualidade=100*0.15 + validacao_humana=100*0.15 = 30+20+8+15+15 = 88 ≥ 80"
     )
 
     # Step 4: Promote to Mar layer

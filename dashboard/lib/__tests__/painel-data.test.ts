@@ -7,6 +7,7 @@ import { setOperatorToken } from "@/lib/api-client";
 import type { AtrativoListItem } from "@/lib/atrativos-api";
 import type { DestinoListItem } from "@/lib/destinos-api";
 import type { FailureItem } from "@/lib/engine-api";
+import type { NascenteListItem } from "@/lib/nascente-api";
 import {
   BR_UFS,
   COLUMN_DEFS,
@@ -24,7 +25,8 @@ import {
   sampleAtrativos,
 } from "@/mocks/handlers/atrativos";
 import { destinosListSuccess, sampleDestinos } from "@/mocks/handlers/destinos";
-import { nascenteEmpty, nascenteList } from "@/mocks/handlers/engine";
+import { dedupPairsEmpty } from "@/mocks/handlers/dedup";
+import { nascenteList } from "@/mocks/handlers/engine";
 import { failuresEmpty } from "@/mocks/handlers/workers";
 import { server } from "@/mocks/server";
 
@@ -92,9 +94,11 @@ const atrativos: AtrativoListItem[] = [
 // --- Pure selectors (RED-first) ---
 
 describe("routingToColumn", () => {
-  it("maps known routings to their column keys (in_progress → rio)", () => {
+  it("maps known routings to their column keys (in_progress → rio; descarte → falha)", () => {
     expect(routingToColumn("mar")).toBe("mar");
-    expect(routingToColumn("descarte")).toBe("descarte");
+    // Phase H: descarte-routed records surface in the Falha column, not a
+    // (non-existent) standalone descarte column.
+    expect(routingToColumn("descarte")).toBe("falha");
     expect(routingToColumn("dlq")).toBe("dlq");
     // 6-column model: the routing value `in_progress` is the "Rio · validação"
     // column (server twin: _ROUTING_TO_COLUMN in_progress → rio).
@@ -147,6 +151,48 @@ describe("toPainelCards", () => {
     expect(cards[0].column).toBe("whatsapp");
   });
 
+  it("maps a routing=descarte atrativo into the Falha column (phase H)", () => {
+    const descartado: AtrativoListItem = {
+      id: "a-descartado",
+      entity_type: "attraction",
+      uf: "MG",
+      routing: "descarte",
+      sub_state: null,
+      score: 20,
+      name: "Ponto Descartado",
+      validation_pending: false,
+      mar_id: null,
+      parent_mar_id: null,
+      contacts_summary: null,
+    };
+    const [card] = toPainelCards([], [descartado]);
+    expect(card.routing).toBe("descarte");
+    expect(card.column).toBe("falha");
+  });
+
+  it("projects whatsapp_eligible onto whatsappEligible (absent ⇒ eligible)", () => {
+    const base: Omit<AtrativoListItem, "id" | "whatsapp_eligible"> = {
+      entity_type: "attraction",
+      uf: "BA",
+      routing: "dlq",
+      sub_state: null,
+      score: 40,
+      name: "Atrativo DLQ",
+      validation_pending: false,
+      mar_id: null,
+      parent_mar_id: null,
+      contacts_summary: null,
+    };
+    const cards = toPainelCards([], [
+      { ...base, id: "a-elig", whatsapp_eligible: true },
+      { ...base, id: "a-inelig", whatsapp_eligible: false },
+      { ...base, id: "a-absent" }, // no flag → treated as eligible
+    ]);
+    expect(cards.find((c) => c.id === "a-elig")!.whatsappEligible).toBe(true);
+    expect(cards.find((c) => c.id === "a-inelig")!.whatsappEligible).toBe(false);
+    expect(cards.find((c) => c.id === "a-absent")!.whatsappEligible).toBe(true);
+  });
+
   it("projects FailureItem[] into real, draggable falha cards (column=falha, error=reason)", () => {
     const failures: FailureItem[] = [
       {
@@ -161,8 +207,12 @@ describe("toPainelCards", () => {
     expect(falha).toBeDefined();
     expect(falha.column).toBe("falha");
     expect(falha.error).toBe("ValidationError: origem field required");
-    // The falha column adds exactly one card on top of the 4 list cards.
-    expect(cards.filter((c) => c.column === "falha")).toHaveLength(1);
+    // Phase H: the Falha column holds BOTH the quarantine failure (f-1) AND the
+    // descarte-routed atrativo (a-descarte) — two cards on top of the 3 rendered
+    // list cards (d-mar, d-dlq, a-inprog).
+    const falhaCards = cards.filter((c) => c.column === "falha");
+    expect(falhaCards).toHaveLength(2);
+    expect(falhaCards.map((c) => c.id).sort()).toEqual(["a-descarte", "f-1"]);
   });
 
   it("projects NascenteListItem[] into read-only nascente-column cards", () => {
@@ -210,12 +260,22 @@ describe("toPainelCards", () => {
     expect(cards.filter((c) => c.column === "nascente")).toHaveLength(2);
   });
 
-  it("derives `duplicate` from validation_pending for BOTH entity types", () => {
-    const cards = toPainelCards(destinos, atrativos);
-    expect(cards.find((c) => c.id === "d-dlq")!.duplicate).toBe(true);
-    expect(cards.find((c) => c.id === "d-mar")!.duplicate).toBe(false);
-    expect(cards.find((c) => c.id === "a-descarte")!.duplicate).toBe(true);
-    expect(cards.find((c) => c.id === "a-inprog")!.duplicate).toBe(false);
+  it("derives `duplicate` from the dedup-candidate id set (a REAL dedup signal), NOT validation_pending", () => {
+    // d-dlq and a-descarte have validation_pending=true but are NOT dedup
+    // candidates. The old code blanket-flagged them ("possível duplicado" on the
+    // whole DLQ column); the fix flags a card ONLY when its rio id is a pending
+    // candidate↔Mar dedup pair (the same source the Duplicados view reads).
+    const dedupCandidateIds = new Set(["d-mar", "a-inprog"]);
+    const cards = toPainelCards(destinos, atrativos, [], [], dedupCandidateIds);
+    expect(cards.find((c) => c.id === "d-mar")!.duplicate).toBe(true);
+    expect(cards.find((c) => c.id === "a-inprog")!.duplicate).toBe(true);
+    // validation_pending=true but not a dedup candidate ⇒ NOT flagged.
+    expect(cards.find((c) => c.id === "d-dlq")!.duplicate).toBe(false);
+    expect(cards.find((c) => c.id === "a-descarte")!.duplicate).toBe(false);
+    // No dedup set passed (default empty) ⇒ nothing is flagged.
+    expect(
+      toPainelCards(destinos, atrativos).every((c) => !c.duplicate),
+    ).toBe(true);
   });
 
   it("sets source and error to null this slice", () => {
@@ -282,8 +342,8 @@ describe("buildColumns", () => {
     expect(byKey.whatsapp).toBe(0);
     expect(byKey.mar).toBe(1);
     expect(byKey.dlq).toBe(1);
-    expect(byKey.falha).toBe(0);
-    // a-descarte (routing=descarte) is NOT a standing column — never rendered.
+    // Phase H: a-descarte (routing=descarte) now lands in the Falha column.
+    expect(byKey.falha).toBe(1);
   });
 
   it("uses COLUMN_DEFS labels in order (6 columns)", () => {
@@ -340,12 +400,28 @@ function hookWrapper() {
 }
 
 describe("usePainelBoard", () => {
-  it("loads destinos + atrativos lists and builds a unified card[]", async () => {
+  it("loads destinos + atrativos + unrouted nascente and builds a unified card[]", async () => {
+    // Bug 4: unrouted nascente rows now feed the Nascente column as real cards.
+    // The envelope total (5) drives the column pill independently of the loaded
+    // slice (1 row) — the TRUE unrouted count, not the loaded-array length.
+    const nascente: NascenteListItem[] = [
+      {
+        id: "n-board-1",
+        entity_type: "destination",
+        uf: "BA",
+        source: "places",
+        name: "Praia do Forte",
+        municipio: "Mata de São João",
+        municipio_id: "2919926",
+        ingested_at: "2026-06-28T00:00:00Z",
+      },
+    ];
     server.use(
       destinosListSuccess(),
       atrativosListSuccess(),
       failuresEmpty(),
-      nascenteEmpty(),
+      dedupPairsEmpty(),
+      nascenteList(nascente, 5),
     );
     const { result } = renderHook(() => usePainelBoard(), {
       wrapper: hookWrapper(),
@@ -353,12 +429,18 @@ describe("usePainelBoard", () => {
 
     await waitFor(() => expect(result.current.isPending).toBe(false));
     expect(result.current.isError).toBe(false);
-    // sampleDestinos (2) + sampleAtrativos (2)
+    // sampleDestinos (2) + sampleAtrativos (2) + 1 unrouted nascente card
     expect(result.current.cards).toHaveLength(
-      sampleDestinos.length + sampleAtrativos.length,
+      sampleDestinos.length + sampleAtrativos.length + nascente.length,
     );
-    const types = result.current.cards.map((c: PainelCard) => c.type).sort();
-    expect(types).toEqual(["atrativo", "atrativo", "destino", "destino"]);
+    // The unrouted nascente row is fed into the Nascente column.
+    const nascenteCards = result.current.cards.filter(
+      (c: PainelCard) => c.column === "nascente",
+    );
+    expect(nascenteCards).toHaveLength(1);
+    expect(nascenteCards[0].id).toBe("n-board-1");
+    // nascenteCount reflects the server ENVELOPE total, not the loaded slice.
+    expect(result.current.nascenteCount).toBe(5);
   });
 });
 

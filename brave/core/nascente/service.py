@@ -12,10 +12,14 @@ import json
 import uuid
 from typing import Any
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.core.models import NascenteRecord
+from brave.observability.record_events import record_event
+
+logger = structlog.get_logger(__name__)
 
 
 def store_raw(
@@ -25,6 +29,8 @@ def store_raw(
     entity_type: str,
     uf: str,
     payload: dict[str, Any],
+    *,
+    timeline: list[dict[str, Any]] | None = None,
 ) -> NascenteRecord:
     """Ingest a raw payload into the Nascente layer.
 
@@ -37,11 +43,17 @@ def store_raw(
 
     Args:
         session:    SQLAlchemy synchronous Session.
-        source:     Data source identifier (e.g., "mtur", "notebooklm").
+        source:     Data source identifier (e.g., "mtur", "places_discovery").
         source_ref: Unique source-scoped reference (e.g., "mtur:BA:12345").
         entity_type: "destination" or "attraction".
         uf:         Two-letter state code.
         payload:    Raw source payload (JSON-serializable dict).
+        timeline:   Optional list of buffered success-stage RecordEvent kwargs
+                    (each dict is the record_event(...) kwargs MINUS session /
+                    nascente_id). Flushed ONLY when a NEW row is created, so the
+                    caller's Log-tab success events sit behind the same content_hash
+                    idempotency as the ingest event and do not re-emit on re-sweep.
+                    The early-return (already-ingested) path stays silent.
 
     Returns:
         The NascenteRecord for this payload (existing or newly created).
@@ -93,6 +105,45 @@ def store_raw(
     if latest is not None:
         latest.superseded_by_id = new_record.id
         session.flush()
+
+    # Per-entity sync log — emitted only when a NEW or SUPERSEDED record is
+    # created (the idempotent early-return above stays silent to avoid re-ingest
+    # log spam). LGPD: public-geo fields only (name, uf, municipio, source).
+    canonical = payload.get("canonical") or {}
+    logger.info(
+        "nascente_ingerido",
+        source=source,
+        entity_type=entity_type,
+        uf=uf,
+        name=(payload.get("name") or source_ref),
+        municipio=canonical.get("municipio"),
+    )
+
+    # Flush the caller's buffered pre-ingest success-stage events FIRST, so the Log-tab
+    # timeline reads in chronological order (synced → município → validado → ingested →
+    # …). NEW-row branch only, so they inherit the same content_hash idempotency as the
+    # 'ingested' event below and never re-emit on a re-sweep. clock_timestamp() gives each
+    # a distinct created_at within the transaction. Each entry is record_event(...) kwargs
+    # minus session / nascente_id (both supplied here).
+    if timeline:
+        for ev in timeline:
+            record_event(session, nascente_id=new_record.id, **ev)
+
+    # Append-only Log-tab timeline event. Placed BEHIND the idempotent early-return
+    # (content_hash exact-match) so a re-sweep of an already-ingested payload does
+    # NOT re-emit. LGPD: public-geo fields only (name/uf/municipio/source/version).
+    record_event(
+        session,
+        source=source,
+        source_ref=source_ref,
+        stage="ingested",
+        status="ok",
+        message=(payload.get("name") or source_ref),
+        entity_type=entity_type,
+        uf=uf,
+        nascente_id=new_record.id,
+        data={"municipio": canonical.get("municipio"), "version": new_version},
+    )
 
     return new_record
 

@@ -24,6 +24,13 @@ interface PainelLogsProps {
   open: boolean;
   onClose: () => void;
   source: string; // string (not EngineSource) — endpoint accepts any source slug
+  /**
+   * Inline variant (phase H "Logs" painel view). When true the component drops
+   * the fixed overlay + slide-over chrome and fills its parent container, and it
+   * polls continuously regardless of `open`. Defaults to false so the original
+   * slide-over usage (mounted from PainelTopbar's terminal icon) is unchanged.
+   */
+  inline?: boolean;
 }
 
 /** Level color mapping against painel-light CSS vars. */
@@ -34,13 +41,22 @@ function levelColor(level: string): string {
   return "var(--painel-text)";
 }
 
-export function PainelLogs({ open, onClose, source }: PainelLogsProps) {
+export function PainelLogs({
+  open,
+  onClose,
+  source,
+  inline = false,
+}: PainelLogsProps) {
   const [allLines, setAllLines] = useState<LogLine[]>([]);
   const cursorRef = useRef<number>(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Inline view polls continuously; the slide-over only while open.
+  const active = open || inline;
+
   // Reset accumulated lines and cursor when the source changes
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset the tail buffer when the log source prop changes
     setAllLines([]);
     cursorRef.current = 0;
   }, [source]);
@@ -48,14 +64,15 @@ export function PainelLogs({ open, onClose, source }: PainelLogsProps) {
   const { data: logsData } = useQuery({
     queryKey: logsKeys.tail(source),
     queryFn: () => fetchLogs(source, cursorRef.current, 100),
-    enabled: open,
-    refetchInterval: open ? 2_000 : false,
+    enabled: active,
+    refetchInterval: active ? 2_000 : false,
     refetchOnWindowFocus: false,
   });
 
   // Append only NEW lines (deduplicated by id), cap at 500 rendered
   useEffect(() => {
     if (!logsData?.lines?.length) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- accumulate the polled log tail (external-system sync)
     setAllLines((prev) => {
       const existingIds = new Set(prev.map((l) => l.id));
       const fresh = logsData.lines.filter((l) => !existingIds.has(l.id));
@@ -75,6 +92,63 @@ export function PainelLogs({ open, onClose, source }: PainelLogsProps) {
 
   const sourceLabel =
     SOURCE_LABELS[source as EngineSource] ?? source;
+
+  // Shared scroll body (empty state + rendered ring-buffer lines).
+  const logScroll = (
+    <div
+      ref={scrollRef}
+      className="flex-1 overflow-y-auto p-3"
+      style={{ background: "var(--card)" }}
+    >
+      {allLines.length === 0 && active ? (
+        <div
+          className="grid h-full place-items-center text-[12px]"
+          style={{ color: "var(--painel-muted)" }}
+        >
+          Aguardando logs…
+        </div>
+      ) : (
+        allLines.map((l) => (
+          <div
+            key={l.id}
+            data-testid="log-line"
+            className="font-mono text-[11px] leading-[1.6]"
+          >
+            <span
+              style={{ color: "var(--painel-muted-2)" }}
+              className="mr-[8px] select-none"
+            >
+              {String(l.id).padStart(4, "0")}
+            </span>
+            <span
+              style={{ color: levelColor(l.level) }}
+              className="mr-[8px] uppercase"
+            >
+              {l.level?.slice(0, 4)}
+            </span>
+            <span style={{ color: "var(--painel-text)" }}>{l.event}</span>
+          </div>
+        ))
+      )}
+    </div>
+  );
+
+  // Inline variant (phase H "Logs" view): fill the parent, no overlay/close chrome.
+  if (inline) {
+    return (
+      <div
+        data-testid="painel-logs-inline"
+        className="flex h-full min-h-0 flex-col bg-[var(--card)]"
+      >
+        <div className="flex flex-shrink-0 items-center gap-2.5 border-b border-[var(--painel-border-outer)] px-5 py-4">
+          <span className="text-[13px] font-semibold text-[var(--painel-text)]">
+            Logs · {sourceLabel}
+          </span>
+        </div>
+        {logScroll}
+      </div>
+    );
+  }
 
   return (
     <>
@@ -126,43 +200,7 @@ export function PainelLogs({ open, onClose, source }: PainelLogsProps) {
           </button>
         </div>
 
-        {/* Body */}
-        <div
-          ref={scrollRef}
-          className="flex-1 overflow-y-auto p-3"
-          style={{ background: "var(--card)" }}
-        >
-          {allLines.length === 0 && open ? (
-            <div
-              className="grid h-full place-items-center text-[12px]"
-              style={{ color: "var(--painel-muted)" }}
-            >
-              Aguardando logs…
-            </div>
-          ) : (
-            allLines.map((l) => (
-              <div
-                key={l.id}
-                data-testid="log-line"
-                className="font-mono text-[11px] leading-[1.6]"
-              >
-                <span
-                  style={{ color: "var(--painel-muted-2)" }}
-                  className="mr-[8px] select-none"
-                >
-                  {String(l.id).padStart(4, "0")}
-                </span>
-                <span
-                  style={{ color: levelColor(l.level) }}
-                  className="mr-[8px] uppercase"
-                >
-                  {l.level?.slice(0, 4)}
-                </span>
-                <span style={{ color: "var(--painel-text)" }}>{l.event}</span>
-              </div>
-            ))
-          )}
-        </div>
+        {logScroll}
       </aside>
     </>
   );

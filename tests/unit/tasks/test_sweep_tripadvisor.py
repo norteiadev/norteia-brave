@@ -115,9 +115,12 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
         stub_client_class,
     )
 
-    # Patch AppConfig and ScoreConfig constructors
+    # Patch AppConfig constructor + the effective-config loader (score seam)
     monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
-    monkeypatch.setattr("brave.tasks.pipeline.ScoreConfig", lambda: mock_score_config)
+    monkeypatch.setattr(
+        "brave.tasks.pipeline.load_effective_config",
+        lambda session, redis=None: MagicMock(score=mock_score_config),
+    )
 
     # Patch redis.from_url to return fakeredis
     monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
@@ -148,8 +151,11 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
 
     # Patch the atrativos produce() to actually call the stub client
     # and propagate its errors (destinos step removed — oa3).
-    async def _stub_produce(uf, run_rio=True):
-        # Errors originate from the atrativos path (no destinos step — oa3)
+    async def _stub_produce(uf, run_rio=True, enrich_reviews=False, redis=None):
+        # Errors originate from the atrativos path (no destinos step — oa3).
+        # enrich_reviews accepted because the per-UF path now passes enrich_reviews=True.
+        # redis accepted because the per-UF path now passes redis= for the mid-run
+        # Motor Pausado/Desligado halt gate (engine.should_halt_producer).
         await stub_client.fetch_attractions(geo_id=0)
 
     mock_atrativos_ingest = MagicMock()
@@ -316,14 +322,17 @@ class TestSweepTripAdvisorPerUfDestinoBuild:
             def __init__(self, **kw):
                 captured["map"] = dict(kw.get("destino_rio_map") or {})
 
-            async def produce(self, uf, *, run_rio=True):
+            async def produce(self, uf, *, run_rio=True, enrich_reviews=False, redis=None):
                 pass  # no-op; constructor arg is what we assert
 
         mock_app_config = MagicMock()
         mock_app_config.run_real_externals = False  # uses NullTripAdvisorClient
 
         monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
-        monkeypatch.setattr("brave.tasks.pipeline.ScoreConfig", lambda: MagicMock())
+        monkeypatch.setattr(
+            "brave.tasks.pipeline.load_effective_config",
+            lambda session, redis=None: MagicMock(),
+        )
         monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
         monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setattr(
@@ -379,10 +388,7 @@ def _make_config() -> ScoreConfig:
         weight_atualidade=15.0,
         weight_validacao_humana=15.0,
         threshold_mar=85.0,
-        threshold_dlq=40.0,
         score_version="v1.1",
-        mar_ready_atualidade_bar=70.0,
-        mar_ready_corrob_bar=60.0,
     )
 
 
@@ -416,12 +422,32 @@ class _RaisingPaginatedClient:
     def __init__(self, *args, pages_before_raise: int = 1, **kwargs) -> None:
         self._pages_before_raise = pages_before_raise
 
-    async def fetch_attractions_paginated(
+    async def fetch_attractions_paginated_gql(
         self, geo_id: int, start_page: int = 1, max_pages: int = 334
     ) -> AsyncIterator[tuple[int, list[dict[str, Any]]]]:
         for i in range(self._pages_before_raise):
             yield i * 30, [_make_card(location_id=1000 + i)]
-        raise SessionExpiredError("TripAdvisor HTML returned 403 — session expired.")
+        raise SessionExpiredError("TripAdvisor GraphQL returned 403 — session expired.")
+
+
+class _RecordingGqlClient:
+    """Records the start_page passed to fetch_attractions_paginated_gql; yields nothing.
+
+    Self-contained (independent of FakeTripAdvisorClient's internal call-recording
+    attributes) so the resume assertion targets a stable, locally-owned surface.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.gql_calls: list[dict[str, Any]] = []
+
+    async def fetch_attractions_paginated_gql(
+        self, geo_id: int, start_page: int = 1, max_pages: int = 334
+    ) -> AsyncIterator[tuple[int, list[dict[str, Any]]]]:
+        self.gql_calls.append(
+            {"geo_id": geo_id, "start_page": start_page, "max_pages": max_pages}
+        )
+        return
+        yield  # unreachable — marks this coroutine as an async generator
 
 
 def _run_bulk_sweep(
@@ -457,7 +483,10 @@ def _run_bulk_sweep(
         lambda config, redis: fake_geo,
     )
     monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
-    monkeypatch.setattr("brave.tasks.pipeline.ScoreConfig", _make_config)
+    monkeypatch.setattr(
+        "brave.tasks.pipeline.load_effective_config",
+        lambda session, redis=None: MagicMock(score=_make_config()),
+    )
     monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
     monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setattr(
@@ -522,7 +551,7 @@ class TestSweepTripAdvisorBulkNational:
         page2 = [_make_card(location_id=20_000 + i) for i in range(30)]
         all_ids = [str(c["locationId"]) for c in page1 + page2]
         fake_client = FakeTripAdvisorClient(
-            fixture_pages={_GEO_ID_BR: [(0, page1), (30, page2)]}
+            gql_pages=[(0, page1), (30, page2)]
         )
         fake_geo = FakeGeocoderClient(
             fixture_national_results=_resolvable_geo_fixture(all_ids)
@@ -572,7 +601,7 @@ class TestSweepTripAdvisorBulkNational:
 
     def test_bulk_resume_starts_after_last_completed_offset(self, monkeypatch):
         """A re-run with last_completed_offset=30 calls produce_paginated at start_page 3."""
-        fake_client = FakeTripAdvisorClient(fixture_pages={_GEO_ID_BR: []})  # yields nothing
+        fake_client = _RecordingGqlClient()  # records start_page; yields nothing
         fake_geo = FakeGeocoderClient(fixture_national_results={})
         fake_redis = fakeredis.FakeRedis()
 
@@ -591,9 +620,9 @@ class TestSweepTripAdvisorBulkNational:
             pre_seed=_seed,
         )
 
-        assert fake_client.paginated_calls, "produce_paginated must drive the client"
+        assert fake_client.gql_calls, "produce_paginated must drive the gql client"
         # resume_offset=30 → start_page = 30 // 30 + 2 = 3 (the page AFTER offset 30).
-        assert fake_client.paginated_calls[0]["start_page"] == 3, (
+        assert fake_client.gql_calls[0]["start_page"] == 3, (
             "re-run must resume at the page after the last completed offset, not page 1"
         )
 
@@ -687,14 +716,27 @@ class TestSweepTripAdvisorTaConfig:
             def __init__(self, **kw: Any) -> None:
                 captured.update(kw)
 
-            async def produce(self, uf: str, *, run_rio: bool = True) -> None:
-                pass  # no-op — constructor args are what we assert
+            async def produce(
+                self,
+                uf: str,
+                *,
+                run_rio: bool = True,
+                enrich_reviews: bool = False,
+                redis: Any = None,
+            ) -> None:
+                # Record produce() kwargs so the per-UF enrich_reviews wiring is assertable.
+                captured["produce_enrich_reviews"] = enrich_reviews
+                captured["produce_run_rio"] = run_rio
+                captured["produce_redis_passed"] = redis is not None
 
         mock_app_config = MagicMock()
         mock_app_config.run_real_externals = real_externals
 
         monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
-        monkeypatch.setattr("brave.tasks.pipeline.ScoreConfig", lambda: MagicMock())
+        monkeypatch.setattr(
+            "brave.tasks.pipeline.load_effective_config",
+            lambda session, redis=None: MagicMock(),
+        )
         monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
         monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setattr(
@@ -742,7 +784,18 @@ class TestSweepTripAdvisorTaConfig:
         except Exception:
             pass  # MaxRetriesExceededError or similar — only the captured kwargs matter
 
+        self._last_captured = captured  # expose full capture for other assertions
         return captured.get("ta_config"), sentinel
+
+    def test_per_uf_passes_enrich_reviews_true(self, monkeypatch: Any) -> None:
+        """The per-UF sweep MUST call produce(enrich_reviews=True) so atualidade is
+        populated. A regression dropping this kwarg would silently zero atualidade
+        across every per-UF sweep (review-recency enrichment)."""
+        self._run_per_uf_capture_ta_config(monkeypatch, real_externals=False)
+        assert self._last_captured.get("produce_enrich_reviews") is True, (
+            "per-UF sweep_tripadvisor must pass enrich_reviews=True to produce() "
+            f"— got {self._last_captured.get('produce_enrich_reviews')!r}"
+        )
 
     def test_passes_ta_config_when_real_externals(self, monkeypatch: Any) -> None:
         """With run_real_externals=True, TripAdvisorAtrativosIngest receives the

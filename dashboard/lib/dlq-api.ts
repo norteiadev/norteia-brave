@@ -15,7 +15,7 @@
  *   POST  /api/v1/dlq/validate-batch?uf&entity_type&limit — validar lote por estado
  */
 
-import { apiFetch } from "@/lib/api-client";
+import { ApiError, apiFetch } from "@/lib/api-client";
 
 /** UI-SPEC D-06 ordering: steward-priority states first, then alphabetical rest. */
 export const UF_PRIORITY = ["BA", "RJ", "SP", "SC", "CE", "PE"] as const;
@@ -130,4 +130,77 @@ export function validateDlqBatch(
     `api/v1/dlq/validate-batch${qs({ uf, entity_type: entityType, limit })}`,
     { method: "POST" },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Manual DLQ→WhatsApp move (atrativos) — Phase H, POST /api/v1/dlq/whatsapp-batch
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of an accepted DLQ→WhatsApp batch (HTTP 202). `moved` = the total moved
+ * off DLQ; it splits into `outreach` (a WhatsApp number was already captured →
+ * conversa iniciada) and `discovery` (no number → LLM number-discovery kicked off).
+ */
+export interface WhatsAppBatchResult {
+  status: string;
+  moved: number;
+  outreach: number;
+  discovery: number;
+}
+
+/** One ineligible record from the atomic 422 breakdown. */
+export interface WhatsAppIneligibleItem {
+  rio_id: string;
+  reason: string;
+}
+
+/** The structured 422 body: `{ error: "ineligible_records", ineligible: [...] }`. */
+export interface WhatsAppIneligibleDetail {
+  error: "ineligible_records";
+  ineligible: WhatsAppIneligibleItem[];
+}
+
+/** PT-BR copy for each server-side ineligibility reason. */
+export const WHATSAPP_INELIGIBLE_REASONS: Record<string, string> = {
+  not_found: "não encontrado",
+  not_attraction: "não é atrativo",
+  not_in_dlq: "não está na DLQ",
+  already_in_whatsapp: "já em WhatsApp",
+  has_horario_or_preco: "já tem horário/preço",
+};
+
+/**
+ * Manually move DLQ atrativos into the WhatsApp column (the single Phase-F entry).
+ *
+ * Body is `{ rio_ids }`. The move is ATOMIC: if ANY id is ineligible or invalid
+ * the whole request 422s (nothing moved) with a per-item breakdown on
+ * `ApiError.detail` (an OBJECT, surfaced via `ineligibleFrom`). Auth-before-lock:
+ * 401 for an unauthenticated caller, then 423 while the Motor is LIGADO.
+ */
+export function moveDlqToWhatsApp(rioIds: string[]): Promise<WhatsAppBatchResult> {
+  return apiFetch<WhatsAppBatchResult>("api/v1/dlq/whatsapp-batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rio_ids: rioIds }),
+  });
+}
+
+/**
+ * Extract the per-item ineligibility breakdown from a batch error, or null when
+ * the error is not the structured `ineligible_records` 422 (e.g. 401/423/500 or
+ * the pydantic empty-list 422 whose detail is an array).
+ */
+export function ineligibleFrom(err: unknown): WhatsAppIneligibleItem[] | null {
+  if (err instanceof ApiError && err.status === 422) {
+    const detail = err.detail as WhatsAppIneligibleDetail | undefined;
+    if (
+      detail &&
+      typeof detail === "object" &&
+      detail.error === "ineligible_records" &&
+      Array.isArray(detail.ineligible)
+    ) {
+      return detail.ineligible;
+    }
+  }
+  return null;
 }

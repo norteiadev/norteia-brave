@@ -15,7 +15,6 @@ caller must not be able to fan out expensive LLM/Places sweeps).
 
 from __future__ import annotations
 
-import os
 import uuid
 
 import structlog
@@ -25,11 +24,30 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from brave.api.deps import get_db, get_redis, require_bearer, require_steward_or_bearer
+from brave.config.runtime import enabled_sources, load_effective_config
+from brave.config.settings import AppConfig
 from brave.core import engine as collection_engine
 from brave.core.models import MarRecord, NascenteRecord, RioRecord
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
+
+
+def _effective_config(db: Session, redis: Redis) -> AppConfig:
+    """Return the effective (env + config_settings overlay) config, best-effort.
+
+    Phase D: the source registered/enabled gate reads the DB overlay so an operator
+    who disables a lane in ``config_settings`` can no longer start it. The read is
+    best-effort — any DB hiccup (or a MagicMock/stub session in the offline suite)
+    falls back to the env-bootstrapped ``AppConfig()`` (both lanes enabled), so a
+    config-store blip can never wedge the start endpoint. ``redis`` warms/serves the
+    snapshot cache when available.
+    """
+    try:
+        return load_effective_config(db, redis)
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.warning("engine_effective_config_fallback", error=str(exc))
+        return AppConfig()
 
 _ATRATIVO_SUB_STATES = [
     "discovered",
@@ -102,8 +120,13 @@ def engine_status(
     db: Session = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ) -> dict:
-    """Engine state + run progress + live pipeline counts (for the dashboard)."""
-    status = collection_engine.get_status(redis)
+    """Engine state + run progress + live pipeline counts (for the dashboard).
+
+    ``session=db`` lets the mode read self-heal from the durable ``config_settings``
+    row after a Redis flush (Phase D): the first status poll re-seeds the live mode
+    key, so the edit-lock and dispatch loop recover the operator's last choice.
+    """
+    status = collection_engine.get_status(redis, session=db)
     status["counts"] = _pipeline_counts(db)
     return status
 
@@ -112,6 +135,7 @@ def engine_status(
 def list_nascente(
     uf: str | None = Query(None),
     entity_type: str | None = Query(None, description="destination | attraction"),
+    unrouted: bool = Query(False, description="only Nascente records with no Rio twin"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
@@ -130,7 +154,20 @@ def list_nascente(
     APPROVED PUBLIC-GEO fields — NOT PII, same class as name/uf (público,
     geo-territorial). Returns paginated {items, total, offset, limit}.
     """
-    stmt = select(NascenteRecord).where(NascenteRecord.superseded_by_id.is_(None))
+    if unrouted:
+        # Bug 4: only Nascente records with NO Rio twin (LEFT JOIN → NULL). Keeps
+        # the current-version filter so the NASCENTE Kanban column shows only cards
+        # that have not yet been routed into Rio.
+        stmt = (
+            select(NascenteRecord)
+            .outerjoin(RioRecord, RioRecord.nascente_id == NascenteRecord.id)
+            .where(
+                NascenteRecord.superseded_by_id.is_(None),
+                RioRecord.id.is_(None),
+            )
+        )
+    else:
+        stmt = select(NascenteRecord).where(NascenteRecord.superseded_by_id.is_(None))
     if uf:
         stmt = stmt.where(NascenteRecord.uf == uf)
     if entity_type:
@@ -180,12 +217,21 @@ def engine_start(
         )
 
     # Validate source BEFORE start_run — same order as depth (T-11-03-03).
-    # Invalid source must return 422 before any engine state mutation.
+    # Phase D: the source must be REGISTERED (a known lane in the effective config)
+    # AND ENABLED (enabled_sources). An unknown lane is a 422 (malformed request); a
+    # known-but-disabled lane is a 409 (valid name, not currently collectable) — both
+    # raised before any engine state mutation so a rejected start never spends.
     source = body.get("source", "default")
-    if source not in collection_engine._VALID_SOURCES:
+    cfg = _effective_config(db, redis)
+    if source not in cfg.sources:
         raise HTTPException(
             status_code=422,
-            detail="source must be 'default' or 'tripadvisor'",
+            detail=f"source must be one of {sorted(cfg.sources)}",
+        )
+    if source not in enabled_sources(cfg):
+        raise HTTPException(
+            status_code=409,
+            detail=f"source '{source}' is disabled in config — enable it before starting.",
         )
 
     # R2: TripAdvisor motor requires a live session — operator must inject a cURL first
@@ -207,7 +253,19 @@ def engine_start(
         )
 
     collection_engine.set_depth(redis, depth)
-    collection_engine.set_source(redis, source)
+    # Persist the source under the SAME registered-and-enabled contract just validated
+    # above (source ∈ cfg.sources ∧ source ∈ enabled_sources) — injected because the
+    # kernel engine module must not import the domains registry (D-18).
+    collection_engine.set_source(redis, source, valid_sources=enabled_sources(cfg))
+
+    # A cold /start IS the LIGADO transition — the operator is turning collection ON.
+    # Without this the operator-mode axis stays at whatever it was (e.g. DESLIGADO
+    # after a fresh config_settings seed / DB reset), and engine_sweep_run's mode gate
+    # (`get_mode() != LIGADO → break`) aborts the run BEFORE dispatching any UF: the
+    # sweep "starts" (enabled=1, state=running) but collects nothing (dispatched=0).
+    # Persist LIGADO durably (config_settings) so the dispatch loop and the Kanban
+    # edit-lock agree. Mirrors the warm-resume path (POST /engine/mode LIGADO).
+    collection_engine.set_mode(redis, collection_engine.LIGADO, session=db)
 
     # Persist a durable runs_history row (UI-PAINEL-2 Varreduras trail). Pitfall 3:
     # this is reached ONLY after the depth/source 422 guards AND start_run() success
@@ -268,22 +326,69 @@ def engine_set_source(
 ) -> dict:
     """Persist the active collection source without starting a run.
 
-    Validates the source against the known-valid set and writes it to the
-    Redis source key (brave:engine:source). The next /start will read this
-    key and route to the correct sweep lane.
+    Validates the source against the REGISTERED-AND-ENABLED lanes and writes it to
+    the Redis source key (brave:engine:source). The next /start will read this key
+    and route to the correct sweep lane.
 
-    Invalid source → 422 before any Redis write (mirrors the /start guard).
-    No RunHistory row — this is a configuration write, not a dispatch.
+    Registry-driven (Phase G STEP 3): the allowed set is ``enabled_sources`` of the
+    env-effective ``AppConfig`` — no hardcoded ``'default'/'tripadvisor'`` literal, and
+    no DB dependency (this configuration write stays DB-free, unlike /start which reads
+    the config_settings overlay). Invalid source → 422 before any Redis write. No
+    RunHistory row — this is a configuration write, not a dispatch.
     """
     source = body.get("source", "default")
-    if source not in collection_engine._VALID_SOURCES:
+    valid = enabled_sources(AppConfig())
+    if source not in valid:
         raise HTTPException(
             status_code=422,
-            detail="source must be 'default' or 'tripadvisor'",
+            detail=f"source must be one of {sorted(valid)}",
         )
-    collection_engine.set_source(redis, source)
+    collection_engine.set_source(redis, source, valid_sources=valid)
     logger.info("engine_source_set", source=source)
     return {"source": source}
+
+
+@router.post(
+    "/api/v1/engine/mode",
+    status_code=200,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def engine_set_mode(
+    redis: Redis = Depends(get_redis),
+    body: dict = Body(default={}),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Set the operator mode (Motor Pausado, phase C) — LIGADO | PAUSADO | DESLIGADO.
+
+    Orthogonal to the runtime state (idle|running|stopping): mode governs whether the
+    orchestrator keeps fanning out UFs and whether the Kanban card edit-lock is
+    released (require_editing_unlocked). The semantics live in engine.set_mode:
+      - LIGADO    — normal auto-collection; card editing LOCKED (mutations → 423).
+      - PAUSADO   — orchestrator drains on its next mode check (no new UFs, no
+                    auto-push); runtime left as-is; card editing UNLOCKED.
+      - DESLIGADO — hard off: also marks the engine idle + clears the enabled latch;
+                    card editing UNLOCKED.
+
+    Invalid mode → 422 before any Redis write (mirrors the /source guard). No
+    RunHistory row — this is a configuration write, not a dispatch. Echoes the new
+    mode plus editing_unlocked so the dashboard can update the lock indicator.
+    """
+    mode = body.get("mode")
+    if mode not in collection_engine._VALID_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail="mode must be 'LIGADO', 'PAUSADO', or 'DESLIGADO'",
+        )
+    # Phase D: persist the mode durably. Redis stays the fast/authoritative live path
+    # (set FIRST inside set_mode); config_settings is the durable store so a Redis
+    # flush no longer resets the mode to LIGADO. Passing session enables the upsert +
+    # snapshot-cache bust.
+    collection_engine.set_mode(redis, mode, session=db)
+    logger.info("engine_mode_set", mode=mode)
+    return {
+        "mode": mode,
+        "editing_unlocked": collection_engine.is_editing_unlocked(redis, session=db),
+    }
 
 
 @router.post(

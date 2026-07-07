@@ -21,7 +21,7 @@ What this suite asserts:
                                   already-advanced record is a no-op (inline guards, D-04).
 
 100% offline + keyless (D-06): AppConfig().run_real_externals defaults to False, so the tasks
-select FakePlaces/FakeApify/FakeLLM. We patch those fakes at their import sites to inject the
+select FakePlaces/FakeLLM. We patch those fakes at their import sites to inject the
 borderline fixtures (mirrors the score math in test_atrativos_lane_e2e.py::test_sc4).
 
 Isolation: the chain tasks call session.commit() internally, so we use the SAVEPOINT-isolated
@@ -35,10 +35,11 @@ exact offline path an operator hits when no broker/worker is reachable.
 Requires: docker-compose postgres up + BRAVE_DB_URL set (load .env before running).
 Marked @pytest.mark.integration — skipped when DB unavailable.
 
-Score math for the borderline fixture (default ScoreConfig: threshold_dlq=40, threshold_mar=85;
+Score math for the borderline fixture (default ScoreConfig: threshold_mar=80;
 weights origem=30%, completude=20%, corroboracao=20%, atualidade=15%, validacao_humana=15%):
-  origem=60, completude=75, corroboracao=40 (Apify confirms via IG), atualidade=100 (recent
-  review), validacao_humana=0  →  18 + 15 + 8 + 15 + 0 = 56  →  40 ≤ 56 < 85  →  DLQ (the gate).
+  origem=60, completude=75, corroboracao=0 (constant; Apify IG source retired, Phase E),
+  atualidade=100 (recent review), validacao_humana=0  →  18 + 15 + 0 + 15 + 0 = 48  →
+  48 < 80  →  DLQ (the gate).
 """
 
 import uuid
@@ -63,9 +64,9 @@ IBGE = "2999999"
 PLACE_ID = "ChIJtest_chain_e2e"
 SOURCE_REF = f"places:{UF}:{PLACE_ID}"
 
-# A recent-review, OPERATIONAL, IG-linked place_details fixture: drives the borderline
-# score (atualidade=100 from the recent review, corroboracao=40 from Apify confirming the
-# IG handle extracted from the instagram.com website).
+# A recent-review, OPERATIONAL place_details fixture: drives the borderline score
+# (atualidade=100 from the recent review; corroboracao is the fixed 0.0 constant now
+# that the Apify IG source is retired — Phase E).
 _PLACE_DETAILS: dict[str, Any] = {
     "place_id": PLACE_ID,
     "business_status": "OPERATIONAL",
@@ -195,11 +196,10 @@ def _seed_parent_destino(session) -> MarRecord:
 def _patch_fakes(monkeypatch) -> None:
     """Inject borderline fixtures into the fakes the chain tasks build internally.
 
-    The tasks construct their own FakePlacesClient()/FakeApifyClient()/FakeLLMClient() with
+    The tasks construct their own FakePlacesClient()/FakeLLMClient() with
     no fixtures (run_real_externals=False). We patch each class at its import site so the
-    chain produces a borderline (<85%) attraction that lands at the gate.
+    chain produces a borderline (<80%) attraction that lands at the gate.
     """
-    from tests.fakes.fake_apify import FakeApifyClient
     from tests.fakes.fake_llm import FakeLLMClient
     from tests.fakes.fake_places import FakePlacesClient
 
@@ -233,16 +233,8 @@ def _patch_fakes(monkeypatch) -> None:
             )
         )
 
-    def _apify_factory(*args, **kwargs):
-        return FakeApifyClient(
-            fixture_data={
-                "@atrativo_chain_e2e": {"followers": 5000, "last_post": "2026-06-12"}
-            }
-        )
-
     monkeypatch.setattr("brave.clients.null_places.NullPlacesClient", _places_factory)
     monkeypatch.setattr("brave.clients.null_llm.NullLLMClient", _llm_factory)
-    monkeypatch.setattr("brave.clients.null_apify.NullApifyClient", _apify_factory)
 
 
 def _force_inline_fallback(monkeypatch, pipeline) -> None:
@@ -286,24 +278,26 @@ def _run_chain(db, monkeypatch):
 
 
 @pytest.mark.integration
-def test_chain_advances_to_gate(isolated_db, monkeypatch):
-    """The full auto chain drives a borderline attraction to the human WhatsApp gate.
+def test_chain_stops_at_dlq_no_auto_gate(isolated_db, monkeypatch):
+    """The full auto chain settles a borderline attraction in DLQ — NOT auto-enrolled (Phase F).
 
-    discovered → contacts_found → signals_gathered → aguardando_consulta_whatsapp.
+    discovered → contacts_found → signals_gathered → routing=dlq, sub_state=None.
+    Spec 2026-07-02: NÃO auto-gate. The operator moves it to WhatsApp manually from DLQ.
     """
     rio, read = _run_chain(isolated_db, monkeypatch)
 
     assert rio is not None, "the chain must create the attraction RioRecord"
-    assert rio.sub_state == "aguardando_consulta_whatsapp", (
-        f"chain must advance to the gate, got sub_state={rio.sub_state!r} "
+    assert rio.sub_state is None, (
+        f"borderline dlq must stay in DLQ (sub_state=None), never auto-enroll into the "
+        f"WhatsApp gate, got sub_state={rio.sub_state!r} "
         f"(routing={rio.routing!r}, score={rio.score!r})"
     )
     assert rio.routing == "dlq", (
-        f"a borderline (<85%) attraction must route dlq, got {rio.routing!r}"
+        f"a borderline (<80%) attraction must route dlq, got {rio.routing!r}"
     )
 
     # Every transition was audited (D-02): discovered, contacts_found, signals_gathered,
-    # aguardando_consulta_whatsapp → ≥ 3 sub_state_advanced rows for this record.
+    # and the terminal dlq/None advance → ≥ 3 sub_state_advanced rows for this record.
     advanced = read.scalars(
         select(AuditLog).where(
             AuditLog.record_id == rio.id,
@@ -318,11 +312,12 @@ def test_chain_advances_to_gate(isolated_db, monkeypatch):
 
 @pytest.mark.integration
 def test_chain_stops_at_gate(isolated_db, monkeypatch):
-    """The auto chain settles at the gate — it promotes nothing to Mar and goes no further."""
+    """The auto chain settles in DLQ — it promotes nothing to Mar and goes no further."""
     rio, read = _run_chain(isolated_db, monkeypatch)
 
-    assert rio.sub_state == "aguardando_consulta_whatsapp", (
-        "the auto chain must STOP at the gate, never advance to whatsapp_in_progress/validated"
+    assert rio.sub_state is None, (
+        "the auto chain must STOP in DLQ (sub_state=None), never auto-enroll into WhatsApp "
+        "nor advance to whatsapp_in_progress/validated"
     )
 
     # No Mar promotion by the auto chain — the attraction stays borderline awaiting the human.
@@ -355,7 +350,7 @@ def test_no_auto_outreach(isolated_db, monkeypatch):
 
     rio, _read = _run_chain(isolated_db, monkeypatch)
 
-    assert rio.sub_state == "aguardando_consulta_whatsapp"
+    assert rio.sub_state is None
     assert len(delay_calls) == 0, (
         f"the auto chain must NOT dispatch outreach_task.delay (D-07), got {len(delay_calls)}"
     )
@@ -375,7 +370,7 @@ def test_replay_is_noop(isolated_db, monkeypatch):
     from brave.tasks import pipeline
 
     rio, read = _run_chain(isolated_db, monkeypatch)
-    assert rio.sub_state == "aguardando_consulta_whatsapp"
+    assert rio.sub_state is None
     rio_id = rio.id
 
     advanced_before = read.scalar(
@@ -393,7 +388,7 @@ def test_replay_is_noop(isolated_db, monkeypatch):
 
     read2 = isolated_db.fresh()
     rio = read2.get(RioRecord, rio_id)
-    assert rio.sub_state == "aguardando_consulta_whatsapp", (
+    assert rio.sub_state is None, (
         f"replay must be a no-op, sub_state changed to {rio.sub_state!r}"
     )
 

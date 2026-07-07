@@ -110,9 +110,10 @@ class RioRecord(Base):
 
     routing values (D-02):
       "in_progress" — being processed
-      "mar"         — promoted to MarRecord (≥85%)
-      "dlq"         — §7.6 review DLQ (51–84.9%)
-      "descarte"    — rejected (≤50%)
+      "mar"         — promoted to MarRecord (score ≥ threshold_mar)
+      "dlq"         — §7.6 review DLQ (score < threshold_mar; binary score gate)
+      "descarte"    — rejected by a non-score path (hard-descarte for CLOSED places,
+                      steward reject, dedup discard). The score engine never emits it.
 
     sub_state is used by the Atrativos lane Phase 3 state machine; null for Destinos.
     """
@@ -149,13 +150,6 @@ class RioRecord(Base):
     )
     canonical_key: Mapped[str | None] = mapped_column(
         String(256), nullable=True, unique=True
-    )
-    # mar_ready: TA-05 promote-override gate. True only for TA attractions that meet
-    # the atualidade + corroboracao bars (route_by_score sets this). Default false via
-    # server_default="false" — no client-side default needed (Alembic 0006 migration
-    # adds this column; plan 11-02 adds it here; migration is in plan 11-03).
-    mar_ready: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false"), index=True
     )
 
     # Relationship helpers
@@ -389,6 +383,80 @@ class PoisonQuarantine(Base):
 
 
 # ---------------------------------------------------------------------------
+# RecordEvent — append-only per-record Brave timeline (Log tab)
+# ---------------------------------------------------------------------------
+
+
+class RecordEvent(Base):
+    """Append-only per-record event log powering the drawer "Log" tab timeline.
+
+    One row per pipeline stage a record passes through (TripAdvisor synced →
+    município resolved → validated → ingested → deduped → scored → routed, or a
+    terminal ``quarantined`` on failure). Written by
+    ``brave.observability.record_events.record_event`` alongside the existing
+    emission points, ALWAYS behind the idempotency early-returns (``store_raw``
+    content_hash / ``process_nascente_record`` canonical_key) so a re-sweep of an
+    already-ingested record does not re-emit DB-stage events.
+
+    ``source_ref`` is the universal drawer key and exists from the first stage,
+    before any Nascente/Rio row (for a TA attraction:
+    ``tripadvisor:attraction:{locationId}`` == ``RioRecord.canonical_key``), so a
+    ``ibge_unmatched`` failure that returns before ``store_raw`` still has a stable
+    identity to group its terminal event under.
+
+    LGPD (T): stores ONLY public-geo + engineering fields — score, routing,
+    dlq_reason, IBGE reason, name/uf (public-geo), locationId. NEVER a phone, PII,
+    review text, or a username. The ``data`` JSON column carries only those fields.
+    """
+
+    __tablename__ = "record_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_ref: Mapped[str] = mapped_column(String(256), nullable=False)
+    entity_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    uf: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    nascente_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    rio_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    stage: Mapped[str] = mapped_column(String(48), nullable=False)
+    # 'ok' | 'fail' | 'skip'
+    status: Mapped[str] = mapped_column(String(8), nullable=False)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # clock_timestamp() (not now()): now() returns the TRANSACTION start time, so the
+    # ~7 events of one atrativo (all in one per-atrativo commit) would share an identical
+    # created_at and the ASC-ordered Log timeline would be ambiguous. clock_timestamp()
+    # advances within a txn (real wall-clock) so intra-transaction order is preserved.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.clock_timestamp()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<RecordEvent id={self.id} stage={self.stage!r} "
+            f"status={self.status!r} source_ref={self.source_ref!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# RecordEvent indexes — drawer lookup by source_ref + Rio-card lookup by rio_id
+# ---------------------------------------------------------------------------
+Index(
+    "ix_record_events_source_ref",
+    RecordEvent.source,
+    RecordEvent.source_ref,
+)
+Index(
+    "ix_record_events_rio_id",
+    RecordEvent.rio_id,
+)
+
+
+# ---------------------------------------------------------------------------
 # Composite index for territorial-key dedup blocking (D-07)
 # ---------------------------------------------------------------------------
 Index(
@@ -484,6 +552,50 @@ def mask_phone(phone: str | None) -> str:
     return f"{prefix}*****{suffix}"
 
 
+def whatsapp_candidate_from_phone(phone_raw: str | None) -> str | None:
+    """Return a MASKED Brazilian celular (WhatsApp candidate) or None (LGPD, Phase F).
+
+    Phase F enrichment captures a `whatsapp_candidate` (celular + DDD) from the
+    phone surfaced by an enrichment source (Google Places `internationalPhoneNumber`).
+    Only a MOBILE line (celular) is a plausible WhatsApp number, so landlines are
+    rejected. The returned value is ALWAYS the ``mask_phone()`` form — the raw celular
+    is NEVER returned, so callers can store it in ``normalized["contact"]
+    ["whatsapp_candidate"]`` and surface it on the board without leaking PII (R3).
+
+    Celular shape (Brazil): DDD(2) + leading 9 + 8 subscriber digits = 11 national
+    digits with the subscriber part starting in ``9`` (Google exposes no mobile/landline
+    flag nor a DDD field — the DDD is embedded and parsed from the number).
+
+    Args:
+        phone_raw: Raw phone string from an enrichment source (E.164, ``55``-prefixed,
+            or bare national). None/empty/landline/non-celular → None.
+
+    Returns:
+        Masked celular (e.g. ``"+5573*****01"``) or None when not a BR celular.
+    """
+    if not phone_raw:
+        return None
+
+    digits = "".join(c for c in phone_raw if c.isdigit())
+    if not digits:
+        return None
+
+    # Derive the national number (DDD + subscriber), stripping a +55 country code.
+    if len(digits) in (12, 13) and digits.startswith("55"):
+        national = digits[2:]
+    elif len(digits) in (10, 11):
+        national = digits
+    else:
+        return None
+
+    # Celular = 11 national digits with the subscriber part starting in 9
+    # (DDD(2) + 9 + 8). A 10-digit national number is a landline → rejected.
+    if len(national) != 11 or national[2] != "9":
+        return None
+
+    return mask_phone(f"+55{national}")
+
+
 class ConversationMessage(Base):
     """Append-only log of every WhatsApp conversation message boundary (R2 Option B).
 
@@ -543,3 +655,46 @@ class ConversationMessage(Base):
             f"<ConversationMessage id={self.id} rio_id={self.rio_id} "
             f"direction={self.direction!r} role={self.role!r}>"
         )
+
+
+# ---------------------------------------------------------------------------
+# ConfigSetting — operator-tunable runtime config overlay (Phase D)
+# ---------------------------------------------------------------------------
+
+
+class ConfigSetting(Base):
+    """Sparse key→value overlay for operator-tunable runtime config (Phase D).
+
+    Each row is one dotted config key (e.g. "score.threshold_mar",
+    "source.tripadvisor.enabled", "engine.mode") whose value is wrapped as
+    ``{"v": <any>}`` so any JSON scalar/list/dict — including ``None``, ``False``,
+    or ``0`` — round-trips through the JSON column unambiguously (row presence,
+    not a NULL, marks "set"). brave.config.runtime.load_effective_config reads
+    every row and overlays it onto the env-bootstrapped AppConfig.
+
+    ABSENT rows → the effective config equals the env/AppConfig defaults
+    (behavior-neutral). The idempotent seed (runtime.seed_default_config) inserts
+    default rows equal to the current env-effective values, so a freshly seeded
+    base behaves identically to one with no rows at all.
+
+    This is the FIRST table in the repo to carry an ``updated_at`` column with an
+    ``onupdate`` bump. NB: ``onupdate=func.now()`` is an ORM-flush-level hook
+    (fires on SQLAlchemy ORM UPDATE), NOT a DB trigger — a raw SQL UPDATE will not
+    bump it. The Alembic DDL therefore only emits the INSERT-time ``server_default``.
+    """
+
+    __tablename__ = "config_settings"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    # Always the {"v": <any>} wrapper — never NULL (see class docstring).
+    value: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<ConfigSetting key={self.key!r}>"

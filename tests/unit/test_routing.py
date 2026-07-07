@@ -71,8 +71,8 @@ def test_route_by_score_dlq(score_config, rio_record):
     assert len(rio_record.dlq_reason) > 0
 
 
-def test_route_by_score_descarte(score_config, rio_record):
-    """route_by_score with score=30.0 sets routing='descarte'."""
+def test_route_by_score_low_dlq(score_config, rio_record):
+    """route_by_score with a low score sets routing='dlq' (binary gate, < 80)."""
     from brave.core.rio.routing import route_by_score
 
     rio_record.normalized = {
@@ -82,9 +82,28 @@ def test_route_by_score_descarte(score_config, rio_record):
         "atualidade_value": 0.0,
         "validacao_humana_value": 0.0,
     }
-    # 12+4+0+0+0 = 16.0 → descarte
+    # 12+4+0+0+0 = 16.0 → dlq
     route_by_score(None, rio_record, score_config)
-    assert rio_record.routing == "descarte"
+    assert rio_record.routing == "dlq"
+    assert rio_record.dlq_reason is not None
+    assert len(rio_record.dlq_reason) > 0
+
+
+def test_route_by_score_boundary_80_is_mar(score_config, rio_record):
+    """route_by_score at exactly 80.0 (default threshold_mar) sets routing='mar'."""
+    from brave.core.rio.routing import route_by_score
+
+    rio_record.normalized = {
+        "origem_value": 100.0,
+        "completude_value": 100.0,
+        "corroboracao_value": 75.0,
+        "atualidade_value": 100.0,
+        "validacao_humana_value": 0.0,
+    }
+    # 30+20+15+15+0 = 80.0 → mar
+    route_by_score(None, rio_record, score_config)
+    assert rio_record.score == 80.0
+    assert rio_record.routing == "mar"
 
 
 def test_route_by_score_sets_score_version(score_config, rio_record):

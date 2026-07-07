@@ -3,10 +3,12 @@
  *
  * The single-shell `/painel` route is an SPA-style view-switcher driven by local
  * state (NOT nested Next routes), mirroring the design contract's `setView`.
- * All six views (painel/duplicados/mapeamento/varreduras/conversas/custo) are
- * implemented and mounted as of phase 17.1 — no "Em breve" placeholders remain.
  *
- * Labels + groups are LOCKED by 17-CONTEXT.md (pt-BR copy from the mockup).
+ * Phase H (route consolidation) folded the standalone dark routes into the
+ * painel: four new views join the original six — Revisão (DLQ + WhatsApp gate),
+ * Monitor & Funis, Logs and Configuração — under two new groups (Observabilidade,
+ * Sistema). The original six (painel/duplicados/mapeamento/varreduras/conversas/
+ * custo) and their locked 17-CONTEXT.md labels/groups are unchanged.
  */
 
 export type PainelViewKey =
@@ -15,9 +17,17 @@ export type PainelViewKey =
   | "mapeamento"
   | "varreduras"
   | "conversas"
-  | "custo";
+  | "custo"
+  | "revisao"
+  | "monitor"
+  | "logs"
+  | "config";
 
-export type PainelNavGroup = "Processamento" | "Operação";
+export type PainelNavGroup =
+  | "Processamento"
+  | "Operação"
+  | "Observabilidade"
+  | "Sistema";
 
 export interface PainelNavItem {
   key: PainelViewKey;
@@ -39,9 +49,21 @@ export const NAV_GROUPS: { group: PainelNavGroup; items: PainelNavItem[] }[] = [
   {
     group: "Operação",
     items: [
+      { key: "revisao", label: "DLQ / Revisão", group: "Operação" },
       { key: "conversas", label: "Conversas WhatsApp", group: "Operação" },
       { key: "custo", label: "Custo & LLM", group: "Operação" },
     ],
+  },
+  {
+    group: "Observabilidade",
+    items: [
+      { key: "monitor", label: "Monitor & Funis", group: "Observabilidade" },
+      { key: "logs", label: "Logs", group: "Observabilidade" },
+    ],
+  },
+  {
+    group: "Sistema",
+    items: [{ key: "config", label: "Configuração", group: "Sistema" }],
   },
 ];
 

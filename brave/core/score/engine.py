@@ -13,10 +13,9 @@ The score formula weights five criteria (§7.6):
   ─────────────────────
   total:           100%
 
-Routing thresholds (configurable via ScoreConfig, D-14):
-  ≥ threshold_mar  (default 85.0) → "mar"
-  ≥ threshold_dlq  (default 51.0) → "dlq"
-  < threshold_dlq                  → "descarte"
+Routing is binary (configurable via ScoreConfig, D-14):
+  ≥ threshold_mar  (default 80.0) → "mar"
+  < threshold_mar                  → "dlq"
 """
 
 from brave.config.settings import ScoreConfig
@@ -55,13 +54,8 @@ def compute_score(inp: ScoreInput, config: ScoreConfig) -> ScoreResult:
     # Round to 2 decimal places to avoid floating-point representation drift
     score = round(total, 2)
 
-    # Routing by threshold (D-02)
-    if score >= config.threshold_mar:
-        routing = "mar"
-    elif score >= config.threshold_dlq:
-        routing = "dlq"
-    else:
-        routing = "descarte"
+    # Binary routing by the single Mar threshold (D-02)
+    routing = "mar" if score >= config.threshold_mar else "dlq"
 
     return ScoreResult(
         score=score,

@@ -2,7 +2,7 @@
 creating a tasks→lanes or lanes→tasks coupling (D-18).
 
 quarantine_poison is extracted from brave/tasks/pipeline.py so that lane code
-(e.g. brave/lanes/destinos/desmembramento.py) can write to PoisonQuarantine without
+(e.g. producers under brave/lanes/) can write to PoisonQuarantine without
 importing from the tasks layer.
 
 D-18 boundary note: brave/core/ never imports from brave/lanes/ or brave/tasks/.
@@ -30,14 +30,14 @@ def quarantine_poison(
 
     Used by:
       - brave/tasks/pipeline.py (Celery task failures, re-exported via re-import)
-      - brave/lanes/destinos/desmembramento.py (malformed LLM output from DesmembramentoAgent)
+      - lane producers under brave/lanes/ (e.g. malformed LLM output)
 
     Args:
         session:     SQLAlchemy Session.
         nascente_id: The nascente_id being processed (if known). None for lane-level failures
                      where no NascenteRecord was successfully created.
         task_name:   The task or agent name (e.g., "brave.process_nascente",
-                     "brave.desmembramento").
+                     "brave.sweep_uf").
         error:       Error message or traceback summary.
         payload:     Optional payload dict for debugging (e.g., municipio context).
 

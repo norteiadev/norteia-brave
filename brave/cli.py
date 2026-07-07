@@ -41,7 +41,7 @@ def _run_fixture() -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from brave.config.settings import ScoreConfig
+    from brave.config.runtime import load_effective_config
     from brave.core.nascente.service import store_raw
     from brave.core.rio.routing import process_nascente_record
     from brave.core.mar.service import promote_to_mar
@@ -74,7 +74,7 @@ def _run_fixture() -> None:
         session.flush()
 
         # Process through Rio pipeline
-        config = ScoreConfig()
+        config = load_effective_config(session).score
         rio = process_nascente_record(session, nascente, config)
         session.flush()
 
@@ -91,6 +91,15 @@ def _run_fixture() -> None:
 
         # Promote to Mar
         mar = promote_to_mar(session, rio)
+        # Phase F: the attraction recency backstop may route to DLQ instead of
+        # promoting (returns None). Persist the DLQ routing and skip the push.
+        if mar is None:
+            session.commit()
+            print(
+                f"Nascente: {nascente.id} | Score: {score:.1f} | "
+                f"Routing: dlq | Mar: (backstop: no_recent_reviews) | Push: skipped"
+            )
+            return
         session.commit()
 
         # Push via the in-package offline stub (no network, production-safe)

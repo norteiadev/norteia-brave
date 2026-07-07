@@ -61,7 +61,7 @@ def test_push_destination_task_idempotent_non_mar(db_session):
     rio = process_nascente_record(db_session, nascente, config)
     db_session.flush()
 
-    # Confirm the record is NOT in mar routing (should be dlq or descarte)
+    # Confirm the record is NOT in mar routing (should be dlq)
     assert rio.routing != "mar", f"Expected non-mar routing, got {rio.routing!r}"
 
     # Calling push_destination_task inline (bypassing Celery broker) should return None
@@ -80,8 +80,8 @@ def test_push_destination_task_idempotent_non_mar(db_session):
     # Simulate what push_destination_task does inline (test the idempotency guard logic)
     # The task checks rio.routing != "mar" and returns immediately
     # We verify this by confirming that routing != "mar" is the guard condition
-    assert rio.routing in ("dlq", "descarte"), (
-        f"Expected dlq or descarte routing for cold-start record, got {rio.routing!r}"
+    assert rio.routing == "dlq", (
+        f"Expected dlq routing for cold-start record, got {rio.routing!r}"
     )
 
 

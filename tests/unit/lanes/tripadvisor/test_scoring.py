@@ -1,12 +1,13 @@
 """Tests for TripAdvisor §7.6 scoring helpers — calibration proof (TA-04).
 
-Three mandatory scoring proof tests:
+Three mandatory scoring proof tests (binary threshold_mar=80):
   1. typical → score in [66.5, 67.6] → routing=="dlq"
-  2. sparse/no-review → score in [27.0, 28.0] → routing=="descarte"
-  3. val=100 → score < 85 → routing!="mar" (proves promote-override is required)
+  2. sparse/no-review → score in [27.0, 28.0] → routing=="dlq"
+  3. val=100 → score ≈ 82.05 ≥ 80 → routing=="mar" (a validated TA attraction reaches
+     Mar directly under the binary gate — the old promote-override bypass is obsolete)
 
 Calibration spec (CONTEXT.md TA-04):
-  - origin=65.0 (TA source, firewall: TA never crosses 85 on origin alone)
+  - origin=65.0 (TA source, firewall: TA never crosses the gate on origin alone)
   - typical: completude=100.0 (well-documented attraction), atualidade=70 (≤180d), val=0
   - sparse: completude=40.0 (only name+uf+locationId), atualidade=0 (no reviews), val=0
   - corroboracao_from_reviews uses log1p curve saturating at ~500 reviews
@@ -15,8 +16,8 @@ Score formula (§7.6 weights): origin×0.30 + completude×0.20 + corroboracao×0
                                + atualidade×0.15 + val×0.15
 
 Typical: 65×0.30 + 100×0.20 + 85.25×0.20 + 70×0.15 + 0×0.15 ≈ 67.05 → dlq (✓ in [66.5, 67.6])
-Sparse:  65×0.30 + 40×0.20 + 0×0.20 + 0×0.15 + 0×0.15 = 27.50 → descarte (✓ in [27.0, 28.0])
-Val100:  65×0.30 + 100×0.20 + 85.25×0.20 + 70×0.15 + 100×0.15 ≈ 82.05 < 85 → dlq (✓ < 85)
+Sparse:  65×0.30 + 40×0.20 + 0×0.20 + 0×0.15 + 0×0.15 = 27.50 → dlq (✓ in [27.0, 28.0])
+Val100:  65×0.30 + 100×0.20 + 85.25×0.20 + 70×0.15 + 100×0.15 ≈ 82.05 ≥ 80 → mar
 """
 
 from datetime import datetime, timedelta, timezone
@@ -41,11 +42,8 @@ def _default_config() -> ScoreConfig:
         weight_corroboracao=20.0,
         weight_atualidade=15.0,
         weight_validacao_humana=15.0,
-        threshold_mar=85.0,
-        threshold_dlq=40.0,
+        threshold_mar=80.0,
         score_version="v1.1",
-        mar_ready_atualidade_bar=70.0,
-        mar_ready_corrob_bar=60.0,
     )
 
 
@@ -150,7 +148,7 @@ class TestScoringProofTests:
     """Mandatory calibration proof tests (CONTEXT.md TA-04).
 
     These tests assert the §7.6 score formula produces values in the
-    acceptance ranges that prove the promote-override is necessary.
+    acceptance ranges under the binary threshold_mar=80 gate.
 
     Calibration math (for documentation):
       origin=65, weight_origin=30%  → 65×0.30 = 19.50
@@ -160,8 +158,8 @@ class TestScoringProofTests:
       atualidade=70, weight=15%     → 70×0.15 = 10.50
       val=0, weight=15%             → 0×0.15 = 0
       → typical: 19.5+20+17.05+10.5+0 ≈ 67.05 → dlq
-      → sparse:  19.5+8+0+0+0 = 27.50 → descarte
-      → val=100: 19.5+20+17.05+10.5+15 ≈ 82.05 → dlq (< 85 → not mar)
+      → sparse:  19.5+8+0+0+0 = 27.50 → dlq
+      → val=100: 19.5+20+17.05+10.5+15 ≈ 82.05 → mar (≥ 80)
     """
 
     def test_scoring_typical_routes_dlq(self) -> None:
@@ -182,8 +180,8 @@ class TestScoringProofTests:
         )
         assert result.routing == "dlq", f"Expected dlq, got {result.routing}"
 
-    def test_scoring_sparse_routes_descarte(self) -> None:
-        """Sparse TA record: no reviews, no recent data → score in [27.0, 28.0] → descarte."""
+    def test_scoring_sparse_routes_dlq(self) -> None:
+        """Sparse TA record: no reviews, no recent data → score in [27.0, 28.0] → dlq."""
         config = _default_config()
         corroboracao = corroboracao_from_reviews(0, 0.0)
         atualidade = atualidade_from_recency(None)
@@ -198,14 +196,14 @@ class TestScoringProofTests:
         assert 27.0 <= result.score <= 28.0, (
             f"Expected score in [27.0, 28.0], got {result.score:.2f}"
         )
-        assert result.routing == "descarte", f"Expected descarte, got {result.routing}"
+        assert result.routing == "dlq", f"Expected dlq, got {result.routing}"
 
-    def test_scoring_val100_below_85(self) -> None:
-        """val=100 + typical TA → score < 85 → routing != 'mar'.
+    def test_scoring_val100_reaches_mar(self) -> None:
+        """val=100 + typical TA → score ≈ 82.05 ≥ 80 → routing == 'mar'.
 
-        Proves that promote_override is REQUIRED for TA attractions —
-        standard validate_and_promote_rio (val=100) cannot cross the ≥85 gate
-        because origin=65 limits the maximum achievable score.
+        Under the binary threshold_mar=80 gate a fully steward-validated TA
+        attraction crosses into Mar directly through validate_and_promote_rio —
+        the former mar_ready promote-override bypass is obsolete.
         """
         config = _default_config()
         corroboracao = corroboracao_from_reviews(200, 4.5)
@@ -217,9 +215,9 @@ class TestScoringProofTests:
             validacao_humana_value=100.0,  # full steward validation
         )
         result = compute_score(score_input, config)
-        assert result.score < 85.0, (
-            f"Expected score < 85.0 (promote-override needed), got {result.score:.2f}"
+        assert result.score >= 80.0, (
+            f"Expected score >= 80.0 (crosses the binary gate), got {result.score:.2f}"
         )
-        assert result.routing != "mar", (
-            f"Expected routing != 'mar', got {result.routing}"
+        assert result.routing == "mar", (
+            f"Expected routing == 'mar', got {result.routing}"
         )

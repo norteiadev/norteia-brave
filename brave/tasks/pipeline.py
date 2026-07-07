@@ -36,10 +36,12 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from brave.clients.norteia_api import NorteiaApiClient
-from brave.config.settings import AppConfig, ScoreConfig
+from brave.config.runtime import load_effective_config
+from brave.config.settings import AppConfig
 from brave.core.models import RioRecord
 from brave.core.nascente.service import get_nascente
 from brave.core.rio.routing import process_nascente_record, reprocess_record
+from brave.shared.exceptions import PermanentError, TransientError  # noqa: F401 (re-export)
 
 logger = structlog.get_logger(__name__)
 
@@ -227,14 +229,11 @@ def _log_conversation_messages(
 # ---------------------------------------------------------------------------
 # Exceptions for error classification
 # ---------------------------------------------------------------------------
-
-
-class TransientError(Exception):
-    """Transient failure — retry with backoff (network, DB timeout, etc.)."""
-
-
-class PermanentError(Exception):
-    """Permanent failure — quarantine, do not retry (malformed payload, etc.)."""
+#
+# TransientError / PermanentError now live in the central hierarchy
+# (brave/shared/exceptions.py) and are imported at the top of this module. They
+# remain module-level names here so every existing raise/except in this file —
+# and any importer — keeps working unchanged.
 
 
 # ---------------------------------------------------------------------------
@@ -260,9 +259,11 @@ def _get_session() -> tuple[Session, Any]:
 # ---------------------------------------------------------------------------
 
 # quarantine_poison is defined in brave/core/quarantine.py so that lane code
-# (e.g. DesmembramentoAgent in brave/lanes/destinos/) can import it from core
+# (e.g. producers under brave/lanes/) can import it from core
 # without depending on the tasks layer.  This re-export keeps existing callers
 # working without any change.
+from datetime import UTC
+
 from brave.core.quarantine import quarantine_poison  # noqa: F401 (re-export)
 
 # ---------------------------------------------------------------------------
@@ -295,7 +296,7 @@ def process_nascente(self, nascente_id: str) -> None:
     session, engine = _get_session()
     try:
         nascente_uuid = uuid.UUID(nascente_id)
-        config = ScoreConfig()
+        config = load_effective_config(session).score
 
         nascente = get_nascente(session, nascente_uuid)
         if nascente is None:
@@ -354,55 +355,23 @@ def process_nascente(self, nascente_id: str) -> None:
 
 
 def _build_push_payload(mar_record: Any, rio_record: RioRecord) -> dict[str, Any]:
-    """Build the flat-provenance Mar push payload from a MarRecord + RioRecord.
+    """Build the flat-provenance Mar push payload (D-16 Pact contract shape).
 
-    The Pact contract shape (D-16) requires flat per-criterion provenance keys:
-        {"origem": float, "completude": float, "corroboracao": float,
-         "atualidade": float, "validacao_humana": float}
-
-    promote_to_mar stores provenance as:
-        {"score_breakdown": {...flat criteria...}, "score_version": str,
-         "nascente_id": str, "rio_id": str}
-
-    This function flattens score_breakdown to top-level provenance keys.
+    Thin shim: the logic moved to
+    ``brave.core.mar.service.build_push_payload`` (returns a typed
+    MarPushPayload). This returns ``.model_dump()`` so the dict is byte-identical
+    to before and every call site stays unchanged.
 
     Args:
         mar_record: MarRecord returned by promote_to_mar.
-        rio_record: Source RioRecord (for entity_type, source, source_ref).
+        rio_record: Source RioRecord (kept for signature compatibility).
 
     Returns:
         Dict matching the Pact contract Mar push shape.
     """
-    provenance_raw = mar_record.provenance or {}
-    score_breakdown = provenance_raw.get("score_breakdown", {})
-    score_version = provenance_raw.get("score_version", mar_record.score_version or "v1.0")
+    from brave.core.mar.service import build_push_payload
 
-    # Flat per-criterion provenance (the Pact contract shape, D-16)
-    flat_provenance = {
-        "origem": float(score_breakdown.get("origem", 0.0)),
-        "completude": float(score_breakdown.get("completude", 0.0)),
-        "corroboracao": float(score_breakdown.get("corroboracao", 0.0)),
-        "atualidade": float(score_breakdown.get("atualidade", 0.0)),
-        "validacao_humana": float(score_breakdown.get("validacao_humana", 0.0)),
-    }
-
-    # Extract source and source_ref from source_ref (format "source:UF:id")
-    # source_ref = "mtur:BA:123" → source = "mtur"
-    source_ref = mar_record.source_ref or ""
-    source_parts = source_ref.split(":", 1)
-    source = source_parts[0] if source_parts else "unknown"
-
-    canonical = mar_record.canonical or {}
-
-    return {
-        "source": source,
-        "source_ref": source_ref,
-        "entity_type": mar_record.entity_type,
-        "canonical": canonical,
-        "reliability_score": float(mar_record.reliability_score),
-        "score_version": score_version,
-        "provenance": flat_provenance,
-    }
+    return build_push_payload(mar_record, rio_record).model_dump()
 
 
 @shared_task(
@@ -451,6 +420,11 @@ def push_mar(self, rio_id: str) -> None:
 
         # Step 1: Promote to Mar layer (idempotent by source_ref, D-15)
         mar = promote_to_mar(session, rio)
+        # Phase F: the attraction recency backstop may route to DLQ instead of
+        # promoting (returns None). Commit the DLQ routing and no-op the push.
+        if mar is None:
+            session.commit()
+            return
         session.commit()
 
         # Step 2: Determine which client to use
@@ -524,7 +498,7 @@ def reprocess_record_task(self, rio_id: str) -> None:
     """
     session, engine = _get_session()
     try:
-        config = ScoreConfig()
+        config = load_effective_config(session).score
         reprocess_record(session, uuid.UUID(rio_id), config)
         session.commit()
     except Exception as exc:
@@ -592,6 +566,11 @@ def push_destination_task(self, rio_id: str) -> None:
 
         # Step 1: Promote to Mar layer (idempotent by source_ref, D-15)
         mar = promote_to_mar(session, rio)
+        # Phase F: the attraction recency backstop may route to DLQ instead of
+        # promoting (returns None). Commit the DLQ routing and no-op the push.
+        if mar is None:
+            session.commit()
+            return
         session.commit()
 
         # Step 2: Determine which client to use
@@ -687,7 +666,7 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
     session, engine = _get_session()
     try:
         app_config = AppConfig()
-        config = ScoreConfig()
+        config = load_effective_config(session).score
 
         # Select Places client based on run_real_externals flag
         if app_config.run_real_externals:
@@ -784,6 +763,10 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
                 q_engine.dispose()
 
     finally:
+        # Producer-completes lifecycle: dispatched by engine_sweep_run
+        # (incr_inflight before .delay); decrement so the LAST producer completes the
+        # run. Best-effort, never breaks the task (single outermost finally).
+        _producer_finally_lifecycle()
         session.close()
         engine.dispose()
 
@@ -805,26 +788,24 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
 def sweep_uf(self, uf: str, depth: str | None = None) -> None:
     """Recurring Destinos sweep for one UF (ORCH-01, D-01/D-02).
 
-    Composes the two destino producers:
-      1. MturSeedIngest.produce(uf)      — idempotent seed re-ingest (origem=100).
-      2. DesmembramentoAgent.produce(uf) — recurring LLM sub-destino discovery (origem=40).
+    Runs the single destino producer:
+      1. MturSeedIngest.produce(uf) — idempotent seed re-ingest (origem=100).
 
     Depth gate (plan 10-02): depth arrives as an explicit task arg (never read
     from Redis here — the orchestrator owns the read). Under depth=NASCENTE the
-    Mtur seed runs Nascente-only (run_rio=False) and the LLM Desmembramento is
-    skipped entirely — zero external cost. At the rio depths both run as today.
-    depth=None (legacy/direct call) defaults to the full path.
+    Mtur seed runs Nascente-only (run_rio=False) — zero external cost. At the rio
+    depths it also runs Rio routing. depth=None (legacy/direct call) defaults to the
+    full path.
 
-    Producer-only (D-02): both producers call store_raw + process_nascente_record
+    Producer-only (D-02): the producer calls store_raw + process_nascente_record
     internally, so records land in DLQ/Mar/descarte by §7.6 automatically. This task
     adds NO scoring/validation branch — promotion to Mar stays behind §7.6 + the human
-    DLQ steward gate. NotebookLM is NOT run here (manual report ingest only, Deferred).
+    DLQ steward gate.
 
     Idempotency: store_raw dedups by (source, source_ref, content_hash) (D-01), so a
     replayed sweep for the same UF is a no-op.
     Error handling: a missing Mtur CSV (FileNotFoundError) or other PermanentError is
     quarantined (PoisonQuarantine), not lost; transient errors retry then quarantine.
-    Client selection: real LLM only when run_real_externals=True (D-06/D-18).
 
     Args:
         uf: Two-letter Brazilian state code (e.g. "BA", "RJ").
@@ -832,40 +813,26 @@ def sweep_uf(self, uf: str, depth: str | None = None) -> None:
     from brave.clients.mtur import MturClient
     from brave.core import engine as collection_engine
     from brave.core.quarantine import quarantine_poison as _quarantine
-    from brave.lanes.destinos.desmembramento import DesmembramentoAgent
     from brave.lanes.destinos.mtur import MturSeedIngest
 
-    # Depth derivation — nascente is the free Nascente-only path: no Rio, no LLM.
+    # Depth derivation — nascente is the free Nascente-only path: no Rio.
     run_rio = depth != collection_engine.NASCENTE
-    run_desmembramento = depth != collection_engine.NASCENTE
 
     session, engine = _get_session()
     try:
-        config = ScoreConfig()
-        app_config = AppConfig()
+        config = load_effective_config(session).score
 
         try:
             # Mtur seed re-ingest (idempotent — store_raw dedups by content_hash).
             # run_rio=False under nascente: Nascente + §7.6 score only, no Rio.
+            # redis lets the producer honor a mid-run Motor Pausado/Desligado
+            # (engine.should_halt_producer) instead of inserting the whole UF.
+            import redis as _seed_redis_lib  # noqa: PLC0415
+            _seed_rc = _seed_redis_lib.from_url(
+                os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+            )
             seed = MturSeedIngest(MturClient(), session, config)
-            asyncio.run(seed.produce(uf, run_rio=run_rio))
-
-            # Desmembramento — the real recurring LLM discovery (origem=40 firewall).
-            # Skipped entirely under nascente (it is paid LLM, not a free source).
-            # LLM client selection mirrors discover_atrativo_task (real vs fake).
-            if run_desmembramento:
-                redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-                import redis as redis_lib
-                redis_client = redis_lib.from_url(redis_url)
-                if app_config.run_real_externals:
-                    from brave.clients.llm import RealLLMClient
-                    llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="destinos")
-                else:
-                    from brave.clients.null_llm import NullLLMClient
-                    llm_client = NullLLMClient()
-                # Ctor arg order: llm FIRST, then mtur (desmembramento.py:128).
-                desm = DesmembramentoAgent(llm_client, MturClient(), session, config)
-                asyncio.run(desm.produce(uf))
+            asyncio.run(seed.produce(uf, run_rio=run_rio, redis=_seed_rc))
         except FileNotFoundError as exc:
             # A missing Mtur seed CSV is permanent — quarantine, never retry (T-05-03).
             raise PermanentError(f"Mtur seed CSV missing for sweep {uf}: {exc}") from exc
@@ -908,6 +875,10 @@ def sweep_uf(self, uf: str, depth: str | None = None) -> None:
                 q_engine.dispose()
 
     finally:
+        # Producer-completes lifecycle: this producer was dispatched by engine_sweep_run
+        # (incr_inflight before .delay); decrement here so the LAST producer completes
+        # the run. Best-effort, never breaks the task (single outermost finally).
+        _producer_finally_lifecycle()
         session.close()
         engine.dispose()
 
@@ -933,7 +904,7 @@ def sweep_tripadvisor(
 ) -> None:
     """TripAdvisor sweep for one UF — atrativos only, parent destinos from authoritative Rio records (Mtur/IBGE) (oa3).
 
-    Mirrors sweep_uf but uses the TripAdvisor ingest lane instead of Mtur/Desmembramento.
+    Mirrors sweep_uf but uses the TripAdvisor ingest lane instead of the Mtur seed.
     Produces TripAdvisor attraction records only. Parent destino RioRecords must already
     exist in Rio (run Mtur seed sweep first). TA-destinos (TripAdvisorDestinosIngest) is
     not wired here — no destinos QID has been captured; deferred until QID is discovered.
@@ -984,7 +955,7 @@ def sweep_tripadvisor(
     # (T-15-07-04). Only the bulk_national branch assigns rc.
     rc = None
     try:
-        config = ScoreConfig()
+        config = load_effective_config(session).score
         app_config = AppConfig()
 
         # T1 (pfr-01): ta_config must be defined before the branch so it is always
@@ -995,8 +966,9 @@ def sweep_tripadvisor(
         ta_config = None
         if app_config.run_real_externals:
             import redis as _redis_lib
-            from brave.lanes.tripadvisor.client import TripAdvisorClient
+
             from brave.config.settings import TripAdvisorConfig
+            from brave.lanes.tripadvisor.client import TripAdvisorClient
             _ta_redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
             ta_config = TripAdvisorConfig()
             ta_client = TripAdvisorClient(
@@ -1037,6 +1009,15 @@ def sweep_tripadvisor(
                 os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
             )
 
+            # Standalone bulk runs are dispatched directly (scripts/ta_bulk_sweep.py),
+            # NOT via engine_sweep_run/start_run, so reset the producer-lifecycle keys to
+            # a clean baseline. A stale positive inflight (or a claimed last_run_ended)
+            # from a prior orchestrator run would otherwise make this run's maybe_complete
+            # return False and the badge would never flip to "synced".
+            rc.set(collection_engine._INFLIGHT_KEY, "0")
+            rc.delete(collection_engine._DISPATCH_DONE_KEY)
+            rc.delete(collection_engine._LAST_RUN_ENDED_KEY)
+
             # Resume: when a prior run recorded progress, continue from the page AFTER
             # the last completed offset (offset//30 + 2). Otherwise start a fresh run at
             # the operator-supplied start_page (default page 1 / offset 0).
@@ -1074,6 +1055,23 @@ def sweep_tripadvisor(
             sweep_progress.mark_done(rc)
             # Terminal commit (produce_paginated already commits per page).
             session.commit()
+            # Standalone completion: the bulk run is dispatched directly (scripts/
+            # ta_bulk_sweep.py), NOT via engine_sweep_run, so it never went through the
+            # incr_inflight/dispatch_done lifecycle. Latch dispatch_done and complete the
+            # run inline so the badge flips DESLIGADO + "synced" (race-safe GETSET claim;
+            # the shared outermost finally then no-ops on the already-claimed marker).
+            _bulk_final_state = collection_engine.get_state(rc)
+            collection_engine.set_dispatch_done(rc, True)
+            if collection_engine.maybe_complete(rc):
+                _bulk_run_id = (
+                    collection_engine._decode(rc.get(collection_engine._RUN_ID_KEY))
+                    or None
+                )
+                if _bulk_run_id:
+                    _bulk_dispatched = sweep_progress.get_progress(rc).get("pages_done", 0)
+                    _finalize_run_history(
+                        _bulk_run_id, _bulk_dispatched, _bulk_final_state
+                    )
             return
 
         # Build destino_rio_map: keyed by municipio_id (IBGE code) → (rio_id, source_ref)
@@ -1082,8 +1080,11 @@ def sweep_tripadvisor(
         # Operator must run a destinos/default sweep (Mtur seed) before a TA atrativos
         # sweep, or atrativos will quarantine with parent_destino_absent per record.
         import asyncio as _asyncio
+
         from sqlalchemy import select as _select
-        from brave.core.models import RioRecord as _RioRecord, NascenteRecord as _NascenteRecord
+
+        from brave.core.models import NascenteRecord as _NascenteRecord
+        from brave.core.models import RioRecord as _RioRecord
         session.flush()
         destino_rows = session.execute(
             _select(_RioRecord.id, _NascenteRecord.source_ref, _RioRecord.municipio_id)
@@ -1112,7 +1113,21 @@ def sweep_tripadvisor(
             geocoder=geocoder,
             ta_config=ta_config,
         )
-        _asyncio.run(atrativos_ingest.produce(uf, run_rio=run_rio))
+        # Per-UF path enriches review recency (fetch_recent_review per card) so
+        # atualidade lifts the §7.6 score. The bulk_national branch above leaves
+        # enrichment OFF (no per-card review calls at 10k scale).
+        # redis=_prod_rc lets the per-UF producer honor a mid-run Motor Pausado/
+        # Desligado (engine.should_halt_producer) — otherwise the fanned-out producer
+        # keeps paginating + inserting atrativos/synthesized destinos after a pause.
+        import redis as _prod_redis_lib  # noqa: PLC0415
+        _prod_rc = _prod_redis_lib.from_url(
+            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        )
+        _asyncio.run(
+            atrativos_ingest.produce(
+                uf, run_rio=run_rio, enrich_reviews=True, redis=_prod_rc
+            )
+        )
 
         session.commit()
 
@@ -1181,6 +1196,13 @@ def sweep_tripadvisor(
                 q_engine.dispose()
 
     finally:
+        # Producer-completes lifecycle: the per-UF TA producer is dispatched by
+        # engine_sweep_run (incr_inflight before .delay). Decrement here so the LAST
+        # producer completes the run. Best-effort, never breaks the task. The bulk_national
+        # branch is dispatched standalone (not via engine_sweep_run) so it never
+        # incremented — decr clamps at 0 and its own inline maybe_complete already
+        # completed the run (idempotent: the GETSET claim makes this a no-op).
+        _producer_finally_lifecycle()
         session.close()
         engine.dispose()
 
@@ -1316,24 +1338,18 @@ def gather_signals_task(self, rio_id: str) -> None:
             raise PermanentError(f"RioRecord {rio_id} not found")
 
         app_config = AppConfig()
-        config = ScoreConfig()
+        config = load_effective_config(session).score
 
         if app_config.run_real_externals:
             places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
-            apify_api_key = os.environ.get("BRAVE_APIFY_API_KEY", "")
-            from brave.clients.apify import RealApifyClient
             from brave.clients.places import RealPlacesClient
             places_client = RealPlacesClient(api_key=places_api_key)
-            apify_client = RealApifyClient(api_key=apify_api_key)
         else:
-            from brave.clients.null_apify import NullApifyClient
             from brave.clients.null_places import NullPlacesClient
             places_client = NullPlacesClient()
-            apify_client = NullApifyClient()
 
         agent = SignalAgent(
             places_client=places_client,
-            apify_client=apify_client,
             session=session,
             config=config,
         )
@@ -1447,6 +1463,11 @@ def push_attraction_task(self, rio_id: str) -> None:
 
         # Step 1: Promote to Mar layer (idempotent by source_ref, D-15)
         mar = promote_to_mar(session, rio)
+        # Phase F: the attraction recency backstop may route to DLQ instead of
+        # promoting (returns None). Commit the DLQ routing and no-op the push.
+        if mar is None:
+            session.commit()
+            return
         session.commit()
 
         # Step 2: Determine which API client to use
@@ -1533,7 +1554,7 @@ def outreach_task(self, rio_id: str) -> None:
         rio_id: UUID string of the RioRecord to outreach.
     """
     from brave.clients.null_whatsapp import NullWhatsAppClient
-    from brave.lanes.atrativos.whatsapp_agent import build_graph
+    from brave.shared.whatsapp.agent import build_graph
 
     session, engine = _get_session()
     try:
@@ -1551,7 +1572,7 @@ def outreach_task(self, rio_id: str) -> None:
             return  # Already advanced past this step — idempotent no-op
 
         app_config = AppConfig()
-        config = ScoreConfig()
+        config = load_effective_config(session).score
 
         # Select WhatsApp client (production: Twilio or Null; never Fake, T-03-04-07)
         if app_config.run_real_externals:
@@ -1598,6 +1619,7 @@ def outreach_task(self, rio_id: str) -> None:
                 rio=rio,
                 config=config,
                 settings=settings,
+                push_confirmed_fn=push_attraction_task.delay,
                 checkpointer=saver,
             )
 
@@ -1724,7 +1746,7 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
         reply_text: Raw inbound message body from the owner (from n8n/Twilio webhook).
     """
     from brave.clients.null_whatsapp import NullWhatsAppClient
-    from brave.lanes.atrativos.whatsapp_agent import build_graph
+    from brave.shared.whatsapp.agent import build_graph
 
     session, engine = _get_session()
     try:
@@ -1743,7 +1765,7 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
             return  # Conversation already completed or never started — no-op
 
         app_config = AppConfig()
-        config = ScoreConfig()
+        config = load_effective_config(session).score
 
         # Select WhatsApp client (production: Twilio or Null; never Fake, T-03-04-07)
         if app_config.run_real_externals:
@@ -1791,6 +1813,7 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
                 rio=rio,
                 config=config,
                 settings=settings,
+                push_confirmed_fn=push_attraction_task.delay,
                 checkpointer=saver,
             )
 
@@ -1864,8 +1887,203 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase F — LLM WhatsApp-number discovery (manual DLQ→WhatsApp batch, no-celular branch)
+# ---------------------------------------------------------------------------
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name="brave.discover_whatsapp_number",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=300,
+)
+def discover_whatsapp_number_task(self, rio_id: str) -> None:
+    """Discover a WhatsApp number for a gated atrativo, then outreach or bounce to DLQ.
+
+    Dispatched by the manual DLQ→WhatsApp batch endpoint (dlq.py) for the no-celular
+    branch: an eligible atrativo was moved to sub_state="aguardando_consulta_whatsapp"
+    but carries NO normalized["contact"]["whatsapp_candidate"]. This task asks the LLM
+    for a plausible number.
+
+    Offline (run_real_externals=False, the default / CI): NullLLMClient returns no
+    number → the record routes straight back to DLQ (aguardando_consulta_whatsapp → None)
+    with dlq_reason="no_contact_found". Deterministic, no network, keyless.
+
+    Real (run_real_externals=True, opt-in): on a found celular the task populates
+    normalized["contacts"]["phone_e164"] (raw, for consent/outreach) AND
+    normalized["contact"]["whatsapp_candidate"] (MASKED, for the board), advances
+    aguardando_consulta_whatsapp → whatsapp_in_progress, and dispatches outreach_task
+    via the dispatch-then-inline-fallback idiom (same as the batch endpoint).
+
+    Idempotency (D-01): only proceeds while sub_state == "aguardando_consulta_whatsapp".
+    A replay after the record already advanced (or bounced) is a no-op. CR-04: the row
+    is held with SELECT ... FOR UPDATE for the whole task so a concurrent resume cannot
+    interleave.
+
+    Args:
+        rio_id: UUID string of the RioRecord (an atrativo parked at the WhatsApp gate).
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from brave.core.atrativos.state_machine import advance_sub_state
+    from brave.core.models import whatsapp_candidate_from_phone
+    from brave.core.quarantine import quarantine_poison as _quarantine
+    from brave.lanes.atrativos.contact_finder_agent import _normalize_phone_e164
+    from brave.lanes.atrativos.number_discovery import discover_number
+
+    session, engine = _get_session()
+    try:
+        rio_uuid = uuid.UUID(rio_id)
+        # CR-04: hold the row lock for the whole task so a concurrent inbound/resume
+        # cannot interleave with the discovery → advance/bounce write.
+        rio = session.get(RioRecord, rio_uuid, with_for_update=True)
+        if rio is None:
+            raise PermanentError(f"RioRecord {rio_id} not found")
+
+        # Idempotency (D-01): only run while parked at the gate awaiting a number.
+        if rio.sub_state != "aguardando_consulta_whatsapp":
+            return
+
+        app_config = AppConfig()
+
+        # LLM client selection (D-18): Null offline (no number), Real opt-in.
+        if app_config.run_real_externals:
+            redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+            import redis as redis_lib
+            redis_client = redis_lib.from_url(redis_url)
+            from brave.clients.llm import RealLLMClient
+            llm_client = RealLLMClient(
+                config=app_config.llm,
+                redis_client=redis_client,
+                session=session,
+                lane="atrativos",
+            )
+        else:
+            from brave.clients.null_llm import NullLLMClient
+            llm_client = NullLLMClient()
+
+        normalized = rio.normalized or {}
+        raw_phone = asyncio.run(
+            discover_number(
+                llm_client,
+                name=normalized.get("name") or "",
+                uf=rio.uf,
+                address=normalized.get("address"),
+            )
+        )
+
+        # Only a MOBILE (celular) number is a plausible WhatsApp — whatsapp_candidate_from_phone
+        # returns the MASKED celular or None (landline / no number). The raw E.164 is kept
+        # separately for the consent/outreach path.
+        masked_candidate = whatsapp_candidate_from_phone(raw_phone)
+
+        if raw_phone and masked_candidate is not None:
+            phone_e164 = _normalize_phone_e164(raw_phone)
+            new_normalized = dict(normalized)
+            contacts = dict(new_normalized.get("contacts") or {})
+            contacts["phone_e164"] = phone_e164
+            new_normalized["contacts"] = contacts
+            # Store the WhatsApp candidate ALREADY MASKED (LGPD R3) — never the raw celular.
+            new_normalized["contact"] = {"whatsapp_candidate": masked_candidate}
+            rio.normalized = new_normalized
+            flag_modified(rio, "normalized")
+
+            # Found → approve for outreach (aguardando → whatsapp_in_progress).
+            advance_sub_state(
+                session,
+                rio,
+                "aguardando_consulta_whatsapp",
+                "whatsapp_in_progress",
+                actor="number_discovery",
+                validate=True,
+                lock=False,
+            )
+            session.commit()
+
+            # Dispatch-then-inline-fallback (same idiom the batch endpoint uses): the
+            # per-task commit above released the row lock, so an inline outreach_task.run
+            # can re-acquire it offline; .delay is the normal broker path.
+            try:
+                outreach_task.delay(rio_id)
+            except Exception:
+                outreach_task.run(rio_id)
+
+            logger.info("whatsapp_number_found", rio_id=rio_id)
+            return
+
+        # Not found → back to DLQ (aguardando_consulta_whatsapp → None) with a distinct reason.
+        advance_sub_state(
+            session,
+            rio,
+            "aguardando_consulta_whatsapp",
+            None,
+            actor="number_discovery",
+            validate=True,
+            lock=False,
+        )
+        rio.routing = "dlq"
+        rio.dlq_reason = "no_contact_found"
+        session.commit()
+
+        logger.info("whatsapp_number_not_found", rio_id=rio_id)
+
+    except PermanentError as exc:
+        session.rollback()
+        q_session, q_engine = _get_session()
+        try:
+            _quarantine(
+                session=q_session,
+                nascente_id=None,
+                task_name="brave.discover_whatsapp_number",
+                error=str(exc),
+                payload={"rio_id": rio_id},
+            )
+            q_session.commit()
+        finally:
+            q_session.close()
+            q_engine.dispose()
+
+    except Exception as exc:
+        session.rollback()
+        try:
+            raise self.retry(exc=exc, max_retries=3)
+        except self.MaxRetriesExceededError:
+            q_session, q_engine = _get_session()
+            try:
+                _quarantine(
+                    session=q_session,
+                    nascente_id=None,
+                    task_name="brave.discover_whatsapp_number",
+                    error=str(exc),
+                    payload={"rio_id": rio_id},
+                )
+                q_session.commit()
+            finally:
+                q_session.close()
+                q_engine.dispose()
+
+    finally:
+        session.close()
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
 # Collection engine — operator-controlled start/stop sweep orchestrator
 # ---------------------------------------------------------------------------
+
+# Maps a domain's SweepDispatch.task_name (stable public celery name) to the
+# producer task's ATTRIBUTE in THIS module. The dispatch loop resolves the producer
+# via ``globals()[attr]`` (not the celery registry) so a test that monkeypatches
+# ``pipeline.sweep_uf`` / ``pipeline.sweep_tripadvisor`` / ``pipeline.discover_atrativo_task``
+# still intercepts the ``.delay`` — the registry indirection stays transparent.
+_PRODUCER_ATTR_BY_TASK_NAME: dict[str, str] = {
+    "brave.sweep_uf": "sweep_uf",
+    "brave.discover_atrativo": "discover_atrativo_task",
+    "brave.sweep_tripadvisor": "sweep_tripadvisor",
+}
 
 
 @shared_task(
@@ -1912,7 +2130,13 @@ def engine_sweep_run(
     import redis as redis_lib
 
     from brave.core import engine as collection_engine
+    from brave.domains import get_domain
     from brave.tasks.beat_schedule import UF_LIST
+
+    # Resolve the domain ONCE per run — single-source-per-run (brave:engine:source is
+    # read once at /start and threaded in as ``source``). The domain owns its
+    # lane→producer routing; this loop never names a source.
+    domain = get_domain(source)
 
     redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
     rc = redis_lib.from_url(redis_url)
@@ -1929,20 +2153,27 @@ def engine_sweep_run(
             if collection_engine.get_state(rc) != collection_engine.RUNNING:
                 logger.info("engine_stop_drain", at_uf=uf, dispatched=dispatched)
                 break
-            if source == "tripadvisor":
-                # TripAdvisor lane — atrativos-only per oa3 fix; parent destinos must be
-                # seeded via Mtur sweep first. Depth gate still applies:
-                # nascente-only is run_rio=False inside sweep_tripadvisor.
-                sweep_tripadvisor.delay(uf, depth=effective_depth)
-            elif nascente_only:
-                # Free path: Mtur-only seed regardless of lane (atrativos = Places,
-                # no free source). Threaded depth makes sweep_uf skip Rio + LLM.
-                sweep_uf.delay(uf, depth=effective_depth)
-            else:
-                if lane in ("destinos", "both"):
-                    sweep_uf.delay(uf, depth=effective_depth)
-                if lane in ("atrativos", "both"):
-                    discover_atrativo_task.delay(uf, depth=effective_depth)
+            # Motor Pausado (phase C): the operator mode is orthogonal to runtime
+            # state — PAUSADO/DESLIGADO break the loop (no new UFs, no auto-push)
+            # while the graceful-drain contract above stays intact. Read per-UF so a
+            # mid-run pause takes effect on the next iteration; the finally block then
+            # marks idle + finalizes the run as parcial.
+            if collection_engine.get_mode(rc) != collection_engine.LIGADO:
+                logger.info("engine_mode_pause_drain", at_uf=uf, dispatched=dispatched)
+                break
+            # Registry-driven dispatch: the domain returns which producer task(s) to
+            # fan out for this UF+depth+lane (the former ``if source == ...`` ladder now
+            # lives in each domain's ``sweep_plan``). Each producer still ``.delay()``s
+            # onto the single 'celery' queue; behavior is byte-identical per source.
+            for _spec in domain.sweep_plan(
+                uf, depth=effective_depth, lane=lane, nascente_only=nascente_only
+            ):
+                _producer = globals()[_PRODUCER_ATTR_BY_TASK_NAME[_spec.task_name]]
+                # Producer-completes lifecycle: count this producer BEFORE dispatch so
+                # the run stays RUNNING/syncing until its finally decrements. The
+                # matching decrement lives in each producer's OUTERMOST finally.
+                collection_engine.incr_inflight(rc)
+                _producer.delay(*_spec.args, **_spec.kwargs)
             collection_engine.mark_uf_dispatched(rc, uf)
             dispatched += 1
             logger.info(
@@ -1955,17 +2186,34 @@ def engine_sweep_run(
             if per_uf_delay > 0:
                 _time.sleep(per_uf_delay)
     finally:
-        # Read the engine state BEFORE mark_idle to detect a mid-run Stop (the same
+        # Read the engine state BEFORE any completion to detect a mid-run Stop (the same
         # signal the loop reads at the top): STOPPING ⇒ the run drained early ⇒ parcial.
+        # NB the state may still be RUNNING/STOPPING here — the dispatch loop is done but
+        # the fanned-out producers keep running (live kanban), so the motor is NOT turned
+        # off here anymore. It flips off only when the LAST producer's finally drains
+        # inflight to 0 (or immediately below when nothing/everything is already done).
         final_state = collection_engine.get_state(rc)
-        collection_engine.mark_idle(rc)
-        logger.info("engine_run_complete", dispatched=dispatched, depth=effective_depth)
-        # Finalize the durable runs_history row (UI-PAINEL-2 Varreduras trail).
-        # BEST-EFFORT: a runs-history write failure must NEVER abort the sweep
-        # (T-17.1-02-02) — wrapped so any exception is swallowed. Skipped entirely
-        # when the start never persisted a row (run_id is None).
-        if run_id:
-            _finalize_run_history(run_id, dispatched, final_state)
+        # Latch dispatch_done, then attempt completion. maybe_complete only fires when
+        # dispatch is done AND no producer is in flight — i.e. the fast paths where the
+        # loop dispatched nothing (paused/stopped before the first UF) or every producer
+        # already finished. In the common case producers are still in flight → this
+        # returns False and the LAST producer completes the run. Redis-only + race-safe
+        # (single-winner GETSET claim); D-18: the run_history finalize stays HERE.
+        collection_engine.set_dispatch_done(rc, True)
+        if collection_engine.maybe_complete(rc):
+            logger.info("engine_run_complete", dispatched=dispatched, depth=effective_depth)
+            # Finalize the durable runs_history row (UI-PAINEL-2 Varreduras trail).
+            # BEST-EFFORT: a runs-history write failure must NEVER abort the sweep
+            # (T-17.1-02-02). Skipped when the start never persisted a row (run_id None).
+            if run_id:
+                _finalize_run_history(run_id, dispatched, final_state)
+        else:
+            logger.info(
+                "engine_dispatch_complete_producers_inflight",
+                dispatched=dispatched,
+                inflight=collection_engine.get_inflight(rc),
+                depth=effective_depth,
+            )
 
     return {"dispatched": dispatched, "lane": lane, "depth": effective_depth, "source": source}
 
@@ -1978,7 +2226,7 @@ def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> Non
     DB unavailable, session error, missing row — is swallowed and logged; this
     function NEVER raises into the sweep's finally block (T-17.1-02-02).
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from brave.core import engine as collection_engine
     from brave.core.models import RunHistory
@@ -1988,7 +2236,7 @@ def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> Non
         try:
             run = session.get(RunHistory, uuid.UUID(run_id))
             if run is not None:
-                run.ended_at = datetime.now(timezone.utc)
+                run.ended_at = datetime.now(UTC)
                 run.ufs_dispatched = dispatched
                 run.status = (
                     "parcial"
@@ -2003,6 +2251,61 @@ def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> Non
         logger.warning(
             "engine_run_history_finalize_failed", run_id=run_id, error=str(exc)
         )
+
+
+def _producer_finally_lifecycle() -> None:
+    """Producer-completes lifecycle decrement — called ONCE in a producer's outermost finally.
+
+    The orchestrator (engine_sweep_run) only DISPATCHES the producer tasks; they run for
+    minutes afterward. To keep the engine "syncing" until real work stops, each dispatched
+    producer decrements the shared in-flight counter here and, when it is the LAST to
+    finish (dispatch already latched done + counter drained to 0), completes the run:
+    race-safe motor-off via engine.maybe_complete (single-winner GETSET claim) plus a
+    best-effort runs_history finalize.
+
+    BEST-EFFORT + idempotent: wrapped so a Redis/DB hiccup can NEVER break the producer's
+    own result or error handling. Placed in the SINGLE outermost finally (not per-except)
+    so exactly one decrement runs per dispatch regardless of the retry/quarantine branch.
+    D-18 stays intact — engine.maybe_complete is redis-only; only this pipeline layer
+    touches runs_history.
+    """
+    # A Celery Retry unwinding through the producer's finally is NOT a terminal
+    # completion — self.retry() raises Retry, Celery re-queues, and the RE-RUN hits
+    # this finally again. incr_inflight fires ONCE per logical dispatch (orchestrator),
+    # so the decrement must fire ONCE per TERMINAL outcome — not per execution. Skip
+    # the decrement while a Retry is in flight; the eventual terminal run (success,
+    # PermanentError→quarantine, MaxRetriesExceeded→quarantine, or fail-fast return)
+    # decrements exactly once. Without this, N retries decrement N+1 times → counter
+    # drains early → premature "synced" while the retried producer is still running.
+    import sys  # noqa: PLC0415
+
+    try:
+        from celery.exceptions import Retry  # noqa: PLC0415
+
+        if isinstance(sys.exc_info()[1], Retry):
+            return
+    except Exception:  # noqa: BLE001 — never let the guard itself break the producer
+        pass
+
+    try:
+        import redis as _r  # noqa: PLC0415
+
+        from brave.core import engine as _ce  # noqa: PLC0415
+
+        _rc = _r.from_url(
+            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        )
+        # Snapshot BEFORE completion — maybe_complete flips state to IDLE, and the
+        # runs_history status hinges on a mid-run Stop (STOPPING → parcial).
+        _final_state = _ce.get_state(_rc)
+        _dispatched = int(_ce._decode(_rc.get(_ce._UFS_DONE_KEY)) or 0)
+        _ce.decr_inflight(_rc)
+        if _ce.maybe_complete(_rc):
+            _run_id = _ce._decode(_rc.get(_ce._RUN_ID_KEY)) or None
+            if _run_id:
+                _finalize_run_history(_run_id, _dispatched, _final_state)
+    except Exception:  # noqa: BLE001 — best-effort; never break the producer
+        pass
 
 
 @shared_task(
@@ -2049,12 +2352,12 @@ def ta_keepalive() -> None:
         return
 
     from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
+    from brave.core import engine as collection_engine  # noqa: PLC0415
     from brave.lanes.tripadvisor.client import (  # noqa: PLC0415
         SessionExpiredError,
         SessionMissingError,
         TripAdvisorClient,
     )
-    from brave.core import engine as collection_engine  # noqa: PLC0415
 
     ta_config = TripAdvisorConfig()
     ta_client = TripAdvisorClient(config=ta_config, redis=rc)
@@ -2092,4 +2395,74 @@ def ta_keepalive() -> None:
             "ta_keepalive_error",
             error_type=type(exc).__name__,
         )
+
+
+# ---------------------------------------------------------------------------
+# RecordEvent retention — nightly prune (Log tab, Decisão C)
+# ---------------------------------------------------------------------------
+
+
+@shared_task(
+    bind=True,
+    name="brave.prune_record_events",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=300,
+)
+def prune_record_events_task(self, retention_days: int = 90) -> int:
+    """Nightly prune of aged RecordEvent rows (retention Decisão C).
+
+    Deletes RecordEvent rows with ``status IN ('ok', 'skip')`` and
+    ``created_at < now() - retention_days``. Rows with ``status='fail'``
+    (quarantine / incident records) are PRESERVED indefinitely — they are the
+    record of the failure and must never age out.
+
+    Single-queue model: dispatched onto the default 'celery' queue (no
+    options.queue on the beat entry). Idempotent: re-running only deletes rows
+    that still exceed the retention window, so a replay is a no-op once the
+    aged 'ok'/'skip' rows are gone.
+
+    Args:
+        retention_days: Age threshold in days (default 90). Rows older than
+                        now() - retention_days AND status IN ('ok','skip') go.
+
+    Returns:
+        The number of rows deleted.
+    """
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import delete
+
+    from brave.core.models import RecordEvent
+
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+
+    session, engine = _get_session()
+    try:
+        result = session.execute(
+            delete(RecordEvent).where(
+                RecordEvent.status.in_(("ok", "skip")),
+                RecordEvent.created_at < cutoff,
+            )
+        )
+        session.commit()
+        deleted = result.rowcount or 0
+        logger.info(
+            "prune_record_events_ok",
+            deleted=deleted,
+            retention_days=retention_days,
+        )
+        return deleted
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        # Retention prune is best-effort maintenance — a failure must not crash
+        # the beat scheduler; the next nightly run retries the same window.
+        logger.warning(
+            "prune_record_events_error",
+            error_type=type(exc).__name__,
+        )
+        return 0
+    finally:
+        session.close()
+        engine.dispose()
 

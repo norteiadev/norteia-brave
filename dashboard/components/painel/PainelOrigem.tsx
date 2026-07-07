@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -18,7 +18,8 @@ import {
 /**
  * PainelOrigem — the "Origem dos dados" source-pick modal (Painel light theme).
  *
- * The operator picks the collection source (mTur / TripAdvisor / Google Places).
+ * The operator picks the collection source (mTur / TripAdvisor). Google Places
+ * is ENRICHMENT, not a collection source, so it is not offered here.
  * For TripAdvisor the modal (re)establishes the scraper session: the operator
  * pastes the authenticated cURL captured in DevTools, which an in-modal parser
  * converts into the strict `SessionInjectBody` shape (cookies, query_ids,
@@ -33,7 +34,7 @@ import {
  * literals are used only where no token exists (overlay, badges).
  */
 
-export type OrigemSource = "mtur" | "tripadvisor" | "google_places";
+export type OrigemSource = "mtur" | "tripadvisor";
 
 /** Inline error kind surfaced after an inject attempt (distinct copy per status). */
 type OrigemErrorKind = "422" | "503" | "other" | null;
@@ -52,17 +53,11 @@ const SOURCE_ROWS: { key: OrigemSource; label: string; desc: string }[] = [
     label: "TripAdvisor",
     desc: "Scraper GraphQL · avaliações e popularidade",
   },
-  {
-    key: "google_places",
-    label: "Google Places",
-    desc: "Places API (New) · contatos e geolocalização",
-  },
 ];
 
 const SOURCE_LABEL: Record<OrigemSource, string> = {
   mtur: "mTur",
   tripadvisor: "TripAdvisor",
-  google_places: "Google Places",
 };
 
 interface PainelOrigemProps {
@@ -142,6 +137,23 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
   const [source, setSource] = useState<OrigemSource>(initialSource ?? "mtur");
   const [curl, setCurl] = useState("");
   const [errorKind, setErrorKind] = useState<OrigemErrorKind>(null);
+
+  // Sync the picked source to the live engine source each time the modal OPENS.
+  // useState only latches `initialSource` on mount — but this component mounts
+  // (open=false) at app load, BEFORE the engine-status query resolves, so it
+  // captures the mount-time default ("mtur"). When the persisted source is
+  // tripadvisor the header (which reads the live prop) shows TripAdvisor while
+  // the picker stayed stuck on mtur. Re-sync on the `open` edge so the modal
+  // always reflects the current persisted source. Gate on `open` ONLY (not
+  // `initialSource`) so a 10s engine-status poll can't clobber an in-progress
+  // selection while the modal is open.
+  useEffect(() => {
+    if (open) {
+      setSource(initialSource ?? "mtur");
+      setErrorKind(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync on the open edge only
+  }, [open]);
 
   // TTL badge reads the real session status; only polled while the modal is open.
   const { data: sessionStatus } = useQuery({

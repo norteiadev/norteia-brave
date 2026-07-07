@@ -87,6 +87,32 @@ def test_start_sets_enabled(client):
     assert collection_engine.is_enabled(rc) is True
 
 
+def test_start_sets_mode_ligado_even_when_desligado(client):
+    """A cold POST /start enters LIGADO even when mode was DESLIGADO.
+
+    Regression: engine_sweep_run gates the per-UF dispatch loop on
+    ``get_mode() != LIGADO → break``. After a fresh config_settings seed / DB
+    reset the persisted mode is DESLIGADO, so without /start flipping the mode the
+    sweep starts (enabled=1) but aborts before dispatching any UF (dispatched=0) —
+    "engine não funciona". /start must atomically enter LIGADO.
+    """
+    from brave.api.deps import get_redis
+    from brave.core import engine as collection_engine
+
+    rc = get_redis()
+    # Simulate the post-reset seed: mode persisted DESLIGADO.
+    collection_engine.set_mode(rc, collection_engine.DESLIGADO)
+    assert collection_engine.get_mode(rc) == collection_engine.DESLIGADO
+
+    resp = client.post(
+        "/api/v1/engine/start",
+        headers=STEWARD_HEADERS,
+        json={"depth": "nascente"},
+    )
+    assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
+    assert collection_engine.get_mode(rc) == collection_engine.LIGADO
+
+
 def test_status_includes_enabled_field(client):
     """GET /status always carries the 'enabled' boolean field.
 

@@ -1,15 +1,18 @@
-"""Unit tests for SignalAgent — hard descarte + Apify degradation + sub_state advance.
+"""Unit tests for SignalAgent — hard descarte + corroboração constant + sub_state advance.
 
 All tests run 100% offline:
   - FakePlacesClient from tests/fakes/fake_places.py
-  - FakeApifyClient from tests/fakes/fake_apify.py
   - Mock RioRecord objects (no real DB)
 
-Test suite covers must_haves from 03-02-PLAN.md:
+Test suite covers must_haves from 03-02-PLAN.md (post Phase E — Apify/IG source retired):
   - test_signal_agent_hard_descarte_closed_permanently
   - test_signal_agent_hard_descarte_closed_temporarily
-  - test_signal_agent_apify_failure_degrades_gracefully
   - test_signal_agent_advances_sub_state_for_open_place
+  - test_signal_agent_writes_corroboracao_constant_zero
+
+Corroboração note (Phase E): the Apify IG signal was removed. SignalAgent now writes a
+deterministic corroboracao_value=0.0 (documented constant) — no Places field feeds it —
+which matches the prior offline (Null) behaviour and keeps §7.6 routing stable.
 
 D-18 boundary: no import from brave.lanes.destinos.
 """
@@ -17,14 +20,17 @@ D-18 boundary: no import from brave.lanes.destinos.
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.fakes.fake_places import FakePlacesClient, SIGNAL_FIXTURE_OPEN, SIGNAL_FIXTURE_CLOSED
-from tests.fakes.fake_apify import FakeApifyClient
+from tests.fakes.fake_places import SIGNAL_FIXTURE_CLOSED, SIGNAL_FIXTURE_OPEN, FakePlacesClient
 
+# Pinned reference clock so the atualidade buckets AND the Phase F 90-day
+# no-recent-reviews rule are fully deterministic offline (SIGNAL_FIXTURE_OPEN's
+# review is 2026-06-01 → 14 days before this, i.e. recent AND well within 90d).
+_NOW = datetime(2026, 6, 15, tzinfo=timezone.utc)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -87,15 +93,14 @@ async def test_signal_agent_hard_descarte_closed_permanently() -> None:
     fake_places = FakePlacesClient(
         fixture_details={"ChIJtest001": closed_fixture},
     )
-    fake_apify = FakeApifyClient()
 
     session = _make_mock_session()
     rio = _make_rio(sub_state="contacts_found")
 
     agent = SignalAgent(
         places_client=fake_places,
-        apify_client=fake_apify,
         session=session,
+        now=_NOW,
     )
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"):
@@ -124,15 +129,14 @@ async def test_signal_agent_hard_descarte_closed_temporarily() -> None:
     fake_places = FakePlacesClient(
         fixture_details={"ChIJtest001": closed_tmp_fixture},
     )
-    fake_apify = FakeApifyClient()
 
     session = _make_mock_session()
     rio = _make_rio(sub_state="contacts_found")
 
     agent = SignalAgent(
         places_client=fake_places,
-        apify_client=fake_apify,
         session=session,
+        now=_NOW,
     )
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"):
@@ -141,48 +145,6 @@ async def test_signal_agent_hard_descarte_closed_temporarily() -> None:
     assert rio.routing == "descarte"
     assert rio.sub_state is None
     assert rio.dlq_reason == "closed_place"
-
-
-# ---------------------------------------------------------------------------
-# Tests: Apify degradation (best-effort, non-blocking)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_signal_agent_apify_failure_degrades_gracefully() -> None:
-    """Apify failure does NOT raise; SignalAgent advances to signals_gathered.
-
-    FakeApifyClient(raise_on_call=RuntimeError("timeout")) — scrape_ig raises.
-    After SignalAgent.run(rio):
-      - No exception propagated
-      - rio.sub_state must be "signals_gathered"
-    """
-    from brave.lanes.atrativos.signal_agent import SignalAgent
-
-    open_fixture = {**SIGNAL_FIXTURE_OPEN, "place_id": "ChIJtest001"}
-
-    fake_places = FakePlacesClient(
-        fixture_details={"ChIJtest001": open_fixture},
-    )
-    # Apify raises on every call
-    fake_apify = FakeApifyClient(raise_on_call=RuntimeError("timeout"))
-
-    session = _make_mock_session()
-    rio = _make_rio(sub_state="contacts_found")
-
-    agent = SignalAgent(
-        places_client=fake_places,
-        apify_client=fake_apify,
-        session=session,
-    )
-
-    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
-         patch("brave.lanes.atrativos.signal_agent.route_by_score"):
-        # Must NOT raise — Apify failure degrades signal, never fails record
-        await agent.run(rio)
-
-    # sub_state must have advanced to signals_gathered
-    assert rio.sub_state == "signals_gathered"
 
 
 # ---------------------------------------------------------------------------
@@ -204,15 +166,14 @@ async def test_signal_agent_advances_sub_state_for_open_place() -> None:
     fake_places = FakePlacesClient(
         fixture_details={"ChIJtest001": open_fixture},
     )
-    fake_apify = FakeApifyClient(fixture_data={"@praiatest": {"followers": 1200}})
 
     session = _make_mock_session()
     rio = _make_rio(sub_state="contacts_found")
 
     agent = SignalAgent(
         places_client=fake_places,
-        apify_client=fake_apify,
         session=session,
+        now=_NOW,
     )
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
@@ -230,42 +191,164 @@ async def test_signal_agent_advances_sub_state_for_open_place() -> None:
 
 
 # ---------------------------------------------------------------------------
-# WR-08: _compute_corroboracao — no catch-all, correct posts_count key
+# Phase E: corroboração is a deterministic 0.0 constant + it feeds routing
 # ---------------------------------------------------------------------------
 
 
-def test_corroboracao_empty_dict_is_zero() -> None:
-    from brave.lanes.atrativos.signal_agent import _compute_corroboracao
+@pytest.mark.asyncio
+async def test_signal_agent_writes_corroboracao_constant_zero() -> None:
+    """SignalAgent writes corroboracao_value=0.0 deterministically, then routes.
 
-    assert _compute_corroboracao({}) == 0.0
+    Post Phase E the Apify/IG corroboration source is retired: no Places field feeds
+    corroboração, so the lane must write the documented 0.0 constant regardless of any
+    stale prior value. It then hands off to route_by_score (the §7.6 routing path).
+    """
+    from brave.lanes.atrativos.signal_agent import SignalAgent
+
+    open_fixture = {**SIGNAL_FIXTURE_OPEN, "place_id": "ChIJtest001"}
+
+    fake_places = FakePlacesClient(
+        fixture_details={"ChIJtest001": open_fixture},
+    )
+
+    session = _make_mock_session()
+    rio = _make_rio(sub_state="contacts_found")
+    # Seed a stale non-zero value to prove SignalAgent overwrites it to the constant.
+    rio.normalized["corroboracao_value"] = 99.0
+
+    agent = SignalAgent(
+        places_client=fake_places,
+        session=session,
+        now=_NOW,
+    )
+
+    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
+         patch("brave.lanes.atrativos.signal_agent.route_by_score") as mock_route:
+        await agent.run(rio)
+
+    # Deterministic constant: corroboracao_value is exactly 0.0 (Apify retired).
+    assert rio.normalized["corroboracao_value"] == 0.0
+    # Routing path still runs after signals are gathered.
+    assert rio.sub_state == "signals_gathered"
+    assert mock_route.called, "route_by_score must be invoked (the §7.6 routing path)"
 
 
-def test_corroboracao_inactive_profile_is_zero() -> None:
-    """WR-08: a found-but-inactive / error-shaped dict (0 followers, no posts)
-    must score 0.0 — not 40.0 via the old `or len(ig_data) > 0` catch-all."""
-    from brave.lanes.atrativos.signal_agent import _compute_corroboracao
-
-    assert _compute_corroboracao({"handle": "@x", "followers": 0, "posts_count": 0}) == 0.0
-    assert _compute_corroboracao({"error": "not_found"}) == 0.0
+# ---------------------------------------------------------------------------
+# Phase F: no-recent-reviews rule (no reviews OR newest > 90 days → terminal DLQ)
+# ---------------------------------------------------------------------------
 
 
-def test_corroboracao_active_followers_is_forty() -> None:
-    from brave.lanes.atrativos.signal_agent import _compute_corroboracao
-
-    assert _compute_corroboracao({"followers": 1200}) == 40.0
-
-
-def test_corroboracao_uses_posts_count_key_not_post_count() -> None:
-    """WR-08: the apify client writes 'posts_count' — the old code read 'post_count'."""
-    from brave.lanes.atrativos.signal_agent import _compute_corroboracao
-
-    # Correct key drives the signal.
-    assert _compute_corroboracao({"followers": 0, "posts_count": 12}) == 40.0
-    # Old (wrong) key must NOT drive the signal.
-    assert _compute_corroboracao({"followers": 0, "post_count": 12}) == 0.0
+def _open_fixture(reviews: list[dict]) -> dict:
+    """OPERATIONAL place_details fixture with the given reviews list."""
+    return {
+        "place_id": "ChIJtest001",
+        "business_status": "OPERATIONAL",
+        "weekday_text": ["Monday: 9:00 AM – 5:00 PM"],
+        "reviews": reviews,
+    }
 
 
-def test_corroboracao_recent_last_post_is_forty() -> None:
-    from brave.lanes.atrativos.signal_agent import _compute_corroboracao
+@pytest.mark.asyncio
+async def test_signal_agent_with_recent_reviews_is_scored() -> None:
+    """Phase F: a review within 90 days is NOT stale → proceeds to §7.6 scoring.
 
-    assert _compute_corroboracao({"followers": 0, "last_post": "2026-06-01"}) == 40.0
+    The no-recent-reviews rule must NOT fire; the record advances to
+    signals_gathered, route_by_score runs, and most_recent_review_at is persisted.
+    """
+    from brave.lanes.atrativos.signal_agent import SignalAgent
+
+    # Review 20 days before the pinned clock → recent (≤ 90 days).
+    recent_dt = (_NOW - timedelta(days=20)).replace(microsecond=0)
+    fixture = _open_fixture([{"publishTime": recent_dt.isoformat(), "rating": 5, "text": "ok"}])
+
+    fake_places = FakePlacesClient(fixture_details={"ChIJtest001": fixture})
+    session = _make_mock_session()
+    rio = _make_rio(sub_state="contacts_found")
+
+    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW)
+
+    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
+         patch("brave.lanes.atrativos.signal_agent.route_by_score") as mock_route:
+        await agent.run(rio)
+
+    assert rio.sub_state == "signals_gathered"
+    assert rio.dlq_reason != "no_recent_reviews"
+    assert mock_route.called, "route_by_score must run for a non-stale attraction"
+    # most_recent_review_at is persisted for the promote_to_mar recency backstop.
+    assert rio.normalized["most_recent_review_at"] == recent_dt.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_no_reviews_routes_to_terminal_dlq() -> None:
+    """Phase F: NO reviews → terminal DLQ (dlq_reason='no_recent_reviews'), NOT the gate.
+
+    route_by_score must NOT run (the rule short-circuits before scoring), and the
+    record must land at sub_state=None — never sub_state='aguardando_consulta_whatsapp'.
+    """
+    from brave.lanes.atrativos.signal_agent import SignalAgent
+
+    fixture = _open_fixture([])  # zero reviews
+    fake_places = FakePlacesClient(fixture_details={"ChIJtest001": fixture})
+    session = _make_mock_session()
+    rio = _make_rio(sub_state="contacts_found")
+
+    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW)
+
+    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
+         patch("brave.lanes.atrativos.signal_agent.route_by_score") as mock_route:
+        await agent.run(rio)
+
+    assert rio.routing == "dlq"
+    assert rio.dlq_reason == "no_recent_reviews"
+    assert rio.sub_state is None
+    assert rio.sub_state != "aguardando_consulta_whatsapp"
+    assert not mock_route.called, "route_by_score must be skipped for a no-review attraction"
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_stale_reviews_over_90d_routes_to_terminal_dlq() -> None:
+    """Phase F: newest review older than 90 days → terminal DLQ, NOT the gate."""
+    from brave.lanes.atrativos.signal_agent import SignalAgent
+
+    # Newest review 120 days before the pinned clock → stale (> 90 days).
+    stale_dt = (_NOW - timedelta(days=120)).replace(microsecond=0)
+    fixture = _open_fixture([{"publishTime": stale_dt.isoformat(), "rating": 4, "text": "old"}])
+
+    fake_places = FakePlacesClient(fixture_details={"ChIJtest001": fixture})
+    session = _make_mock_session()
+    rio = _make_rio(sub_state="contacts_found")
+
+    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW)
+
+    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
+         patch("brave.lanes.atrativos.signal_agent.route_by_score") as mock_route:
+        await agent.run(rio)
+
+    assert rio.routing == "dlq"
+    assert rio.dlq_reason == "no_recent_reviews"
+    assert rio.sub_state is None
+    assert not mock_route.called, "route_by_score must be skipped for a stale attraction"
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_no_recent_reviews_never_reaches_whatsapp_gate() -> None:
+    """Phase F guard: a review-less attraction must NEVER enter the WhatsApp gate.
+
+    Regression pin for the 'manual now' requirement: the terminal-DLQ short-circuit
+    replaces the old auto-enrollment into sub_state='aguardando_consulta_whatsapp'.
+    """
+    from brave.lanes.atrativos.signal_agent import SignalAgent
+
+    fixture = _open_fixture([])
+    fake_places = FakePlacesClient(fixture_details={"ChIJtest001": fixture})
+    session = _make_mock_session()
+    rio = _make_rio(sub_state="contacts_found")
+
+    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW)
+
+    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
+         patch("brave.lanes.atrativos.signal_agent.route_by_score"):
+        await agent.run(rio)
+
+    assert rio.sub_state is None
+    assert rio.sub_state != "aguardando_consulta_whatsapp"

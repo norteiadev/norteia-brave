@@ -21,7 +21,9 @@ import { useQuery } from "@tanstack/react-query";
 import {
   atrativoKeys,
   fetchAtrativoList,
+  fetchFailureCards,
   type AtrativoListItem,
+  type FailureCard,
 } from "@/lib/atrativos-api";
 import {
   destinoKeys,
@@ -31,7 +33,6 @@ import {
 import {
   ENGINE_REFETCH_INTERVAL_MS,
   engineKeys,
-  fetchFailures,
   type FailureItem,
 } from "@/lib/engine-api";
 import {
@@ -39,6 +40,7 @@ import {
   nascenteKeys,
   type NascenteListItem,
 } from "@/lib/nascente-api";
+import { dedupKeys, fetchDedupPairs } from "@/lib/dedup-api";
 
 // --- Types ---
 
@@ -46,9 +48,11 @@ export type PainelEntityType = "destino" | "atrativo";
 
 /**
  * Board column key. The 6 RENDERED stage columns are the ones in COLUMN_DEFS
- * (nascente, rio, whatsapp, mar, dlq, falha). `descarte` is kept as a valid,
- * NON-rendered key: a record with routing="descarte" maps here (so it never
- * appears as a standing column), and the drawer "Descartar" path targets it.
+ * (nascente, rio, whatsapp, mar, dlq, falha). A record with routing="descarte"
+ * now maps to the Falha column (phase H) so discarded records are visible.
+ * `descarte` is kept as a valid, NON-rendered TARGET key: it is the server
+ * column name the drawer "Descartar" path (and rio/dlq→descarte edges) transition
+ * to — never a standing board column.
  */
 export type PainelColumnKey =
   | "nascente"
@@ -76,6 +80,14 @@ export interface EntityMetric {
  */
 export interface PainelCard {
   id: string;
+  /**
+   * The universal Brave drawer/log key (`tripadvisor:attraction:{locationId}` for
+   * TA atrativos). Present on Falha-column cards sourced from the RecordEvent
+   * fail-timeline (they have no Rio row, so `id` == `source_ref`); the drawer Log
+   * tab routes to `fetchFailureCardLog(sourceRef)` when set. Absent/undefined on
+   * ordinary rio/nascente cards, whose Log reads via `fetchAtrativoDetail(id)`.
+   */
+  sourceRef?: string | null;
   type: PainelEntityType;
   name: string | null;
   uf: string | null;
@@ -86,6 +98,13 @@ export interface PainelCard {
   source: string | null;
   duplicate: boolean;
   error: string | null;
+  /**
+   * DLQ→WhatsApp eligibility (phase H) — only meaningful for a DLQ-column
+   * atrativo. False ⇒ the card already has horário/preço and its selection
+   * checkbox is disabled. Absent/true ⇒ selectable (the batch 422 is the
+   * authoritative atomic gate). Non-atrativo cards leave this true (unused).
+   */
+  whatsappEligible?: boolean;
 }
 
 // --- Constants ---
@@ -113,7 +132,9 @@ const ROUTING_TO_COLUMN: ReadonlyMap<string, PainelColumnKey> = new Map([
   ["in_progress", "rio"],
   ["mar", "mar"],
   ["dlq", "dlq"],
-  ["descarte", "descarte"],
+  // Phase H: descarte-routed records surface in the Falha column (alongside
+  // PoisonQuarantine failures) instead of being silently dropped.
+  ["descarte", "falha"],
 ]);
 
 /** The atrativo FSM sub_state that buckets a record into the WhatsApp column. */
@@ -139,15 +160,21 @@ function municipalityFromCanonicalKey(canonicalKey: string | null): string | nul
  *
  * PII guard (T-17-02-01): explicit allow-list — only the fields below are read.
  * phone_e164 / phone_masked / contacts_summary are NEVER copied.
- * `duplicate = validation_pending` for BOTH entity types (destinos have no
- * atrativo-style dedup flag, so the validation-pending flag IS the slice-1
- * "possível duplicado" hint — explicit + uniform).
+ * `duplicate` is a REAL dedup signal (F3): a card is flagged "possível duplicado"
+ * ONLY when its rio id is in `dedupCandidateIds` — the pending candidate↔Mar pairs
+ * from GET /api/v1/dedup/pairs (the exact source the Duplicados view uses). It is
+ * NOT derived from `validation_pending` (which only means "DLQ pending review" /
+ * the WhatsApp gate — unrelated to dedup, so it blanket-flagged the whole DLQ column).
  */
 export function toPainelCards(
   destinos: DestinoListItem[],
   atrativos: AtrativoListItem[],
-  failures: FailureItem[] = [],
+  // Accepts BOTH the new RecordEvent-backed FailureCard[] (GET /failures/cards —
+  // real name/uf identity, source_ref drawer key) AND the legacy PoisonQuarantine
+  // FailureItem[] (task_name/error_message), discriminated in `failureToCard`.
+  failures: (FailureCard | FailureItem)[] = [],
   nascente: NascenteListItem[] = [],
+  dedupCandidateIds: ReadonlySet<string> = new Set(),
 ): PainelCard[] {
   // Nascente cards: the raw immutable ingest layer, READ-ONLY (no routing yet).
   // entity_type is the backend's "destination"/"attraction" — map to the board's
@@ -171,12 +198,14 @@ export function toPainelCards(
     type: "destino" as const,
     name: d.name,
     uf: d.uf,
-    municipality: municipalityFromCanonicalKey(d.canonical_key),
+    // Prefer the resolved município NOME; fall back to the canonical_key segment
+    // (IBGE code) only for legacy records ingested before município was preserved.
+    municipality: d.municipio ?? municipalityFromCanonicalKey(d.canonical_key),
     routing: d.routing,
     column: routingToColumn(d.routing),
     score: d.score,
     source: null,
-    duplicate: d.validation_pending,
+    duplicate: dedupCandidateIds.has(d.id),
     error: null,
   }));
 
@@ -185,7 +214,7 @@ export function toPainelCards(
     type: "atrativo" as const,
     name: a.name,
     uf: a.uf,
-    municipality: null, // atrativo município is a later detail slice
+    municipality: a.municipio ?? null, // público-geo município resolved at ingest
     routing: a.routing,
     // An atrativo awaiting WhatsApp contact lives in its own column regardless
     // of routing (the gate sub_state wins over the rio routing value).
@@ -193,8 +222,11 @@ export function toPainelCards(
       a.sub_state === WHATSAPP_SUB_STATE ? "whatsapp" : routingToColumn(a.routing),
     score: a.score,
     source: null,
-    duplicate: a.validation_pending,
+    duplicate: dedupCandidateIds.has(a.id),
     error: null,
+    // Phase H DLQ→WhatsApp gate: absent from the list ⇒ eligible (the batch 422
+    // is authoritative); false ⇒ already has horário/preço → checkbox disabled.
+    whatsappEligible: a.whatsapp_eligible ?? true,
   }));
 
   const falhaCards = failures.map(failureToCard);
@@ -202,19 +234,43 @@ export function toPainelCards(
   return [...nascenteCards, ...destinoCards, ...atrativoCards, ...falhaCards];
 }
 
-/** Infer the entity type of a quarantined task from its task_name. */
+/** Infer the entity type of a quarantined task from its task_name (legacy path). */
 function failureEntityType(taskName: string): PainelEntityType {
   return /attraction|atrativo/i.test(taskName) ? "atrativo" : "destino";
 }
 
 /**
- * Project a PoisonQuarantine FailureItem (GET /api/v1/failures) into a real,
- * draggable falha card. PII guard (T-17.1-06-03): only the quarantine id, task
- * name, and truncated error reason are read — no payload, no phone.
+ * Project a Falha row into a real, draggable falha card.
+ *
+ * Two shapes are accepted and discriminated on `source_ref`:
+ *   - NEW FailureCard (GET /api/v1/failures/cards): carries the REAL atrativo
+ *     name/uf and the universal `source_ref` drawer/log key (fixing the old
+ *     opaque `name = task_name`). `entity_type` (e.g. "attraction") maps to the
+ *     board's atrativo/destino.
+ *   - LEGACY FailureItem (GET /api/v1/failures): only the quarantine id, task
+ *     name, and truncated error reason.
+ * PII guard: no payload, no phone — only público-geo + engineering fields.
  */
-function failureToCard(f: FailureItem): PainelCard {
+function failureToCard(f: FailureCard | FailureItem): PainelCard {
+  if ("source_ref" in f) {
+    return {
+      id: f.source_ref,
+      sourceRef: f.source_ref,
+      type: f.entity_type === "attraction" ? "atrativo" : "destino",
+      name: f.name,
+      uf: f.uf,
+      municipality: null,
+      routing: "falha",
+      column: "falha",
+      score: null,
+      source: null,
+      duplicate: false,
+      error: f.error,
+    };
+  }
   return {
     id: f.id,
+    sourceRef: null,
     type: failureEntityType(f.task_name),
     name: f.task_name,
     uf: null,
@@ -271,48 +327,76 @@ export function computeMetric(
  * Load destinos + atrativos lists (board scope) and build the unified card[].
  * Uses a generous limit so the board shows all in-scope records this slice.
  */
-export function usePainelBoard(): {
+export function usePainelBoard(
+  intervalMs: number = ENGINE_REFETCH_INTERVAL_MS,
+): {
   cards: PainelCard[];
+  nascenteCount: number;
   isPending: boolean;
   isError: boolean;
 } {
   const destinosQuery = useQuery({
     queryKey: destinoKeys.list({ board: true }),
     queryFn: () => fetchDestinoList({ limit: 500 }),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
   });
   const atrativosQuery = useQuery({
     queryKey: atrativoKeys.list({ board: true }),
     queryFn: () => fetchAtrativoList({ limit: 500 }),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
   });
-  // Falha column: real PoisonQuarantine records (draggable for reprocess). The
-  // board still loads if /failures fails — falha just renders empty (additive).
+  // Falha column: the RecordEvent fail-timeline cards (GET /failures/cards) —
+  // real name/uf identity + the source_ref drawer/log key (replaces the opaque
+  // PoisonQuarantine task_name). The board still loads if this fails — falha just
+  // renders empty (additive).
   const failuresQuery = useQuery({
     queryKey: engineKeys.failures,
-    queryFn: () => fetchFailures(),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    queryFn: () => fetchFailureCards(),
+    refetchInterval: intervalMs,
   });
-  // Nascente column: raw ingest cards (read-only). The board still loads if
-  // /nascente fails — the column just renders empty (additive, like falha).
+  // Nascente column (bug 4): the REAL unrouted records — nascente rows with no
+  // RioRecord twin yet. These are genuine "just ingested, not yet routed" cards
+  // (the LEFT JOIN … IS NULL slice), so they no longer double-count the routed
+  // layer. The board still builds if this is pending (?? []); nascenteCount is
+  // the server ENVELOPE total (the true unrouted count for the column pill).
   const nascenteQuery = useQuery({
     queryKey: nascenteKeys.list({ board: true }),
-    queryFn: () => fetchNascenteList({ limit: 500 }),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    queryFn: () => fetchNascenteList({ unrouted: true, limit: 500 }),
+    refetchInterval: intervalMs,
   });
+  // Dedup pairs (F3): the REAL "possível duplicado" signal — the same
+  // compute-on-read candidate↔Mar pairs the Duplicados view shows (shared query
+  // cache key). A card is flagged ONLY when its rio id is a pending dedup
+  // candidate, never as a blanket flag on the whole DLQ column. The board still
+  // loads if this fails — the candidate set just stays empty (no badges).
+  const dedupQuery = useQuery({
+    queryKey: dedupKeys.pairs(),
+    queryFn: () => fetchDedupPairs(),
+    refetchInterval: intervalMs,
+  });
+  const dedupCandidateIds = new Set(
+    (dedupQuery.data?.items ?? []).map((p) => p.candidate_rio_id),
+  );
 
   const cards =
     destinosQuery.data && atrativosQuery.data
       ? toPainelCards(
           destinosQuery.data.items,
           atrativosQuery.data.items,
-          failuresQuery.data?.items ?? [],
+          failuresQuery.data ?? [],
+          // Bug 4: feed the REAL unrouted nascente rows as Nascente-column cards.
+          // Guard: the board still builds once destinos+atrativos resolve even if
+          // the nascente query is still pending (?? []).
           nascenteQuery.data?.items ?? [],
+          dedupCandidateIds,
         )
       : [];
 
   return {
     cards,
+    // The Nascente pill shows the TRUE unrouted total (server envelope), not the
+    // loaded-array length.
+    nascenteCount: nascenteQuery.data?.total ?? 0,
     isPending: destinosQuery.isPending || atrativosQuery.isPending,
     isError: destinosQuery.isError || atrativosQuery.isError,
   };
@@ -365,7 +449,9 @@ export function usePainelMetrics(): {
   });
 
   // Nascente count from the nascente list ENVELOPE total (current versions
-  // only) so the column header matches the rendered Nascente cards exactly.
+  // only). The Nascente column is count-only (QA F2): it renders no cards —
+  // every record shows once in its routed column — so this pill is the true
+  // server total (same aggregate semantics as the Monitor view).
   const nascenteTotal = useQuery({
     queryKey: nascenteKeys.list({ count: "total" }),
     queryFn: () => fetchNascenteList({ limit: 1 }),

@@ -88,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-redis", action="store_true", help="do not touch Redis")
     ap.add_argument("--no-broker-purge", action="store_true",
                     help="skip Celery broker queue purge (Postgres + brave:* flush still run)")
+    ap.add_argument("--no-seed", action="store_true",
+                    help="skip re-seeding config_settings defaults after the wipe")
     ap.add_argument("--redis-pattern", default="brave:*", help='key glob to delete (default "brave:*")')
     ap.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
     args = ap.parse_args(argv)
@@ -152,6 +154,31 @@ def main(argv: list[str] | None = None) -> int:
         for t in all_tables:
             tag = "kept" if t in keep else "wiped"
             print(f"  {t:32} {counts_before[t]:>7} -> {after[t]:<7} [{tag}]")
+
+    # Re-seed config_settings defaults (Phase D). The wipe empties config_settings,
+    # which would drop the operator-tunable baseline (score weights/threshold, per-source
+    # enabled flags, engine mode). Repopulate the idempotent defaults so the painel Config
+    # view and the engine mode come up in a known clean cold-start state. Values equal the
+    # env-effective AppConfig, so this never changes pipeline behavior. Skipped when
+    # config_settings was preserved (--keep) or --no-seed is passed. Best-effort: a seed
+    # failure warns but does not fail the reset (the data wipe already succeeded).
+    if "config_settings" in targets and not args.no_seed:
+        try:
+            from sqlalchemy.orm import sessionmaker
+
+            from brave.config.runtime import seed_default_config
+
+            with sessionmaker(bind=engine)() as session:
+                inserted = seed_default_config(session)
+                session.commit()
+            print(f"\nconfig_settings re-seeded: {inserted} default row(s) inserted.")
+        except Exception as exc:  # noqa: BLE001 — best-effort; never fail the reset
+            print(
+                f"\nWARN: config_settings re-seed skipped ({type(exc).__name__}: {exc}). "
+                "Run manually: set -a; source .env; set +a; "
+                ".venv/bin/python -m scripts.seed_config",
+                file=sys.stderr,
+            )
 
     # Redis flush (scoped to the pattern — never FLUSHALL).
     if not args.no_redis:

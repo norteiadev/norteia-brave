@@ -13,14 +13,16 @@ import {
   engineKeys,
   fetchEngineStatus,
   fetchTASessionStatus,
+  setEngineMode,
   startEngine,
-  stopEngine,
   taSessionKeys,
   type EngineDepth,
   type EngineSource,
   type EngineState,
   type TASessionStatus,
 } from "@/lib/engine-api";
+import { ENGINE_MODE_LABELS, type EngineMode } from "@/lib/config-api";
+import { BR_UFS } from "@/lib/painel-data";
 import { PainelLogs } from "@/components/painel/PainelLogs";
 import { PainelOrigem, type OrigemSource } from "@/components/painel/PainelOrigem";
 
@@ -43,10 +45,18 @@ interface PainelTopbarProps {
   subtitle: string;
 }
 
-const STATE_LABEL: Record<EngineState, string> = {
-  idle: "Desligado",
-  running: "Ligado",
-  stopping: "Parando…",
+/** The tri-state motor modes, in Ligar/Pausar/Desligar order. */
+const MOTOR_MODES: EngineMode[] = ["LIGADO", "PAUSADO", "DESLIGADO"];
+
+/**
+ * Per-mode button metadata: the imperative ACTION label/testid (Ligar/Pausar/
+ * Desligar) — distinct from the state adjective (Ligado/Pausado/Desligado) shown
+ * in the "Motor · …" label.
+ */
+const MOTOR_ACTION_META: Record<EngineMode, { label: string; testid: string }> = {
+  LIGADO: { label: "Ligar", testid: "painel-motor-ligar" },
+  PAUSADO: { label: "Pausar", testid: "painel-motor-pausar" },
+  DESLIGADO: { label: "Desligar", testid: "painel-motor-desligar" },
 };
 
 /** Depth options offered when starting the motor (order = least → most spend). */
@@ -116,6 +126,9 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   const [origemOpen, setOrigemOpen] = useState(false);
   const [depthMenuOpen, setDepthMenuOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
+  // Bug 2: cold-start UF scope. "" = Todo o Brasil (backend uses all 27 UFs when
+  // ufs is omitted); a UF code scopes the sweep to a single UF. Source-independent.
+  const [startUf, setStartUf] = useState<string>("");
 
   const { data } = useQuery({
     queryKey: engineKeys.status,
@@ -139,26 +152,39 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   // source is already in scope from line below (data?.source ?? "default") and
   // is passed so the selected origem lane actually reaches the sweep orchestrator.
   const start = useMutation({
-    mutationFn: (depth: EngineDepth) => startEngine({ depth, source }),
+    mutationFn: (vars: { depth: EngineDepth; ufs?: string[] }) =>
+      startEngine({ depth: vars.depth, source, ufs: vars.ufs }),
     onError: (err) => toast.error(explainError(err)),
     onSuccess: () => toast.success("Motor ligado — varredura iniciada"),
     onSettled: invalidate,
   });
 
-  const stop = useMutation({
-    mutationFn: () => stopEngine(),
+  // Tri-state motor mode (phase H edit-lock) — POST /api/v1/engine/mode. Pausar /
+  // Desligar go straight through here; a warm Ligar (resume from Pausado) too. A
+  // cold Ligar (engine off) still runs the depth-picker start below.
+  const setMode = useMutation({
+    mutationFn: (mode: EngineMode) => setEngineMode(mode),
     onError: (err) => toast.error(explainError(err)),
-    onSuccess: () => toast.success("Parando — drenando a fila atual"),
+    onSuccess: (res) =>
+      toast.success(`Modo · ${ENGINE_MODE_LABELS[res.mode]}`),
     onSettled: invalidate,
   });
 
   const state: EngineState = data?.state ?? "idle";
   const source: EngineSource = data?.source ?? "default";
-  const pending = start.isPending || stop.isPending;
+  const mode: EngineMode = data?.mode ?? "DESLIGADO";
+  const pending = start.isPending || setMode.isPending;
   // motorOn is driven by the operator-intent latch (enabled), not the transient
   // dispatch state. This keeps the switch ON when state returns to "idle" mid-run
   // (workers still processing) and only clears it when /stop is explicitly called.
   const motorOn = data?.enabled ?? (state !== "idle");
+
+  // Tri-state sync phase for the topbar indicator. Prefer the backend-computed
+  // sync_phase (idle | syncing | synced); fall back to deriving from motorOn
+  // (syncing while the motor is on, else idle) so a status payload without the
+  // field still renders a sensible two-state indicator.
+  const syncPhase: "idle" | "syncing" | "synced" =
+    data?.sync_phase ?? (motorOn ? "syncing" : "idle");
 
   // R2 client gate: when source is tripadvisor, require a valid session before
   // enabling the depth menu. Reuses the sessionStatus query (present && expires_in > 0).
@@ -195,27 +221,36 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     prevEnabledRef.current = enabled;
   }, [data?.enabled]);
 
-  const onToggleMotor = () => {
-    if (pending) return;
+  const onLigar = () => {
+    if (pending || mode === "LIGADO") return;
     if (motorOn) {
-      // Engine is on (operator intent) — stop it.
-      stop.mutate();
-    } else {
-      // R2: block if source=tripadvisor and no valid session
-      if (taBlocked) {
-        toast.error(
-          "Injete uma sessão TripAdvisor válida antes de ligar o motor.",
-        );
-        return;
-      }
-      // Engine is off — open the depth picker to start.
-      setDepthMenuOpen((v) => !v);
+      // Warm resume (a run is still active, e.g. from PAUSADO) — just relock via mode.
+      setMode.mutate("LIGADO");
+      return;
     }
+    // Cold start: R2 gate — block if source=tripadvisor and no valid session.
+    if (taBlocked) {
+      toast.error("Injete uma sessão TripAdvisor válida antes de ligar o motor.");
+      return;
+    }
+    // Engine is off — open the depth picker to start a sweep.
+    setDepthMenuOpen((v) => !v);
+  };
+
+  const onPausar = () => {
+    if (pending || mode === "PAUSADO") return;
+    setMode.mutate("PAUSADO");
+  };
+
+  const onDesligar = () => {
+    if (pending || mode === "DESLIGADO") return;
+    setMode.mutate("DESLIGADO");
   };
 
   const onPickDepth = (depth: EngineDepth) => {
     setDepthMenuOpen(false);
-    start.mutate(depth);
+    // Bug 2: scope the sweep to the picked UF, or omit ufs for Todo o Brasil.
+    start.mutate({ depth, ufs: startUf ? [startUf] : undefined });
   };
 
   return (
@@ -273,25 +308,29 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
           Origem <strong className="font-semibold">{SOURCE_LABELS[source]}</strong>
         </button>
 
-        {/* Sync status indicator — reads from the existing engine/status query (no second poll).
-            Shows Sincronizando + UF progress when motor is ON; muted "Motor parado" when idle.
-            aria-live polite so screen readers announce state changes. */}
+        {/* Runtime (execução) indicator — reads from the existing engine/status query (no second poll).
+            Tri-state sync_phase: syncing (yellow, Sincronizando + UF progress) · synced (green,
+            "Sincronizado") · idle (muted "Execução parada"). This is the RUNTIME axis (is a sweep
+            dispatching / has one just completed) — distinct from the "Modo · …" operator-mode label
+            below. aria-live polite so screen readers announce state changes. */}
         <div
           data-testid="sync-indicator"
           className="flex min-w-[160px] flex-col items-end gap-[3px]"
         >
-          {motorOn ? (
+          {syncPhase === "syncing" && (
             <>
               <div className="flex items-center gap-[6px]">
                 <span
                   className="h-[7px] w-[7px] flex-shrink-0 animate-pulse rounded-full"
-                  style={{ background: "var(--status-mar)" }}
+                  style={{ background: "var(--status-dlq)" }}
                   aria-hidden
                 />
                 <span
                   aria-live="polite"
+                  data-testid="sync-indicator-label"
+                  data-phase={syncPhase}
                   className="whitespace-nowrap text-[11.5px] font-medium"
-                  style={{ color: "var(--painel-text)" }}
+                  style={{ color: "var(--status-dlq)" }}
                 >
                   Sincronizando {SOURCE_LABELS[source]} · UF{" "}
                   {data?.ufs_done ?? 0}/{data?.ufs_total ?? 0}
@@ -307,20 +346,41 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
                   <div
                     className="h-full rounded-full transition-[width]"
                     style={{
-                      background: "var(--status-mar)",
+                      background: "var(--status-dlq)",
                       width: `${Math.min(100, Math.round(((data?.ufs_done ?? 0) / (data?.ufs_total ?? 1)) * 100))}%`,
                     }}
                   />
                 </div>
               )}
             </>
-          ) : (
+          )}
+          {syncPhase === "synced" && (
+            <div className="flex items-center gap-[6px]">
+              <span
+                className="h-[7px] w-[7px] flex-shrink-0 rounded-full"
+                style={{ background: "var(--status-mar)" }}
+                aria-hidden
+              />
+              <span
+                aria-live="polite"
+                data-testid="sync-indicator-label"
+                data-phase={syncPhase}
+                className="whitespace-nowrap text-[11.5px] font-medium"
+                style={{ color: "var(--status-mar)" }}
+              >
+                Sincronizado
+              </span>
+            </div>
+          )}
+          {syncPhase === "idle" && (
             <span
               aria-live="polite"
+              data-testid="sync-indicator-label"
+              data-phase={syncPhase}
               className="whitespace-nowrap text-[11.5px]"
               style={{ color: "var(--painel-muted)" }}
             >
-              Motor parado
+              Execução parada
             </span>
           )}
         </div>
@@ -348,41 +408,61 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
           aria-hidden
         />
 
-        {/* Motor label + switch */}
+        {/* Motor tri-state: Ligar / Pausar / Desligar (POST /api/v1/engine/mode) */}
         <div className="flex items-center gap-[9px]">
           <span
             className="text-[12px] font-medium text-[var(--painel-muted)]"
             data-testid="painel-motor-state"
           >
-            {/* motorLabel is driven by motorOn (enabled latch), not state, so that
-                enabled=true + state=idle still renders "Ligado" rather than "Desligado". */}
-            Motor · {motorOn ? (state === "stopping" ? "Parando…" : "Ligado") : "Desligado"}
+            {/* Operator-MODE axis (edit-lock source of truth), orthogonal to the
+                runtime "Execução …" indicator above — hence "Modo · …", not "Motor · …". */}
+            Modo · {ENGINE_MODE_LABELS[mode]}
           </span>
           <div className="relative">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={motorOn}
-              aria-label="Ligar/desligar motor"
-              data-testid="painel-motor-switch"
-              disabled={pending}
-              onClick={onToggleMotor}
-              className="relative h-[22px] w-[40px] flex-shrink-0 rounded-full transition-colors disabled:opacity-60"
+            <div
+              role="group"
+              aria-label="Modo do motor"
+              data-testid="painel-motor-modes"
+              className="inline-flex gap-0.5 rounded-[9px] border p-[3px]"
               style={{
-                background: motorOn
-                  ? "var(--painel-navy)"
-                  : "var(--painel-border-outer)",
+                borderColor: "var(--painel-border-outer)",
+                background: "var(--painel-chip)",
               }}
             >
-              <span
-                className="absolute top-[2px] h-[18px] w-[18px] rounded-full bg-white transition-all"
-                style={{ left: motorOn ? "20px" : "2px" }}
-                aria-hidden
-              />
-            </button>
+              {MOTOR_MODES.map((m) => {
+                const active = m === mode;
+                const onClick =
+                  m === "LIGADO"
+                    ? onLigar
+                    : m === "PAUSADO"
+                      ? onPausar
+                      : onDesligar;
+                const meta = MOTOR_ACTION_META[m];
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    data-testid={meta.testid}
+                    aria-pressed={active}
+                    disabled={pending}
+                    onClick={onClick}
+                    className="rounded-[6px] px-[10px] py-[4px] text-[12px] font-semibold transition-colors disabled:opacity-60"
+                    style={{
+                      background: active ? "var(--card)" : "transparent",
+                      color: active
+                        ? "var(--painel-navy)"
+                        : "var(--painel-muted)",
+                      boxShadow: active ? "0 1px 2px rgba(15,23,42,.10)" : "none",
+                    }}
+                  >
+                    {meta.label}
+                  </button>
+                );
+              })}
+            </div>
 
-            {/* Depth picker — START requires a depth (backend 422s without one).
-                Only shown when the engine is off (motorOn=false). */}
+            {/* Depth picker — a COLD Ligar (engine off) requires a depth (backend
+                422s without one). Only shown when the engine is off (motorOn=false). */}
             {depthMenuOpen && !motorOn && (
               <div
                 role="menu"
@@ -390,6 +470,24 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
                 className="absolute right-0 top-[30px] z-[20] w-[208px] rounded-[10px] border bg-[var(--card)] p-[6px] shadow-lg"
                 style={{ borderColor: "var(--painel-border-outer)" }}
               >
+                {/* Bug 2: UF scope — source-independent. "" ⇒ all 27 UFs. */}
+                <div className="px-[8px] pb-[3px] pt-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
+                  Abrangência
+                </div>
+                <select
+                  data-testid="painel-uf-select"
+                  value={startUf}
+                  onChange={(e) => setStartUf(e.target.value)}
+                  className="mb-[6px] block w-full rounded-[7px] border bg-[var(--card)] px-[8px] py-[6px] text-[12.5px] font-medium text-[var(--painel-text)]"
+                  style={{ borderColor: "var(--painel-border-outer)" }}
+                >
+                  <option value="">Todo o Brasil (27 UFs)</option>
+                  {BR_UFS.map((uf) => (
+                    <option key={uf} value={uf}>
+                      {uf}
+                    </option>
+                  ))}
+                </select>
                 <div className="px-[8px] py-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
                   Profundidade da varredura
                 </div>

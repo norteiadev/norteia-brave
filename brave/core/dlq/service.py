@@ -9,6 +9,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from brave.config.runtime import load_effective_config
 from brave.config.settings import ScoreConfig
 from brave.core.models import MarRecord, RioRecord
 from brave.core.mar.service import promote_to_mar
@@ -31,7 +32,7 @@ def validate_and_promote_rio(
     Returns:
         MarRecord if promoted to Mar; None if routing != 'mar' after re-score.
     """
-    config = config or ScoreConfig()
+    config = config or load_effective_config(session).score
 
     # Step 1: CRITICAL — reassign + flag_modified (Pitfall 3)
     normalized = dict(rio.normalized or {})

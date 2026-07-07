@@ -152,6 +152,18 @@ class TestResolveMunicipio:
         result = resolve_municipio("ZZZUnknown", "SP", records)
         assert result is None
 
+    @pytest.mark.parametrize("bad_name", [None, "", "   "])
+    def test_ibge_none_or_blank_name_returns_none(self, bad_name) -> None:
+        """Falsy/non-str name → None (unmatched), never a normalize() crash.
+
+        Regression: TA fetch_attraction_geo can return cityName=None; feeding that
+        to _fold_accents → unicodedata.normalize raised
+        'normalize() argument 2 must be str, not None', poisoning the whole
+        produce task (5 coordless ES beach attractions, 2026-07-05).
+        """
+        records = _make_records()
+        assert resolve_municipio(bad_name, "SP", records) is None
+
     def test_ibge_case_insensitive_like_match(self) -> None:
         """'salvador' (lowercase) should match 'Salvador' in BA."""
         records = _make_records()
