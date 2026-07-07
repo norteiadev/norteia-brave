@@ -331,9 +331,9 @@ describe("buildColumns", () => {
     expect(cols.map((c) => c.key)).toEqual([
       "nascente",
       "rio",
+      "dlq",
       "whatsapp",
       "mar",
-      "dlq",
       "falha",
     ]);
     const byKey = Object.fromEntries(cols.map((c) => [c.key, c.cards.length]));
@@ -351,9 +351,9 @@ describe("buildColumns", () => {
     expect(COLUMN_DEFS.map((c) => c.label)).toEqual([
       "Nascente",
       "Rio · validação",
+      "DLQ · revisão",
       "WhatsApp · contato",
       "Mar · publicado",
-      "DLQ · revisão",
       "Falha",
     ]);
   });

@@ -113,9 +113,9 @@ export interface PainelCard {
 export const COLUMN_DEFS: { key: PainelColumnKey; label: string }[] = [
   { key: "nascente", label: "Nascente" },
   { key: "rio", label: "Rio · validação" },
+  { key: "dlq", label: "DLQ · revisão" },
   { key: "whatsapp", label: "WhatsApp · contato" },
   { key: "mar", label: "Mar · publicado" },
-  { key: "dlq", label: "DLQ · revisão" },
   { key: "falha", label: "Falha" },
 ];
 
