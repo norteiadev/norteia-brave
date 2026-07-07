@@ -204,7 +204,7 @@ export function toPainelCards(
     routing: d.routing,
     column: routingToColumn(d.routing),
     score: d.score,
-    source: null,
+    source: d.source,
     duplicate: dedupCandidateIds.has(d.id),
     error: null,
   }));
@@ -221,7 +221,7 @@ export function toPainelCards(
     column:
       a.sub_state === WHATSAPP_SUB_STATE ? "whatsapp" : routingToColumn(a.routing),
     score: a.score,
-    source: null,
+    source: a.source,
     duplicate: dedupCandidateIds.has(a.id),
     error: null,
     // Phase H DLQ→WhatsApp gate: absent from the list ⇒ eligible (the batch 422

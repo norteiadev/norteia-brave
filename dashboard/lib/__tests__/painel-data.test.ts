@@ -43,6 +43,7 @@ const destinos: DestinoListItem[] = [
     routing: "mar",
     score: 91.2,
     name: "Copacabana",
+    source: "ibge",
     canonical_key: "rj:rio:copacabana",
     validation_pending: false,
     mar_id: "mar-1",
@@ -55,6 +56,7 @@ const destinos: DestinoListItem[] = [
     routing: "dlq",
     score: 72.4,
     name: "Pelourinho",
+    source: "ibge",
     canonical_key: "ba:salvador:pelourinho",
     validation_pending: true,
     mar_id: null,
@@ -71,6 +73,7 @@ const atrativos: AtrativoListItem[] = [
     sub_state: "discovered",
     score: null,
     name: "Mercado Modelo",
+    source: "tripadvisor",
     validation_pending: false,
     mar_id: null,
     parent_mar_id: "mar-1",
@@ -84,6 +87,7 @@ const atrativos: AtrativoListItem[] = [
     sub_state: null,
     score: 12.0,
     name: "Lugar Falso",
+    source: "tripadvisor",
     validation_pending: true,
     mar_id: null,
     parent_mar_id: null,
@@ -141,6 +145,7 @@ describe("toPainelCards", () => {
       sub_state: "aguardando_consulta_whatsapp",
       score: 70,
       name: "Elevador Lacerda",
+      source: "tripadvisor",
       validation_pending: true,
       mar_id: null,
       parent_mar_id: null,
@@ -160,6 +165,7 @@ describe("toPainelCards", () => {
       sub_state: null,
       score: 20,
       name: "Ponto Descartado",
+      source: "tripadvisor",
       validation_pending: false,
       mar_id: null,
       parent_mar_id: null,
@@ -278,10 +284,14 @@ describe("toPainelCards", () => {
     ).toBe(true);
   });
 
-  it("sets source and error to null this slice", () => {
+  it("carries the Nascente source through to each card (error null this slice)", () => {
     const cards = toPainelCards(destinos, atrativos);
+    // Regression: rio/dlq cards used to drop source (always null), leaving
+    // TripAdvisor-synced cards with no origin shown. Source now flows from the
+    // list item (destino → ibge, atrativo → tripadvisor here).
+    expect(cards.find((c) => c.id === "d-mar")!.source).toBe("ibge");
+    expect(cards.find((c) => c.id === "a-inprog")!.source).toBe("tripadvisor");
     for (const c of cards) {
-      expect(c.source).toBeNull();
       expect(c.error).toBeNull();
     }
   });

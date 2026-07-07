@@ -280,6 +280,13 @@ def list_destinos(
             "routing": rio.routing,
             "score": float(rio.score) if rio.score is not None else None,
             "canonical_key": rio.canonical_key,
+            # Nascente source (tripadvisor|ibge|mtur) = first segment of the
+            # canonical_key (source_ref = f"{source}:..." by store_raw convention).
+            "source": (
+                rio.canonical_key.split(":", 1)[0]
+                if rio.canonical_key and ":" in rio.canonical_key
+                else None
+            ),
             "name": (rio.normalized or {}).get("name") or (
                 (mar.canonical or {}).get("name") if mar else None
             ),
@@ -744,6 +751,13 @@ def list_atrativos(
             "sub_state": rio.sub_state,
             "score": float(rio.score) if rio.score is not None else None,
             "name": (rio.normalized or {}).get("name"),
+            # Nascente source (tripadvisor|ibge|mtur) = first segment of the
+            # canonical_key (source_ref = f"{source}:..." by store_raw convention).
+            "source": (
+                rio.canonical_key.split(":", 1)[0]
+                if rio.canonical_key and ":" in rio.canonical_key
+                else None
+            ),
             "validation_pending": rio.sub_state == "aguardando_consulta_whatsapp",
             "whatsapp_eligible": _is_whatsapp_eligible(rio.normalized),
             "mar_id": None,  # atrativos don't have direct mar_id in normalized
