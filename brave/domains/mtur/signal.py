@@ -1,8 +1,8 @@
-"""SignalAgent — gathers operating signals and triggers §7.6 scoring.
+"""SignalAgent — gathers operating signals and triggers reliability scoring.
 
 Sub-state transition: contacts_found → signals_gathered.
 
-D-05: Hard descarte path fires FIRST, before any §7.6 scoring:
+D-05: Hard descarte path fires FIRST, before any reliability scoring:
   - business_status CLOSED_PERMANENTLY or CLOSED_TEMPORARILY:
     → rio.routing = "descarte", rio.sub_state = None, rio.dlq_reason = "closed_place"
     → write audit row, flush, return (no scoring)
@@ -13,16 +13,16 @@ Score inputs set on normalized:
   - corroboracao_value: fixed at 0.0. The social-signal (Apify IG) corroboration
     source was retired (Phase E); no Places field feeds corroboração today, so the
     lane writes a deterministic 0.0. This matches the prior offline (Null) behaviour
-    exactly and keeps the §7.6 score input present (no default drift in routing).
+    exactly and keeps the reliability score input present (no default drift in routing).
 
-No-recent-reviews rule (Phase F), attraction only, BEFORE any §7.6 scoring:
+No-recent-reviews rule (Phase F), attraction only, BEFORE any reliability scoring:
   - NO reviews OR most-recent review older than 90 days:
     → rio.routing = "dlq", rio.dlq_reason = "no_recent_reviews", rio.sub_state = None
     → terminal DLQ; does NOT enter the WhatsApp gate (the gate is manual now).
   The 90-day check uses an injectable reference clock (SignalAgent(now=...)) so it is
   fully deterministic offline.
 
-After gathering signals, calls route_by_score to apply §7.6 and route to mar/dlq/descarte.
+After gathering signals, calls route_by_score to apply reliability scoring and route to mar/dlq/descarte.
 For a NON-stale borderline record (routing == "dlq" via score), sets
 sub_state = "aguardando_consulta_whatsapp" (human WhatsApp gate, D-06).
 
@@ -122,7 +122,7 @@ def _compute_atualidade(reviews: list[dict[str, Any]], reference_date: datetime 
 
 
 class SignalAgent:
-    """SignalAgent — gathers Places signals and triggers §7.6 scoring.
+    """SignalAgent — gathers Places signals and triggers reliability scoring.
 
     Advances sub_state from "contacts_found" to "signals_gathered".
     Idempotency guard: returns immediately if sub_state != "contacts_found".
@@ -133,7 +133,7 @@ class SignalAgent:
     Corroboração (Phase E): the social-signal (Apify IG) source was retired, so
     corroboracao_value is written as a deterministic 0.0 (no Places field feeds it
     today). This preserves the prior offline behaviour and keeps the score input
-    present so §7.6 routing does not silently drift.
+    present so reliability routing does not silently drift.
 
     After signals: calls route_by_score. If routing == "dlq" (borderline), sets
     sub_state = "aguardando_consulta_whatsapp" (human gate, D-06).
@@ -143,7 +143,7 @@ class SignalAgent:
     Args:
         places_client: PlacesClientProtocol implementation (real or fake).
         session:       SQLAlchemy synchronous Session.
-        config:        ScoreConfig with §7.6 weights (optional; defaults to ScoreConfig()).
+        config:        ScoreConfig with reliability weights (optional; defaults to ScoreConfig()).
     """
 
     def __init__(
@@ -175,7 +175,7 @@ class SignalAgent:
           3. Compute atualidade_value from reviews
           4. Set corroboracao_value to the deterministic 0.0 constant (Apify retired)
           5. Mutate normalized (incl. most_recent_review_at) with flag_modified, advance sub_state
-          6. Call route_by_score for §7.6 scoring
+          6. Call route_by_score for reliability scoring
           7. If routing == "dlq" → set sub_state = "aguardando_consulta_whatsapp"
 
         Args:
@@ -195,7 +195,7 @@ class SignalAgent:
         details = await self._places_client.place_details(place_id)
         business_status: str = details.get("business_status", "UNKNOWN")
 
-        # Step 2: HARD DESCARTE CHECK — before any §7.6 scoring (D-05)
+        # Step 2: HARD DESCARTE CHECK — before any reliability scoring (D-05)
         if business_status in CLOSED_STATUSES:
             rio.routing = "descarte"
             rio.dlq_reason = "closed_place"
@@ -267,7 +267,7 @@ class SignalAgent:
 
         # Step 4: Corroboração — deterministic 0.0 constant (Apify IG source retired,
         # Phase E). No Places field feeds corroboração today; writing an explicit 0.0
-        # keeps the §7.6 score input present and matches the prior offline behaviour
+        # keeps the reliability score input present and matches the prior offline behaviour
         # (routing does not silently drift on a missing key).
         corroboracao_value = 0.0
 
@@ -311,7 +311,7 @@ class SignalAgent:
         )
         self._session.flush()
 
-        # Step 6: Apply §7.6 scoring (route_by_score mutates routing in-place)
+        # Step 6: Apply reliability scoring (route_by_score mutates routing in-place)
         route_by_score(self._session, rio, self._config)
         self._session.flush()
 

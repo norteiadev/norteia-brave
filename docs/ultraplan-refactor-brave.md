@@ -4,7 +4,7 @@
 
 O `norteia-brave` (Pipeline Brave / Collector) evoluiu além do que o novo documento
 `docs/brave-spec-driven-development.md` define como o produto-alvo. O `docs/FLUXO-BRAVE.md`
-descreve o estado atual: um core entity-agnostic com scoring §7.6 de 5 critérios
+descreve o estado atual: um core entity-agnostic com scoring de confiabilidade de 5 critérios
 (85/40/descarte), múltiplas lanes (Mtur, Desmembramento LLM, NotebookLM, Places, TripAdvisor,
 Apify) e **duas frontends coexistentes** (10 rotas "dark" legadas + a casca clara `/painel`).
 

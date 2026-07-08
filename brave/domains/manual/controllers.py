@@ -37,7 +37,7 @@ class ManualDomain:
         return {}
 
     def score_input(self, payload: Mapping[str, Any]) -> ScoreInput:
-        """Map a manual payload onto the §7.6 ScoreInput (origem/validação = 100)."""
+        """Map a manual payload onto the ScoreInput (origem/validação = 100)."""
         return build_score_input(payload)
 
     def sweep_plan(

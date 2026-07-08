@@ -1,4 +1,4 @@
-"""Tests for the §7.6 pure score engine.
+"""Tests for the reliability pure score engine.
 
 All tests run fully offline (no I/O, no DB, no Redis, no network).
 """

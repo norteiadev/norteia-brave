@@ -44,7 +44,7 @@ MTUR_ATUALIDADE_DEFAULT = 70.0
 # 2024 dataset edition; re-calibrate when new Mtur edition is published.
 # The Mtur dataset is versioned by year (municipios_mtur_YYYY.csv).
 # A 2024 or 2025 dataset is considered recent; atualidade=70 reflects
-# "recently published" in the §7.6 scoring scheme.
+# "recently published" in the reliability scoring scheme.
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ class MturSeedIngest:
     Args:
         mtur_client: MturClientProtocol implementation (real or fake).
         session:     SQLAlchemy synchronous Session.
-        config:      ScoreConfig with §7.6 weights and thresholds.
+        config:      ScoreConfig with reliability weights and thresholds.
     """
 
     def __init__(
@@ -124,7 +124,7 @@ class MturSeedIngest:
         run_rio is the depth gate (plan 10-02): the orchestrator owns the depth
         read and passes run_rio down; this lane NEVER reads Redis depth itself.
           - run_rio=True (default): store_raw then process_nascente_record, as today.
-          - run_rio=False: the `Apenas nascente` (free) path — Nascente + the §7.6
+          - run_rio=False: the `Apenas nascente` (free) path — Nascente + the reliability
             *_value score inputs are still written via store_raw, but
             process_nascente_record (Rio) is skipped entirely. No RioRecord is
             created, zero LLM/Places, zero external cost.
@@ -161,7 +161,7 @@ class MturSeedIngest:
                 "municipio_id": ibge_code,  # 7-digit IBGE code (D-10)
                 "uf": uf,
                 "categoria": categoria,
-                # §7.6 criterion *_value fields — routing.py reads these at normalize step
+                # reliability criterion *_value fields — routing.py reads these at normalize step
                 "origem_value": 100.0,
                 "completude_value": _completude_from_fields(mun),
                 "corroboracao_value": 0.0,

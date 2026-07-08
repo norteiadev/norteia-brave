@@ -2,7 +2,7 @@
 
 **Pipeline Brave** — sistema de coleta, processamento e qualidade dos dados territoriais da Norteia
 (Nascente → Rio → Mar). Serviço Python contínuo que coleta destinos e atrativos turísticos de todo o
-Brasil, pontua confiabilidade (§7.6 do doc de MVP), e publica apenas itens **Mar** (canônicos) na
+Brasil, pontua confiabilidade (conforme o doc de MVP), e publica apenas itens **Mar** (canônicos) na
 `norteia-api`.
 
 > Repo irmão da `norteia-api` (Laravel, consumidor de Mar) e da `norteia-frontend` (Next.js).

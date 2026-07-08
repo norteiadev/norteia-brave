@@ -5,7 +5,7 @@
 A Norteia precisa popular sua base territorial com **dados validados e pontuados por
 confiabilidade**, cobrindo **todo o Brasil**, começando do zero ("carga inicial"). O doc de MVP
 (`docs/Norteia_MVP_Documentacao_Tecnica_v1.md`, §7) já define o framework canônico — o **Pipeline
-Brave (Nascente → Rio → Mar)** com **score de confiabilidade** (§7.6) e **DLQ** — e o trata como
+Brave (Nascente → Rio → Mar)** com **score de confiabilidade** e **DLQ** — e o trata como
 **pré-requisito #1** da plataforma (§16, linhas 1633–1679). **Esse pipeline ainda não existe no
 código** (verificado: sem Brave/Nascente/Rio/Mar/DLQ/score em `app/` ou `database/`).
 
@@ -15,14 +15,14 @@ primeiras lanes de coleta: Destinos e Atrativos**.
 ### Fronteira (decisões do usuário)
 
 > **O collector (app Python novo) É o Brave.** Motor completo — Nascente, Rio (limpeza/dedup/
-> normalização/scoring §7.6), Mar (canônico ≥85%), DLQ (51–84.9% revisão humana), descarte (≤50%)
+> normalização/scoring de confiabilidade), Mar (canônico ≥85%), DLQ (51–84.9% revisão humana), descarte (≤50%)
 > — + as lanes de coleta + dashboard de operação. **Apenas itens Mar vão para a norteia-api.**
 
 ```
 ┌──────────────────────────────────────────────────────────┐         POST itens MAR        ┌────────────────────────┐
 │  norteia-brave (Python)  =  PIPELINE BRAVE                │  ─────────────────────────▶   │  norteia-api (Laravel) │
 │  Lanes: DESTINOS + ATRATIVOS (+ futuras)                 │   /api/internal/territorial   │                        │
-│      → NASCENTE → RIO(score §7.6) → MAR ─────────────────┼──▶ só MAR (≥85% ou DLQ-aprov)  │  destinations/attractions│
+│      → NASCENTE → RIO(score de confiabilidade) → MAR ─────────────────┼──▶ só MAR (≥85% ou DLQ-aprov)  │  destinations/attractions│
 │                              ├─ DLQ (51–84.9%, humano)    │                               │  (consumo: UI + IA)    │
 │                              └─ descarte (≤50%)           │  ◀── flag de erro p/ reprocess│  + botão "reportar erro"│
 │  Dashboard Next.js: monitor Brave + DLQ + ops + gates    │   /webhook (community report) │                        │
@@ -31,7 +31,7 @@ primeiras lanes de coleta: Destinos e Atrativos**.
 
 - **Stack do collector: Python** (repo novo; trava "PHP fixo" da CLAUDE.md governa só a norteia-api).
 - **Execução: serviço contínuo 24/7** (todos os estados do BR).
-- **Score §7.6 + DLQ** é o gating canônico (não approve-humano em tudo).
+- **Score de confiabilidade + DLQ** é o gating canônico (não approve-humano em tudo).
 - **Dependência:** Destinos populam Mar **antes/junto** dos Atrativos (atrativo pertence a um destino).
 - **LLM:** backend (extração/scoring/desmembramento) = **DeepSeek pago via OpenRouter**;
   conversacional (WhatsApp, lane de atrativos) = **Claude Sonnet 4.5**.
@@ -76,12 +76,12 @@ Não hospeda Brave. Recebe **só Mar** e serve UI + assistentes.
 - **Nascente (ingest bruto)** — store source-tagged + versionado (JSONB) de payloads de qualquer
   lane/entidade.
 - **Rio (processamento + scoring)** — explode payloads: dedup (hash exato + fuzzy/embedding),
-  normalização (nomes/coords/endereços), rotulação (taxonomia Norteia), **score §7.6**. Regras
+  normalização (nomes/coords/endereços), rotulação (taxonomia Norteia), **score de confiabilidade**. Regras
   determinísticas + NLP (DeepSeek).
 - **Mar (canônico ≥85%)** — publicável → **push p/ norteia-api**. Versionado; invalidação/atualização.
 - **DLQ (51–84.9%)** — revisão humana no dashboard (aprovar/rejeitar/editar/reprocessar).
   **Descarte/reprocesso (≤50%)**.
-- **Score engine §7.6** — origem 30% · completude 20% · corroboração 20% · atualidade 15% ·
+- **Score engine de confiabilidade** — origem 30% · completude 20% · corroboração 20% · atualidade 15% ·
   validação humana 15%; **pesos calibráveis** via config. Mesmo motor p/ destino e atrativo.
 
 ### B.2 Lanes de coleta
@@ -94,7 +94,7 @@ Não hospeda Brave. Recebe **só Mar** e serve UI + assistentes.
 Destinos são unidades territoriais (não se contata por WhatsApp). Validação = humana (equipe) +
 corroboração + origem oficial.
 1. **MturSeedIngest** — ingest dos municípios Mtur categorizados (Oferta Principal/Complementar/
-   Apoio) → Nascente (`source=mtur`, origem §7.6 = 100). Vínculo a `municipality_id`.
+   Apoio) → Nascente (`source=mtur`, origem = 100). Vínculo a `municipality_id`.
 2. **NotebookLMIngest** — relatórios estruturados → Nascente (`source=notebooklm`, origem = 80).
    Complementa destinos que não constam no Mtur (distritos/localidades).
 3. **DesmembramentoAgent (§7.4)** — p/ cada município Oferta Principal, DeepSeek lista destinos
@@ -102,7 +102,7 @@ corroboração + origem oficial.
    flag "gerado por LLM — pendente validação" (origem = 40). Complementar/Apoio: 1:1 simplificado,
    LLM só com indício de subdivisão.
 4. **Rio + score** — dedup (ex.: Trancoso ≠ Porto Seguro sede), normaliza nome turístico vs
-   município, score §7.6. Geralmente score médio (falta validação humana) → **DLQ**.
+   município, score de confiabilidade. Geralmente score médio (falta validação humana) → **DLQ**.
 5. **Validação humana (DLQ, em lote por estado — BA/RJ/SP/SC/CE/PE primeiro)** — equipe confirma/
    corrige/completa → validação humana = 100 → **Mar** → push (`destinations`).
 
@@ -113,7 +113,7 @@ Sub-estados: `discovered` → `contacts_found` → `signals_gathered` → *(Rio 
    Nascente. **Resolve o `destino` pai** (destino já em Mar).
 2. **ContactFinderAgent** — Places Details (phone/website/**link WhatsApp**) + site/IG-FB/email.
 3. **SignalAgent** — **Places**: `business_status` (CLOSED_* → descarte), `weekday_text` (horários),
-   **`reviews[].publishTime` ≤ 30 dias ⇒ funcionando** (Atualidade §7.6). **IG/X via Apify**
+   **`reviews[].publishTime` ≤ 30 dias ⇒ funcionando** (Atualidade). **IG/X via Apify**
    (best-effort). **OTA** opcional (preço cross-check; só ticketado).
 4. **Gate WhatsApp (humano, dashboard) — só borderline** (score < 85% por falta de validação
    direta). Humano aprova quais contatar (controle de volume = mitigação de ban/custo; ramp).
@@ -150,7 +150,7 @@ Sub-estados: `discovered` → `contacts_found` → `signals_gathered` → *(Rio 
 - **Dashboard (Next.js, Bun, Node 22, Bearer header, Vitest):**
   - **Monitor Brave (§15.7)** — volume por camada, taxas aprovação/rejeição/DLQ, alertas de falha,
     throughput, auditoria.
-  - **Fila DLQ** — revisar (payload Nascente, dados Rio, score §7.6 por critério, sinais, log
+  - **Fila DLQ** — revisar (payload Nascente, dados Rio, score de confiabilidade por critério, sinais, log
     WhatsApp) → aprovar/rejeitar/editar/reprocessar. **Modo lote por estado** (desmembramento de
     destinos).
   - **Gate WhatsApp** — fila `aguardando_consulta_whatsapp` → aprovar/rejeitar; ramp.
@@ -186,7 +186,7 @@ padrão. Real = **opt-in por flag**. CI sem chaves.
 ## Sequência de fases GSD
 
 **Trilha 1 — Brave core (collector, milestone foundational):** Nascente/Rio/Mar/DLQ + **score engine
-§7.6** (calibrável) + FastAPI + workers (Celery/Redis) + clients atrás de interface + observabilidade.
+de confiabilidade** (calibrável) + FastAPI + workers (Celery/Redis) + clients atrás de interface + observabilidade.
 
 **Trilha 2 — Lane de Destinos (collector, PRECEDE atrativos):** MturSeedIngest + NotebookLMIngest +
 **DesmembramentoAgent §7.4** → Rio/score → DLQ (validação humana em lote por estado) → Mar.

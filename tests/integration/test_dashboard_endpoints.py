@@ -298,7 +298,7 @@ def authed_client():
 
 
 def _make_dlq_record(db_session: Session):
-    """Seed a Nascente + Rio (routing='dlq') record with a §7.6 score_breakdown.
+    """Seed a Nascente + Rio (routing='dlq') record with a reliability score_breakdown.
 
     Returns the RioRecord. Mirrors the gate test seed helper — we only need a
     record in the right shape, not a full pipeline run.
@@ -393,14 +393,14 @@ def test_dlq_detail_returns_full_shape(authed_client, db_session: Session):
 
 @pytest.mark.integration
 def test_dlq_detail_score_breakdown_has_criteria(authed_client, db_session: Session):
-    """score_breakdown surfaces the §7.6 per-criterion keys when present on the Rio record."""
+    """score_breakdown surfaces the reliability per-criterion keys when present on the Rio record."""
     rio = _make_dlq_record(db_session)
     db_session.commit()
 
     body = authed_client.get(f"/api/v1/dlq/{rio.id}").json()
     breakdown = body["score_breakdown"]
     for criterion in ("origem", "completude", "corroboracao", "atualidade", "validacao_humana"):
-        assert criterion in breakdown, f"Missing §7.6 criterion {criterion!r}: {breakdown}"
+        assert criterion in breakdown, f"Missing reliability criterion {criterion!r}: {breakdown}"
 
 
 @pytest.mark.integration

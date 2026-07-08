@@ -10,7 +10,7 @@
 
 O Brave é a **Pipeline Brave (Collector)** da Norteia: um serviço 24/7 que **descobre, limpa, deduplica, normaliza, pontua e publica** dados territoriais turísticos de todo o Brasil (27 UFs), a partir de uma carga inicial fria.
 
-Regra soberana do negócio: **só chega na plataforma (`norteia-api`) o que for validado e confiável.** A publicação é governada por um **score de confiabilidade (§7.6)** e por uma **fila de revisão humana (DLQ)** — não por "aprovar tudo na mão".
+Regra soberana do negócio: **só chega na plataforma (`norteia-api`) o que for validado e confiável.** A publicação é governada por um **score de confiabilidade** e por uma **fila de revisão humana (DLQ)** — não por "aprovar tudo na mão".
 
 O modelo é um **pipeline medalhão** de três camadas, com o vocabulário de rio:
 
@@ -99,7 +99,7 @@ flowchart TD
         D2["2. Dedup fuzzy (pgvector, bloqueado por território)"]
         D3["3. Normaliza nome/coords/endereço"]
         D4["4. Rotula com taxonomia Norteia"]
-        D5["5. Score §7.6"]
+        D5["5. Score de confiabilidade"]
         D6["6. Decide roteamento"]
         D1-->D2-->D3-->D4-->D5-->D6
     end
@@ -133,7 +133,7 @@ flowchart TD
 
 - **Mar ("o mar"):** único que sai do Brave. Recebe registros Rio com `routing='mar'`. Upsert idempotente por referência de fonte; unicidade só em linhas ativas; atualização por supersessão (linha nova ativa, aponta a antiga). Guarda o canônico + a proveniência completa (breakdown do score + linhagem).
 
-- **DLQ (revisão §7.6):** **não é tabela** — é `routing='dlq'` no Rio. Registros na fronteira (40–84,9%) que precisam de validação humana. Revisados em lote por estado no dashboard. Validação humana = boost no score → re-score → Mar.
+- **DLQ (revisão de confiabilidade):** **não é tabela** — é `routing='dlq'` no Rio. Registros na fronteira (40–84,9%) que precisam de validação humana. Revisados em lote por estado no dashboard. Validação humana = boost no score → re-score → Mar.
 
 - **Descarte:** `routing='descarte'` (score < 40%). Rejeitado; pode ser reprocessado se surgir sinal novo.
 
@@ -143,7 +143,7 @@ flowchart TD
 
 ---
 
-## 4. Score de Confiabilidade (§7.6) — a regra de promoção
+## 4. Score de Confiabilidade — a regra de promoção
 
 O score é uma **função pura** (sem I/O). Cinco critérios ponderados, cada um 0–100:
 
@@ -198,7 +198,7 @@ stateDiagram-v2
 **Estados** (`brave:engine:state`): `idle` | `running` | `stopping`. Stop é **gracioso**: termina de despachar a UF corrente, drena o que já foi enfileirado (sem abrir novas UFs) e volta a `idle`.
 
 **Depth = a trava de gasto** (até onde a corrida vai):
-- `nascente` — só ingest + score §7.6. **Grátis** (sem Places, sem LLM).
+- `nascente` — só ingest + score de confiabilidade. **Grátis** (sem Places, sem LLM).
 - `nascente_rio` — + validação Places/LLM até o roteamento do Rio (**pago**), mas não aciona a cadeia do gate WhatsApp de atrativos.
 - `nascente_rio_mar` — pipeline completo, incluindo o push idempotente pro Mar.
 
@@ -242,7 +242,7 @@ flowchart TD
         TA2["Nominatim geocode → município IBGE"]
     end
 
-    PIPE["Nascente → Rio (score §7.6) → roteamento"]
+    PIPE["Nascente → Rio (score de confiabilidade) → roteamento"]
 
     MTUR --> PIPE
     DESM --> PIPE
@@ -370,7 +370,7 @@ flowchart TD
     end
 
     subgraph HUMAN["Filas humanas"]
-        DLQV["/dlq — revisão §7.6 por estado"]
+        DLQV["/dlq — revisão de confiabilidade por estado"]
         GATE["/gate — gate WhatsApp (atrativos)"]
         CONV["/conversations — transcrições (telefone mascarado)"]
         MR["/mar-ready — promoção de atrativos TA"]
@@ -400,7 +400,7 @@ flowchart TD
 |---|---|---|
 | **/processo** | Monitor ao vivo | Liga/desliga o motor (depth, source, escopo de UF); vê progresso do sweep TA nacional, workers/filas, pendências DLQ/Gate, funil por sub-estado, falhas recentes. Polling de 10s. |
 | **/monitor** | Monitor Brave | Tiles de volume por camada + taxa de aprovação/rejeição/DLQ, gráfico de throughput, alertas de falha. |
-| **/dlq** | Revisão §7.6 | Fila por UF em ordem de prioridade (BA/RJ/SP/SC/CE/PE), lote "Validar {UF}"; painel de review com breakdown do score, Nascente bruto, Rio normalizado, sinais, auditoria → **Validar e publicar / Reprocessar / Rejeitar**. |
+| **/dlq** | Revisão de confiabilidade | Fila por UF em ordem de prioridade (BA/RJ/SP/SC/CE/PE), lote "Validar {UF}"; painel de review com breakdown do score, Nascente bruto, Rio normalizado, sinais, auditoria → **Validar e publicar / Reprocessar / Rejeitar**. |
 | **/gate** | Gate WhatsApp | Fila de atrativos em `aguardando_consulta_whatsapp`; aprova contato (→ outreach) ou rejeita. |
 | **/mar-ready** | Promoção TA | Atrativos TA que bateram os limiares Mar-Ready, promoção manual (individual + lote). |
 | **/destinos**, **/atrativos** | CMS | Lista/detalhe com ações por estágio (promover, reprocessar, editar, descartar; atrativo avança FSM). |

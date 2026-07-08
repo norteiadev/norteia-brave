@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 
 class FlatProvenance(BaseModel):
-    """Flat per-criterion §7.6 provenance (the D-16 Pact contract shape).
+    """Flat per-criterion reliability provenance (the D-16 Pact contract shape).
 
     All five criteria default to 0.0 and are stored as floats, matching the
     ``float(score_breakdown.get(..., 0.0))`` coercion of the original payload

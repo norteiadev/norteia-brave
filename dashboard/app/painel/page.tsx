@@ -62,7 +62,7 @@ const VIEW_HEADERS: Record<
   },
   revisao: {
     title: "Revisão · DLQ & Gate",
-    subtitle: "Fila DLQ (§7.6) e gate WhatsApp de atrativos",
+    subtitle: "Fila DLQ (confiabilidade) e gate WhatsApp de atrativos",
   },
   monitor: {
     title: "Monitor & Funis",
@@ -74,7 +74,7 @@ const VIEW_HEADERS: Record<
   },
   config: {
     title: "Configuração",
-    subtitle: "Fontes, pesos §7.6, limiar do Mar e modo do motor",
+    subtitle: "Fontes, pesos de confiabilidade, limiar do Mar e modo do motor",
   },
 };
 

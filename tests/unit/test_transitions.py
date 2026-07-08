@@ -246,7 +246,7 @@ from brave.api.routers.atrativos import (  # noqa: E402
 ATRATIVO_ALLOWED = {
     ("rio", "dlq"),       # force send-to-review
     ("dlq", "rio"),       # reprocess / reopen (NEW)
-    ("rio", "mar"),       # borderline promotion via the §7.6 gate
+    ("rio", "mar"),       # borderline promotion via the reliability gate
     ("rio", "descarte"),  # descarte
     # Rio/DLQ column merge: atrativos now rest in the "dlq"-keyed "Rio · revisão"
     # column, so promote/descarte must be reachable from "dlq" too (twins of the

@@ -12,7 +12,7 @@ class ManualRecordInput(BaseModel):
 
     ``origem`` and ``validação humana`` are fixed at 100 by the domain (not
     accepted here) — a manual record is human-authoritative by construction. The
-    remaining §7.6 criteria default to sensible manual values but may be overridden.
+    remaining reliability criteria default to sensible manual values but may be overridden.
     """
 
     entity_type: Literal["destination", "attraction"] = Field(
@@ -27,11 +27,11 @@ class ManualRecordInput(BaseModel):
         default=None, description="Extra canonical fields to merge (name/uf are filled in)."
     )
     completude_value: float = Field(
-        default=100.0, ge=0.0, le=100.0, description="§7.6 completude (default 100 for manual)."
+        default=100.0, ge=0.0, le=100.0, description="completude (default 100 for manual)."
     )
     corroboracao_value: float = Field(
-        default=0.0, ge=0.0, le=100.0, description="§7.6 corroboração (default 0)."
+        default=0.0, ge=0.0, le=100.0, description="corroboração (default 0)."
     )
     atualidade_value: float = Field(
-        default=100.0, ge=0.0, le=100.0, description="§7.6 atualidade (default 100 for manual)."
+        default=100.0, ge=0.0, le=100.0, description="atualidade (default 100 for manual)."
     )

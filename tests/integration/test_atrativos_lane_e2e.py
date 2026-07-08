@@ -554,7 +554,7 @@ def test_sc2_discovery_skips_absent_parent_destino(db_session: Session) -> None:
 
 @pytest.mark.integration
 def test_sc3_signal_agent_hard_descarte_closed_place(db_session: Session) -> None:
-    """SC-3: SignalAgent → CLOSED_PERMANENTLY → hard descarte before §7.6 scoring.
+    """SC-3: SignalAgent → CLOSED_PERMANENTLY → hard descarte before reliability scoring.
 
     Verifies: ATR-04, D-05
 
@@ -567,7 +567,7 @@ def test_sc3_signal_agent_hard_descarte_closed_place(db_session: Session) -> Non
       - rio.routing == "descarte"
       - rio.sub_state is None (cleared by hard descarte path)
       - AuditLog row with action="hard_descarte" exists
-      - §7.6 score NOT computed (routing bypasses route_by_score)
+      - reliability score NOT computed (routing bypasses route_by_score)
     """
     uf = "BA"
     ibge = "2900702"
@@ -638,7 +638,7 @@ def test_sc4_full_pipeline_borderline_reaches_gate(db_session: Session) -> None:
     Verifies: ATR-01 (sub_state FSM D-01/D-02), ATR-03 (contacts found), ATR-04 (signals)
 
     This test exercises the full FSM path:
-      discovered → contacts_found → signals_gathered → (§7.6 score) →
+      discovered → contacts_found → signals_gathered → (reliability score) →
       routing=dlq, sub_state=None (borderline; NÃO auto-gate — manual move from DLQ)
 
     Score math (ensures borderline band score < 80):

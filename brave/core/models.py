@@ -6,7 +6,7 @@ Tables (D-01):
   - mar_records       — canonical published store
   - llm_generations   — LLM call observability (D-20)
   - audit_log         — steward + pipeline audit trail (D-21, OBS-04)
-  - poison_quarantine — Celery poison messages (separate from §7.6 DLQ)
+  - poison_quarantine — Celery poison messages (separate from reliability DLQ)
   - consent_log       — LGPD consent and opt-out log per contact (COMP-01, D-11)
 
 Key design decisions implemented here:
@@ -111,7 +111,7 @@ class RioRecord(Base):
     routing values (D-02):
       "in_progress" — being processed
       "mar"         — promoted to MarRecord (score ≥ threshold_mar)
-      "dlq"         — §7.6 review DLQ (score < threshold_mar; binary score gate)
+      "dlq"         — reliability review DLQ (score < threshold_mar; binary score gate)
       "descarte"    — rejected by a non-score path (hard-descarte for CLOSED places,
                       steward reject, dedup discard). The score engine never emits it.
 
@@ -348,15 +348,15 @@ class AuditLog(Base):
 
 
 # ---------------------------------------------------------------------------
-# PoisonQuarantine — Celery poison messages (distinct from §7.6 DLQ)
+# PoisonQuarantine — Celery poison messages (distinct from reliability DLQ)
 # ---------------------------------------------------------------------------
 
 
 class PoisonQuarantine(Base):
     """Celery tasks that failed permanently after max_retries are quarantined here.
 
-    This is DISTINCT from the §7.6 review DLQ (routing='dlq' on RioRecord):
-      - §7.6 DLQ = score gate routing; human reviews the territorial record
+    This is DISTINCT from the reliability review DLQ (routing='dlq' on RioRecord):
+      - reliability DLQ = score gate routing; human reviews the territorial record
       - PoisonQuarantine = Celery operational; engineering investigates the failure
 
     Both must be named and documented clearly to avoid confusion (see PITFALLS §6).

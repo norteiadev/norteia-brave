@@ -4,7 +4,7 @@ These lock the cost-checkpoint contract: the operator-selected *depth* (read onc
 at the /start edge in plan 10-01 and threaded down as an explicit task arg) decides
 which producers fan out and how far the pipeline flows.
 
-  nascente          — Mtur-only seed; Nascente + §7.6 score; NO Rio,
+  nascente          — Mtur-only seed; Nascente + reliability score; NO Rio,
                       NO atrativos (Places). Zero external cost.
   nascente_rio      — producers + Rio routing, but the atrativos WhatsApp-gate FSM
                       chain is NOT kicked (neither find_contacts_task.delay nor its
@@ -53,7 +53,7 @@ def test_produce_run_rio_param_default_true():
 
 @pytest.mark.parametrize("run_rio", [True, False])
 def test_produce_always_writes_nascente(run_rio):
-    """store_raw (Nascente + §7.6 *_value fields) is written regardless of run_rio."""
+    """store_raw (Nascente + reliability *_value fields) is written regardless of run_rio."""
     fake_mtur = FakeMturClient(
         fixtures=[
             {"ibge_code": "2927408", "name": "Porto Seguro", "categoria": "Oferta Principal", "uf": "BA"},
@@ -71,7 +71,7 @@ def test_produce_always_writes_nascente(run_rio):
 
     # Nascente always written, once per municipality.
     assert mock_store.call_count == 2
-    # §7.6 origem_value=100 always present in payload (free Nascente score inputs).
+    # origem_value=100 always present in payload (free Nascente score inputs).
     payload = mock_store.call_args.kwargs["payload"]
     assert payload["origem_value"] == 100.0
     assert "completude_value" in payload

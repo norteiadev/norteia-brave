@@ -80,7 +80,7 @@ class TripAdvisorDestinosIngest:
     Args:
         ta_client:    TripAdvisorClientProtocol implementation (real or fake).
         session:      SQLAlchemy synchronous Session.
-        config:       ScoreConfig with §7.6 weights and thresholds.
+        config:       ScoreConfig with reliability weights and thresholds.
         ibge_records: Pre-loaded IBGE municipality records (from load_ibge_csv).
     """
 
@@ -186,7 +186,7 @@ class TripAdvisorDestinosIngest:
             most_recent_review_at=most_recent_dt,
         )
 
-        # Compute §7.6 criterion values
+        # Compute reliability criterion values
         corroboracao_value = corroboracao_from_reviews(review_count, rating)
         atualidade_value = atualidade_from_recency(most_recent_dt)
         completude_value = completude_from_fields(entity, cap=80)  # destino cap=80
@@ -252,7 +252,7 @@ class TripAdvisorDestinosIngest:
             "lat": payload_model.lat,
             "lng": payload_model.lng,
             "municipio_id": ibge_match.ibge_code,
-            # §7.6 criterion *_value fields — routing.py reads these at normalize step
+            # reliability criterion *_value fields — routing.py reads these at normalize step
             "origem_value": payload_model.origem_value,
             "completude_value": payload_model.completude_value,
             "corroboracao_value": payload_model.corroboracao_value,

@@ -12,7 +12,7 @@ Test suite covers must_haves from 03-02-PLAN.md (post Phase E — Apify/IG sourc
 
 Corroboração note (Phase E): the Apify IG signal was removed. SignalAgent now writes a
 deterministic corroboracao_value=0.0 (documented constant) — no Places field feeds it —
-which matches the prior offline (Null) behaviour and keeps §7.6 routing stable.
+which matches the prior offline (Null) behaviour and keeps reliability routing stable.
 
 D-18 boundary: no import from brave.lanes.destinos.
 """
@@ -201,7 +201,7 @@ async def test_signal_agent_writes_corroboracao_constant_zero() -> None:
 
     Post Phase E the Apify/IG corroboration source is retired: no Places field feeds
     corroboração, so the lane must write the documented 0.0 constant regardless of any
-    stale prior value. It then hands off to route_by_score (the §7.6 routing path).
+    stale prior value. It then hands off to route_by_score (the reliability routing path).
     """
     from brave.lanes.atrativos.signal_agent import SignalAgent
 
@@ -230,7 +230,7 @@ async def test_signal_agent_writes_corroboracao_constant_zero() -> None:
     assert rio.normalized["corroboracao_value"] == 0.0
     # Routing path still runs after signals are gathered.
     assert rio.sub_state == "signals_gathered"
-    assert mock_route.called, "route_by_score must be invoked (the §7.6 routing path)"
+    assert mock_route.called, "route_by_score must be invoked (the reliability routing path)"
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +250,7 @@ def _open_fixture(reviews: list[dict]) -> dict:
 
 @pytest.mark.asyncio
 async def test_signal_agent_with_recent_reviews_is_scored() -> None:
-    """Phase F: a review within 90 days is NOT stale → proceeds to §7.6 scoring.
+    """Phase F: a review within 90 days is NOT stale → proceeds to reliability scoring.
 
     The no-recent-reviews rule must NOT fire; the record advances to
     signals_gathered, route_by_score runs, and most_recent_review_at is persisted.

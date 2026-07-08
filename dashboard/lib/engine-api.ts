@@ -27,7 +27,7 @@ export type EngineState = "idle" | "running" | "stopping";
 /**
  * Pipeline depth — the operator-chosen cost checkpoint for a sweep run.
  * Values are identical to the backend contract (brave/core/engine.py):
- *   nascente          — ingest + §7.6 score only (free, Mtur seed only)
+ *   nascente          — ingest + reliability score only (free, Mtur seed only)
  *   nascente_rio      — + Places + LLM validation up to Rio routing (paid)
  *   nascente_rio_mar  — full pipeline incl. the idempotent Mar push
  */

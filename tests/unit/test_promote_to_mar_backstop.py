@@ -164,5 +164,5 @@ def test_promote_excludes_internal_keys_from_canonical() -> None:
     assert result is not None
     assert "most_recent_review_at" not in result.canonical
     assert "contact" not in result.canonical
-    assert "atualidade_value" not in result.canonical  # §7.6 criterion still excluded
+    assert "atualidade_value" not in result.canonical  # reliability criterion still excluded
     assert result.canonical["name"] == "Praia X"

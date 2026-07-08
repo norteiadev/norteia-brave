@@ -75,7 +75,7 @@ def test_quarantine_poison_creates_row(db_session):
 def test_poison_quarantine_not_dlq(db_session):
     """Poison quarantine row does NOT set routing='dlq' on RioRecord.
 
-    The §7.6 DLQ (routing='dlq') and Celery poison quarantine are distinct.
+    The reliability DLQ (routing='dlq') and Celery poison quarantine are distinct.
     Poison → PoisonQuarantine table; DLQ → RioRecord.routing='dlq'.
     """
     from brave.tasks.pipeline import quarantine_poison
@@ -101,5 +101,5 @@ def test_poison_quarantine_not_dlq(db_session):
     )
     assert len(rio_records) == 0, (
         "Poison quarantine must NOT create a routing='dlq' RioRecord. "
-        "Use PoisonQuarantine table for Celery failures; DLQ is for §7.6 score routing."
+        "Use PoisonQuarantine table for Celery failures; DLQ is for reliability score routing."
     )

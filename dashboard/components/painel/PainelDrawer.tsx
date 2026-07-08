@@ -55,7 +55,7 @@ const STAGE_LABELS: Record<string, string> = {
   validated: "Validado",
   ingested: "Ingerido (Nascente)",
   deduped: "Duplicado",
-  scored: "Pontuado (§7.6)",
+  scored: "Pontuado (confiabilidade)",
   routed: "Roteado",
   quarantined: "Quarentena (falha)",
 };
@@ -270,7 +270,7 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
               <Field label="Fonte" testid="drawer-field-source">
                 {card?.source ?? "—"}
               </Field>
-              <Field label="Score §7.6" testid="drawer-field-score" mono>
+              <Field label="Score de confiabilidade" testid="drawer-field-score" mono>
                 {card?.score != null ? card.score.toFixed(1) : "—"}
               </Field>
             </div>

@@ -1,4 +1,4 @@
-"""Tests for the §7.6 score distribution simulation harness.
+"""Tests for the reliability score distribution simulation harness.
 
 All tests run fully offline.
 """

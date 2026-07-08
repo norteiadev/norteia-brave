@@ -79,7 +79,7 @@ def test_boost_capped_at_100() -> None:
 
 
 def test_harness_boost_does_not_touch_settings() -> None:
-    """Guard: ScoreConfig §7.6 weights and thresholds are unchanged by this plan.
+    """Guard: ScoreConfig reliability weights and thresholds are unchanged by this plan.
 
     If any of these assertions fail, plan 07-06 accidentally changed brave/config/settings.py.
     This test must pass BOTH before and after applying the harness changes — the harness
@@ -87,7 +87,7 @@ def test_harness_boost_does_not_touch_settings() -> None:
     """
     config = ScoreConfig()
 
-    # §7.6 calibrated weights (must sum to 100)
+    # reliability calibrated weights (must sum to 100)
     assert config.weight_origem == 30.0, (
         f"weight_origem changed: expected 30.0, got {config.weight_origem}"
     )
@@ -118,5 +118,5 @@ def test_harness_boost_does_not_touch_settings() -> None:
         + config.weight_validacao_humana
     )
     assert total_weight == 100.0, (
-        f"§7.6 weights no longer sum to 100: got {total_weight}"
+        f"reliability weights no longer sum to 100: got {total_weight}"
     )

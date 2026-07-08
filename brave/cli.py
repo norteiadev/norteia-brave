@@ -148,8 +148,8 @@ def _run_sweep(uf: str, lane: str = "both") -> None:
     synchronous inline `.run(uf)` when no broker is reachable (mirrors the
     swallow-all dispatch-then-inline pattern in dlq.py:104-114). This only kicks
     the SAME producer/chain tasks the beat drives — it does NOT auto-validate, does
-    NOT bypass the §7.6 gate, and never reaches the WhatsApp send path (D-02/D-07):
-      - destinos  → sweep_uf            (producer-only; records land via §7.6)
+    NOT bypass the reliability gate, and never reaches the WhatsApp send path (D-02/D-07):
+      - destinos  → sweep_uf            (producer-only; records land via reliability scoring)
       - atrativos → discover_atrativo_task (auto-chains, STOPS at the WhatsApp gate)
 
     The inline path runs the real task, which calls _get_session() and needs

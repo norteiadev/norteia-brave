@@ -83,7 +83,7 @@ export interface AtrativoDetail extends AtrativoListItem {
   source: string | null;
   /** ISO timestamp the record was last processed, else null. */
   processed_at: string | null;
-  /** §7.6 score-engine version tag, else null. */
+  /** reliability score-engine version tag, else null. */
   score_version: string | null;
 }
 

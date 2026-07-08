@@ -3,18 +3,18 @@
 
 **norteia-brave — Pipeline Brave (Collector)**
 
-`norteia-brave` is a standalone Python service that **is** the Norteia **Pipeline Brave** — a 24/7 data-collection and reliability-scoring engine that populates Norteia's territorial base (every Brazilian state, from a cold "carga inicial" start). It ingests raw territorial data from many sources, cleans/dedups/normalizes/scores it (framework §7.6), and only publishes high-confidence canonical records ("Mar", ≥85%) to the consuming `norteia-api` (Laravel). It ships with a Next.js operations dashboard that is the **territorial CMS**: Brave monitor, DLQ human-review queue, WhatsApp gate, funnels, and cost/LLM observability.
+`norteia-brave` is a standalone Python service that **is** the Norteia **Pipeline Brave** — a 24/7 data-collection and reliability-scoring engine that populates Norteia's territorial base (every Brazilian state, from a cold "carga inicial" start). It ingests raw territorial data from many sources, cleans/dedups/normalizes/scores it (reliability framework), and only publishes high-confidence canonical records ("Mar", ≥85%) to the consuming `norteia-api` (Laravel). It ships with a Next.js operations dashboard that is the **territorial CMS**: Brave monitor, DLQ human-review queue, WhatsApp gate, funnels, and cost/LLM observability.
 
 This milestone delivers the **entity-agnostic Brave core** plus its **first two collection lanes: Destinos (destinations) and Atrativos (attractions)**.
 
-**Core Value:** Only **validated, reliability-scored canonical records reach the platform** — the Brave pipeline (Nascente → Rio → Mar) with §7.6 scoring and a DLQ gate is the single thing that must work. Everything downstream (UI, AI assistants) depends on Mar being trustworthy.
+**Core Value:** Only **validated, reliability-scored canonical records reach the platform** — the Brave pipeline (Nascente → Rio → Mar) with reliability scoring and a DLQ gate is the single thing that must work. Everything downstream (UI, AI assistants) depends on Mar being trustworthy.
 
 ### Constraints
 
 - **Tech stack (collector)**: Python — FastAPI · Celery+Redis · LangGraph · Pydantic+`instructor` · PostgreSQL (JSONB Nascente, pgvector for dedup). The CLAUDE.md "PHP fixed" lock governs only norteia-api, not this repo.
 - **Tech stack (dashboard)**: Next.js + Bun (Node 22), Bearer-header auth, Vitest + MSW.
 - **Execution**: continuous 24/7 service covering all BR states.
-- **Gating**: §7.6 score + DLQ is the canonical gate — not human-approve-everything.
+- **Gating**: reliability score + DLQ is the canonical gate — not human-approve-everything.
 - **Testing**: no test hits Places/OTA/Apify/WhatsApp/OpenRouter/Anthropic/Mtur/norteia-api by default; real = opt-in flag; CI runs without keys. Logic lives in code (Brave core, score engine, desmembramento, conversation); n8n is thin transport. Contract with norteia-api verified via Pact.
 - **Compliance**: LGPD, WhatsApp BSP (templates/24h window/opt-out), Meta ToS (no automated DM), Google Places ToS (persist place_id, canonical = first-party validated), OTA partner approval, source-scraping legal risk documented per source.
 <!-- GSD:project-end -->
@@ -44,7 +44,7 @@ This milestone delivers the **entity-agnostic Brave core** plus its **first two 
 | **psycopg** (v3) | 3.3.x | Postgres driver | Always. Use psycopg **3** (not psycopg2) — async support + better connection handling. Pair with `pgvector` Python adapter for vector types. |
 | **SQLAlchemy** | 2.0.x | ORM / Core for Brave state tables | Always. 2.0 typed API. Use Core or ORM; pgvector integrates via `pgvector.sqlalchemy`. |
 | **Alembic** | 1.18.x | DB migrations | Always — schema for Nascente/Rio/Mar/DLQ + `llm_generations` + audit. |
-| **pydantic-settings** | 2.14.x | 12-factor config (slugs, weights, keys, flags) | Always — centralizes the pinned DeepSeek slug, calibrable §7.6 weights, and the test opt-in flags. |
+| **pydantic-settings** | 2.14.x | 12-factor config (slugs, weights, keys, flags) | Always — centralizes the pinned DeepSeek slug, calibrable reliability weights, and the test opt-in flags. |
 | **celery-redbeat** | 2.3.x | Redis-backed Celery beat scheduler | Use instead of default file-based beat. Lets you run multiple beat-capable workers safely and store schedule in Redis (no single-point file). |
 | **flower** | 2.0.x | Celery monitoring UI | Dev/ops visibility into queues/workers (complements your own Brave metrics). |
 | **tenacity** | 9.1.x | Retry/backoff for external clients | Wrap Places/Apify/OTA/OpenRouter clients (429/5xx). Pairs with circuit-breaking around the cost guard. |

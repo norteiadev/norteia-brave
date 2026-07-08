@@ -798,8 +798,8 @@ def sweep_uf(self, uf: str, depth: str | None = None) -> None:
     full path.
 
     Producer-only (D-02): the producer calls store_raw + process_nascente_record
-    internally, so records land in DLQ/Mar/descarte by §7.6 automatically. This task
-    adds NO scoring/validation branch — promotion to Mar stays behind §7.6 + the human
+    internally, so records land in DLQ/Mar/descarte by reliability scoring automatically. This task
+    adds NO scoring/validation branch — promotion to Mar stays behind reliability scoring + the human
     DLQ steward gate.
 
     Idempotency: store_raw dedups by (source, source_ref, content_hash) (D-01), so a
@@ -824,7 +824,7 @@ def sweep_uf(self, uf: str, depth: str | None = None) -> None:
 
         try:
             # Mtur seed re-ingest (idempotent — store_raw dedups by content_hash).
-            # run_rio=False under nascente: Nascente + §7.6 score only, no Rio.
+            # run_rio=False under nascente: Nascente + reliability score only, no Rio.
             # redis lets the producer honor a mid-run Motor Pausado/Desligado
             # (engine.should_halt_producer) instead of inserting the whole UF.
             import redis as _seed_redis_lib  # noqa: PLC0415
@@ -909,7 +909,7 @@ def sweep_tripadvisor(
     exist in Rio (run Mtur seed sweep first). TA-destinos (TripAdvisorDestinosIngest) is
     not wired here — no destinos QID has been captured; deferred until QID is discovered.
 
-    Depth gate: depth=NASCENTE → run_rio=False (Nascente + §7.6 score only, no Rio validation).
+    Depth gate: depth=NASCENTE → run_rio=False (Nascente + reliability score only, no Rio validation).
     depth=None (legacy/direct call) defaults to the full pipeline path.
 
     Client selection: NullTripAdvisorClient unless AppConfig().run_real_externals
@@ -1114,7 +1114,7 @@ def sweep_tripadvisor(
             ta_config=ta_config,
         )
         # Per-UF path enriches review recency (fetch_recent_review per card) so
-        # atualidade lifts the §7.6 score. The bulk_national branch above leaves
+        # atualidade lifts the reliability score. The bulk_national branch above leaves
         # enrichment OFF (no per-card review calls at 10k scale).
         # redis=_prod_rc lets the per-UF producer honor a mid-run Motor Pausado/
         # Desligado (engine.should_halt_producer) — otherwise the fanned-out producer
@@ -1320,7 +1320,7 @@ def gather_signals_task(self, rio_id: str) -> None:
 
     After SignalAgent.run():
       - CLOSED_* places → routing=descarte, sub_state=None
-      - Open places → §7.6 scored; borderline → sub_state=aguardando_consulta_whatsapp
+      - Open places → reliability scored; borderline → sub_state=aguardando_consulta_whatsapp
 
     Idempotency guard: SignalAgent.run() short-circuits if sub_state != "contacts_found".
 

@@ -5,7 +5,7 @@ ORCH-03 / ORCH-04, D-05, security (T-05-07/T-05-09).
 The endpoint is the D-05 nice-to-have manual fan-out surface. It MUST be
 Bearer-guarded so an unauthenticated caller cannot fan out expensive LLM/Places
 sweeps (T-05-07). It only kicks the existing producer/chain tasks — it never
-auto-validates, never bypasses the §7.6 gate, and never reaches the WhatsApp send
+auto-validates, never bypasses the reliability gate, and never reaches the WhatsApp send
 path (T-05-09).
 
 These tests are 100% offline / keyless (D-06 / ORCH-04):

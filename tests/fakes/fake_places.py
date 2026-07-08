@@ -113,7 +113,7 @@ SIGNAL_FIXTURE_CLOSED: dict[str, Any] = {
 }
 """Closed-place fixture for SignalAgent tests.
 
-business_status=CLOSED_PERMANENTLY → hard descarte before §7.6 scoring (D-05).
+business_status=CLOSED_PERMANENTLY → hard descarte before reliability scoring (D-05).
 Use to test that SignalAgent sets routing=descarte and sub_state=None
 without calling route_by_score.
 """

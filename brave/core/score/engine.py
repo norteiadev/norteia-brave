@@ -1,10 +1,10 @@
-"""§7.6 pure score engine (D-12).
+"""Reliability pure score engine (D-12).
 
 PURE FUNCTION: compute_score has zero I/O.
 This file must NEVER import SQLAlchemy, httpx, redis, aiohttp, or any I/O library.
 Verified by grep check in CI: grep -n "sqlalchemy|httpx|redis|aiohttp|Session" this_file
 
-The score formula weights five criteria (§7.6):
+The score formula weights five criteria (reliability):
   origem:           30%
   completude:       20%
   corroboração:     20%
@@ -23,7 +23,7 @@ from brave.core.score.schemas import ScoreBreakdown, ScoreInput, ScoreResult
 
 
 def compute_score(inp: ScoreInput, config: ScoreConfig) -> ScoreResult:
-    """Compute a §7.6 reliability score for a normalized record.
+    """Compute a reliability score for a normalized record.
 
     Pure function — no I/O, no side effects, no global state mutation.
     Can be called synchronously inside a Celery task or directly in a test

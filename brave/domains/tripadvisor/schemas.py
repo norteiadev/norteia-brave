@@ -69,7 +69,7 @@ class TripAdvisorDestinoPayload(BaseModel):
         default_factory=TripAdvisorReviewSignals,
         description="Aggregate review signals (LGPD-safe)",
     )
-    # §7.6 scoring criterion values
+    # reliability scoring criterion values
     origem_value: float = Field(default=65.0, ge=0.0, le=100.0)
     completude_value: float = Field(default=0.0, ge=0.0, le=100.0)
     corroboracao_value: float = Field(default=0.0, ge=0.0, le=100.0)
@@ -100,7 +100,7 @@ class TripAdvisorAtrativoPayload(BaseModel):
         default_factory=TripAdvisorReviewSignals,
         description="Aggregate review signals (LGPD-safe)",
     )
-    # §7.6 scoring criterion values
+    # reliability scoring criterion values
     origem_value: float = Field(default=65.0, ge=0.0, le=100.0)
     completude_value: float = Field(default=0.0, ge=0.0, le=100.0)
     corroboracao_value: float = Field(default=0.0, ge=0.0, le=100.0)

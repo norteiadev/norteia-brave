@@ -21,7 +21,7 @@ checklist (proxy setup, scraper dep group, LGPD acknowledgement).
 NO WHATSAPP OUTREACH: TA attractions NEVER enter the WhatsApp outreach pipeline.
 They are review-signal validated only (corroboracao + atualidade from aggregate
 review data). Promotion to Mar requires a human steward's audited transition
-through the §7.6 gate — there is no automated Mar push path for this lane.
+through the reliability gate — there is no automated Mar push path for this lane.
 
 Mirrors TripAdvisorDestinosIngest in structure. Adds parent destino linkage:
   - parent_rio_id: from destino_rio_map (dict[ibge_code, (rio_id, source_ref)])
@@ -102,7 +102,7 @@ class TripAdvisorAtrativosIngest:
     Args:
         ta_client:       TripAdvisorClientProtocol implementation (real or fake).
         session:         SQLAlchemy synchronous Session.
-        config:          ScoreConfig with §7.6 weights and thresholds.
+        config:          ScoreConfig with reliability weights and thresholds.
         ibge_records:    Pre-loaded IBGE municipality records (from load_ibge_csv).
         destino_rio_map: Optional mapping from ibge_code → (rio_id, source_ref) for
                          destinos produced in the same sweep. None or empty dict is
@@ -160,7 +160,7 @@ class TripAdvisorAtrativosIngest:
             run_rio:        When True, trigger process_nascente_record after store_raw.
             enrich_reviews: When True, each card with a numeric locationId triggers ONE
                             ``fetch_recent_review`` call so ``most_recent_review_at`` is
-                            populated and atualidade lifts the §7.6 score (per-UF path).
+                            populated and atualidade lifts the reliability score (per-UF path).
                             Off (today's Nascente behavior) for bulk / Nascente-only.
         """
         # Resolve geoId for this UF, then paginate the GraphQL listing. Every page
@@ -305,7 +305,7 @@ class TripAdvisorAtrativosIngest:
         When ``enrich_reviews`` is True and the card carries a numeric locationId,
         one ``fetch_recent_review`` call fills ``most_recent_review_at`` (LGPD-aggregate
         only: totalCount + newest publishedDate + rating) so ``atualidade_from_recency``
-        lifts the §7.6 score; ``review_count``/``rating`` are overridden from that
+        lifts the reliability score; ``review_count``/``rating`` are overridden from that
         precise container when present. Off → today's behavior (recency None).
         """
         location_id = str(entity.get("locationId", ""))
@@ -383,7 +383,7 @@ class TripAdvisorAtrativosIngest:
             }
         )
 
-        # Compute §7.6 criterion values
+        # Compute reliability criterion values
         corroboracao_value = corroboracao_from_reviews(review_count, rating)
         atualidade_value = atualidade_from_recency(most_recent_dt)
 
@@ -583,7 +583,7 @@ class TripAdvisorAtrativosIngest:
             "lat": payload_model.lat,
             "lng": payload_model.lng,
             "municipio_id": ibge_match.ibge_code,
-            # §7.6 criterion *_value fields
+            # reliability criterion *_value fields
             "origem_value": payload_model.origem_value,
             "completude_value": payload_model.completude_value,
             "corroboracao_value": payload_model.corroboracao_value,
@@ -650,7 +650,7 @@ class TripAdvisorAtrativosIngest:
         (``resolve_municipio_national``). The parent-destino gate of
         ``_ingest_one`` (the ``parent_destino_absent`` quarantine) is intentionally
         DROPPED here — bulk records land in Nascente parent-less and still pass
-        §7.6 + DLQ (the canonical gate; CONTEXT A1). ``_ingest_one`` is left
+        reliability scoring + DLQ (the canonical gate; CONTEXT A1). ``_ingest_one`` is left
         byte-for-byte unchanged.
 
         A card that cannot be geocoded OR has no IBGE seat within radius is
@@ -683,7 +683,7 @@ class TripAdvisorAtrativosIngest:
             most_recent_review_at=most_recent_dt,
         )
 
-        # Compute §7.6 criterion values
+        # Compute reliability criterion values
         corroboracao_value = corroboracao_from_reviews(review_count, rating)
         atualidade_value = atualidade_from_recency(most_recent_dt)
 
@@ -773,7 +773,7 @@ class TripAdvisorAtrativosIngest:
             "lat": payload_model.lat,
             "lng": payload_model.lng,
             "municipio_id": ibge_match.ibge_code,
-            # §7.6 criterion *_value fields
+            # reliability criterion *_value fields
             "origem_value": payload_model.origem_value,
             "completude_value": payload_model.completude_value,
             "corroboracao_value": payload_model.corroboracao_value,

@@ -57,7 +57,7 @@ def test_sweep_uf_name_resolves():
 
 @pytest.mark.integration
 def test_sweep_uf_ingests_destinos(isolated_session, monkeypatch):
-    """sweep_uf("BA") creates destination RioRecords routed by §7.6 (producer-only) [D-01/D-02].
+    """sweep_uf("BA") creates destination RioRecords routed by reliability score (producer-only) [D-01/D-02].
 
     Drives the real offline path: MturClient reads the bundled CSV. Asserts the Mtur
     seed produced destination Rio rows for BA (origem=100).
@@ -81,7 +81,7 @@ def test_sweep_uf_ingests_destinos(isolated_session, monkeypatch):
     # Producer-only: no auto-validation — validacao_humana stays 0 (D-02).
     for rio in rios:
         assert rio.routing in ("mar", "dlq"), (
-            f"unexpected routing {rio.routing!r} — §7.6 routes, sweep adds no branch"
+            f"unexpected routing {rio.routing!r} — reliability score routes, sweep adds no branch"
         )
 
 

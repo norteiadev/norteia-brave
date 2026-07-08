@@ -7,7 +7,7 @@ Requires:
   BRAVE_DB_URL=postgresql+psycopg://brave:brave@localhost:5432/norteia_brave
   (docker-compose up -d)
 
-Score math verification (§7.6 weights: origem 30%, completude 20%,
+Score math verification (reliability weights: origem 30%, completude 20%,
 corroboracao 20%, atualidade 15%, validacao_humana 15%):
 
   High-score (→ mar):

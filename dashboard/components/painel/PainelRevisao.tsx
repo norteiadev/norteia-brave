@@ -92,7 +92,7 @@ export function PainelRevisao() {
   return (
     <div className="h-full overflow-y-auto px-[22px] pb-7 pt-5">
       {/* DLQ queue */}
-      <Section title="Fila DLQ" subtitle="Registros abaixo do limiar §7.6" count={dlqRows.length}>
+      <Section title="Fila DLQ" subtitle="Registros abaixo do limiar de confiabilidade" count={dlqRows.length}>
         {dlqRows.length === 0 ? (
           <Empty testId="revisao-dlq-empty" text="Nenhum registro na DLQ." />
         ) : (

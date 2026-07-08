@@ -77,7 +77,7 @@ class MturDomain:
         }
 
     def score_input(self, payload: Mapping[str, Any]) -> ScoreInput:
-        """Map a Nascente payload / Rio normalized dict onto the §7.6 ScoreInput."""
+        """Map a Nascente payload / Rio normalized dict onto the ScoreInput."""
         return build_score_input(payload)
 
     def sweep_plan(

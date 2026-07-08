@@ -1,7 +1,7 @@
 """Scaffold smoke tests — verify import correctness and attribute expectations.
 
 These tests prove:
-1. brave.config.settings imports and ScoreConfig() yields exact §7.6 defaults
+1. brave.config.settings imports and ScoreConfig() yields exact reliability defaults
 2. brave.core.models imports and table names match spec
 3. brave.clients.base imports and the core Protocol interfaces are defined
 4. Layer boundary: NascenteRecord has no 'routing' column; RioRecord has 'routing'
@@ -15,7 +15,7 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# 1. ScoreConfig — §7.6 defaults
+# 1. ScoreConfig — reliability defaults
 # ---------------------------------------------------------------------------
 
 

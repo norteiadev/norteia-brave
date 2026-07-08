@@ -574,7 +574,7 @@ def transition_destino(
         rio.routing = "dlq"
         rio.dlq_reason = "steward_sent_to_review"
     elif edge == "reprocess":
-        # Reopen: reset → re-score (§7.6). Reuses the routing helper, no new machinery.
+        # Reopen: reset → re-score (reliability). Reuses the routing helper, no new machinery.
         from brave.config.runtime import load_effective_config
         from brave.core.rio.routing import reprocess_record
 

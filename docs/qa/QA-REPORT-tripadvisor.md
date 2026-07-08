@@ -40,6 +40,6 @@ best-effort scrape; worth a spot-check if the ratio grows on a full run.
 
 ## Net
 The TripAdvisor lane works end-to-end against live TripAdvisor with an operator-injected
-session: inject → canary → real paginated sweep → §7.6 scoring → DLQ → manual WhatsApp move →
+session: inject → canary → real paginated sweep → reliability scoring → DLQ → manual WhatsApp move →
 worker LLM discovery. No new painel/backend bugs surfaced. The only "findings" are the
 by-design single-source DLQ scoring (TA1) and two INFO items (test-method, data variance).

@@ -36,7 +36,7 @@ _VALID = {IDLE, RUNNING, STOPPING}
 # Pipeline depth = how far a run reaches (the cost-checkpoint contract, shared
 # verbatim with the dashboard TS layer). Orthogonal to `lane` (which entity
 # families run). Depth is the spend gate:
-#   nascente         — ingest + §7.6 score only. Free (no Places, no LLM).
+#   nascente         — ingest + reliability score only. Free (no Places, no LLM).
 #   nascente_rio     — + Places/LLM validation up to Rio routing (paid).
 #   nascente_rio_mar — full pipeline incl. the idempotent norteia-api Mar push.
 NASCENTE = "nascente"

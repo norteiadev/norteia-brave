@@ -7,7 +7,7 @@ Two endpoints over the ``config_settings`` overlay (brave.config.runtime):
 
 The effective config is the env-bootstrapped :class:`AppConfig` overlaid with every
 ``config_settings`` row (brave.config.runtime.load_effective_config). GET returns that
-snapshot with secrets redacted. PATCH validates the requested changes (§7.6 weight-sum
+snapshot with secrets redacted. PATCH validates the requested changes (reliability weight-sum
 == 100 whenever any weight is touched; thresholds ∈ [0, 100]; known keys only), upserts
 the rows, writes an audit trail row, commits, then busts the Redis snapshot cache so the
 next read recomputes the overlay.
@@ -44,7 +44,7 @@ router = APIRouter()
 # Settable-key contract (mirrors brave.config.runtime overlay keys)
 # ---------------------------------------------------------------------------
 
-# The five §7.6 weight keys (dotted → ScoreConfig attribute). These must sum to 100.
+# The five reliability weight keys (dotted → ScoreConfig attribute). These must sum to 100.
 _WEIGHT_KEYS: dict[str, str] = {
     "score.weight_origem": "weight_origem",
     "score.weight_completude": "weight_completude",
@@ -119,7 +119,7 @@ def _validate_updates(db: Session, updates: dict[str, Any]) -> None:
       - ``source.<name>.enabled`` must be a bool;
       - whenever ANY weight is touched, the RESULTING weight set (the update merged
         over the current effective config) must sum to 100 — a single-weight edit that
-        breaks the §7.6 invariant is rejected.
+        breaks the reliability invariant is rejected.
     """
     if not isinstance(updates, dict) or not updates:
         raise HTTPException(
@@ -162,7 +162,7 @@ def _validate_updates(db: Session, updates: dict[str, Any]) -> None:
                 status_code=422, detail=f"unknown or non-settable config key: {key!r}"
             )
 
-    # §7.6 weight-sum invariant: only enforced when a weight is actually touched.
+    # reliability weight-sum invariant: only enforced when a weight is actually touched.
     touched_weights = [k for k in updates if k in _WEIGHT_KEYS]
     if touched_weights:
         current = load_effective_config(db)  # no redis → always the live DB overlay

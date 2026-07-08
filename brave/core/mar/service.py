@@ -64,7 +64,7 @@ def promote_to_mar(
     Idempotent: If a MarRecord with the same source_ref already exists,
     update reliability_score and supersede the old row (D-03, D-15).
 
-    Provenance carries full per-criterion §7.6 breakdown (D-06).
+    Provenance carries full per-criterion reliability breakdown (D-06).
 
     Attraction recency BACKSTOP (Phase F): a belt-and-suspenders guard behind the
     SignalAgent no-recent-reviews rule. If an ATTRACTION reaches promotion but its
@@ -97,7 +97,7 @@ def promote_to_mar(
 
     # Build canonical payload from normalized record. most_recent_review_at and
     # contact (Phase F) are internal/board-only fields — exclude them alongside the
-    # five §7.6 *_value criteria so the norteia-api Mar push shape stays byte-identical.
+    # five reliability *_value criteria so the norteia-api Mar push shape stays byte-identical.
     canonical: dict[str, Any] = {
         k: v for k, v in normalized.items()
         if k not in ("origem_value", "completude_value", "corroboracao_value",

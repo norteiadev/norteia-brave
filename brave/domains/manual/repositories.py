@@ -19,7 +19,7 @@ from brave.core.models import NascenteRecord
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-# Fixed §7.6 inputs for a hand-entered record: authoritative + human-validated.
+# Fixed reliability inputs for a hand-entered record: authoritative + human-validated.
 MANUAL_ORIGEM_VALUE = 100.0
 MANUAL_VALIDACAO_HUMANA_VALUE = 100.0
 
@@ -76,7 +76,7 @@ class ManualRepository:
             "name": name,
             "uf": uf_up,
             "entity_type": entity_type,
-            # §7.6 criterion *_value fields (read by the Rio normalizer/route)
+            # reliability criterion *_value fields (read by the Rio normalizer/route)
             "origem_value": MANUAL_ORIGEM_VALUE,
             "completude_value": completude_value,
             "corroboracao_value": corroboracao_value,
