@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { BR_UFS, type TypeFilter } from "@/lib/painel-data";
 
@@ -38,9 +38,22 @@ export function PainelFilters({
 }: PainelFiltersProps) {
   const [open, setOpen] = useState(false);
   const ufLabel = uf ?? "Todas";
+  const ufRef = useRef<HTMLDivElement>(null);
+
+  // Close the UF popover on any click outside it (anywhere on the page).
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (ufRef.current && !ufRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
 
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className="flex items-center gap-3">
       <div className="flex items-center gap-2.5">
         <span className="text-[11px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted)]">
           Mostrar
@@ -74,7 +87,7 @@ export function PainelFilters({
         </div>
       </div>
 
-      <div className="relative">
+      <div className="relative" ref={ufRef}>
         <button
           type="button"
           data-testid="filter-uf-trigger"
@@ -88,7 +101,7 @@ export function PainelFilters({
         </button>
 
         {open ? (
-          <div className="absolute right-0 top-10 z-40 w-[248px] rounded-[11px] border border-[var(--painel-border-outer)] bg-[var(--card)] p-3 shadow-lg">
+          <div className="absolute left-0 top-10 z-40 w-[248px] rounded-[11px] border border-[var(--painel-border-outer)] bg-[var(--card)] p-3 shadow-lg">
             <div className="mb-2.5 flex items-center justify-between">
               <span className="text-[11px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted)]">
                 Acompanhar por UF
