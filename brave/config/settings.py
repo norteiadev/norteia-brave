@@ -1,7 +1,7 @@
 """Pydantic-settings configuration hierarchy for norteia-brave.
 
 Three root config classes (D-10, D-12):
-  - ScoreConfig        — §7.6 weights and thresholds (env_prefix BRAVE_SCORE_)
+  - ScoreConfig        — reliability weights and thresholds (env_prefix BRAVE_SCORE_)
   - LLMConfig          — LLM provider slugs and budget (env_prefix BRAVE_LLM_)
   - DBConfig           — database and Redis URLs (env_prefix BRAVE_DB_)
   - WhatsAppConfig     — WhatsApp BSP (Twilio) config (env_prefix BRAVE_WA_)
@@ -20,9 +20,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ScoreConfig(BaseSettings):
-    """§7.6 scoring weights and the single Mar routing threshold.
+    """Reliability scoring weights and the single Mar routing threshold.
 
-    All weight fields default to the §7.6 calibration values.
+    All weight fields default to the reliability calibration values.
     Routing is binary: score >= threshold_mar → "mar", else → "dlq"
     (no descarte band). threshold_mar is a tunable knob — treat as a starting
     point and calibrate on the first state before national fan-out

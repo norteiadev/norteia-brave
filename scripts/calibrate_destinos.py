@@ -2,7 +2,7 @@
 
 Purpose
 -------
-This script answers the Phase 2 calibration question: with the default §7.6 weights
+This script answers the Phase 2 calibration question: with the default reliability weights
 and the three Destinos producers (Mtur, NotebookLM, DesmembramentoAgent), where do
 cold-start records land — Mar, DLQ, or descarte?
 

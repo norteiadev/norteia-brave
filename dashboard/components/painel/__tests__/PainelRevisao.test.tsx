@@ -40,6 +40,11 @@ describe("PainelRevisao", () => {
     const dlqRows = await findAllByTestId("revisao-dlq-row");
     expect(dlqRows).toHaveLength(sampleListItems.length);
 
+    // Regression: the Entidade column names the record (público-geo), not just
+    // "destination"/"attraction" — an empty name left operators unable to tell
+    // which record was failing.
+    expect(dlqRows[0]).toHaveTextContent(sampleListItems[0].name as string);
+
     const gateRows = await findAllByTestId("revisao-gate-row");
     expect(gateRows).toHaveLength(sampleGateItems.length);
 

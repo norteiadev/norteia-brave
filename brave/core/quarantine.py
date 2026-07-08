@@ -24,9 +24,9 @@ def quarantine_poison(
 ) -> PoisonQuarantine:
     """Insert a PoisonQuarantine row for a permanently failed task.
 
-    This is DISTINCT from the §7.6 review DLQ (routing='dlq' on RioRecord).
+    This is DISTINCT from the reliability review DLQ (routing='dlq' on RioRecord).
     PoisonQuarantine = operational failure (Celery task failure or malformed LLM output).
-    §7.6 DLQ = score gate routing for human review.
+    reliability DLQ = score gate routing for human review.
 
     Used by:
       - brave/tasks/pipeline.py (Celery task failures, re-exported via re-import)

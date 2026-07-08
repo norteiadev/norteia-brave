@@ -196,7 +196,7 @@ describe("PainelDrawer", () => {
     expect(steps).toHaveLength(7);
     // PT-BR stage labels (not raw slugs).
     expect(steps[0]).toHaveTextContent("Sincronizado do TripAdvisor");
-    expect(steps.some((s) => s.textContent?.includes("Pontuado (§7.6)"))).toBe(
+    expect(steps.some((s) => s.textContent?.includes("Pontuado (confiabilidade)"))).toBe(
       true,
     );
     expect(steps.some((s) => s.textContent?.includes("Roteado"))).toBe(true);

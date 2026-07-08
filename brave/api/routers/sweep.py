@@ -8,7 +8,7 @@ is the required one). It MUST be Bearer-guarded so an unauthenticated caller
 cannot fan out expensive LLM/Places sweeps (T-05-07). It only kicks the existing
 producer/chain tasks — sweep_uf (producer-only) and discover_atrativo_task (which
 auto-chains and STOPS at the WhatsApp gate). It never auto-validates, never
-bypasses the §7.6 gate, and never reaches the WhatsApp send path (T-05-09, D-02/D-07).
+bypasses the reliability gate, and never reaches the WhatsApp send path (T-05-09, D-02/D-07).
 
 Dispatch uses the prod-vs-offline fallback variant (mirrors atrativos_gate.py:376-396):
 swallow the broker error ONLY when run_real_externals is False (offline tests/dev,
@@ -68,7 +68,7 @@ def trigger_sweep(
     Bearer-guarded (require_steward_or_bearer) so an unauthenticated caller cannot
     fan out expensive LLM/Places sweeps (T-05-07). Returns 202 Accepted.
 
-    - lane=destinos  → sweep_uf (producer-only; records land via §7.6 / DLQ).
+    - lane=destinos  → sweep_uf (producer-only; records land via reliability scoring / DLQ).
     - lane=atrativos → discover_atrativo_task (auto-chains, STOPS at the gate).
     - lane=both      → both (default).
 

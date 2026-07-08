@@ -93,14 +93,14 @@ class AtrativoResult(BaseModel):
     origem_value: float = Field(
         default=60.0,
         description=(
-            "Valor do critério origem §7.6 para este atrativo (padrão 60.0 para "
+            "Valor do critério origem para este atrativo (padrão 60.0 para "
             "Google Places — fonte autoritativa mas não oficial gov)."
         ),
     )
     completude_value: float = Field(
         default=0.0,
         description=(
-            "Valor do critério completude §7.6 (0–100), calculado a partir da cobertura "
+            "Valor do critério completude (0–100), calculado a partir da cobertura "
             "de campos obrigatórios: nome, coordenadas, telefone/WhatsApp, horários, tipo."
         ),
     )
@@ -148,7 +148,7 @@ class SignalResult(BaseModel):
     """Operating signal data gathered by SignalAgent.
 
     business_status: CLOSED_PERMANENTLY or CLOSED_TEMPORARILY triggers hard
-    descarte before §7.6 scoring (D-05). Corroboração is a fixed 0.0 constant
+    descarte before reliability scoring (D-05). Corroboração is a fixed 0.0 constant
     (the Apify IG social-signal source was retired in Phase E); it never fails the record.
     """
 
@@ -170,7 +170,7 @@ class SignalResult(BaseModel):
     atualidade_value: float = Field(
         default=0.0,
         description=(
-            "Valor do critério atualidade §7.6 (0–100). 100 se reviews recentes "
+            "Valor do critério atualidade (0–100). 100 se reviews recentes "
             "(≤30 dias); 50 se 1–6 meses; 0 se sem reviews recentes."
         ),
     )

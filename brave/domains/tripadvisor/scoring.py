@@ -1,4 +1,4 @@
-"""TripAdvisor §7.6 scoring helpers (TA-04).
+"""TripAdvisor reliability scoring helpers (TA-04).
 
 Pure functions — no I/O, no SQLAlchemy, no external dependencies except math.
 Feeds the existing compute_score() via *_value payload keys in the Nascente payload.
@@ -8,7 +8,7 @@ Calibration spec (CONTEXT.md TA-04):
   atualidade_from_recency(150 days) = 70.0 (≤180d step)
   completude_from_fields checks 10 TA-specific fields
 
-Scoring proof (§7.6 weights — see brave/core/score/engine.py):
+Scoring proof (reliability weights — see brave/core/score/engine.py):
   Typical: origin=65 + completude=100 + corroboracao≈85.25 + atualidade=70 + val=0
   = 65×0.30 + 100×0.20 + 85.25×0.20 + 70×0.15 + 0×0.15 ≈ 67.05 → dlq (< 85)
   Sparse:  origin=65 + completude=40 + corroboracao=0 + atualidade=0 + val=0
@@ -37,7 +37,7 @@ def corroboracao_from_reviews(count: int, rating: float) -> float:
     Uses a log1p curve that saturates at ~500 reviews, returning values in [0, 100].
     Rating is stored and accepted as a parameter for forward compatibility (e.g., future
     quality-gating), but the primary calibration uses the log curve directly so that
-    the §7.6 proof values hold:
+    the reliability proof values hold:
 
         corroboracao_from_reviews(200, 4.5) ≈ 85.25
 

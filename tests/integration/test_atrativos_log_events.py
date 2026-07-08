@@ -252,3 +252,59 @@ async def test_ibge_unmatched_emits_single_terminal_and_surfaces_in_failure_endp
     assert "ibge_unmatched" in (quarantined_steps[0]["message"] or "")
     assert body["identity"]["name"] == unresolvable_name
     assert body["identity"]["uf"] == "ES"
+
+
+# ---------------------------------------------------------------------------
+# 3. A DLQ-routed record must NOT leak into the Falha column
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_dlq_routed_record_absent_from_failure_cards(
+    db_session: Session,
+) -> None:
+    """A below-threshold record routes to DLQ (routed/fail event) but is NOT a Falha.
+
+    Regression: GET /api/v1/failures/cards previously grouped ALL status='fail'
+    events, so the `routed` fail event every DLQ record emits made it double-appear
+    in the Falha column (177 phantom cards over 170 records, name-less). The endpoint
+    must surface ONLY terminal quarantine failures — the DLQ record belongs to the
+    review queue, not Falha.
+    """
+    from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+    location_id = 800_000 + uuid.uuid4().int % 90_000
+    source_ref = f"tripadvisor:attraction:{location_id}"
+
+    ingest = TripAdvisorAtrativosIngest(
+        ta_client=MagicMock(),
+        session=db_session,
+        config=_make_config(),  # threshold_mar=85 → this card scores below it → DLQ
+        ibge_records=[_IBGE_UBERLANDIA],
+        destino_rio_map={},
+    )
+    await ingest._ingest_one("MG", _card(location_id, "Uberlândia"), run_rio=True)
+    db_session.commit()
+
+    # Precondition: the record DID route to DLQ and emitted a routed/fail event —
+    # exactly the event that leaked into Falha before the fix.
+    routed = db_session.scalars(
+        select(RecordEvent).where(
+            RecordEvent.source_ref == source_ref,
+            RecordEvent.stage == "routed",
+        )
+    ).all()
+    assert len(routed) == 1 and routed[0].status == "fail", (
+        f"expected a DLQ routed/fail event; got {[(e.stage, e.status) for e in routed]}"
+    )
+
+    from brave.api.main import app  # noqa: PLC0415
+
+    os.environ["BRAVE_DASHBOARD_BEARER_TOKEN"] = _BEARER_TOKEN
+    client = TestClient(app, raise_server_exceptions=False)
+    r_cards = client.get("/api/v1/failures/cards", headers=_BEARER_HEADERS)
+    assert r_cards.status_code == 200, f"{r_cards.status_code}: {r_cards.text}"
+    refs = {c["source_ref"] for c in r_cards.json()}
+    assert source_ref not in refs, (
+        "a DLQ-routed record must not appear in the Falha column (failures/cards)"
+    )

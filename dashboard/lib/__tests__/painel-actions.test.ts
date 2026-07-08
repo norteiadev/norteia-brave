@@ -60,6 +60,11 @@ const ATRATIVO_ALLOWED = new Set([
   "dlq>rio",
   "rio>mar",
   "rio>descarte",
+  // Rio/DLQ column merge: atrativos rest in the "dlq"-keyed "Rio · revisão"
+  // column, so promote/descarte drags are keyed from "dlq" (twin of the server
+  // _ATRATIVO_ALLOWED_EDGES additions).
+  "dlq>mar",
+  "dlq>descarte",
 ]);
 
 describe("mapDrop — full-pipeline allow-list (server twin, no invented edges)", () => {

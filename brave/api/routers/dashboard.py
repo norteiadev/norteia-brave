@@ -6,7 +6,7 @@ endpoint is Bearer-guarded (require_bearer, D-02) and performs no pipeline logic
 it only reads existing medallion + observability tables.
 
 Endpoints:
-  GET /api/v1/dlq/{rio_id} — full DLQ detail (DASH-01): the per-criterion §7.6
+  GET /api/v1/dlq/{rio_id} — full DLQ detail (DASH-01): the per-criterion reliability
       score_breakdown + Rio normalized + Nascente raw payload + signals + the
       per-record WhatsApp/steward event log. The existing GET /api/v1/dlq list
       (dlq.py) deliberately omits these heavier fields; this surfaces them.
@@ -70,7 +70,7 @@ def _extract_signals(
 def get_dlq_detail(rio_id: uuid.UUID, db: Session = Depends(get_db)) -> dict:
     """Return the full DLQ detail for a single Rio record (DASH-01, D-01).
 
-    Surfaces what the list endpoint omits: the §7.6 per-criterion score_breakdown
+    Surfaces what the list endpoint omits: the reliability per-criterion score_breakdown
     (the explainability panel source), the Rio normalized view, the joined raw
     Nascente payload, the extracted signals, and the per-record WhatsApp/steward
     event log (AuditLog rows for this rio_id, oldest-first).
@@ -102,7 +102,7 @@ def get_dlq_detail(rio_id: uuid.UUID, db: Session = Depends(get_db)) -> dict:
         "dlq_reason": rio.dlq_reason,
         "score": float(rio.score) if rio.score is not None else None,
         "score_version": rio.score_version,
-        # §7.6 per-criterion breakdown — the DASH-01 explainability panel source.
+        # reliability per-criterion breakdown — the DASH-01 explainability panel source.
         "score_breakdown": rio.score_breakdown or {},
         "normalized": rio.normalized or {},
         "nascente_payload": nascente_payload,

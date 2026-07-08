@@ -1,7 +1,7 @@
 # TripAdvisor — Coleta de dados de Atrativos
 
 > Como o `norteia-brave` coleta atrativos (attractions) do TripAdvisor: aquisição de
-> sessão, transportes de fetch, parsing, geo-enriquecimento, scoring §7.6 e ingestão
+> sessão, transportes de fetch, parsing, geo-enriquecimento, scoring de confiabilidade e ingestão
 > em Nascente. Extraído do código real em `brave/domains/tripadvisor/` e
 > `brave/tasks/pipeline.py`.
 
@@ -148,7 +148,7 @@ guardar campos present-but-null (ex. `bubbleRating=null`).
      `state_name_to_uf` deriva a UF; `countryId != 294280` (não-Brasil) → descartado.
   - Sem match → quarentena `ibge_unmatched` (nunca dropado silenciosamente).
 
-## 4. Scoring §7.6 (`scoring.py`)
+## 4. Scoring de confiabilidade (`scoring.py`)
 
 Cada critério vira uma chave `*_value` no payload Nascente, consumida por `compute_score()`.
 
@@ -186,7 +186,7 @@ Valida via `TripAdvisorAtrativoPayload` (LGPD enforcement no parse), depois `sto
 source_ref="tripadvisor:attraction:{location_id}", entity_type="attraction", uf, payload)`.
 Payload inclui `*_value`, `review_count`/`rating`, `category`, `municipio_id`, e o sub-dict
 `canonical` (contrato norteia-api). Idempotência: `store_raw` dedup por `(source, source_ref,
-content_hash)`. Se `run_rio=True`, dispara `process_nascente_record` (Rio → §7.6 → Mar/DLQ).
+content_hash)`. Se `run_rio=True`, dispara `process_nascente_record` (Rio → score de confiabilidade → Mar/DLQ).
 
 ## 6. Orquestração — task Celery `sweep_tripadvisor`
 
@@ -199,7 +199,7 @@ sweep_tripadvisor(uf, depth=None, *, bulk_national=False,
 
 - **Client**: `NullTripAdvisorClient` a menos que `RUN_REAL_EXTERNALS=True` (opt-in). Real usa
   `TripAdvisorClient` + `NominatimGeocoderClient`, broker Redis (`BRAVE_DB_REDIS_URL`).
-- **Depth gate**: `depth="nascente"` → `run_rio=False` (só Nascente+§7.6, sem Rio).
+- **Depth gate**: `depth="nascente"` → `run_rio=False` (só Nascente + score de confiabilidade, sem Rio).
 - **`bulk_national=True`**: path DISTINTO — pagina geoId 294280 via `produce_paginated`, sem
   destinos/destino_rio_map. Lê offset de resume de `sweep_progress` (continua da página após o
   último offset completo, não da 1), seed do hash live, commit por-página, `mark_done` no fim.

@@ -179,7 +179,7 @@ class DiscoveryAgent:
         places_client: PlacesClientProtocol implementation (real or fake).
         llm_client:    LLMClientProtocol implementation (real or fake).
         session:       SQLAlchemy synchronous Session.
-        config:        ScoreConfig with §7.6 weights.
+        config:        ScoreConfig with reliability weights.
     """
 
     def __init__(
@@ -290,7 +290,7 @@ class DiscoveryAgent:
                 completude = _compute_completude(result)
 
                 payload: dict[str, Any] = {
-                    # §7.6 criterion values (read by route_by_score from normalized)
+                    # reliability criterion values (read by route_by_score from normalized)
                     "origem_value": 60.0,  # Google Places = authoritative but not official gov
                     "completude_value": completude,
                     "corroboracao_value": 0.0,

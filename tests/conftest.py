@@ -5,7 +5,7 @@ Fixtures:
   - db_session      — synchronous session (integration tests)
   - fake_redis      — fakeredis.FakeRedis for unit tests (no container required)
   - app_config      — AppConfig loaded from environment
-  - score_config    — ScoreConfig with default §7.6 weights
+  - score_config    — ScoreConfig with default reliability weights
   - db_config       — DBConfig (requires BRAVE_DB_URL env var)
 
 Integration fixtures require:
@@ -64,7 +64,7 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(scope="session")
 def score_config() -> ScoreConfig:
-    """ScoreConfig with default §7.6 weights and thresholds."""
+    """ScoreConfig with default reliability weights and thresholds."""
     return ScoreConfig()
 
 

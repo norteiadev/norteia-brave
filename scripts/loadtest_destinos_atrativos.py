@@ -163,7 +163,7 @@ def main() -> None:
                 # corroboration. Mtur single-source records have corroboracao=0; this +50 boost
                 # (capped at 100) is the same pattern as notebooklm.py:214-221. After this boost
                 # and D-06 validacao=100, score reaches >=85 → Mar. Per gap G1 decision: do NOT
-                # change global §7.6 weights or thresholds.
+                # change global reliability weights or thresholds.
                 normalized = dict(rio.normalized or {})
                 normalized["corroboracao_value"] = min(
                     100.0, float(normalized.get("corroboracao_value", 0.0)) + 50.0

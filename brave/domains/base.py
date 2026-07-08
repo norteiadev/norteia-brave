@@ -16,7 +16,7 @@ The protocol is intentionally small: ``name``/``produces`` describe the domain,
 ``discover`` is the per-UF produce entry (wraps the lane's ``produce`` — the deps
 it needs are injected as keyword-only args by the task layer), ``enrich`` returns
 a domain-shaped enrichment view of a Rio record, and ``score_input`` maps a raw
-payload/normalized dict onto the shared §7.6 :class:`ScoreInput`.
+payload/normalized dict onto the shared :class:`ScoreInput`.
 
 Orchestration is registry-driven (Phase G STEP 3): the task layer never names a
 source. Instead it resolves ``get_domain(source)`` and asks the domain how to run:
@@ -57,7 +57,7 @@ class SweepDispatch:
 
 
 def build_score_input(payload: Mapping[str, Any]) -> ScoreInput:
-    """Build a §7.6 :class:`ScoreInput` from a payload / normalized dict.
+    """Build a :class:`ScoreInput` from a payload / normalized dict.
 
     Mirrors the construction in ``brave.core.rio.routing.route_by_score`` (safe
     ``float(...)`` coercion, 0.0 default per criterion) so a domain's
@@ -65,7 +65,7 @@ def build_score_input(payload: Mapping[str, Any]) -> ScoreInput:
 
     Args:
         payload: A Nascente payload or Rio ``normalized`` dict carrying the five
-            ``*_value`` §7.6 criterion keys (missing keys default to 0.0).
+            ``*_value`` reliability criterion keys (missing keys default to 0.0).
 
     Returns:
         A validated :class:`ScoreInput` (each field clamped to 0–100 by Pydantic).
@@ -124,7 +124,7 @@ class SourceDomain(Protocol):
         ...
 
     def score_input(self, payload: Mapping[str, Any]) -> ScoreInput:
-        """Map a raw payload / normalized dict onto the shared §7.6 ScoreInput."""
+        """Map a raw payload / normalized dict onto the shared ScoreInput."""
         ...
 
     def sweep_plan(

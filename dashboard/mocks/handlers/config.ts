@@ -57,7 +57,7 @@ export function configPatchSuccess(
   });
 }
 
-/** PATCH rejected — the §7.6 weight-sum (or range/mode) 422 backstop. */
+/** PATCH rejected — the reliability weight-sum (or range/mode) 422 backstop. */
 export function configPatchError(
   status = 422,
   detail = "score weights (origem + completude + corroboracao + atualidade + validacao_humana) must sum to 100 — got 90",

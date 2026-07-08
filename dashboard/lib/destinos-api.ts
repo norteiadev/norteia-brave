@@ -24,6 +24,7 @@ export interface DestinoListItem {
   routing: string;
   score: number | null;
   name: string | null;
+  source: string | null; // Nascente origin: tripadvisor | ibge | mtur
   canonical_key: string | null;
   municipio?: string | null; // público-geo município nome (resolved at ingest)
   municipio_id?: string | null; // IBGE code

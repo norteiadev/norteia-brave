@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -43,6 +44,7 @@ const destinos: DestinoListItem[] = [
     routing: "mar",
     score: 91.2,
     name: "Copacabana",
+    source: "ibge",
     canonical_key: "rj:rio:copacabana",
     validation_pending: false,
     mar_id: "mar-1",
@@ -55,6 +57,7 @@ const destinos: DestinoListItem[] = [
     routing: "dlq",
     score: 72.4,
     name: "Pelourinho",
+    source: "ibge",
     canonical_key: "ba:salvador:pelourinho",
     validation_pending: true,
     mar_id: null,
@@ -71,6 +74,7 @@ const atrativos: AtrativoListItem[] = [
     sub_state: "discovered",
     score: null,
     name: "Mercado Modelo",
+    source: "tripadvisor",
     validation_pending: false,
     mar_id: null,
     parent_mar_id: "mar-1",
@@ -84,6 +88,7 @@ const atrativos: AtrativoListItem[] = [
     sub_state: null,
     score: 12.0,
     name: "Lugar Falso",
+    source: "tripadvisor",
     validation_pending: true,
     mar_id: null,
     parent_mar_id: null,
@@ -94,15 +99,16 @@ const atrativos: AtrativoListItem[] = [
 // --- Pure selectors (RED-first) ---
 
 describe("routingToColumn", () => {
-  it("maps known routings to their column keys (in_progress → rio; descarte → falha)", () => {
+  it("maps known routings to their column keys (in_progress → dlq; descarte → falha)", () => {
     expect(routingToColumn("mar")).toBe("mar");
     // Phase H: descarte-routed records surface in the Falha column, not a
     // (non-existent) standalone descarte column.
     expect(routingToColumn("descarte")).toBe("falha");
     expect(routingToColumn("dlq")).toBe("dlq");
-    // 6-column model: the routing value `in_progress` is the "Rio · validação"
-    // column (server twin: _ROUTING_TO_COLUMN in_progress → rio).
-    expect(routingToColumn("in_progress")).toBe("rio");
+    // 5-column model: the routing value `in_progress` folds into the merged
+    // "Rio · revisão" column keyed "dlq" (server twin: _ROUTING_TO_COLUMN
+    // in_progress → dlq).
+    expect(routingToColumn("in_progress")).toBe("dlq");
   });
 
   it("falls back to 'nascente' for unknown/empty routing", () => {
@@ -128,7 +134,7 @@ describe("toPainelCards", () => {
 
     const atr = cards.find((c) => c.id === "a-inprog")!;
     expect(atr.type).toBe("atrativo");
-    expect(atr.column).toBe("rio");
+    expect(atr.column).toBe("dlq");
     expect(atr.municipality).toBeNull();
   });
 
@@ -141,6 +147,7 @@ describe("toPainelCards", () => {
       sub_state: "aguardando_consulta_whatsapp",
       score: 70,
       name: "Elevador Lacerda",
+      source: "tripadvisor",
       validation_pending: true,
       mar_id: null,
       parent_mar_id: null,
@@ -160,6 +167,7 @@ describe("toPainelCards", () => {
       sub_state: null,
       score: 20,
       name: "Ponto Descartado",
+      source: "tripadvisor",
       validation_pending: false,
       mar_id: null,
       parent_mar_id: null,
@@ -178,6 +186,7 @@ describe("toPainelCards", () => {
       sub_state: null,
       score: 40,
       name: "Atrativo DLQ",
+      source: "tripadvisor",
       validation_pending: false,
       mar_id: null,
       parent_mar_id: null,
@@ -278,10 +287,14 @@ describe("toPainelCards", () => {
     ).toBe(true);
   });
 
-  it("sets source and error to null this slice", () => {
+  it("carries the Nascente source through to each card (error null this slice)", () => {
     const cards = toPainelCards(destinos, atrativos);
+    // Regression: rio/dlq cards used to drop source (always null), leaving
+    // TripAdvisor-synced cards with no origin shown. Source now flows from the
+    // list item (destino → ibge, atrativo → tripadvisor here).
+    expect(cards.find((c) => c.id === "d-mar")!.source).toBe("ibge");
+    expect(cards.find((c) => c.id === "a-inprog")!.source).toBe("tripadvisor");
     for (const c of cards) {
-      expect(c.source).toBeNull();
       expect(c.error).toBeNull();
     }
   });
@@ -304,56 +317,55 @@ describe("filterCards", () => {
   const cards = toPainelCards(destinos, atrativos);
 
   it("type 'all' keeps both entity types", () => {
-    expect(filterCards(cards, { type: "all", ufs: [] })).toHaveLength(4);
+    expect(filterCards(cards, { type: "all", uf: null })).toHaveLength(4);
   });
 
   it("type 'destino' / 'atrativo' filters by card.type", () => {
-    expect(filterCards(cards, { type: "destino", ufs: [] })).toHaveLength(2);
-    const atr = filterCards(cards, { type: "atrativo", ufs: [] });
+    expect(filterCards(cards, { type: "destino", uf: null })).toHaveLength(2);
+    const atr = filterCards(cards, { type: "atrativo", uf: null });
     expect(atr).toHaveLength(2);
     expect(atr.every((c) => c.type === "atrativo")).toBe(true);
   });
 
-  it("empty ufs keeps all UFs; non-empty keeps only cards whose uf ∈ ufs", () => {
-    expect(filterCards(cards, { type: "all", ufs: [] })).toHaveLength(4);
-    const ba = filterCards(cards, { type: "all", ufs: ["BA"] });
+  it("uf null keeps all UFs; a single UF keeps only cards whose uf === it", () => {
+    expect(filterCards(cards, { type: "all", uf: null })).toHaveLength(4);
+    const ba = filterCards(cards, { type: "all", uf: "BA" });
     expect(ba.every((c) => c.uf === "BA")).toBe(true);
     expect(ba).toHaveLength(2); // Pelourinho (destino) + Mercado Modelo (atrativo)
-    const baRj = filterCards(cards, { type: "all", ufs: ["BA", "RJ"] });
-    expect(baRj).toHaveLength(3);
+    // a card with uf==null (none here) would be excluded when a UF is set.
+    expect(filterCards(cards, { type: "all", uf: "RJ" })).toHaveLength(1);
   });
 });
 
 describe("buildColumns", () => {
-  it("returns the 6 ordered stage columns with cards bucketed by column", () => {
+  it("returns the 5 ordered stage columns with cards bucketed by column", () => {
     const cards = toPainelCards(destinos, atrativos);
     const cols = buildColumns(cards);
     expect(cols.map((c) => c.key)).toEqual([
       "nascente",
-      "rio",
+      "dlq",
       "whatsapp",
       "mar",
-      "dlq",
       "falha",
     ]);
     const byKey = Object.fromEntries(cols.map((c) => [c.key, c.cards.length]));
     expect(byKey.nascente).toBe(0);
-    expect(byKey.rio).toBe(1); // a-inprog (in_progress → rio)
     expect(byKey.whatsapp).toBe(0);
     expect(byKey.mar).toBe(1);
-    expect(byKey.dlq).toBe(1);
+    // Merged "Rio · revisão" column holds BOTH d-dlq (routing=dlq) AND
+    // a-inprog (routing=in_progress → dlq).
+    expect(byKey.dlq).toBe(2);
     // Phase H: a-descarte (routing=descarte) now lands in the Falha column.
     expect(byKey.falha).toBe(1);
   });
 
-  it("uses COLUMN_DEFS labels in order (6 columns)", () => {
-    expect(COLUMN_DEFS).toHaveLength(6);
+  it("uses COLUMN_DEFS labels in order (5 columns)", () => {
+    expect(COLUMN_DEFS).toHaveLength(5);
     expect(COLUMN_DEFS.map((c) => c.label)).toEqual([
       "Nascente",
-      "Rio · validação",
+      "Rio · revisão",
       "WhatsApp · contato",
       "Mar · publicado",
-      "DLQ · revisão",
       "Falha",
     ]);
   });
@@ -442,6 +454,31 @@ describe("usePainelBoard", () => {
     // nascenteCount reflects the server ENVELOPE total, not the loaded slice.
     expect(result.current.nascenteCount).toBe(5);
   });
+
+  it("pushes the selected UF to the server queries (?uf=DF)", async () => {
+    // The board's rio-backed queries must scope server-side so the WHOLE UF
+    // slice loads (not the first 500 unscoped rows). Assert each carries ?uf=DF.
+    const seen: Record<string, string | null> = {};
+    const capture = (key: string, path: string) =>
+      http.get(`http://localhost:3000/api/api/v1/${path}`, ({ request }) => {
+        seen[key] = new URL(request.url).searchParams.get("uf");
+        return HttpResponse.json({ items: [], total: 0, offset: 0, limit: 500 });
+      });
+    server.use(
+      capture("destinos", "destinos"),
+      capture("atrativos", "atrativos"),
+      capture("nascente", "nascente"),
+      failuresEmpty(),
+      dedupPairsEmpty(),
+    );
+    const { result } = renderHook(() => usePainelBoard(60_000, "DF"), {
+      wrapper: hookWrapper(),
+    });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(seen.destinos).toBe("DF");
+    expect(seen.atrativos).toBe("DF");
+    expect(seen.nascente).toBe("DF");
+  });
 });
 
 describe("usePainelMetrics", () => {
@@ -468,5 +505,21 @@ describe("usePainelMetrics", () => {
 
     // Nascente COLUMN count comes from the /nascente envelope total
     expect(result.current.nascenteCount).toBe(9);
+  });
+
+  it("scopes the count queries to the selected UF (?uf=DF)", async () => {
+    const seen = new Set<string | null>();
+    const capture = (path: string) =>
+      http.get(`http://localhost:3000/api/api/v1/${path}`, ({ request }) => {
+        seen.add(new URL(request.url).searchParams.get("uf"));
+        return HttpResponse.json({ items: [], total: 0, offset: 0, limit: 1 });
+      });
+    server.use(capture("destinos"), capture("atrativos"), capture("nascente"));
+    const { result } = renderHook(() => usePainelMetrics("DF"), {
+      wrapper: hookWrapper(),
+    });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    // Every metric fetch carried ?uf=DF — no whole-base ("null") request slipped through.
+    expect([...seen]).toEqual(["DF"]);
   });
 });

@@ -72,7 +72,7 @@ from brave.api.routers.webhook import router as webhook_router
 
 app = FastAPI(
     title="norteia-brave",
-    description="Brave pipeline: Nascente → Rio → Mar with §7.6 score gate",
+    description="Brave pipeline: Nascente → Rio → Mar with reliability score gate",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -131,7 +131,7 @@ from brave.api.routers.logs import router as logs_router  # noqa: E402
 app.include_router(logs_router)
 
 # Phase D: operator-tunable runtime config (config_settings overlay) — GET (Bearer)
-# effective snapshot + PATCH (steward) upsert with §7.6 validation + audit + cache-bust.
+# effective snapshot + PATCH (steward) upsert with reliability validation + audit + cache-bust.
 from brave.api.routers.config import router as config_router  # noqa: E402
 
 app.include_router(config_router)

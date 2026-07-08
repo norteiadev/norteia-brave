@@ -79,13 +79,13 @@ Arquivos do probe: `$CLAUDE_JOB_DIR/tmp/ta_poc_p{0,30,60}.json` (respostas cruas
 
 ---
 
-# POC (parte 2) — Coleta de dados de review para o score §7.6
+# POC (parte 2) — Coleta de dados de review para o score de confiabilidade
 
 **Status: CONFIRMADO** (probe real, locationId 312332 = Iguazu Falls, 2026-07-04).
 
 ## Onde estão os dados de review
 
-| Critério §7.6 | Fonte confirmada | Observação |
+| Critério de confiabilidade | Fonte confirmada | Observação |
 |---|---|---|
 | **corroboração** | listagem `bubbleRating.reviewCount` + `.rating` (grátis, no card) **ou** `totalCount` da query de reviews (mais preciso) | Já coletável no sweep paginado |
 | **atualidade** | query de reviews → `reviews[0].publishedDate` (ordenado mais-recente) | **1 call por atrativo** |

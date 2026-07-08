@@ -1726,7 +1726,7 @@ class TestFetchAttractionsPaginatedGql:
 
 
 # ---------------------------------------------------------------------------
-# TestFetchRecentReview — review recency (qid ef1a9f94012220d3), §7.6 + LGPD
+# TestFetchRecentReview — review recency (qid ef1a9f94012220d3), reliability + LGPD
 # ---------------------------------------------------------------------------
 
 

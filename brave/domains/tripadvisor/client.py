@@ -94,7 +94,7 @@ _DESTINATIONS_QID: str | None = None
 # REPLACES the single-page fetch_attractions AND the fragile HTML-SSR path.
 _LISTING_QID_GQL: str = "79aaeeb847e55e58"
 
-# Review-list persisted query id: powers §7.6 review recency (atualidade + precise
+# Review-list persisted query id: powers reliability review recency (atualidade + precise
 # corroboração) via fetch_recent_review. POC-confirmed live.
 _REVIEWS_QID: str = "ef1a9f94012220d3"
 
@@ -1037,7 +1037,7 @@ class TripAdvisorClient:
                 await asyncio.sleep(throttle)
 
     async def fetch_recent_review(self, location_id: int) -> dict | None:
-        """Fetch review recency for one attraction (qid ef1a9f94012220d3), §7.6.
+        """Fetch review recency for one attraction (qid ef1a9f94012220d3).
 
         Powers ``atualidade_from_recency`` (review recency lifts the score) plus a
         precise corroboração review_count/rating. The review list is sorted

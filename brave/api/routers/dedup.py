@@ -45,7 +45,7 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
-# §7.6 scoring keys excluded from the canonical allow-list (mar/service.py:46-50)
+# reliability scoring keys excluded from the canonical allow-list (mar/service.py:46-50)
 # ---------------------------------------------------------------------------
 
 _SCORING_KEYS = frozenset(
@@ -117,7 +117,7 @@ def _compute_field_diff(
 ) -> tuple[list[str], list[dict[str, Any]]]:
     """Diff a candidate's normalized payload vs the Mar's canonical payload.
 
-    Compares only the canonical allow-list keys (the §7.6 scoring *_value keys
+    Compares only the canonical allow-list keys (the reliability scoring *_value keys
     are excluded, matching mar/service.py:46-50). For each comparable key:
       - present in BOTH and equal           → matched
       - present in BOTH and unequal          → diverged ({field, candidate, mar})

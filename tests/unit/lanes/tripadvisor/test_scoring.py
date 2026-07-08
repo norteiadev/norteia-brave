@@ -1,4 +1,4 @@
-"""Tests for TripAdvisor §7.6 scoring helpers — calibration proof (TA-04).
+"""Tests for TripAdvisor reliability scoring helpers — calibration proof (TA-04).
 
 Three mandatory scoring proof tests (binary threshold_mar=80):
   1. typical → score in [66.5, 67.6] → routing=="dlq"
@@ -12,7 +12,7 @@ Calibration spec (CONTEXT.md TA-04):
   - sparse: completude=40.0 (only name+uf+locationId), atualidade=0 (no reviews), val=0
   - corroboracao_from_reviews uses log1p curve saturating at ~500 reviews
 
-Score formula (§7.6 weights): origin×0.30 + completude×0.20 + corroboracao×0.20
+Score formula (reliability weights): origin×0.30 + completude×0.20 + corroboracao×0.20
                                + atualidade×0.15 + val×0.15
 
 Typical: 65×0.30 + 100×0.20 + 85.25×0.20 + 70×0.15 + 0×0.15 ≈ 67.05 → dlq (✓ in [66.5, 67.6])
@@ -147,7 +147,7 @@ class TestCompletudFromFields:
 class TestScoringProofTests:
     """Mandatory calibration proof tests (CONTEXT.md TA-04).
 
-    These tests assert the §7.6 score formula produces values in the
+    These tests assert the reliability score formula produces values in the
     acceptance ranges under the binary threshold_mar=80 gate.
 
     Calibration math (for documentation):

@@ -1,6 +1,6 @@
 """Binary score routing — backfill descarte→dlq and drop rio_records.mar_ready.
 
-Phase B (score binary) collapses the §7.6 score engine to a two-way gate:
+Phase B (score binary) collapses the reliability score engine to a two-way gate:
 score >= threshold_mar → "mar", else → "dlq" (no descarte band, no mar_ready
 promote-override). Two schema/data changes follow:
 

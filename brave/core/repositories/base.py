@@ -89,7 +89,7 @@ class MarRepository(Protocol):
 
 
 class DlqRepository(Protocol):
-    """Read access to the §7.6 review DLQ (routing='dlq' rows in the Rio layer)."""
+    """Read access to the reliability review DLQ (routing='dlq' rows in the Rio layer)."""
 
     def list_dlq(
         self,

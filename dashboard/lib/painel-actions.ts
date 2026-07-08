@@ -75,6 +75,12 @@ const ATRATIVO_EDGES: ReadonlySet<string> = new Set([
   "dlq>rio",
   "rio>mar",
   "rio>descarte",
+  // Rio/DLQ column merge: atrativos now sit in the "dlq"-keyed "Rio · revisão"
+  // column, so their promote/descarte drags are keyed from "dlq" (twin of the
+  // server _ATRATIVO_ALLOWED_EDGES dlq→mar / dlq→descarte). The "rio>" twins
+  // above stay for back-compat but are dead (no card reports column "rio").
+  "dlq>mar",
+  "dlq>descarte",
 ]);
 
 /**

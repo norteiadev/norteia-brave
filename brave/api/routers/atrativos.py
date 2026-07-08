@@ -9,7 +9,7 @@ Security (T-17.1-03-03):
     of the client mapDrop): any (expected, to) pair absent from it returns 409 and
     NEVER mutates; every ("mar", *) edge is absent so a live Mar record is never moved.
 
-Borderline promotion (the ("rio","mar") edge) flows through the standard §7.6 gate
+Borderline promotion (the ("rio","mar") edge) flows through the standard reliability gate
 (validate_and_promote_rio): validacao_humana=100 → re-score → promote only when the
 score crosses threshold_mar. The former mar_ready promote-override bypass was removed —
 under the binary Mar/DLQ threshold a validated attraction reaches Mar directly when it
@@ -41,8 +41,15 @@ router = APIRouter()
 _ATRATIVO_ALLOWED_EDGES: dict[tuple[str, str], str] = {
     ("rio", "dlq"): "send_to_review",      # force send-to-review
     ("dlq", "rio"): "reprocess",           # reopen / reprocess (NEW backward edge)
-    ("rio", "mar"): "promote",             # borderline promotion via the §7.6 gate
+    ("rio", "mar"): "promote",             # borderline promotion via the reliability gate
     ("rio", "descarte"): "descarte",       # descarte
+    # Rio/DLQ column merge: an atrativo at routing=in_progress OR dlq now rests in
+    # the single "Rio · revisão" column (keyed "dlq"), so its promote/descarte edges
+    # must be reachable from "dlq" too (mirrors the destino _ALLOWED_EDGES, which
+    # already carries dlq→mar / dlq→descarte). The "rio"-keyed twins above stay for
+    # back-compat but are now unreachable (no card reports column "rio").
+    ("dlq", "mar"): "promote",
+    ("dlq", "descarte"): "descarte",
     ("whatsapp", "whatsapp"): "gate_approve",  # delegate to atrativos_gate approve
 }
 
@@ -103,7 +110,7 @@ def transition_atrativo(
     before_state = {"column": body.expected, "routing": rio.routing, "sub_state": rio.sub_state}
 
     if edge == "promote":
-        # Borderline promotion flows through the standard §7.6 gate: inject
+        # Borderline promotion flows through the standard reliability gate: inject
         # validacao_humana=100 → re-score → promote only if score ≥ threshold_mar.
         # Returns None when the record does not cross the gate; it then stays put.
         validate_and_promote_rio(db, rio)
@@ -117,7 +124,7 @@ def transition_atrativo(
         rio.dlq_reason = "steward_sent_to_review"
         rio.sub_state = None
     elif edge == "reprocess":
-        # Reopen: reset → re-score (§7.6). Reuses the routing helper, no new machinery.
+        # Reopen: reset → re-score (reliability). Reuses the routing helper, no new machinery.
         from brave.config.runtime import load_effective_config
         from brave.core.rio.routing import reprocess_record
 

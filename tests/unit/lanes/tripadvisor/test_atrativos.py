@@ -636,7 +636,7 @@ class TestAtrativosGeoFallback:
 #
 # produce() now paginates the GraphQL listing (fetch_attractions_paginated_gql,
 # replacing single-page fetch_attractions) and, under enrich_reviews=True, calls
-# fetch_recent_review per card so atualidade lifts the §7.6 score. These tests use
+# fetch_recent_review per card so atualidade lifts the reliability score. These tests use
 # a self-contained local stub client so they do NOT couple to FakeTripAdvisorClient's
 # fixture attributes.
 # ---------------------------------------------------------------------------

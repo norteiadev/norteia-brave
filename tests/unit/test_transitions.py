@@ -178,7 +178,8 @@ def test_transition_destino_rio_to_descarte_sets_routing_and_audits():
     with patch("brave.api.routers.cms.write_audit") as audit:
         result = transition_destino(
             rio_id=rio.id,
-            body=TransitionBody(to="descarte", expected="rio"),
+            # Merge: in_progress derives column "dlq" now, so expected="dlq".
+            body=TransitionBody(to="descarte", expected="dlq"),
             db=db,
         )
 
@@ -197,7 +198,8 @@ def test_transition_destino_rio_to_mar_reuses_promote_helper():
     ) as audit:
         result = transition_destino(
             rio_id=rio.id,
-            body=TransitionBody(to="mar", expected="rio"),
+            # Merge: in_progress derives column "dlq" now, so expected="dlq".
+            body=TransitionBody(to="mar", expected="dlq"),
             db=db,
         )
 
@@ -244,8 +246,13 @@ from brave.api.routers.atrativos import (  # noqa: E402
 ATRATIVO_ALLOWED = {
     ("rio", "dlq"),       # force send-to-review
     ("dlq", "rio"),       # reprocess / reopen (NEW)
-    ("rio", "mar"),       # borderline promotion via the §7.6 gate
+    ("rio", "mar"),       # borderline promotion via the reliability gate
     ("rio", "descarte"),  # descarte
+    # Rio/DLQ column merge: atrativos now rest in the "dlq"-keyed "Rio · revisão"
+    # column, so promote/descarte must be reachable from "dlq" too (twins of the
+    # now-dead "rio" edges above; mirrors the destino contract).
+    ("dlq", "mar"),       # promotion from the merged Rio column
+    ("dlq", "descarte"),  # descarte from the merged Rio column
     ("whatsapp", "whatsapp"),  # into-whatsapp: delegate to the audited gate approve
 }
 
@@ -334,7 +341,9 @@ def test_transition_atrativo_rio_to_mar_reuses_validate_and_promote():
     ) as audit:
         result = transition_atrativo(
             rio_id=rio.id,
-            body=TransitionBody(to="mar", expected="rio"),
+            # Rio/DLQ merge: an in_progress atrativo now rests in the "dlq"-keyed
+            # "Rio · revisão" column, so the promote edge is (dlq → mar).
+            body=TransitionBody(to="mar", expected="dlq"),
             db=db,
         )
 

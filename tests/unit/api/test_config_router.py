@@ -7,7 +7,7 @@ tests/unit/test_runs_write_path.py plus a few HTTP-level wiring/auth checks.
 Covers (task #5):
   - GET returns the effective snapshot (env defaults + overlay), secrets redacted;
   - PATCH overlays a value and the effective snapshot round-trips it back;
-  - §7.6 weight-sum-100 validation (422 on a single-weight edit that breaks the sum);
+  - reliability weight-sum-100 validation (422 on a single-weight edit that breaks the sum);
   - threshold bounds (422 on out-of-range) + unknown-key rejection;
   - an AuditLog row (action='config_updated', actor='steward') is written;
   - the Redis snapshot cache is busted (a poisoned pre-PATCH cache is not served after).

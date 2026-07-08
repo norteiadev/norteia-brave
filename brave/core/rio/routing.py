@@ -1,4 +1,4 @@
-"""Rio routing — §7.6 score, routing column, and pipeline orchestration (D-02, D-12, D-13).
+"""Rio routing — reliability score, routing column, and pipeline orchestration (D-02, D-12, D-13).
 
 route_by_score:          Score a RioRecord and set its routing column.
 process_nascente_record: Full Rio pipeline (dedup → normalize → label → route).
@@ -35,7 +35,7 @@ def route_by_score(
     rio_record: RioRecord,
     config: ScoreConfig,
 ) -> RioRecord:
-    """Apply §7.6 score to a RioRecord and set its routing column.
+    """Apply reliability score to a RioRecord and set its routing column.
 
     Reads scoring inputs from rio_record.normalized dict.
     Sets: routing, score, score_breakdown, score_version, processed_at.
@@ -47,7 +47,7 @@ def route_by_score(
         session:    SQLAlchemy Session (used for SELECT FOR UPDATE in production).
                     None is accepted for unit tests.
         rio_record: The RioRecord to score and route.
-        config:     ScoreConfig with §7.6 weights and thresholds.
+        config:     ScoreConfig with reliability weights and thresholds.
 
     Returns:
         The updated RioRecord (mutated in-place, also returned for chaining).
@@ -105,13 +105,13 @@ def process_nascente_record(
     2. Territorial-key-blocked pgvector fuzzy dedup
     3. Normalize names/coordinates/addresses
     4. Label with Norteia taxonomy (Phase 1 stub)
-    5. Score via §7.6 pure function
+    5. Score via reliability pure function
     6. Route to mar/dlq (binary threshold_mar gate)
 
     Args:
         session:    SQLAlchemy synchronous Session.
         nascente:   NascenteRecord to process.
-        config:     ScoreConfig with §7.6 weights.
+        config:     ScoreConfig with reliability weights.
         llm_client: LLMClientProtocol for future extraction (Phase 2). Unused in Phase 1.
 
     Returns:
@@ -249,7 +249,7 @@ def process_nascente_record(
     )
     _rio_repo.add(session, rio)
 
-    # Apply §7.6 scoring and routing
+    # Apply reliability scoring and routing
     route_by_score(session, rio, config)
     session.flush()
 
@@ -265,7 +265,7 @@ def process_nascente_record(
     )
 
     # Append-only Log-tab timeline events (behind the canonical_key early-return).
-    # LGPD: only §7.6 engineering fields (score, routing, dlq_reason, version).
+    # LGPD: only reliability engineering fields (score, routing, dlq_reason, version).
     _score = float(rio.score) if rio.score is not None else None
     record_event(
         session,
@@ -315,7 +315,7 @@ def reprocess_record(
     Args:
         session: SQLAlchemy synchronous Session.
         rio_id:  UUID of the RioRecord to reprocess.
-        config:  ScoreConfig with §7.6 weights (may differ from original score).
+        config:  ScoreConfig with reliability weights (may differ from original score).
 
     Returns:
         The updated RioRecord.
@@ -331,7 +331,7 @@ def reprocess_record(
     rio.routing = "in_progress"
     session.flush()
 
-    # Re-apply §7.6 score
+    # Re-apply reliability score
     route_by_score(session, rio, config)
     session.flush()
 
@@ -349,7 +349,7 @@ def reprocess_record_inline(
 
     Args:
         rio_record: The RioRecord to reprocess (mutated in-place).
-        config:     ScoreConfig with §7.6 weights.
+        config:     ScoreConfig with reliability weights.
 
     Returns:
         The updated RioRecord (same object, mutated).

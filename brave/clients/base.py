@@ -295,7 +295,7 @@ class TripAdvisorClientProtocol(Protocol):
         ...
 
     async def fetch_recent_review(self, location_id: int) -> dict | None:
-        """Fetch review recency for one attraction (qid ef1a9f94012220d3), §7.6.
+        """Fetch review recency for one attraction (qid ef1a9f94012220d3).
 
         Powers ``atualidade_from_recency`` plus a precise corroboração count/rating.
         Reviews are newest-first (SERVER_DETERMINED), so ``reviews[0]`` is newest.

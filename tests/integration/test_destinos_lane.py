@@ -52,7 +52,7 @@ def client():
 def _make_dlq_record(db_session: Session, uf: str = "BA", corroboracao: float = 50.0) -> RioRecord:
     """Helper: insert a RioRecord in 'dlq' routing for endpoint tests.
 
-    Sets up normalized dict with all §7.6 criterion values.
+    Sets up normalized dict with all reliability criterion values.
     With corroboracao=50 + validacao_humana=100: score will be >=85 → 'mar'.
     With corroboracao=0 + validacao_humana=100: score will be 80.0 → still 'dlq'.
     """

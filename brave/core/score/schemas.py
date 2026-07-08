@@ -1,4 +1,4 @@
-"""Pydantic schemas for the §7.6 score engine.
+"""Pydantic schemas for the reliability score engine.
 
 ScoreInput    — per-criterion input values (0-100 each)
 ScoreBreakdown — per-criterion weighted point contributions
@@ -42,7 +42,7 @@ class ScoreBreakdown(BaseModel):
 
 
 class ScoreResult(BaseModel):
-    """Result of the §7.6 pure score computation.
+    """Result of the pure reliability score computation.
 
     score         — total reliability score (0–100, rounded to 2 decimal places)
     routing       — destination: "mar" (≥ threshold_mar) or "dlq" (below it).

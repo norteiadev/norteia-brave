@@ -15,7 +15,7 @@
  *     and `score.threshold_mar` — numbers ∈ [0, 100]
  *   - `engine.mode` ∈ {LIGADO, PAUSADO, DESLIGADO}
  *
- * The weight-sum-100 §7.6 invariant is enforced BOTH client-side (so an invalid
+ * The weight-sum-100 reliability invariant is enforced BOTH client-side (so an invalid
  * edit never leaves the form) and server-side (the authoritative 422 backstop).
  */
 
@@ -36,7 +36,7 @@ export const ENGINE_MODE_LABELS: Record<EngineMode, string> = {
   DESLIGADO: "Desligado",
 };
 
-/** The five §7.6 score-weight attribute names (under the `score.` block). */
+/** The five reliability score-weight attribute names (under the `score.` block). */
 export const WEIGHT_KEYS = [
   "weight_origem",
   "weight_completude",
@@ -103,7 +103,7 @@ export function updateConfig(body: ConfigPatchBody): Promise<ConfigPatchResult> 
   });
 }
 
-/** Sum the five §7.6 weights (client twin of the server invariant). */
+/** Sum the five reliability weights (client twin of the server invariant). */
 export function weightsSum(weights: Record<WeightKey, number>): number {
   return WEIGHT_KEYS.reduce((sum, k) => sum + (Number(weights[k]) || 0), 0);
 }

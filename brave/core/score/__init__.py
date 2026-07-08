@@ -1,4 +1,4 @@
-"""§7.6 score engine — pure function, simulation harness, and schemas.
+"""Reliability score engine — pure function, simulation harness, and schemas.
 
 Exports:
   compute_score   — pure scoring function (zero I/O)

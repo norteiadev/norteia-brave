@@ -105,7 +105,7 @@ _ALLOWED_EDGES: dict[tuple[str, str], str] = {
 # record's CURRENT column is derived from its routing so a stale `expected`
 # (e.g. a record already moved out from under the operator) is rejected with 409.
 _ROUTING_TO_COLUMN: dict[str, str] = {
-    "in_progress": "rio",
+    "in_progress": "dlq",
     "mar": "mar",
     "dlq": "dlq",
     "descarte": "descarte",
@@ -280,6 +280,13 @@ def list_destinos(
             "routing": rio.routing,
             "score": float(rio.score) if rio.score is not None else None,
             "canonical_key": rio.canonical_key,
+            # Nascente source (tripadvisor|ibge|mtur) = first segment of the
+            # canonical_key (source_ref = f"{source}:..." by store_raw convention).
+            "source": (
+                rio.canonical_key.split(":", 1)[0]
+                if rio.canonical_key and ":" in rio.canonical_key
+                else None
+            ),
             "name": (rio.normalized or {}).get("name") or (
                 (mar.canonical or {}).get("name") if mar else None
             ),
@@ -567,7 +574,7 @@ def transition_destino(
         rio.routing = "dlq"
         rio.dlq_reason = "steward_sent_to_review"
     elif edge == "reprocess":
-        # Reopen: reset → re-score (§7.6). Reuses the routing helper, no new machinery.
+        # Reopen: reset → re-score (reliability). Reuses the routing helper, no new machinery.
         from brave.config.runtime import load_effective_config
         from brave.core.rio.routing import reprocess_record
 
@@ -744,6 +751,13 @@ def list_atrativos(
             "sub_state": rio.sub_state,
             "score": float(rio.score) if rio.score is not None else None,
             "name": (rio.normalized or {}).get("name"),
+            # Nascente source (tripadvisor|ibge|mtur) = first segment of the
+            # canonical_key (source_ref = f"{source}:..." by store_raw convention).
+            "source": (
+                rio.canonical_key.split(":", 1)[0]
+                if rio.canonical_key and ":" in rio.canonical_key
+                else None
+            ),
             "validation_pending": rio.sub_state == "aguardando_consulta_whatsapp",
             "whatsapp_eligible": _is_whatsapp_eligible(rio.normalized),
             "mar_id": None,  # atrativos don't have direct mar_id in normalized

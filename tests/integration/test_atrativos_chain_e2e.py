@@ -8,7 +8,7 @@ The chain (all keyed on sub_state queries, D-03):
     → produce() seeds Rio at sub_state='discovered' (finding #1, Plan 05-02 Task 1)
     → fan out find_contacts_task per discovered record
       → advances discovered → contacts_found, enqueues gather_signals_task
-        → advances contacts_found → signals_gathered, runs §7.6
+        → advances contacts_found → signals_gathered, runs reliability scoring
         → borderline (<85%) lands sub_state='aguardando_consulta_whatsapp' and STOPS
 
 What this suite asserts:

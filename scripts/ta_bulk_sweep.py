@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DEPTH",
         help=(
             "Pipeline depth (nascente|nascente_rio|nascente_rio_mar). Omit for the "
-            "full pipeline path. depth=nascente runs Nascente + §7.6 only (no Rio)."
+            "full pipeline path. depth=nascente runs Nascente + reliability scoring only (no Rio)."
         ),
     )
     parser.add_argument(

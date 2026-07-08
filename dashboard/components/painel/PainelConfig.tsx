@@ -25,7 +25,7 @@ import {
  *
  * The operator-tunable runtime surface over GET/PATCH /api/v1/config:
  *   - Fontes: per-source on/off (`source.<name>.enabled`) — toggled inline.
- *   - Pesos §7.6: the five score weights + `score.threshold_mar`. The five
+ *   - Pesos de confiabilidade: the five score weights + `score.threshold_mar`. The five
  *     weights MUST sum to 100 — enforced CLIENT-SIDE here (Salvar disabled +
  *     live sum indicator) and again server-side (the authoritative 422).
  *   - Motor: `engine.mode` ∈ LIGADO / PAUSADO / DESLIGADO.
@@ -176,9 +176,9 @@ export function PainelConfig() {
           )}
         </Card>
 
-        {/* Pesos §7.6 + threshold */}
+        {/* Pesos de confiabilidade + threshold */}
         <Card
-          title="Pesos §7.6 e limiar do Mar"
+          title="Pesos de confiabilidade e limiar do Mar"
           subtitle="Os cinco pesos devem somar 100"
         >
           <div className="flex flex-col gap-[10px]">

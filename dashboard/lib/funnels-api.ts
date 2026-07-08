@@ -31,7 +31,7 @@ export interface FunnelIngestedRow {
 
 /** One routing-stage row: a Rio working-area count per (routing, uf). */
 export interface FunnelRoutingRow {
-  /** in_progress | mar | dlq | descarte (the §7.6 routing outcome). */
+  /** in_progress | mar | dlq | descarte (the reliability routing outcome). */
   routing: string;
   uf: string;
   count: number;

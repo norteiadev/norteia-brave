@@ -6,21 +6,21 @@ import type { TypeFilter } from "@/lib/painel-data";
 
 function setup(overrides: {
   type?: TypeFilter;
-  ufs?: string[];
+  uf?: string | null;
   onTypeChange?: (t: TypeFilter) => void;
-  onUfsChange?: (ufs: string[]) => void;
+  onUfChange?: (uf: string | null) => void;
 } = {}) {
   const onTypeChange = overrides.onTypeChange ?? vi.fn();
-  const onUfsChange = overrides.onUfsChange ?? vi.fn();
+  const onUfChange = overrides.onUfChange ?? vi.fn();
   render(
     <PainelFilters
       type={overrides.type ?? "all"}
       onTypeChange={onTypeChange}
-      ufs={overrides.ufs ?? []}
-      onUfsChange={onUfsChange}
+      uf={overrides.uf ?? null}
+      onUfChange={onUfChange}
     />,
   );
-  return { onTypeChange, onUfsChange };
+  return { onTypeChange, onUfChange };
 }
 
 describe("PainelFilters — type segmented control", () => {
@@ -37,33 +37,46 @@ describe("PainelFilters — type segmented control", () => {
   });
 });
 
-describe("PainelFilters — UF-scope dropdown", () => {
+describe("PainelFilters — UF-scope dropdown (single-select)", () => {
   it("shows 'Todas' in the trigger when no UF is selected", () => {
-    setup({ ufs: [] });
+    setup({ uf: null });
     expect(screen.getByTestId("filter-uf-trigger")).toHaveTextContent("Todas");
   });
 
-  it("appends a UF on toggle from an empty scope", () => {
-    const { onUfsChange } = setup({ ufs: [] });
-
-    fireEvent.click(screen.getByTestId("filter-uf-trigger"));
-    fireEvent.click(screen.getByTestId("filter-uf-BA"));
-    expect(onUfsChange).toHaveBeenCalledWith(["BA"]);
+  it("shows the selected UF code in the trigger", () => {
+    setup({ uf: "DF" });
+    expect(screen.getByTestId("filter-uf-trigger")).toHaveTextContent("DF");
   });
 
-  it("removes a UF on toggle when already selected", () => {
-    const { onUfsChange } = setup({ ufs: ["BA", "SP"] });
+  it("selects a UF on click from an empty scope", () => {
+    const { onUfChange } = setup({ uf: null });
 
     fireEvent.click(screen.getByTestId("filter-uf-trigger"));
     fireEvent.click(screen.getByTestId("filter-uf-BA"));
-    expect(onUfsChange).toHaveBeenCalledWith(["SP"]);
+    expect(onUfChange).toHaveBeenCalledWith("BA");
+  });
+
+  it("clicking the active UF again clears the scope to null", () => {
+    const { onUfChange } = setup({ uf: "BA" });
+
+    fireEvent.click(screen.getByTestId("filter-uf-trigger"));
+    fireEvent.click(screen.getByTestId("filter-uf-BA"));
+    expect(onUfChange).toHaveBeenCalledWith(null);
+  });
+
+  it("picking a different UF replaces the current one (single-select)", () => {
+    const { onUfChange } = setup({ uf: "BA" });
+
+    fireEvent.click(screen.getByTestId("filter-uf-trigger"));
+    fireEvent.click(screen.getByTestId("filter-uf-SP"));
+    expect(onUfChange).toHaveBeenCalledWith("SP");
   });
 
   it("clears the scope via 'Todas'", () => {
-    const { onUfsChange } = setup({ ufs: ["BA"] });
+    const { onUfChange } = setup({ uf: "BA" });
 
     fireEvent.click(screen.getByTestId("filter-uf-trigger"));
     fireEvent.click(screen.getByTestId("filter-uf-clear"));
-    expect(onUfsChange).toHaveBeenCalledWith([]);
+    expect(onUfChange).toHaveBeenCalledWith(null);
   });
 });
