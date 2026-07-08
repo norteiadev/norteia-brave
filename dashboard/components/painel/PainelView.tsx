@@ -54,7 +54,7 @@ import {
 export function PainelView() {
   const qc = useQueryClient();
   const [type, setType] = useState<TypeFilter>("all");
-  const [ufs, setUfs] = useState<string[]>([]);
+  const [uf, setUf] = useState<string | null>(null);
   const [overrides, setOverrides] = useState<Record<string, PainelColumnKey>>(
     {},
   );
@@ -78,8 +78,8 @@ export function PainelView() {
   const boardIntervalMs =
     engine?.state === "running" ? 3000 : ENGINE_REFETCH_INTERVAL_MS;
 
-  const { cards, isPending, nascenteCount } = usePainelBoard(boardIntervalMs);
-  const metrics = usePainelMetrics();
+  const { cards, isPending, nascenteCount } = usePainelBoard(boardIntervalMs, uf);
+  const metrics = usePainelMetrics(uf);
 
   const actions = usePainelMutations({
     onOptimistic: (card, target) =>
@@ -132,7 +132,7 @@ export function PainelView() {
   const effective = cards.map((c) =>
     overrides[c.id] ? { ...c, column: overrides[c.id] } : c,
   );
-  const scoped = filterCards(effective, { type, ufs });
+  const scoped = filterCards(effective, { type, uf });
 
   return (
     <div data-testid="painel-view" className="flex h-full min-h-0 flex-col">
@@ -141,8 +141,8 @@ export function PainelView() {
         <PainelFilters
           type={type}
           onTypeChange={setType}
-          ufs={ufs}
-          onUfsChange={setUfs}
+          uf={uf}
+          onUfChange={setUf}
         />
         {selectedIds.size > 0 ? (
           <div

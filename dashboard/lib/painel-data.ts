@@ -47,12 +47,12 @@ import { dedupKeys, fetchDedupPairs } from "@/lib/dedup-api";
 export type PainelEntityType = "destino" | "atrativo";
 
 /**
- * Board column key. The 6 RENDERED stage columns are the ones in COLUMN_DEFS
- * (nascente, rio, whatsapp, mar, dlq, falha). A record with routing="descarte"
- * now maps to the Falha column (phase H) so discarded records are visible.
- * `descarte` is kept as a valid, NON-rendered TARGET key: it is the server
- * column name the drawer "Descartar" path (and rio/dlq→descarte edges) transition
- * to — never a standing board column.
+ * Board column key. The 5 RENDERED stage columns are the ones in COLUMN_DEFS
+ * (nascente, dlq[labeled "Rio · revisão"], whatsapp, mar, falha). A record with
+ * routing="descarte" now maps to the Falha column (phase H) so discarded records
+ * are visible. `rio` and `descarte` are kept as valid, NON-rendered TARGET keys:
+ * they are the server column names the drawer "Descartar"/reprocess paths (and
+ * dlq→rio/dlq→descarte edges) transition to — never a standing board column.
  */
 export type PainelColumnKey =
   | "nascente"
@@ -109,11 +109,10 @@ export interface PainelCard {
 
 // --- Constants ---
 
-/** The 6 ordered stage columns (copy matches the design canvas, pt-BR). */
+/** The 5 ordered stage columns (copy matches the design canvas, pt-BR). */
 export const COLUMN_DEFS: { key: PainelColumnKey; label: string }[] = [
   { key: "nascente", label: "Nascente" },
-  { key: "rio", label: "Rio · validação" },
-  { key: "dlq", label: "DLQ · revisão" },
+  { key: "dlq", label: "Rio · revisão" },
   { key: "whatsapp", label: "WhatsApp · contato" },
   { key: "mar", label: "Mar · publicado" },
   { key: "falha", label: "Falha" },
@@ -127,9 +126,10 @@ export const BR_UFS: string[] = [
 ];
 
 /** Routing value → board column. The server twin is `_ROUTING_TO_COLUMN`
- *  (brave/api/routers/cms.py): `in_progress` is the "Rio · validação" column. */
+ *  (brave/api/routers/cms.py): `in_progress` folds into the merged "Rio · revisão"
+ *  column (keyed "dlq"). */
 const ROUTING_TO_COLUMN: ReadonlyMap<string, PainelColumnKey> = new Map([
-  ["in_progress", "rio"],
+  ["in_progress", "dlq"],
   ["mar", "mar"],
   ["dlq", "dlq"],
   // Phase H: descarte-routed records surface in the Falha column (alongside
@@ -284,14 +284,22 @@ function failureToCard(f: FailureCard | FailureItem): PainelCard {
   };
 }
 
-/** Apply the type filter (Tudo/Destinos/Atrativos) and UF scope client-side. */
+/**
+ * Apply the type filter (Tudo/Destinos/Atrativos) + single UF scope client-side.
+ *
+ * UF scope is single-select (one UF or null = "Todas"). The board's rio-backed
+ * queries are ALSO UF-scoped server-side (usePainelBoard passes `uf`), so this
+ * client guard is mostly defensive there — its load-bearing job is the Falha
+ * lane, whose source (GET /failures/cards) has no server `uf` param and is
+ * fetched whole-base, so it must be narrowed to the selected UF here.
+ */
 export function filterCards(
   cards: PainelCard[],
-  { type, ufs }: { type: TypeFilter; ufs: string[] },
+  { type, uf }: { type: TypeFilter; uf: string | null },
 ): PainelCard[] {
   return cards.filter((c) => {
     if (type !== "all" && c.type !== type) return false;
-    if (ufs.length > 0 && (c.uf == null || !ufs.includes(c.uf))) return false;
+    if (uf != null && c.uf !== uf) return false;
     return true;
   });
 }
@@ -329,20 +337,25 @@ export function computeMetric(
  */
 export function usePainelBoard(
   intervalMs: number = ENGINE_REFETCH_INTERVAL_MS,
+  uf: string | null = null,
 ): {
   cards: PainelCard[];
   nascenteCount: number;
   isPending: boolean;
   isError: boolean;
 } {
+  // UF scope (single-select) is pushed to the server so the board loads the
+  // WHOLE UF slice (not the first 500 unscoped rows), and `uf` in each queryKey
+  // makes a UF change refetch. undefined ⇒ no ?uf param ⇒ whole base ("Todas").
+  const ufParam = uf ?? undefined;
   const destinosQuery = useQuery({
-    queryKey: destinoKeys.list({ board: true }),
-    queryFn: () => fetchDestinoList({ limit: 500 }),
+    queryKey: destinoKeys.list({ board: true, uf }),
+    queryFn: () => fetchDestinoList({ limit: 500, uf: ufParam }),
     refetchInterval: intervalMs,
   });
   const atrativosQuery = useQuery({
-    queryKey: atrativoKeys.list({ board: true }),
-    queryFn: () => fetchAtrativoList({ limit: 500 }),
+    queryKey: atrativoKeys.list({ board: true, uf }),
+    queryFn: () => fetchAtrativoList({ limit: 500, uf: ufParam }),
     refetchInterval: intervalMs,
   });
   // Falha column: the RecordEvent fail-timeline cards (GET /failures/cards) —
@@ -360,8 +373,8 @@ export function usePainelBoard(
   // layer. The board still builds if this is pending (?? []); nascenteCount is
   // the server ENVELOPE total (the true unrouted count for the column pill).
   const nascenteQuery = useQuery({
-    queryKey: nascenteKeys.list({ board: true }),
-    queryFn: () => fetchNascenteList({ unrouted: true, limit: 500 }),
+    queryKey: nascenteKeys.list({ board: true, uf }),
+    queryFn: () => fetchNascenteList({ unrouted: true, limit: 500, uf: ufParam }),
     refetchInterval: intervalMs,
   });
   // Dedup pairs (F3): the REAL "possível duplicado" signal — the same
@@ -407,44 +420,46 @@ export function usePainelBoard(
  * count, not loaded-array length) plus the Nascente column count from engine
  * counts. Each filtered count uses `limit: 1` to keep payloads tiny.
  *
- * Metrics reflect the WHOLE base (not UF-scoped) — the UF scope filters the
- * board only this slice.
+ * Metrics are UF-scoped when a UF is selected (pass `uf`) so the pills reflect
+ * the same slice as the board; with `uf = null` they reflect the WHOLE base.
  */
-export function usePainelMetrics(): {
+export function usePainelMetrics(uf: string | null = null): {
   destino: EntityMetric;
   atrativo: EntityMetric;
   nascenteCount: number;
   isPending: boolean;
 } {
+  // undefined ⇒ no ?uf param ⇒ whole-base totals ("Todas"); a UF ⇒ scoped counts.
+  const ufParam = uf ?? undefined;
   const destinoTotal = useQuery({
-    queryKey: destinoKeys.list({ count: "total" }),
-    queryFn: () => fetchDestinoList({ limit: 1 }),
+    queryKey: destinoKeys.list({ count: "total", uf }),
+    queryFn: () => fetchDestinoList({ limit: 1, uf: ufParam }),
     refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
   const destinoMar = useQuery({
-    queryKey: destinoKeys.list({ count: "mar" }),
-    queryFn: () => fetchDestinoList({ routing: "mar", limit: 1 }),
+    queryKey: destinoKeys.list({ count: "mar", uf }),
+    queryFn: () => fetchDestinoList({ routing: "mar", limit: 1, uf: ufParam }),
     refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
   const destinoFalha = useQuery({
-    queryKey: destinoKeys.list({ count: "descarte" }),
-    queryFn: () => fetchDestinoList({ routing: "descarte", limit: 1 }),
+    queryKey: destinoKeys.list({ count: "descarte", uf }),
+    queryFn: () => fetchDestinoList({ routing: "descarte", limit: 1, uf: ufParam }),
     refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
 
   const atrativoTotal = useQuery({
-    queryKey: atrativoKeys.list({ count: "total" }),
-    queryFn: () => fetchAtrativoList({ limit: 1 }),
+    queryKey: atrativoKeys.list({ count: "total", uf }),
+    queryFn: () => fetchAtrativoList({ limit: 1, uf: ufParam }),
     refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
   const atrativoMar = useQuery({
-    queryKey: atrativoKeys.list({ count: "mar" }),
-    queryFn: () => fetchAtrativoList({ routing: "mar", limit: 1 }),
+    queryKey: atrativoKeys.list({ count: "mar", uf }),
+    queryFn: () => fetchAtrativoList({ routing: "mar", limit: 1, uf: ufParam }),
     refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
   const atrativoFalha = useQuery({
-    queryKey: atrativoKeys.list({ count: "descarte" }),
-    queryFn: () => fetchAtrativoList({ routing: "descarte", limit: 1 }),
+    queryKey: atrativoKeys.list({ count: "descarte", uf }),
+    queryFn: () => fetchAtrativoList({ routing: "descarte", limit: 1, uf: ufParam }),
     refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
 
@@ -453,8 +468,8 @@ export function usePainelMetrics(): {
   // every record shows once in its routed column — so this pill is the true
   // server total (same aggregate semantics as the Monitor view).
   const nascenteTotal = useQuery({
-    queryKey: nascenteKeys.list({ count: "total" }),
-    queryFn: () => fetchNascenteList({ limit: 1 }),
+    queryKey: nascenteKeys.list({ count: "total", uf }),
+    queryFn: () => fetchNascenteList({ limit: 1, uf: ufParam }),
     refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
   });
 

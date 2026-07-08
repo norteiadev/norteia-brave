@@ -13,8 +13,8 @@ const TYPE_OPTIONS: { key: TypeFilter; label: string }[] = [
 export interface PainelFiltersProps {
   type: TypeFilter;
   onTypeChange: (t: TypeFilter) => void;
-  ufs: string[];
-  onUfsChange: (ufs: string[]) => void;
+  uf: string | null;
+  onUfChange: (uf: string | null) => void;
   counts?: { all: number; destino: number; atrativo: number };
 }
 
@@ -22,8 +22,9 @@ export interface PainelFiltersProps {
  * The Painel header's filter controls — a presentational, fully controlled pair:
  *   - a type segmented control (Tudo / Destinos / Atrativos) that reports the
  *     selected `TypeFilter` to the parent and marks the active button, and
- *   - a UF-scope dropdown that multi-selects from the 27 BR UFs (toggle add /
- *     remove), with a "Todas" action that clears the scope to [].
+ *   - a UF-scope dropdown that SINGLE-selects one of the 27 BR UFs (click to
+ *     pick, click again or "Todas" to clear to null) — one state at a time so
+ *     the whole board + counts scope to that UF ("acompanhar o processo por UF").
  *
  * State and data live in the container (plan 17-05); only the popover open/close
  * is local. Tokens are the scoped painel CSS vars only — no hardcoded hex.
@@ -31,12 +32,12 @@ export interface PainelFiltersProps {
 export function PainelFilters({
   type,
   onTypeChange,
-  ufs,
-  onUfsChange,
+  uf,
+  onUfChange,
   counts,
 }: PainelFiltersProps) {
   const [open, setOpen] = useState(false);
-  const ufLabel = ufs.length === 0 ? "Todas" : `${ufs.length} UF`;
+  const ufLabel = uf ?? "Todas";
 
   return (
     <div className="flex items-center justify-between gap-3">
@@ -90,46 +91,40 @@ export function PainelFilters({
           <div className="absolute right-0 top-10 z-40 w-[248px] rounded-[11px] border border-[var(--painel-border-outer)] bg-[var(--card)] p-3 shadow-lg">
             <div className="mb-2.5 flex items-center justify-between">
               <span className="text-[11px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted)]">
-                Sincronizar por UF
+                Acompanhar por UF
               </span>
               <button
                 type="button"
                 data-testid="filter-uf-clear"
-                onClick={() => onUfsChange([])}
+                onClick={() => onUfChange(null)}
                 className="text-[11.5px] font-semibold text-[var(--painel-navy)]"
               >
                 Todas
               </button>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {BR_UFS.map((uf) => {
-                const selected = ufs.includes(uf);
+              {BR_UFS.map((code) => {
+                const selected = uf === code;
                 return (
                   <button
-                    key={uf}
+                    key={code}
                     type="button"
-                    data-testid={`filter-uf-${uf}`}
+                    data-testid={`filter-uf-${code}`}
                     aria-pressed={selected}
-                    onClick={() =>
-                      onUfsChange(
-                        selected
-                          ? ufs.filter((u) => u !== uf)
-                          : [...ufs, uf],
-                      )
-                    }
+                    onClick={() => onUfChange(selected ? null : code)}
                     className={`rounded border px-1.5 py-0.5 font-mono text-[11px] transition-colors ${
                       selected
                         ? "border-[var(--painel-navy)] bg-[var(--painel-chip)] font-medium text-[var(--painel-text)]"
                         : "border-[var(--painel-border-outer)] text-[var(--painel-muted)]"
                     }`}
                   >
-                    {uf}
+                    {code}
                   </button>
                 );
               })}
             </div>
             <p className="mt-[11px] text-[11px] leading-[1.4] text-[var(--painel-muted-2)]">
-              Define o escopo da varredura do motor e filtra o quadro.
+              Escopa o quadro e as contagens a uma UF para acompanhar o processo.
             </p>
           </div>
         ) : null}
