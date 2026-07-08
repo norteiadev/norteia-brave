@@ -95,7 +95,7 @@ export function PainelFilters({
           onClick={() => setOpen((v) => !v)}
           className="flex h-8 items-center gap-2 rounded-lg border border-[var(--painel-border-outer)] bg-[var(--card)] px-3 text-[12.5px] font-medium text-[var(--painel-text)]"
         >
-          <span className="text-[var(--painel-muted)]">Escopo UF</span>
+          <span className="text-[var(--painel-muted)]">Filtrar por UF</span>
           <strong className="font-semibold">{ufLabel}</strong>
           <span className="text-[10px] text-[var(--painel-muted-2)]">▾</span>
         </button>
