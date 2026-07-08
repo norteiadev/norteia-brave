@@ -43,6 +43,13 @@ _ATRATIVO_ALLOWED_EDGES: dict[tuple[str, str], str] = {
     ("dlq", "rio"): "reprocess",           # reopen / reprocess (NEW backward edge)
     ("rio", "mar"): "promote",             # borderline promotion via the §7.6 gate
     ("rio", "descarte"): "descarte",       # descarte
+    # Rio/DLQ column merge: an atrativo at routing=in_progress OR dlq now rests in
+    # the single "Rio · revisão" column (keyed "dlq"), so its promote/descarte edges
+    # must be reachable from "dlq" too (mirrors the destino _ALLOWED_EDGES, which
+    # already carries dlq→mar / dlq→descarte). The "rio"-keyed twins above stay for
+    # back-compat but are now unreachable (no card reports column "rio").
+    ("dlq", "mar"): "promote",
+    ("dlq", "descarte"): "descarte",
     ("whatsapp", "whatsapp"): "gate_approve",  # delegate to atrativos_gate approve
 }
 

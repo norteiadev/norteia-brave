@@ -105,7 +105,7 @@ _ALLOWED_EDGES: dict[tuple[str, str], str] = {
 # record's CURRENT column is derived from its routing so a stale `expected`
 # (e.g. a record already moved out from under the operator) is rejected with 409.
 _ROUTING_TO_COLUMN: dict[str, str] = {
-    "in_progress": "rio",
+    "in_progress": "dlq",
     "mar": "mar",
     "dlq": "dlq",
     "descarte": "descarte",

@@ -40,6 +40,7 @@ function dlqAtrativo(
     sub_state: null,
     score: 42,
     name,
+    source: "tripadvisor",
     validation_pending: false,
     mar_id: null,
     parent_mar_id: null,

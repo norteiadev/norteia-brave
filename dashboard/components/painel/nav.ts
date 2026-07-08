@@ -49,7 +49,7 @@ export const NAV_GROUPS: { group: PainelNavGroup; items: PainelNavItem[] }[] = [
   {
     group: "Operação",
     items: [
-      { key: "revisao", label: "DLQ / Revisão", group: "Operação" },
+      { key: "revisao", label: "Rio / Revisão", group: "Operação" },
       { key: "conversas", label: "Conversas WhatsApp", group: "Operação" },
       { key: "custo", label: "Custo & LLM", group: "Operação" },
     ],
