@@ -60,6 +60,26 @@ _L_PAGE_RE = re.compile(r"/([^/]+?)-\d+-\d+-l\.html$")
 # <loc>…</loc> entries in the flat sitemap.xml.
 _LOC_RE = re.compile(r"<loc>\s*(.*?)\s*</loc>", re.IGNORECASE | re.DOTALL)
 
+# Article-body container classes on a guia.melhoresdestinos.com.br ``-l`` page, in
+# preference order. The editorial prose lives as ``<p>`` tags inside ``post-body``
+# (== the ``conteudo-post`` region); ``texto`` is the intro block. Matched as a
+# whitespace-delimited class token so multi-class attributes still hit.
+_ARTICLE_BODY_CLASSES: tuple[str, ...] = ("post-body", "conteudo-post", "texto")
+# <script>/<style> blocks are stripped before paragraph extraction (never prose).
+_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
+_PARAGRAPH_RE = re.compile(r"<p\b[^>]*>(.*?)</p>", re.IGNORECASE | re.DOTALL)
+_TAG_RE = re.compile(r"<[^>]+>")
+# A paragraph shorter than this is boilerplate (nav, share, captions) — dropped.
+_MIN_PARAGRAPH_CHARS: int = 40
+# Site self-promo / legal paragraphs the article container also carries (about-the-site
+# blurb, copyright, privacy). Strong brand/legal markers an attraction description would
+# never contain, so a case-insensitive substring hit safely drops the whole paragraph.
+_BOILERPLATE_RE = re.compile(
+    r"melhores destinos|copyright|pol[íi]tica de privacidade|passagens a[ée]reas"
+    r"|equipe de jornalistas|guias gr[áa]tis",
+    re.IGNORECASE,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -97,17 +117,62 @@ def _is_retryable(exc: BaseException) -> bool:
     return False
 
 
+def _clean_paragraph(raw: str) -> str:
+    """Strip tags, unescape entities, collapse whitespace for one ``<p>`` inner HTML."""
+    return re.sub(r"\s+", " ", html.unescape(_TAG_RE.sub("", raw))).strip()
+
+
+def _extract_article_body(html_text: str) -> str | None:
+    """Recover the full editorial article body (the ``<p>`` prose) from a page.
+
+    The ``og:description`` meta is a short, site-truncated social blurb (~160 chars,
+    often cut mid-sentence); the real editorial content is the ``<p>`` paragraphs
+    inside the article container (``post-body`` / ``conteudo-post``). This locates the
+    first such container, strips ``<script>``/``<style>``, collects its paragraph text
+    (dropping short fragments AND the site's about/copyright/privacy self-promo
+    paragraphs via _BOILERPLATE_RE), and joins with blank lines. Returns None when no
+    container/paragraphs are found. ONLY stdlib re — no lxml/bs4 (house style).
+    """
+    for cls in _ARTICLE_BODY_CLASSES:
+        # Match the class as a whitespace-delimited token inside the attribute so a
+        # multi-class value (e.g. class="largura_padrao conteudo-post") still matches.
+        m = re.search(
+            r'<div[^>]*\bclass="[^"]*\b' + re.escape(cls) + r'\b[^"]*"[^>]*>',
+            html_text,
+            re.IGNORECASE,
+        )
+        if m is None:
+            continue
+        # Bounded forward window from the container start (the article body is well
+        # under this; avoids walking the whole page and never over-matches into the
+        # footer's own paragraphs meaningfully once short ones are filtered).
+        window = html_text[m.start() : m.start() + 40_000]
+        window = _SCRIPT_STYLE_RE.sub("", window)
+        paras = [
+            p for p in (_clean_paragraph(raw) for raw in _PARAGRAPH_RE.findall(window))
+            if len(p) >= _MIN_PARAGRAPH_CHARS and not _BOILERPLATE_RE.search(p)
+        ]
+        if paras:
+            return "\n\n".join(paras)
+    return None
+
+
 def _extract_description(html_text: str) -> str | None:
     """Recover the editorial description from a page using ONLY stdlib re + json.
 
-    Strategy (house style — no lxml/bs4; analog: tripadvisor/client.py peels the JSON
-    island with re+json): collect candidate description strings from the JSON-LD
-    ``"description"`` fields and the ``og:description`` meta tag, HTML-unescape them,
-    and return the LONGEST (the editorial body beats the short social blurb). Returns
-    None when no usable description is present. Never raises.
+    Body-first (house style — no lxml/bs4): prefer the FULL article body (the ``<p>``
+    prose inside ``post-body``/``conteudo-post``) so the LLM rewrite sees the real
+    facts, not just the ~160-char ``og:description`` social blurb the site truncates
+    mid-sentence. Falls back to the JSON-LD ``"description"`` / ``og:description`` meta
+    (longest) only when no article body is found. Returns None when nothing usable is
+    present. Never raises.
     """
     if not html_text:
         return None
+
+    body = _extract_article_body(html_text)
+    if body:
+        return body
 
     candidates: list[str] = []
 

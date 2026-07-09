@@ -63,12 +63,15 @@ logger = structlog.get_logger(__name__)
 
 NORTEIA_VOICE_PROMPT = """Você é editor(a) de conteúdo turístico da Norteia.
 
-Reescreva a descrição abaixo do atrativo "{nome}" ({municipio}/{uf}) em português do
-Brasil, com tom acolhedor e editorial. Regras:
-- Seja fiel aos fatos do texto-fonte; NÃO invente dados ausentes (horários, preços,
-  distâncias, história) que não estejam no texto.
-- Produza um texto GENUINAMENTE ORIGINAL — não parafraseie frase a frase o original.
-- 2 a 4 frases, sem títulos, sem emojis, sem listas.
+Reescreva o texto-fonte abaixo sobre o atrativo "{nome}" ({municipio}/{uf}) em
+português do Brasil, com tom acolhedor e editorial. Regras (obrigatórias):
+- PRESERVE TODOS os fatos do texto-fonte (datas, nomes, história, motivos, tradições,
+  detalhes). Não omita fatos relevantes.
+- NÃO adicione nenhum fato que não esteja no texto-fonte — não invente datas, números,
+  história, superlativos ou significados ausentes. Apenas reescreva o que está lá.
+- Reescreva com PALAVRAS PRÓPRIAS — não copie frases literais do original.
+- Escreva em prosa corrida, sem títulos, sem emojis, sem listas. Extensão proporcional
+  ao conteúdo do texto-fonte (não infle nem resuma além do necessário).
 - Retorne APENAS a descrição final, sem comentários.
 
 Texto-fonte:

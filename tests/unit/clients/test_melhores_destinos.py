@@ -122,6 +122,50 @@ async def test_fetch_description_extracts_editorial(
     assert "Projeto Tamar" in desc  # og:description (longer) wins over the JSON-LD blurb
 
 
+ARTICLE_HTML = (
+    "<!doctype html><html><head>"
+    '<meta property="og:description" content="A Igreja começou a ser construida em 1549 e recebeu esse nome. Hoje em" />'
+    "</head><body>"
+    '<div class="largura_padrao conteudo-post">'
+    '<div class="post-body">'
+    "<p>A Igreja Nossa Senhora d'Ajuda foi construida em homenagem a chegada da imagem "
+    "trazida pelos jesuitas portugueses, e a igreja original data do seculo XVI.</p>"
+    '<p class="share">x</p>'  # short boilerplate — dropped
+    "<p>O local atrai grande numero de romeiros devido a tradicao catolica da agua "
+    "milagrosa que brota de uma fonte proxima ao templo.</p>"
+    # Site self-promo + copyright paragraphs the container also carries — must be dropped.
+    "<p>O Guia Melhores Destinos foi lancado em 2012 e e um dos sites mais completos "
+    "sobre turismo, com guias gratis produzidos pela nossa equipe de jornalistas.</p>"
+    "<p>Copyright 2008 - 2026 Guia Melhores Destinos Politica de Privacidade.</p>"
+    "</div></div></body></html>"
+)
+
+
+async def test_fetch_description_prefers_full_article_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The full article body (<p> prose) is returned, NOT the truncated og:description."""
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    from brave.clients.melhores_destinos import RealMelhoresDestinosClient
+
+    redis = fakeredis.FakeRedis()
+    with respx.mock:
+        respx.get(PRAIA_URL).mock(return_value=httpx.Response(200, text=ARTICLE_HTML))
+        client = RealMelhoresDestinosClient(config=_cfg(), redis=redis)
+        desc = await client.fetch_description(PRAIA_URL)
+
+    assert desc is not None
+    # Both real paragraphs present, joined; the short share <p> is dropped.
+    assert "jesuitas portugueses" in desc
+    assert "romeiros" in desc
+    assert "\n\n" in desc  # paragraphs joined
+    assert "Hoje em" not in desc  # did NOT fall back to the truncated og:description
+    # Site self-promo + copyright + short boilerplate paragraphs are all excluded.
+    assert "Melhores Destinos" not in desc
+    assert "Copyright" not in desc
+    assert "Politica de Privacidade" not in desc
+
+
 async def test_fetch_description_apostrophe_not_truncated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
