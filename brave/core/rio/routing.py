@@ -172,6 +172,16 @@ def process_nascente_record(
     if _municipio_id:
         normalized["municipio_id"] = _municipio_id
 
+    # Carry the editorial description (descricao_editorial) from canonical into
+    # normalized so it survives the Rio cherry-pick and flows Mar→push→drawer (the
+    # DescriptionEnrichmentAgent later overwrites it in-place with the Norteia-voice
+    # rewrite). Without this it would die in the Rio exactly like `posicionamento`
+    # does today (POC §7). Schemaless passthrough — no migration, no exclusion in
+    # promote_to_mar. On discovery it is absent → key simply not set (floor preserved).
+    _descricao = _canonical.get("descricao_editorial")
+    if _descricao:
+        normalized["descricao_editorial"] = _descricao
+
     # Attraction-specific: preserve place_id_cache so ContactFinderAgent and SignalAgent
     # can look up Place Details without repeating text_search (D-04, COMP-03).
     # This cache key is written by DiscoveryAgent into the nascente payload; copying it

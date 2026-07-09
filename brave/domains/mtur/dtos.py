@@ -104,6 +104,14 @@ class AtrativoResult(BaseModel):
             "de campos obrigatórios: nome, coordenadas, telefone/WhatsApp, horários, tipo."
         ),
     )
+    descricao_editorial: str | None = Field(
+        default=None,
+        description=(
+            "Descrição editorial curada na voz da Norteia (preenchida pelo agente de "
+            "enriquecimento pós-discovery a partir do Guia Melhores Destinos). Opcional: "
+            "na descoberta é None e o atrativo mantém o floor (posicionamento sintético)."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

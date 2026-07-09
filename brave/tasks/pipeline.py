@@ -1357,6 +1357,18 @@ def gather_signals_task(self, rio_id: str) -> None:
         asyncio.run(agent.run(rio))
         session.commit()
 
+        # ORCH-02 / D-03: continue the chain only if this record actually advanced to
+        # signals_gathered (a CLOSED / no-recent-reviews record is terminal DLQ with
+        # sub_state=None, and must NOT be enriched). Re-read after commit and dispatch
+        # enrich_description_task with the same dispatch-then-inline-fallback. Keyed on
+        # sub_state (D-03); replay-safe via the description agent's own guard (D-04).
+        session.refresh(rio)
+        if rio.sub_state == "signals_gathered":
+            try:
+                enrich_description_task.delay(str(rio_id))
+            except Exception:
+                enrich_description_task.run(str(rio_id))
+
     except PermanentError as exc:
         session.rollback()
         q_session, q_engine = _get_session()
@@ -1384,6 +1396,115 @@ def gather_signals_task(self, rio_id: str) -> None:
                     session=q_session,
                     nascente_id=None,
                     task_name="brave.gather_signals",
+                    error=str(exc),
+                    payload={"rio_id": rio_id},
+                )
+                q_session.commit()
+            finally:
+                q_session.close()
+                q_engine.dispose()
+
+    finally:
+        session.close()
+        engine.dispose()
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name="brave.enrich_description",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=300,
+)
+def enrich_description_task(self, rio_id: str) -> None:
+    """Advance one RioRecord signals_gathered → description_enriched (DescriptionEnrichmentAgent).
+
+    Fuzzy-matches the atrativo to its Guia Melhores Destinos editorial page, scrapes
+    the description, rewrites it in the Norteia voice, persists descricao_editorial,
+    and re-scores. Graceful degradation: no MD page / no text / rewrite failure keeps
+    the floor (posicionamento) and the record still advances.
+
+    Idempotency guard: DescriptionEnrichmentAgent.run() short-circuits if
+    sub_state != "signals_gathered". Client selection: real clients only when
+    run_real_externals=True (D-18).
+
+    Args:
+        rio_id: UUID string of the RioRecord to enrich.
+    """
+    from brave.core.quarantine import quarantine_poison as _quarantine
+    from brave.domains.mtur.description import DescriptionEnrichmentAgent
+
+    session, engine = _get_session()
+    try:
+        rio_uuid = uuid.UUID(rio_id)
+        rio = session.get(RioRecord, rio_uuid)
+        if rio is None:
+            raise PermanentError(f"RioRecord {rio_id} not found")
+
+        app_config = AppConfig()
+        config = load_effective_config(session).score
+        md_config = app_config.melhores_destinos
+
+        redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        import redis as redis_lib
+        redis_client = redis_lib.from_url(redis_url)
+
+        if app_config.run_real_externals:
+            from brave.clients.melhores_destinos import RealMelhoresDestinosClient
+            md_client = RealMelhoresDestinosClient(config=md_config, redis=redis_client)
+            from brave.clients.llm import RealLLMClient
+            llm_client = RealLLMClient(
+                config=app_config.llm,
+                redis_client=redis_client,
+                session=session,
+                lane="melhores_destinos",
+            )
+        else:
+            from brave.clients.null_melhores_destinos import NullMelhoresDestinosClient
+            md_client = NullMelhoresDestinosClient()
+            from brave.clients.null_llm import NullLLMClient
+            llm_client = NullLLMClient()
+
+        agent = DescriptionEnrichmentAgent(
+            md_client=md_client,
+            llm_client=llm_client,
+            session=session,
+            config=config,
+            md_config=md_config,
+        )
+
+        asyncio.run(agent.run(rio))
+        session.commit()
+
+    except PermanentError as exc:
+        session.rollback()
+        q_session, q_engine = _get_session()
+        try:
+            _quarantine(
+                session=q_session,
+                nascente_id=None,
+                task_name="brave.enrich_description",
+                error=str(exc),
+                payload={"rio_id": rio_id},
+            )
+            q_session.commit()
+        finally:
+            q_session.close()
+            q_engine.dispose()
+
+    except Exception as exc:
+        session.rollback()
+        try:
+            raise self.retry(exc=exc, max_retries=3)
+        except self.MaxRetriesExceededError:
+            q_session, q_engine = _get_session()
+            try:
+                _quarantine(
+                    session=q_session,
+                    nascente_id=None,
+                    task_name="brave.enrich_description",
                     error=str(exc),
                     payload={"rio_id": rio_id},
                 )

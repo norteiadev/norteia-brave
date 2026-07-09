@@ -158,6 +158,48 @@ def test_validate_rejects_unknown_edge() -> None:
     assert rio.sub_state == "discovered"
 
 
+# ---------------------------------------------------------------------------
+# Description-enrichment step edges (signals_gathered → description_enriched → …)
+# ---------------------------------------------------------------------------
+
+
+def test_enrichment_forward_edge_is_allowed() -> None:
+    """signals_gathered -> description_enriched (post-Signal enrichment step)."""
+    assert is_allowed_sub_state_edge("signals_gathered", "description_enriched") is True
+    assert ("signals_gathered", "description_enriched") in ATRATIVO_SUB_STATE_EDGES
+
+
+def test_enrichment_to_gate_edge_is_allowed() -> None:
+    """description_enriched -> aguardando_consulta_whatsapp."""
+    assert (
+        is_allowed_sub_state_edge("description_enriched", "aguardando_consulta_whatsapp")
+        is True
+    )
+
+
+def test_enrichment_to_dlq_edge_is_allowed() -> None:
+    """description_enriched -> None (re-score routed to dlq → bounce back)."""
+    assert is_allowed_sub_state_edge("description_enriched", None) is True
+    assert ("description_enriched", None) in ATRATIVO_SUB_STATE_EDGES
+
+
+def test_advance_applies_enrichment_forward_edge() -> None:
+    session = MagicMock()
+    rio = _rio("signals_gathered")
+
+    applied = advance_sub_state(
+        session,
+        rio,
+        expected_state="signals_gathered",
+        next_state="description_enriched",
+        lock=False,
+        validate=True,
+    )
+
+    assert applied is True
+    assert rio.sub_state == "description_enriched"
+
+
 def test_validate_false_default_preserves_generic_behavior() -> None:
     """Existing callers (validate=False) keep the historical generic FSM behaviour."""
     session = MagicMock()

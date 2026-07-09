@@ -364,6 +364,45 @@ class TripAdvisorClientProtocol(Protocol):
         ...
 
 
+class MelhoresDestinosClientProtocol(Protocol):
+    """Guia Melhores Destinos scraper — description-enrichment lane (post-Signal).
+
+    A plain GET scraper (no session/DataDome bootstrap): it fuzzy-matches an
+    atrativo to its ``guia.melhoresdestinos.com.br`` ``-l.html`` editorial page via
+    the public sitemap, then pulls the article's editorial description for the
+    Norteia-voice LLM rewrite. Consumers accept this protocol; production code uses
+    RealMelhoresDestinosClient or NullMelhoresDestinosClient (offline/CI). Both
+    methods return None on a miss so the agent degrades gracefully to the floor.
+    """
+
+    async def find_attraction_url(
+        self, nome: str, municipio: str, uf: str
+    ) -> str | None:
+        """Fuzzy-match an atrativo to its Melhores Destinos ``-l.html`` page URL.
+
+        Args:
+            nome:      Attraction name (fuzzy-matched against the page slug).
+            municipio: Municipality name (context to narrow candidates).
+            uf:        Two-letter Brazilian state code.
+
+        Returns:
+            The absolute ``-l.html`` page URL on a confident match, else None.
+        """
+        ...
+
+    async def fetch_description(self, url: str) -> str | None:
+        """Fetch and extract the editorial description from a page URL.
+
+        Args:
+            url: An absolute Melhores Destinos ``-l.html`` page URL.
+
+        Returns:
+            The cleaned editorial description text, or None when the page has no
+            usable description (or on any fetch/parse failure — never raises).
+        """
+        ...
+
+
 class GeocoderClientProtocol(Protocol):
     """OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14).
 

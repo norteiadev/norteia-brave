@@ -115,6 +115,63 @@ def test_atrativo_result_invalid_tipo_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _compute_completude degrau tests (new descricao_editorial degrau = 90)
+# ---------------------------------------------------------------------------
+
+
+def _full_atrativo(**overrides):
+    from brave.lanes.atrativos.schemas import AtrativoResult
+
+    base = {
+        "nome": "Praia do Forte",
+        "tipo": "praia",
+        "posicionamento": "Bela praia com recifes de coral na Costa dos Coqueiros",
+        "municipio_nome": "Mata de São João",
+        "municipio_ibge": "2921005",
+        "uf": "BA",
+        "place_id": "ChIJabc123",
+    }
+    base.update(overrides)
+    return AtrativoResult(**base)
+
+
+def test_completude_ceiling_without_description_is_75() -> None:
+    """All five discovery fields, no descricao_editorial → 75.0 (unchanged floor)."""
+    from brave.domains.mtur.discovery import _compute_completude
+
+    assert _compute_completude(_full_atrativo()) == 75.0
+
+
+def test_completude_new_degrau_with_description_is_90() -> None:
+    """All five fields + a curated descricao_editorial → the new 90.0 degrau."""
+    from brave.domains.mtur.discovery import _compute_completude
+
+    result = _full_atrativo(
+        descricao_editorial="Descrição editorial curada, na voz da Norteia."
+    )
+    assert _compute_completude(result) == 90.0
+
+
+def test_completude_description_below_ceiling_stays_50() -> None:
+    """Missing ibge/place_id keeps the 50 degrau even with a description (no jump)."""
+    from brave.domains.mtur.discovery import _compute_completude
+
+    from brave.lanes.atrativos.schemas import AtrativoResult
+
+    result = AtrativoResult(
+        nome="Atrativo",
+        tipo="praia",
+        posicionamento="Descrição longa o suficiente para contar",
+        municipio_nome="Lugar",
+        municipio_ibge="2921005",  # pattern requires 7 digits; keep valid
+        uf="BA",
+        place_id="",  # missing place_id → below the ceiling
+        descricao_editorial="Descrição editorial curada.",
+    )
+    assert _compute_completude(result) == 50.0
+
+
+# ---------------------------------------------------------------------------
 # ConversationExtractionResult tests
 # ---------------------------------------------------------------------------
 
