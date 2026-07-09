@@ -271,6 +271,12 @@ class TripAdvisorAtrativosIngest:
                 "uf": ibge_match.uf,
                 "municipio": ibge_match.nome,
                 "ibge_code": ibge_match.ibge_code,
+                # Reserved distrito/subdistrito keys — uniform wire shape across lanes.
+                # TA/IBGE cards carry no sub-município text → stay None (see Places lane).
+                "distrito_name": None,
+                "distrito_code": None,
+                "subdistrito_name": None,
+                "subdistrito_code": None,
             },
         }
         nascente = store_raw(
@@ -604,6 +610,12 @@ class TripAdvisorAtrativosIngest:
                 "municipio": ibge_match.nome,
                 "ibge_code": ibge_match.ibge_code,
                 "source": "tripadvisor",
+                # Reserved distrito/subdistrito keys — uniform wire shape across lanes.
+                # TA cards carry no sub-município text → stay None (see Places lane).
+                "distrito_name": None,
+                "distrito_code": None,
+                "subdistrito_name": None,
+                "subdistrito_code": None,
             },
         }
 
@@ -794,6 +806,12 @@ class TripAdvisorAtrativosIngest:
                 "municipio": ibge_match.nome,
                 "ibge_code": ibge_match.ibge_code,
                 "source": "tripadvisor",
+                # Reserved distrito/subdistrito keys — uniform wire shape across lanes.
+                # TA cards carry no sub-município text → stay None (see Places lane).
+                "distrito_name": None,
+                "distrito_code": None,
+                "subdistrito_name": None,
+                "subdistrito_code": None,
             },
         }
 

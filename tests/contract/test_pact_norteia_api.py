@@ -87,6 +87,17 @@ ATTRACTION_PAYLOAD = {
         # provider verification (precedent: ibge_code on the destination payload).
         "descricao_editorial": "Um dos maiores parques nacionais da Bahia, a Chapada "
         "Diamantina reune cachoeiras, grutas e trilhas em um cenario de serras.",
+        # Distrito/subdistrito localization (IBGE DTB 2025), resolved from the Places
+        # administrative_area_level_3 text name-matched against the município's distritos
+        # (brave.shared.ibge_distritos.resolve_distrito). Public geo-territorial fields
+        # (same class as municipio/ibge_code) — schemaless passthrough, documented on the
+        # wire so norteia-api (Laravel) ingestion can persist them. subdistrito_* are
+        # reserved keys (Google returns no admin_area_level_4) → always null for now.
+        # Cross-repo: coordinate provider verification (precedent: ibge_code / descricao_editorial).
+        "distrito_name": "Arraial D'Ajuda",
+        "distrito_code": "292530307",
+        "subdistrito_name": None,
+        "subdistrito_code": None,
     },
     "reliability_score": 90.0,
     "score_version": "v1.0",

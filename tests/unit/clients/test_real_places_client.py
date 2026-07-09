@@ -8,6 +8,7 @@ Tests:
   T3 — place_details sends x-goog-fieldmask WITHOUT 'places.' prefix + 'regularOpeningHours'
   T4 — addressComponents → municipio_nome + municipio_ibge via ibge_lookup
   T5 — review.publish_time proto Timestamp converted safely via ToDatetime()
+  T6 — addressComponents admin_area_level_3 → distrito_hint (text_search + place_details)
 """
 
 from __future__ import annotations
@@ -254,4 +255,90 @@ async def test_place_details_converts_publish_time_via_to_datetime(monkeypatch):
     # Verify ToDatetime was called with tzinfo=utc
     place_response.reviews[0].publish_time.ToDatetime.assert_called_once_with(
         tzinfo=timezone.utc
+    )
+
+
+# ---------------------------------------------------------------------------
+# T6 — addressComponents admin_area_level_3 → distrito_hint
+# ---------------------------------------------------------------------------
+
+
+def _make_distrito_component(long_text: str) -> MagicMock:
+    """A canned addressComponent carrying the distrito name (admin_area_level_3)."""
+    comp = MagicMock()
+    comp.long_text = long_text
+    comp.types = ["administrative_area_level_3", "political"]
+    return comp
+
+
+async def test_text_search_extracts_distrito_hint_from_level_3(monkeypatch):
+    """text_search results surface distrito_hint from an addressComponent whose
+    types contain 'administrative_area_level_3' (its long_text) — DTB name-match signal.
+    """
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+
+    response = _make_search_response(municipio="Porto Seguro", uf_short="BA")
+    # Splice the distrito component into the existing components list
+    response.places[0].address_components = [
+        *response.places[0].address_components,
+        _make_distrito_component("Arraial d'Ajuda"),
+    ]
+    mock_client = MagicMock()
+    mock_client.search_text = AsyncMock(return_value=response)
+
+    with patch("google.maps.places_v1.PlacesAsyncClient", return_value=mock_client):
+        from brave.clients.places import RealPlacesClient
+
+        client = RealPlacesClient(api_key="test-key")
+        client._client = mock_client
+
+        results = await client.text_search(query="igrejas", uf="BA")
+
+    assert results[0]["distrito_hint"] == "Arraial d'Ajuda", (
+        f"Expected distrito_hint 'Arraial d'Ajuda', got {results[0]['distrito_hint']!r}"
+    )
+
+
+async def test_text_search_distrito_hint_empty_without_level_3(monkeypatch):
+    """text_search yields distrito_hint == '' when no admin_area_level_3 component
+    is present (município seat with no distrito text) — keys stay null downstream.
+    """
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+
+    # Default _make_search_response has only level_2 + level_1 (no level_3)
+    mock_client = MagicMock()
+    mock_client.search_text = AsyncMock(return_value=_make_search_response())
+
+    with patch("google.maps.places_v1.PlacesAsyncClient", return_value=mock_client):
+        from brave.clients.places import RealPlacesClient
+
+        client = RealPlacesClient(api_key="test-key")
+        client._client = mock_client
+
+        results = await client.text_search(query="praias", uf="BA")
+
+    assert results[0]["distrito_hint"] == "", (
+        f"Expected empty distrito_hint, got {results[0]['distrito_hint']!r}"
+    )
+
+
+async def test_place_details_extracts_distrito_hint_from_level_3(monkeypatch):
+    """place_details surfaces distrito_hint from an admin_area_level_3 component."""
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+
+    place_response = _make_place_response()
+    place_response.address_components = [_make_distrito_component("Trancoso")]
+    mock_client = MagicMock()
+    mock_client.get_place = AsyncMock(return_value=place_response)
+
+    with patch("google.maps.places_v1.PlacesAsyncClient", return_value=mock_client):
+        from brave.clients.places import RealPlacesClient
+
+        client = RealPlacesClient(api_key="test-key")
+        client._client = mock_client
+
+        result = await client.place_details(place_id="ChIJtest001")
+
+    assert result["distrito_hint"] == "Trancoso", (
+        f"Expected distrito_hint 'Trancoso', got {result['distrito_hint']!r}"
     )

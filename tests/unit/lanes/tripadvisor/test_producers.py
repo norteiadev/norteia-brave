@@ -307,6 +307,12 @@ class TestTripAdvisorAtrativosIngest:
             "uf": "BA",
             "municipio": "Salvador",
             "ibge_code": "2927408",
+            # Reserved distrito/subdistrito keys — uniform wire shape across lanes.
+            # TA/IBGE cards carry no sub-município text → always None (see Places lane).
+            "distrito_name": None,
+            "distrito_code": None,
+            "subdistrito_name": None,
+            "subdistrito_code": None,
         }
 
     @pytest.mark.asyncio

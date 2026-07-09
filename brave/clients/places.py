@@ -99,6 +99,24 @@ def _extract_municipio_from_components(address_components: Any) -> tuple[str, st
     return municipio_nome, uf_short
 
 
+def _extract_distrito_from_components(address_components: Any) -> str:
+    """Return the distrito name (long_text) from Places API addressComponents.
+
+    Type:
+      "administrative_area_level_3" → distrito name (long_text)
+        e.g. "Arraial d'Ajuda" (distrito of município Porto Seguro/BA)
+
+    DTB has no GPS, so this NAME text is the only distrito signal Places returns.
+    Callers name-match it against the município's distritos (resolve_distrito).
+
+    Returns "" if components are missing or do not contain the expected type.
+    """
+    for comp in address_components:
+        if "administrative_area_level_3" in list(comp.types):
+            return comp.long_text
+    return ""
+
+
 def build_mtur_ibge_lookup(mtur_rows: list[dict]) -> dict[tuple[str, str], str]:
     """Build {(normalized_name, UF): ibge_code} lookup dict from all Mtur rows.
 
@@ -267,6 +285,10 @@ class RealPlacesClient:
             )
             ibge_key = (_normalize_name(municipio_nome), uf.upper())
             municipio_ibge = self._ibge_lookup.get(ibge_key, "")
+            # distrito name text (admin_area_level_3) — name-matched downstream
+            distrito_hint = _extract_distrito_from_components(
+                place.address_components or []
+            )
 
             result = {
                 "place_id": place.id,
@@ -279,6 +301,7 @@ class RealPlacesClient:
                 },
                 "municipio_nome": municipio_nome,
                 "municipio_ibge": municipio_ibge,
+                "distrito_hint": distrito_hint,
             }
             results.append(result)
 
@@ -351,6 +374,9 @@ class RealPlacesClient:
         if place.regular_opening_hours:
             weekday_text = list(place.regular_opening_hours.weekday_descriptions)
 
+        # distrito name text (admin_area_level_3) — name-matched downstream
+        distrito_hint = _extract_distrito_from_components(place.address_components or [])
+
         result = {
             "place_id": place.id,
             "name": place.display_name.text if place.display_name else "",
@@ -360,6 +386,7 @@ class RealPlacesClient:
             "business_status": place.business_status.name if place.business_status else "UNKNOWN",
             "weekday_text": weekday_text,
             "reviews": reviews,
+            "distrito_hint": distrito_hint,
         }
 
         logger.info("places_place_details_ok", place_id=place_id)

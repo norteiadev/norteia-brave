@@ -688,11 +688,24 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
             from brave.clients.null_llm import NullLLMClient
             llm_client = NullLLMClient()
 
+        # Load the IBGE DTB distrito reference (static CSV) once — threads into the
+        # discovery agent for admin_area_level_3 → distrito name-match enrichment,
+        # mirroring how ibge_records (municipios) is loaded and passed in the TA lane.
+        from brave.shared.ibge_distritos import load_distritos_csv
+        _project_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        distritos_csv_path = os.path.join(
+            _project_root, "data", "ibge", "ibge_distritos.csv"
+        )
+        distritos = load_distritos_csv(distritos_csv_path)
+
         agent = DiscoveryAgent(
             places_client=places_client,
             llm_client=llm_client,
             session=session,
             config=config,
+            distritos=distritos,
         )
 
         asyncio.run(agent.produce(uf))

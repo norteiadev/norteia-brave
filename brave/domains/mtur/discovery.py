@@ -32,9 +32,11 @@ from brave.core.quarantine import quarantine_poison
 from brave.core.rio.routing import process_nascente_record
 from brave.domains.mtur.dtos import AtrativoResult
 from brave.observability.audit import write_audit
+from brave.shared.ibge_distritos import resolve_distrito
 
 if TYPE_CHECKING:
     from brave.clients.base import LLMClientProtocol, PlacesClientProtocol
+    from brave.shared.ibge_distritos import IbgeDistrito
 
 logger = structlog.get_logger(__name__)
 
@@ -197,11 +199,43 @@ class DiscoveryAgent:
         llm_client: LLMClientProtocol,
         session: Session,
         config: ScoreConfig,
+        distritos: list[IbgeDistrito] | None = None,
     ) -> None:
         self._places_client = places_client
         self._llm_client = llm_client
         self._session = session
         self._config = config
+        # IBGE DTB distrito reference table for admin_area_level_3 name-match (loaded
+        # once at construction, mirroring ibge_records). None → distrito enrichment is a
+        # no-op and every canonical distrito_* key stays null (offline tests, TA lane).
+        self._distritos = distritos or []
+
+    def _resolve_distrito_fields(
+        self,
+        place: dict[str, Any],
+        municipio_ibge: str,
+    ) -> dict[str, Any]:
+        """Resolve the Places admin_area_level_3 hint to an IBGE distrito record.
+
+        Returns the canonical distrito keys. All keys stay ``None`` when there is no
+        reference table, no ``distrito_hint`` in the Places result, or nothing
+        name-matches within the parent município — never raises on a missing hint/match.
+        subdistrito_* are reserved but always null (DTB subdistritos carry no Places
+        signal — see plan Scope).
+        """
+        distrito_hint = place.get("distrito_hint")
+        match = (
+            resolve_distrito(distrito_hint, municipio_ibge, self._distritos)
+            if self._distritos
+            else None
+        )
+        return {
+            "distrito_name": match.nome if match else None,
+            "distrito_code": match.distrito_code if match else None,
+            "subdistrito_name": None,
+            "subdistrito_code": None,
+            "distrito_source": "places_admin_area_level_3" if match else None,
+        }
 
     async def produce(self, uf: str) -> None:
         """Sweep Google Places for attractions in a UF and write to Nascente.
@@ -316,6 +350,9 @@ class DiscoveryAgent:
                         "municipio_nome": result.municipio_nome,
                         "municipio_ibge": result.municipio_ibge,
                         "uf": result.uf,
+                        # Distrito enrichment (IBGE DTB, name-match on Places
+                        # admin_area_level_3). All null when no hint/match.
+                        **self._resolve_distrito_fields(place, municipio_ibge),
                     },
                     # Linking to parent destino in Mar
                     "parent_mar_id": str(parent_mar.id),
@@ -498,6 +535,9 @@ class DiscoveryAgent:
                         "municipio_nome": result.municipio_nome,
                         "municipio_ibge": result.municipio_ibge,
                         "uf": result.uf,
+                        # Distrito enrichment (IBGE DTB, name-match on Places
+                        # admin_area_level_3). All null when no hint/match.
+                        **self._resolve_distrito_fields(place, place_municipio_ibge),
                     },
                     # D-03 targeted: inject parent_mar_id directly — no _resolve_parent_destino
                     "parent_mar_id": str(parent_mar.id),

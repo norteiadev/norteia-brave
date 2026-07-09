@@ -182,6 +182,27 @@ def process_nascente_record(
     if _descricao:
         normalized["descricao_editorial"] = _descricao
 
+    # Carry distrito/subdistrito localization (IBGE DTB) from canonical into normalized so
+    # it survives the Rio cherry-pick and flows Mar→push→drawer. These are PUBLIC geo-
+    # territorial fields (same class as município) — NOT PII; do NOT add to any exclusion/
+    # blocklist. On discovery/TA lanes without a distrito signal they are absent → key
+    # simply not set (floor preserved), exactly like descricao_editorial above.
+    _distrito_name = _canonical.get("distrito_name")
+    if _distrito_name:
+        normalized["distrito_name"] = _distrito_name
+    _distrito_code = _canonical.get("distrito_code")
+    if _distrito_code:
+        normalized["distrito_code"] = _distrito_code
+    _subdistrito_name = _canonical.get("subdistrito_name")
+    if _subdistrito_name:
+        normalized["subdistrito_name"] = _subdistrito_name
+    _subdistrito_code = _canonical.get("subdistrito_code")
+    if _subdistrito_code:
+        normalized["subdistrito_code"] = _subdistrito_code
+    _distrito_source = _canonical.get("distrito_source")
+    if _distrito_source:
+        normalized["distrito_source"] = _distrito_source
+
     # Attraction-specific: preserve place_id_cache so ContactFinderAgent and SignalAgent
     # can look up Place Details without repeating text_search (D-04, COMP-03).
     # This cache key is written by DiscoveryAgent into the nascente payload; copying it
