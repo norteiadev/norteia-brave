@@ -81,6 +81,12 @@ ATTRACTION_PAYLOAD = {
         "name": "Chapada Diamantina",
         "uf": "BA",
         "municipio": "Lencois",
+        # Curated editorial description in the Norteia voice (DescriptionEnrichmentAgent).
+        # Schemaless in the medallion; documents the new key on the wire so the
+        # norteia-api (Laravel) ingestion can accept/persist it. Cross-repo: coordinate
+        # provider verification (precedent: ibge_code on the destination payload).
+        "descricao_editorial": "Um dos maiores parques nacionais da Bahia, a Chapada "
+        "Diamantina reune cachoeiras, grutas e trilhas em um cenario de serras.",
     },
     "reliability_score": 90.0,
     "score_version": "v1.0",

@@ -108,6 +108,21 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
   const messages = convo.data?.messages ?? [];
   const convoEmpty = convo.isError || (convo.isSuccess && messages.length === 0);
 
+  // Dados tab: fetch the full atrativo detail so the curated editorial description
+  // (descricao_editorial, produced by the DescriptionEnrichmentAgent) can be shown.
+  // It rides along in `normalized` (backend passthrough) — no new endpoint. Atrativo
+  // only; destinos have no MD description.
+  const detail = useQuery<AtrativoDetail>({
+    queryKey: ["atrativo-detail", cardId],
+    queryFn: () => fetchAtrativoDetail(cardId),
+    enabled: tab === "dados" && isOpen && card?.type === "atrativo",
+    retry: false,
+  });
+  const descricaoEditorial =
+    typeof detail.data?.normalized?.descricao_editorial === "string"
+      ? (detail.data.normalized.descricao_editorial as string)
+      : null;
+
   // Log tab source (Decision B): a Falha-column card has no Rio row, so its
   // timeline comes from the source_ref-keyed failure log; every other card reads
   // events[] off the atrativo detail. Gated on tab==="log" so it only fires when
@@ -277,6 +292,15 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
             <Field label="Etapa do pipeline" testid="drawer-field-stage">
               {stageLabel}
             </Field>
+
+            {card?.type === "atrativo" ? (
+              <Field
+                label="Descrição editorial"
+                testid="drawer-field-descricao-editorial"
+              >
+                {descricaoEditorial ?? "—"}
+              </Field>
+            ) : null}
 
             {card?.duplicate ? (
               <div

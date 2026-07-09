@@ -75,6 +75,9 @@ def _compute_completude(result: AtrativoResult) -> float:
     """Compute completude_value from AtrativoResult field coverage.
 
     Fields contributing: nome, tipo, posicionamento, municipio_ibge, place_id.
+    Returns 90.0 if all five present AND a curated descricao_editorial is set (the new
+      degrau seeded by the DescriptionEnrichmentAgent — the ONLY way to exceed the
+      discovery ceiling; discovery itself never sets descricao_editorial so it stays ≤75).
     Returns 75.0 if all five present (LLM-generated ceiling before contact/signal agents).
     Returns 50.0 if nome + tipo + posicionamento only.
     Returns 25.0 otherwise.
@@ -84,8 +87,14 @@ def _compute_completude(result: AtrativoResult) -> float:
     has_posicionamento = bool(result.posicionamento and len(result.posicionamento) >= 10)
     has_ibge = bool(result.municipio_ibge)
     has_place_id = bool(result.place_id)
+    has_descricao = bool(result.descricao_editorial and len(result.descricao_editorial) >= 10)
 
     if has_nome and has_tipo and has_posicionamento and has_ibge and has_place_id:
+        # New top degrau: curated editorial description present → 90.0. Existing
+        # fixtures omit descricao_editorial → has_descricao is False → still 75.0
+        # (25/50/75 branches stay byte-identical).
+        if has_descricao:
+            return 90.0
         return 75.0
     elif has_nome and has_tipo and has_posicionamento:
         return 50.0

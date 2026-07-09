@@ -42,6 +42,11 @@ ATRATIVO_SUB_STATE_EDGES: frozenset[tuple[str | None, str | None]] = frozenset(
         (None, "discovered"),
         ("discovered", "contacts_found"),
         ("contacts_found", "signals_gathered"),
+        # Description-enrichment step (post-Signal): fetch MD → Norteia-voice rewrite →
+        # descricao_editorial → re-score. Inserted between signals_gathered and the gate.
+        ("signals_gathered", "description_enriched"),
+        ("description_enriched", "aguardando_consulta_whatsapp"),
+        ("description_enriched", None),  # re-score → dlq (bounce back to DLQ)
         ("signals_gathered", "aguardando_consulta_whatsapp"),
         ("aguardando_consulta_whatsapp", "whatsapp_in_progress"),
         # Phase F manual WhatsApp gate moves (DLQ = routing="dlq", sub_state=None):

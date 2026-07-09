@@ -53,6 +53,7 @@ _ATRATIVO_SUB_STATES = [
     "discovered",
     "contacts_found",
     "signals_gathered",
+    "description_enriched",
     "aguardando_consulta_whatsapp",
     "whatsapp_in_progress",
 ]

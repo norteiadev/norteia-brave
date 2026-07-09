@@ -93,6 +93,9 @@ export const sampleAtrativoDetail: AtrativoDetail = {
     uf: "BA",
     municipality: "Salvador",
     type: "market",
+    descricao_editorial:
+      "No coração de Salvador, o Mercado Modelo reúne artesanato baiano, música e " +
+      "sabores em um casarão histórico à beira da Baía de Todos-os-Santos.",
   },
   audit_log: [
     {
