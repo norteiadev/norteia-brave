@@ -107,6 +107,10 @@ export function PainelConfig() {
     patch.mutate({ [`source.${name}.enabled`]: next });
   }
 
+  function toggleEnrichment(next: boolean) {
+    patch.mutate({ description_enrichment_enabled: next });
+  }
+
   function setMode(mode: EngineMode) {
     if (mode === activeMode) return;
     patch.mutate({ "engine.mode": mode });
@@ -174,6 +178,29 @@ export function PainelConfig() {
               ))}
             </div>
           )}
+        </Card>
+
+        {/* Enriquecimento de descrição */}
+        <Card
+          title="Enriquecimento de descrição"
+          subtitle="Gera a descrição editorial via LLM. Desligue para rodar coletas locais sem custo."
+        >
+          <label
+            data-testid="config-enrichment"
+            className="flex items-center justify-between rounded-[8px] px-[10px] py-[9px] hover:bg-[var(--painel-chip)]"
+          >
+            <span className="text-[13px] font-medium text-[var(--painel-text)]">
+              Descrição editorial (Melhores Destinos + LLM)
+            </span>
+            <input
+              type="checkbox"
+              data-testid="config-enrichment-toggle"
+              checked={data.description_enrichment_enabled}
+              disabled={patch.isPending}
+              onChange={(e) => toggleEnrichment(e.target.checked)}
+              className="h-4 w-4 cursor-pointer accent-[var(--painel-navy)] disabled:cursor-not-allowed"
+            />
+          </label>
         </Card>
 
         {/* Pesos de confiabilidade + threshold */}

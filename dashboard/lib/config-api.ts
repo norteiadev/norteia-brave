@@ -76,6 +76,8 @@ export interface AppConfigSnapshot {
   engine: ConfigEngine;
   /** Collection sources keyed by name → enabled flag. */
   sources: Record<string, boolean>;
+  /** Gates the LLM description-enrichment lane (off → local sweeps run without cost). */
+  description_enrichment_enabled: boolean;
   [key: string]: unknown;
 }
 

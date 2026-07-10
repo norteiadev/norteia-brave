@@ -115,6 +115,32 @@ describe("PainelConfig", () => {
     );
   });
 
+  it("renders the description-enrichment toggle from the snapshot (on by default)", async () => {
+    server.use(configGetSuccess(), configPatchSuccess());
+
+    const { getByTestId } = renderWithClient(<PainelConfig />);
+
+    await waitFor(() => getByTestId("config-enrichment-toggle"));
+    expect(getByTestId("config-enrichment-toggle")).toBeChecked();
+  });
+
+  it("toggling description enrichment off PATCHes /config", async () => {
+    server.use(configGetSuccess(), configPatchSuccess());
+
+    const { getByTestId } = renderWithClient(<PainelConfig />);
+
+    await waitFor(() => getByTestId("config-enrichment-toggle"));
+    fireEvent.click(getByTestId("config-enrichment-toggle"));
+
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (r) => r.method === "PATCH" && r.url.includes("/api/api/v1/config"),
+        ),
+      ).toBe(true),
+    );
+  });
+
   it("surfaces the server 422 (weight-sum backstop) without crashing", async () => {
     // GET valid, but PATCH is rejected 422 — the view must not crash on the
     // authoritative server guard (client already blocks the obvious case).

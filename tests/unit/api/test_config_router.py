@@ -175,6 +175,23 @@ def test_patch_toggles_source_enabled(db, redis):
     assert db.rows["source.tripadvisor.enabled"].value == {"v": False}
 
 
+def test_patch_toggles_description_enrichment(db, redis):
+    out = update_config(
+        body={"description_enrichment_enabled": False}, db=db, redis=redis
+    )
+    # The overlay flows through load_effective_config into the returned snapshot.
+    assert out["config"]["description_enrichment_enabled"] is False
+    assert db.rows["description_enrichment_enabled"].value == {"v": False}
+
+
+def test_patch_rejects_non_bool_description_enrichment(db, redis):
+    with pytest.raises(HTTPException) as exc:
+        update_config(
+            body={"description_enrichment_enabled": "yes"}, db=db, redis=redis
+        )
+    assert exc.value.status_code == 422
+
+
 def test_patch_accepts_weight_set_summing_100(db, redis):
     # origem 40 + completude 10 + (defaults) corroboracao 20 + atualidade 15 +
     # validacao_humana 15 == 100.

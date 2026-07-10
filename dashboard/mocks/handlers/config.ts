@@ -28,6 +28,7 @@ export const sampleConfig: AppConfigSnapshot = {
   },
   engine: { mode: "LIGADO" },
   sources: { mtur: true, tripadvisor: true, places: false },
+  description_enrichment_enabled: true,
 };
 
 export function configGetSuccess(

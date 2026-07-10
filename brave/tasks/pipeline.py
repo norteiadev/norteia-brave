@@ -1457,14 +1457,19 @@ def enrich_description_task(self, rio_id: str) -> None:
             raise PermanentError(f"RioRecord {rio_id} not found")
 
         app_config = AppConfig()
-        config = load_effective_config(session).score
+        effective = load_effective_config(session)
+        config = effective.score
         md_config = app_config.melhores_destinos
 
         redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         import redis as redis_lib
         redis_client = redis_lib.from_url(redis_url)
 
-        if app_config.run_real_externals:
+        # Real clients require BOTH run_real_externals AND the operator-toggleable
+        # description_enrichment_enabled flag (config_settings overlay, /painel). When the
+        # flag is off, the Null clients keep the floor and the agent still advances
+        # sub_state + re-scores — a real local sweep runs with ZERO LLM spend on descriptions.
+        if app_config.run_real_externals and effective.description_enrichment_enabled:
             from brave.clients.melhores_destinos import RealMelhoresDestinosClient
             md_client = RealMelhoresDestinosClient(config=md_config, redis=redis_client)
             from brave.clients.llm import RealLLMClient
@@ -1475,10 +1480,24 @@ def enrich_description_task(self, rio_id: str) -> None:
                 lane="melhores_destinos",
             )
         else:
+            if app_config.run_real_externals and not effective.description_enrichment_enabled:
+                logger.info("description_enrichment_disabled", rio_id=rio_id)
             from brave.clients.null_melhores_destinos import NullMelhoresDestinosClient
             md_client = NullMelhoresDestinosClient()
             from brave.clients.null_llm import NullLLMClient
             llm_client = NullLLMClient()
+
+        # Load the IBGE DTB distrito reference (static CSV) once — threads into the
+        # enrichment agent for the MD breadcrumb <Place> → distrito name-match, scoped
+        # to the atrativo's parent município. Mirrors the discovery lane's distrito load.
+        from brave.shared.ibge_distritos import load_distritos_csv
+        _project_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        distritos_csv_path = os.path.join(
+            _project_root, "data", "ibge", "ibge_distritos.csv"
+        )
+        distritos = load_distritos_csv(distritos_csv_path)
 
         agent = DescriptionEnrichmentAgent(
             md_client=md_client,
@@ -1486,6 +1505,7 @@ def enrich_description_task(self, rio_id: str) -> None:
             session=session,
             config=config,
             md_config=md_config,
+            distritos=distritos,
         )
 
         asyncio.run(agent.run(rio))

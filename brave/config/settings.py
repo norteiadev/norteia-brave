@@ -500,6 +500,14 @@ class AppConfig(BaseSettings):
     # run_real_externals=True enables real API calls (tests and CI default to False)
     run_real_externals: bool = False
 
+    # description_enrichment_enabled gates the LLM description-enrichment lane
+    # (Melhores Destinos scrape + Norteia-voice rewrite + breadcrumb→distrito). When
+    # False the enrich task uses the Null clients → floor kept, record still advances,
+    # ZERO LLM spend. Lets a real local sweep run without paying per-attraction Haiku.
+    # Overlay key ``description_enrichment_enabled`` (brave.config.runtime); toggled in
+    # the /painel config surface. Defaults True (production behavior unchanged).
+    description_enrichment_enabled: bool = True
+
     model_config = SettingsConfigDict(env_prefix="")
 
     @classmethod

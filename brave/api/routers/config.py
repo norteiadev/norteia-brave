@@ -58,6 +58,7 @@ _THRESHOLD_KEYS: dict[str, str] = {"score.threshold_mar": "threshold_mar"}
 _ENGINE_MODE_KEY = "engine.mode"
 _SOURCE_PREFIX = "source."
 _SOURCE_SUFFIX = ".enabled"
+_DESC_ENRICH_KEY = "description_enrichment_enabled"
 
 # Secret paths in the AppConfig snapshot to redact on GET (never echo secrets).
 _SECRET_PATHS: tuple[tuple[str, str], ...] = (
@@ -95,6 +96,8 @@ def _current_value(cfg: AppConfig, dotted: str) -> Any:
         return getattr(cfg.score, _THRESHOLD_KEYS[dotted])
     if dotted == _ENGINE_MODE_KEY:
         return cfg.engine.mode
+    if dotted == _DESC_ENRICH_KEY:
+        return cfg.description_enrichment_enabled
     if _is_source_key(dotted):
         name = dotted[len(_SOURCE_PREFIX) : -len(_SOURCE_SUFFIX)]
         return cfg.sources.get(name)
@@ -142,6 +145,11 @@ def _validate_updates(db: Session, updates: dict[str, Any]) -> None:
                 raise HTTPException(
                     status_code=422,
                     detail="engine.mode must be 'LIGADO', 'PAUSADO', or 'DESLIGADO'",
+                )
+        elif key == _DESC_ENRICH_KEY:
+            if not isinstance(value, bool):
+                raise HTTPException(
+                    status_code=422, detail=f"{key} must be a boolean"
                 )
         elif _is_source_key(key):
             if not isinstance(value, bool):
