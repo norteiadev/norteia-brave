@@ -297,6 +297,7 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
               <Field
                 label="Descrição editorial"
                 testid="drawer-field-descricao-editorial"
+                multiline
               >
                 {descricaoEditorial ?? "—"}
               </Field>
@@ -509,16 +510,22 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
   );
 }
 
-/** A read-only labelled field row (static value text, never an input). */
+/** A read-only labelled field row (static value text, never an input).
+ *
+ * Single-line by default (fixed 38px pill). Pass `multiline` for long,
+ * wrapping values (e.g. descricao_editorial) so the box grows with the text
+ * and top-aligns instead of overflowing onto the fields below. */
 function Field({
   label,
   testid,
   mono,
+  multiline,
   children,
 }: {
   label: string;
   testid: string;
   mono?: boolean;
+  multiline?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -528,9 +535,11 @@ function Field({
       </span>
       <span
         data-testid={testid}
-        className={`flex h-[38px] items-center rounded-lg border border-[var(--painel-border-outer)] bg-[var(--card)] px-3 text-[13px] text-[var(--painel-text)] ${
-          mono ? "font-mono" : ""
-        }`}
+        className={`flex rounded-lg border border-[var(--painel-border-outer)] bg-[var(--card)] px-3 text-[13px] text-[var(--painel-text)] ${
+          multiline
+            ? "min-h-[38px] items-start whitespace-pre-wrap break-words py-2.5 leading-[1.55]"
+            : "h-[38px] items-center"
+        } ${mono ? "font-mono" : ""}`}
       >
         {children}
       </span>
