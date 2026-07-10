@@ -224,6 +224,23 @@ def test_set_mode_desligado_marks_idle_and_clears_enabled(redis):
     assert engine.get_status(redis)["current_uf"] is None  # mark_idle cleared it
 
 
+def test_set_mode_desligado_zeroes_inflight_and_clears_syncing(redis):
+    """Hard off must reset the producer inflight counter so the badge leaves 'syncing'.
+
+    Regression (motor-off stuck on Sincronizando): a leaked/draining inflight count kept
+    get_status().sync_phase pinned to 'syncing' after DESLIGADO because OFF never reset it.
+    """
+    engine.start_run(redis, ufs_total=3)
+    engine.incr_inflight(redis)
+    engine.incr_inflight(redis)
+    assert engine.get_inflight(redis) == 2
+    assert engine.get_status(redis)["sync_phase"] == "syncing"
+
+    engine.set_mode(redis, engine.DESLIGADO)
+    assert engine.get_inflight(redis) == 0
+    assert engine.get_status(redis)["sync_phase"] != "syncing"
+
+
 def test_get_status_includes_mode_and_editing_unlocked(redis):
     status = engine.get_status(redis)
     assert status["mode"] == engine.LIGADO  # default
