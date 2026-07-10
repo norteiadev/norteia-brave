@@ -166,6 +166,9 @@ export function startEngine(
     lane?: "destinos" | "atrativos" | "both";
     depth?: EngineDepth;
     source?: EngineSource;
+    // Optional operator test-run throttle: cap attractions ingested per UF so the
+    // whole flow can be exercised with a handful of records. Omit for a full sweep.
+    max_atrativos_per_uf?: number;
   },
 ): Promise<EngineActionResult> {
   return apiFetch<EngineActionResult>("api/v1/engine/start", {

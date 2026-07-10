@@ -65,6 +65,31 @@ export interface ParsedTACurl {
 }
 
 /**
+ * Decode the ANSI-C ($'...') escape sequences Chrome emits inside cURL flags:
+ * \', \", \\, \n, \t, \r, \xHH, and \NNN octal. A plain single-quoted cURL value
+ * carries no backslash escapes, so running this on the non-$ form is a no-op.
+ */
+function unescapeAnsiC(s: string): string {
+  return s.replace(
+    /\\(x[0-9a-fA-F]{2}|[0-7]{1,3}|['"\\nrt])/g,
+    (_full, esc: string) => {
+      if (esc[0] === "x") return String.fromCharCode(parseInt(esc.slice(1), 16));
+      if (esc[0] >= "0" && esc[0] <= "7")
+        return String.fromCharCode(parseInt(esc, 8));
+      const map: Record<string, string> = {
+        n: "\n",
+        r: "\r",
+        t: "\t",
+        "'": "'",
+        '"': '"',
+        "\\": "\\",
+      };
+      return map[esc] ?? esc;
+    },
+  );
+}
+
+/**
  * Parse an operator's "Copy as cURL" paste into the cookies / query_ids /
  * user_agent triple the TA session endpoint requires. Cookie VALUES are only
  * ever passed straight to the BFF (never logged here). Resilient to single- or
@@ -85,11 +110,17 @@ export function parseTACurl(curl: string): ParsedTACurl {
     }
   };
 
-  // -H 'name: value' / --header "name: value"
-  const headerRe = /(?:-H|--header)\s+(['"])([\s\S]*?)\1/gi;
+  // Chrome "Copy as cURL (bash)" wraps any header/cookie whose value carries a
+  // special char (very common in datadome cookies and the User-Agent) in ANSI-C
+  // $'...' quoting — e.g. `-H $'user-agent: ...'`, `-b $'TASID=...; datadome=...'`.
+  // The optional `\$?` before the quote matches both the plain and $'...' forms;
+  // without it those values parsed empty and the endpoint 422'd with a misleading
+  // "sessão expirada/malformada" (cookies came back empty → Pydantic reject).
+  // -H 'name: value' / --header "name: value" / -H $'name: value'
+  const headerRe = /(?:-H|--header)\s+\$?(['"])([\s\S]*?)\1/gi;
   let m: RegExpExecArray | null;
   while ((m = headerRe.exec(curl)) !== null) {
-    const header = m[2];
+    const header = unescapeAnsiC(m[2]);
     const idx = header.indexOf(":");
     if (idx === -1) continue;
     const name = header.slice(0, idx).trim().toLowerCase();
@@ -98,9 +129,10 @@ export function parseTACurl(curl: string): ParsedTACurl {
     else if (name === "user-agent") user_agent = value;
   }
 
-  // -b 'k=v; ...' / --cookie "k=v; ..."
-  const cookieFlagRe = /(?:-b|--cookie)\s+(['"])([\s\S]*?)\1/gi;
-  while ((m = cookieFlagRe.exec(curl)) !== null) splitCookieJar(m[2]);
+  // -b 'k=v; ...' / --cookie "k=v; ..." / -b $'k=v; ...'
+  const cookieFlagRe = /(?:-b|--cookie)\s+\$?(['"])([\s\S]*?)\1/gi;
+  while ((m = cookieFlagRe.exec(curl)) !== null)
+    splitCookieJar(unescapeAnsiC(m[2]));
 
   // GraphQL persisted-query ids carried in the request body. Key each by its
   // adjacent operationName when present, else positionally.
@@ -207,6 +239,21 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
 
   const onSave = () => {
     const parsed = parseTACurl(curl);
+    // Client-side pre-validation: an empty parse means the paste was the wrong
+    // request or an unparseable format — surface THAT (precise + actionable)
+    // instead of posting and getting the backend's generic 422 "expired" toast.
+    const missing: string[] = [];
+    if (Object.keys(parsed.cookies).length === 0) missing.push("cookies");
+    if (Object.keys(parsed.query_ids).length === 0)
+      missing.push("preRegisteredQueryId");
+    if (missing.length > 0) {
+      setErrorKind("422");
+      toast.error(
+        `Não encontrei ${missing.join(" e ")} no cURL. Copie a requisição GraphQL ` +
+          "(/data/graphql/ids) da aba Network, não a página.",
+      );
+      return;
+    }
     inject.mutate({
       cookies: parsed.cookies,
       query_ids: parsed.query_ids,

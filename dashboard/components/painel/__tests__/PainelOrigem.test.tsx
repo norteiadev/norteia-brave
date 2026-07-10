@@ -3,7 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { PainelOrigem, type OrigemSource } from "@/components/painel/PainelOrigem";
+import {
+  PainelOrigem,
+  parseTACurl,
+  type OrigemSource,
+} from "@/components/painel/PainelOrigem";
 import { setOperatorToken } from "@/lib/api-client";
 import { engineSetSourceSuccess, taSessionStatus } from "@/mocks/handlers/engine";
 import { server } from "@/mocks/server";
@@ -174,5 +178,44 @@ describe("PainelOrigem", () => {
     fireEvent.click(screen.getByTestId("origem-submit"));
 
     await waitFor(() => expect(captured).toMatchObject({ source: "tripadvisor" }));
+  });
+});
+
+describe("parseTACurl", () => {
+  it("parses a plain single-quoted cURL (cookies, UA, query id)", () => {
+    const p = parseTACurl(SAMPLE_CURL);
+    expect(Object.keys(p.cookies)).toEqual(["TASID", "datadome", "TAUnique"]);
+    expect(p.user_agent).toContain("Mozilla/5.0");
+    expect(Object.values(p.query_ids)).toEqual(["a5cb7fa004b5e4b5"]);
+  });
+
+  it("parses Chrome's ANSI-C $'...' quoting (regression: cookies/UA no longer empty)", () => {
+    // Chrome "Copy as cURL (bash)" wraps values with special chars in $'...'.
+    // Before the \$? fix this returned empty cookies → backend 422 "expired".
+    const ansiC =
+      "curl 'https://www.tripadvisor.com/data/graphql/ids' " +
+      "-H $'user-agent: Mozilla/5.0 (Macintosh)' " +
+      "-b $'TASID=abc123; datadome=zZ!9; TAUnique=u-42' " +
+      "--data-raw $'[{\"extensions\":{\"preRegisteredQueryId\":\"79aaeeb847e55e58\"}}]'";
+    const p = parseTACurl(ansiC);
+    expect(Object.keys(p.cookies)).toEqual(["TASID", "datadome", "TAUnique"]);
+    expect(p.user_agent).toBe("Mozilla/5.0 (Macintosh)");
+    expect(Object.values(p.query_ids)).toEqual(["79aaeeb847e55e58"]);
+  });
+
+  it("decodes ANSI-C escape sequences inside $'...' values", () => {
+    // \x3d → '=', \' → ' ; ensure the cookie value round-trips through the jar split.
+    const curl =
+      "curl 'https://x/data/graphql/ids' " +
+      "-b $'TASID=a\\x62c; datadome=zzz' " +
+      "--data-raw $'[{\"extensions\":{\"preRegisteredQueryId\":\"444040f131735091\"}}]'";
+    const p = parseTACurl(curl);
+    expect(p.cookies.TASID).toBe("abc"); // \x62 → 'b'
+  });
+
+  it("returns empty maps when the paste has no cookies or query id", () => {
+    const p = parseTACurl("curl 'https://www.tripadvisor.com/SomePage'");
+    expect(Object.keys(p.cookies)).toHaveLength(0);
+    expect(Object.keys(p.query_ids)).toHaveLength(0);
   });
 });

@@ -30,6 +30,13 @@ x-backend: &backend
   build:
     context: .
     dockerfile: Dockerfile
+  # Load secrets from .env (LLM/Places/steward/webhook keys + TA creds). The DB/redis
+  # URLs in .env point at localhost (wrong inside a container) but the `environment:`
+  # block below OVERRIDES env_file in compose, so BRAVE_DB_URL/BRAVE_DB_REDIS_URL still
+  # resolve to the compose service names. Without this, real-externals runs had EMPTY
+  # LLM/Places keys (e.g. description enrichment failed with "openrouter_api_key is empty").
+  env_file:
+    - .env
   volumes:
     - ./:/app
     - venv:/app/.venv          # container's linux venv (seeded from the image build)
@@ -94,8 +101,14 @@ services:
     <<: *backend
     environment: *backend-env
     # No -Q flag: worker consumes the default 'celery' queue (single-queue model).
+    # Dev autoreload: Celery has no native --reload (unlike uvicorn), so wrap it in
+    # watchfiles (already in the venv — uvicorn[standard] pulls it). It restarts the
+    # worker on any *.py change under /app/brave, so a task-signature change no longer
+    # needs a manual `docker compose restart worker`. Not for prod.
     command:
-      ["/app/.venv/bin/celery", "-A", "brave.tasks.celery_app:app", "worker", "--loglevel=info"]
+      ["/app/.venv/bin/watchfiles", "--filter", "python",
+       "/app/.venv/bin/celery -A brave.tasks.celery_app:app worker --loglevel=info",
+       "/app/brave"]
     depends_on:
       migrate:
         condition: service_completed_successfully

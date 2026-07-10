@@ -160,6 +160,10 @@ class TestTaKeepaliveTask:
         assert fake.get(_ENGINE_ENABLED_KEY) == b"0", (
             "engine:enabled must be set to 0 (OFF) after SessionExpiredError"
         )
+        assert fake.get("brave:engine:mode") == b"DESLIGADO", (
+            "operator mode must be DESLIGADO — leaving it LIGADO while enabled=0 "
+            "makes the topbar 'Ligar' a no-op (stuck UI)"
+        )
 
     def test_session_missing_also_triggers_fallback(self, monkeypatch):
         """SessionMissingError has the same fallback: needs_bootstrap + engine OFF."""
@@ -186,6 +190,10 @@ class TestTaKeepaliveTask:
         )
         assert fake.get(_ENGINE_ENABLED_KEY) == b"0", (
             "engine:enabled must be 0 (OFF) after SessionMissingError"
+        )
+        assert fake.get("brave:engine:mode") == b"DESLIGADO", (
+            "operator mode must be DESLIGADO — leaving it LIGADO while enabled=0 "
+            "makes the topbar 'Ligar' a no-op (stuck UI)"
         )
 
     def test_non_session_error_does_not_crash(self, monkeypatch):

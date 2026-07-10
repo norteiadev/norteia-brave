@@ -1189,3 +1189,132 @@ class TestAtrativosEnrichCommitGranularity:
             "município B (failed iteration) must be evicted"
         )
         assert session.rollback.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# TestAtrativosMaxPerUf — operator test-run cap (max_per_uf)
+# ---------------------------------------------------------------------------
+
+
+class TestAtrativosMaxPerUf:
+    """produce(max_per_uf=N) stops after N attractions are processed and does not
+    paginate further; max_per_uf=None ingests every card (regression)."""
+
+    def _multi_page_client(self) -> FakeTripAdvisorClient:
+        """Two pages of cards (3 + 2 = 5 total) for the MG geoId."""
+        page1 = [_make_card() for _ in range(3)]
+        page2 = [_make_card() for _ in range(2)]
+        # Distinct locationIds so each card is its own entity (defensive; store_raw
+        # is mocked so identity does not gate the count, but keeps the fixture honest).
+        for i, c in enumerate(page1 + page2):
+            c["locationId"] = 400000 + i
+        return FakeTripAdvisorClient(
+            gql_pages=[(0, page1), (30, page2)],
+            geo_ids={"MG": _GEO_ID_MG},
+        )
+
+    async def _run(self, max_per_uf: int | None) -> int:
+        """Run produce() with the cap; return the store_raw call count (attractions ingested)."""
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        client = self._multi_page_client()
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_nascente = MagicMock()
+            mock_nascente.id = uuid.uuid4()
+            mock_store_raw.return_value = mock_nascente
+
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=client,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=dict(_DESTINO_RIO_MAP),
+            )
+            await ingest.produce("MG", run_rio=False, max_per_uf=max_per_uf)
+        return mock_store_raw.call_count
+
+    @pytest.mark.asyncio
+    async def test_cap_stops_after_n_and_halts_pagination(self) -> None:
+        """max_per_uf=2 ingests exactly 2 of the 5 available cards (page 2 never fetched)."""
+        count = await self._run(max_per_uf=2)
+        assert count == 2, f"expected exactly 2 attractions ingested under the cap, got {count}"
+
+    @pytest.mark.asyncio
+    async def test_cap_none_ingests_all(self) -> None:
+        """max_per_uf=None is the full sweep — all 5 cards across both pages ingested."""
+        count = await self._run(max_per_uf=None)
+        assert count == 5, f"expected all 5 attractions ingested with no cap, got {count}"
+
+    @pytest.mark.asyncio
+    async def test_cap_above_total_ingests_all(self) -> None:
+        """A cap larger than the available cards ingests everything (no premature stop)."""
+        count = await self._run(max_per_uf=99)
+        assert count == 5, f"expected all 5 ingested when cap exceeds total, got {count}"
+
+
+class TestAtrativosProduceReturnsRioIds:
+    """produce() returns the Rio ids of atrativos ingested this sweep so the task layer
+    can dispatch description enrichment (the TA lane's only path to descricao_editorial).
+    """
+
+    @pytest.mark.asyncio
+    async def test_run_rio_returns_ingested_rio_ids(self) -> None:
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        cards = [_make_card() for _ in range(3)]
+        for i, c in enumerate(cards):
+            c["locationId"] = 500000 + i
+        client = FakeTripAdvisorClient(
+            gql_pages=[(0, cards)],
+            geo_ids={"MG": _GEO_ID_MG},
+        )
+        rio_ids = [uuid.uuid4() for _ in cards]
+
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch(
+                "brave.lanes.tripadvisor.atrativos.process_nascente_record"
+            ) as mock_process,
+        ):
+            mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
+            # Each ingested card yields a distinct RioRecord id.
+            mock_process.side_effect = [MagicMock(id=rid) for rid in rio_ids]
+
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=client,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=dict(_DESTINO_RIO_MAP),
+            )
+            returned = await ingest.produce("MG", run_rio=True)
+
+        assert returned == [str(rid) for rid in rio_ids], (
+            "produce must return one Rio id (str) per atrativo ingested with run_rio=True"
+        )
+
+    @pytest.mark.asyncio
+    async def test_nascente_only_returns_empty(self) -> None:
+        """run_rio=False → no Rio records created → empty id list (no enrich dispatched)."""
+        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        card = _make_card()
+        client = _make_fake_client(card)
+        with (
+            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        ):
+            mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=client,
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                destino_rio_map=dict(_DESTINO_RIO_MAP),
+            )
+            returned = await ingest.produce("MG", run_rio=False)
+
+        assert returned == []

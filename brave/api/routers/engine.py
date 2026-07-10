@@ -247,6 +247,22 @@ def engine_start(
                 detail="Motor TripAdvisor requer uma sessão com TTL válido — injete um cURL primeiro.",
             )
 
+    # Optional operator test-run throttle: cap attractions ingested per UF so the whole
+    # Nascente→Rio→Mar flow can be exercised with a handful of records. Absent/null = no
+    # cap (full sweep). Validated BEFORE start_run — a bad value 422s without mutating
+    # engine state, mirroring the depth/source guards above. bool is an int subclass, so
+    # reject it explicitly (True would otherwise pass as 1).
+    max_atrativos_per_uf = body.get("max_atrativos_per_uf")
+    if max_atrativos_per_uf is not None and (
+        isinstance(max_atrativos_per_uf, bool)
+        or not isinstance(max_atrativos_per_uf, int)
+        or max_atrativos_per_uf < 1
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="max_atrativos_per_uf must be a positive integer",
+        )
+
     if not collection_engine.start_run(redis, ufs_total=len(ufs)):
         raise HTTPException(
             status_code=409,
@@ -298,7 +314,12 @@ def engine_start(
         from brave.tasks.pipeline import engine_sweep_run
 
         engine_sweep_run.delay(
-            ufs=ufs, lane=lane, depth=depth, source=source, run_id=run_id
+            ufs=ufs,
+            lane=lane,
+            depth=depth,
+            source=source,
+            run_id=run_id,
+            max_per_uf=max_atrativos_per_uf,
         )
     except Exception as exc:  # broker-down
         from brave.config.settings import AppConfig
@@ -312,8 +333,22 @@ def engine_start(
             ) from exc
         # Offline (tests/dev): no broker — leave state running; orchestrator is exercised separately.
 
-    logger.info("engine_started", ufs=len(ufs), lane=lane, depth=depth, source=source)
-    return {"status": "started", "ufs_total": len(ufs), "lane": lane, "depth": depth, "source": source}
+    logger.info(
+        "engine_started",
+        ufs=len(ufs),
+        lane=lane,
+        depth=depth,
+        source=source,
+        max_atrativos_per_uf=max_atrativos_per_uf,
+    )
+    return {
+        "status": "started",
+        "ufs_total": len(ufs),
+        "lane": lane,
+        "depth": depth,
+        "source": source,
+        "max_atrativos_per_uf": max_atrativos_per_uf,
+    }
 
 
 @router.post(

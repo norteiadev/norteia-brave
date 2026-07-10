@@ -120,6 +120,46 @@ describe("PainelTopbar", () => {
     expect(screen.queryByTestId("painel-depth-menu")).toBeNull();
   });
 
+  it("desynced Ligar (mode LIGADO but engine idle+disabled) RECOVERS — opens the depth picker", async () => {
+    // Regression: an R1 session-expiry auto-off (or an idle /stop) can leave
+    // mode=LIGADO while enabled=false & state=idle. Clicking Ligar must fall through
+    // to cold-start recovery, not no-op on the mode===LIGADO guard.
+    let startBody: { depth?: string } | null = null;
+    server.use(
+      engineStatus({ mode: "LIGADO", editing_unlocked: false, state: "idle", enabled: false }),
+      taSessionStatus(),
+      http.post(START_URL, async ({ request }) => {
+        startBody = (await request.json()) as { depth?: string };
+        return HttpResponse.json({ status: "started", ufs_total: 27 }, { status: 202 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+    const ligar = await screen.findByTestId("painel-motor-ligar");
+    await user.click(ligar);
+    // Recovery path: the depth picker opens (was a no-op before the guard fix).
+    await screen.findByTestId("painel-depth-menu");
+    await user.click(screen.getByTestId("painel-depth-nascente"));
+    await waitFor(() => expect(startBody).not.toBeNull());
+    expect(startBody).toMatchObject({ depth: "nascente" });
+  });
+
+  it("genuinely-running Ligar (mode LIGADO, enabled) stays a no-op — no depth picker", async () => {
+    server.use(
+      engineStatus({ mode: "LIGADO", editing_unlocked: false, state: "running", enabled: true }),
+      taSessionStatus(),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+    const ligar = await screen.findByTestId("painel-motor-ligar");
+    await waitFor(() => expect(ligar).toHaveAttribute("aria-pressed", "true"));
+    await user.click(ligar);
+    // A truly-on engine: Ligar must do nothing (no picker, no restart).
+    expect(screen.queryByTestId("painel-depth-menu")).toBeNull();
+  });
+
   it("cold Ligar (engine off) opens the depth menu; picking a depth fires POST /start WITH that depth", async () => {
     let startBody: { depth?: string } | null = null;
     server.use(
@@ -196,6 +236,56 @@ describe("PainelTopbar", () => {
     await user.click(screen.getByTestId("painel-depth-nascente_rio"));
     await waitFor(() => expect(startBody).not.toBeNull());
     expect(startBody).toMatchObject({ depth: "nascente_rio", ufs: ["SP"] });
+  });
+
+  it("typing a per-UF cap sends max_atrativos_per_uf in the /start body", async () => {
+    let startBody: Record<string, unknown> | null = null;
+    server.use(
+      engineStatus({ mode: "DESLIGADO", editing_unlocked: true, state: "idle", enabled: false }),
+      taSessionStatus(),
+      http.post(START_URL, async ({ request }) => {
+        startBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(
+          { status: "started", ufs_total: 27 },
+          { status: 202 },
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+    const ligar = await screen.findByTestId("painel-motor-ligar");
+    await user.click(ligar);
+    await screen.findByTestId("painel-depth-menu");
+    await user.type(screen.getByTestId("painel-max-per-uf"), "5");
+    await user.click(screen.getByTestId("painel-depth-nascente"));
+    await waitFor(() => expect(startBody).not.toBeNull());
+    expect(startBody).toMatchObject({ depth: "nascente", max_atrativos_per_uf: 5 });
+  });
+
+  it("empty per-UF cap omits max_atrativos_per_uf from the /start body", async () => {
+    let startBody: Record<string, unknown> | null = null;
+    server.use(
+      engineStatus({ mode: "DESLIGADO", editing_unlocked: true, state: "idle", enabled: false }),
+      taSessionStatus(),
+      http.post(START_URL, async ({ request }) => {
+        startBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(
+          { status: "started", ufs_total: 27 },
+          { status: 202 },
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+    const ligar = await screen.findByTestId("painel-motor-ligar");
+    await user.click(ligar);
+    await screen.findByTestId("painel-depth-menu");
+    // Leave the cap input empty → full sweep, field must not be sent.
+    await user.click(screen.getByTestId("painel-depth-nascente"));
+    await waitFor(() => expect(startBody).not.toBeNull());
+    expect(startBody).not.toHaveProperty("max_atrativos_per_uf");
   });
 
   it("opening the depth menu without picking does NOT fire POST /start", async () => {

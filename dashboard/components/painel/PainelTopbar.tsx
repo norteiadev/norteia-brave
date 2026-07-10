@@ -124,6 +124,9 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   // Bug 2: cold-start UF scope. "" = Todo o Brasil (backend uses all 27 UFs when
   // ufs is omitted); a UF code scopes the sweep to a single UF. Source-independent.
   const [startUf, setStartUf] = useState<string>("");
+  // Optional per-UF attraction cap (test-run throttle). "" = no cap (full sweep);
+  // a positive integer stops each UF after N attractions are processed.
+  const [maxPerUf, setMaxPerUf] = useState<string>("");
 
   const { data } = useQuery({
     queryKey: engineKeys.status,
@@ -147,8 +150,17 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   // source is already in scope from line below (data?.source ?? "tripadvisor")
   // and is passed so the selected origem lane actually reaches the sweep orchestrator.
   const start = useMutation({
-    mutationFn: (vars: { depth: EngineDepth; ufs?: string[] }) =>
-      startEngine({ depth: vars.depth, source, ufs: vars.ufs }),
+    mutationFn: (vars: {
+      depth: EngineDepth;
+      ufs?: string[];
+      maxPerUf?: number;
+    }) =>
+      startEngine({
+        depth: vars.depth,
+        source,
+        ufs: vars.ufs,
+        max_atrativos_per_uf: vars.maxPerUf,
+      }),
     onError: (err) => toast.error(explainError(err)),
     onSuccess: () => toast.success("Motor ligado — varredura iniciada"),
     onSettled: invalidate,
@@ -217,7 +229,12 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   }, [data?.enabled]);
 
   const onLigar = () => {
-    if (pending || mode === "LIGADO") return;
+    if (pending) return;
+    // A GENUINELY-running LIGADO is a no-op. But a DESYNCED LIGADO — mode says LIGADO
+    // while the engine is really off (motorOn=false, e.g. after an R1 session-expiry
+    // auto-off or an idle /stop that left mode=LIGADO) — must RECOVER, not swallow the
+    // click: fall through to the cold-start path so the operator can restart the motor.
+    if (mode === "LIGADO" && motorOn) return;
     if (motorOn) {
       // Warm resume (a run is still active, e.g. from PAUSADO) — just relock via mode.
       setMode.mutate("LIGADO");
@@ -245,7 +262,16 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   const onPickDepth = (depth: EngineDepth) => {
     setDepthMenuOpen(false);
     // Bug 2: scope the sweep to the picked UF, or omit ufs for Todo o Brasil.
-    start.mutate({ depth, ufs: startUf ? [startUf] : undefined });
+    // Parse the optional per-UF cap: only forward a positive integer, else omit
+    // (empty / invalid ⇒ full sweep). Number("") is 0, so the >= 1 guard covers it.
+    const parsedMax = Number(maxPerUf);
+    const maxPerUfValue =
+      Number.isInteger(parsedMax) && parsedMax >= 1 ? parsedMax : undefined;
+    start.mutate({
+      depth,
+      ufs: startUf ? [startUf] : undefined,
+      maxPerUf: maxPerUfValue,
+    });
   };
 
   return (
@@ -483,6 +509,22 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
                     </option>
                   ))}
                 </select>
+                {/* Optional per-UF attraction cap (test-run throttle). Empty ⇒ full
+                    sweep. TripAdvisor lane only. */}
+                <div className="px-[8px] pb-[3px] pt-[2px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
+                  Máx. atrativos por UF
+                </div>
+                <input
+                  type="number"
+                  data-testid="painel-max-per-uf"
+                  value={maxPerUf}
+                  min={1}
+                  step={1}
+                  placeholder="Sem limite"
+                  onChange={(e) => setMaxPerUf(e.target.value)}
+                  className="mb-[6px] block w-full rounded-[7px] border bg-[var(--card)] px-[8px] py-[6px] text-[12.5px] font-medium text-[var(--painel-text)]"
+                  style={{ borderColor: "var(--painel-border-outer)" }}
+                />
                 <div className="px-[8px] py-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
                   Profundidade da varredura
                 </div>

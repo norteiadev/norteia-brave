@@ -95,6 +95,26 @@ async def test_idempotency_guard_wrong_state() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ta_direct_entry_none_sub_state_enriches() -> None:
+    """TA-lane entry: sub_state=None (never passed through find_contacts/signals) is
+    accepted and enriched. The TA lane's only path to descricao_editorial."""
+    md = FakeMelhoresDestinosClient(
+        url_by_name={"Praia do Forte": PRAIA_URL},
+        description_by_url={PRAIA_URL: "Prosa editorial raspada do MD."},
+    )
+    llm = FakeLLMClient(generate_result="Descrição na voz da Norteia.")
+    rio = _make_rio(sub_state=None)
+
+    agent = _agent(md, llm, _make_session())
+    with patch(f"{_MODULE}.write_audit"), patch(f"{_MODULE}.route_by_score"):
+        await agent.run(rio)
+
+    assert md.find_calls != [], "None sub_state must NOT be treated as terminal no-op"
+    assert rio.normalized["descricao_editorial"] == "Descrição na voz da Norteia."
+    assert rio.sub_state == "description_enriched"
+
+
+@pytest.mark.asyncio
 async def test_match_and_rewrite_ok_bumps_completude() -> None:
     """MD match + rewrite ok → Norteia-voice description; completude 75 → 90."""
     md = FakeMelhoresDestinosClient(

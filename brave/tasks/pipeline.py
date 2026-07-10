@@ -806,6 +806,7 @@ def sweep_tripadvisor(
     start_page: int = 1,
     max_pages: int | None = None,
     geo_id: int = 294280,
+    max_per_uf: int | None = None,
 ) -> None:
     """TripAdvisor sweep for one UF — atrativos only, parent destinos from authoritative Rio records (Mtur/IBGE) (oa3).
 
@@ -1024,13 +1025,32 @@ def sweep_tripadvisor(
         _prod_rc = _prod_redis_lib.from_url(
             os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         )
-        _asyncio.run(
+        ingested_rio_ids = _asyncio.run(
             atrativos_ingest.produce(
-                uf, run_rio=run_rio, enrich_reviews=True, redis=_prod_rc
+                uf,
+                run_rio=run_rio,
+                enrich_reviews=True,
+                redis=_prod_rc,
+                max_per_uf=max_per_uf,
             )
         )
 
         session.commit()
+
+        # Description enrichment for TA atrativos. The TA lane never enters the Places
+        # FSM chain (find_contacts → gather_signals → enrich_description), so this is
+        # its ONLY path to descricao_editorial — dispatched at every Rio depth
+        # (run_rio: nascente_rio AND nascente_rio_mar), NOT gated to _mar. It is
+        # description-ONLY: no contact-finder/signal/WhatsApp steps (TA carries no
+        # Google place_id). The agent is idempotent (its own sub_state guard) and the
+        # actual MD-scrape + LLM spend stays behind run_real_externals +
+        # description_enrichment_enabled (checked inside enrich_description_task).
+        if run_rio and ingested_rio_ids:
+            for _rio_id in ingested_rio_ids:
+                try:
+                    enrich_description_task.delay(_rio_id)
+                except Exception:  # broker down → inline fallback (mirror Places lane)
+                    enrich_description_task.run(_rio_id)
 
     except (SessionMissingError, SessionExpiredError) as exc:
         # Operator error: session not injected (Missing) or expired at DataDome (Expired).
@@ -1050,8 +1070,12 @@ def sweep_tripadvisor(
         _r1_rc = rc if rc is not None else _r1_redis.from_url(
             os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         )
-        collection_engine.set_enabled(_r1_rc, False)
-        collection_engine.mark_idle(_r1_rc)
+        # R1 is a HARD off (operator must re-inject a session before restarting).
+        # set_mode(DESLIGADO) subsumes set_enabled(False) + mark_idle + inflight=0 AND
+        # resets the operator mode — without it the engine lands at enabled=0 while
+        # mode stays LIGADO, which makes the topbar "Ligar" button a no-op (stuck UI).
+        # Redis-only (no session) keeps this fail-fast path from ever raising.
+        collection_engine.set_mode(_r1_rc, collection_engine.DESLIGADO)
         logger.warning(
             "sweep_tripadvisor_session_fail_fast",
             uf=uf,
@@ -2136,6 +2160,7 @@ def engine_sweep_run(
     depth: str | None = None,
     source: str = "default",
     run_id: str | None = None,
+    max_per_uf: int | None = None,
 ) -> dict:
     """Operator-started full sweep orchestrator (engine ON).
 
@@ -2204,7 +2229,11 @@ def engine_sweep_run(
             # lives in each domain's ``sweep_plan``). Each producer still ``.delay()``s
             # onto the single 'celery' queue; behavior is byte-identical per source.
             for _spec in domain.sweep_plan(
-                uf, depth=effective_depth, lane=lane, nascente_only=nascente_only
+                uf,
+                depth=effective_depth,
+                lane=lane,
+                nascente_only=nascente_only,
+                max_per_uf=max_per_uf,
             ):
                 _producer = globals()[_PRODUCER_ATTR_BY_TASK_NAME[_spec.task_name]]
                 # Producer-completes lifecycle: count this producer BEFORE dispatch so
@@ -2417,9 +2446,10 @@ def ta_keepalive() -> None:
 
     except (SessionExpiredError, SessionMissingError) as exc:
         # Same fallback as sweep_tripadvisor: needs_bootstrap + engine OFF.
+        # set_mode(DESLIGADO) subsumes set_enabled(False) + mark_idle + inflight=0 and
+        # resets the operator mode so mode/enabled never desync into a stuck "Ligar".
         _mark_needs_bootstrap()
-        collection_engine.set_enabled(rc, False)
-        collection_engine.mark_idle(rc)
+        collection_engine.set_mode(rc, collection_engine.DESLIGADO)
         logger.warning(
             "ta_keepalive_session_expired",
             error_type=type(exc).__name__,
