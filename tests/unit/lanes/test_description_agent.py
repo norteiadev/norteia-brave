@@ -246,6 +246,58 @@ async def test_rescore_promotes_borderline_to_mar() -> None:
     assert rio.sub_state == "description_enriched"
 
 
+@pytest.mark.asyncio
+async def test_emits_description_enriched_record_event() -> None:
+    """Successful enrichment emits a `description_enriched` RecordEvent (Log tab).
+
+    Regression: the enrichment step advanced sub_state + wrote an audit row but
+    never emitted a RecordEvent, so the drawer Log tab had no entry for it.
+    """
+    md = FakeMelhoresDestinosClient(
+        url_by_name={"Praia do Forte": PRAIA_URL},
+        description_by_url={PRAIA_URL: "Prosa editorial raspada do MD."},
+    )
+    llm = FakeLLMClient(generate_result="Descrição na voz da Norteia.")
+    rio = _make_rio()
+    rio.canonical_key = "tripadvisor:attraction:2401600"
+
+    agent = _agent(md, llm, _make_session())
+    with (
+        patch(f"{_MODULE}.write_audit"),
+        patch(f"{_MODULE}.route_by_score"),
+        patch(f"{_MODULE}.record_event") as rec,
+    ):
+        await agent.run(rio)
+
+    assert rec.call_count == 1
+    kwargs = rec.call_args.kwargs
+    assert kwargs["stage"] == "description_enriched"
+    assert kwargs["status"] == "ok"
+    assert kwargs["source"] == "tripadvisor"
+    assert kwargs["source_ref"] == "tripadvisor:attraction:2401600"
+    assert kwargs["entity_type"] == "attraction"
+
+
+@pytest.mark.asyncio
+async def test_record_event_status_skip_when_no_description() -> None:
+    """No MD match → still emits the event, but with status="skip"."""
+    md = FakeMelhoresDestinosClient(url_by_name={})  # miss → floor kept
+    llm = FakeLLMClient()
+    rio = _make_rio()
+    rio.canonical_key = "tripadvisor:attraction:2401600"
+
+    agent = _agent(md, llm, _make_session())
+    with (
+        patch(f"{_MODULE}.write_audit"),
+        patch(f"{_MODULE}.route_by_score"),
+        patch(f"{_MODULE}.record_event") as rec,
+    ):
+        await agent.run(rio)
+
+    assert rec.call_count == 1
+    assert rec.call_args.kwargs["status"] == "skip"
+
+
 # ---------------------------------------------------------------------------
 # Distrito relation via the MD breadcrumb <Place> (IBGE DTB, scoped to município)
 # ---------------------------------------------------------------------------

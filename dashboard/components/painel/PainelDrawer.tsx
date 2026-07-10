@@ -57,6 +57,7 @@ const STAGE_LABELS: Record<string, string> = {
   deduped: "Duplicado",
   scored: "Pontuado (confiabilidade)",
   routed: "Roteado",
+  description_enriched: "Descrição editorial gerada",
   quarantined: "Quarentena (falha)",
 };
 

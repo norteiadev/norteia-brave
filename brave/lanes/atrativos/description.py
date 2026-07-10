@@ -42,6 +42,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from brave.config.settings import ScoreConfig
 from brave.core.rio.routing import route_by_score
 from brave.observability.audit import write_audit
+from brave.observability.record_events import record_event
 from brave.shared.ibge_distritos import resolve_distrito_place
 
 if TYPE_CHECKING:
@@ -286,6 +287,28 @@ class DescriptionEnrichmentAgent:
                 actor="description_enrichment_agent",
             )
             self._session.flush()
+
+        # Append-only Log-tab timeline event — mirrors the ingested/scored/routed
+        # emissions in routing.py so the drawer Log tab shows the enrichment step.
+        # Keyed by canonical_key (the universal drawer key). LGPD: public-geo /
+        # engineering fields only — never the descricao_editorial text itself.
+        canonical_key = rio.canonical_key or ""
+        record_event(
+            session=self._session,
+            source=canonical_key.split(":", 1)[0] if canonical_key else "unknown",
+            source_ref=canonical_key,
+            stage="description_enriched",
+            status="ok" if description_written else "skip",
+            entity_type="attraction",
+            uf=rio.uf,
+            rio_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
+            data={
+                "description_written": description_written,
+                "completude_value": new_normalized.get("completude_value"),
+                "routing": rio.routing,
+            },
+        )
+        self._session.flush()
 
         logger.info(
             "description_enriched",
