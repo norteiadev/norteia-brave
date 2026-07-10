@@ -70,7 +70,7 @@ services:
     command:
       - /bin/sh
       - -lc
-      - "/app/.venv/bin/alembic upgrade head && /app/.venv/bin/python -m scripts.seed_config"
+      - "/app/.venv/bin/alembic upgrade head && /app/.venv/bin/python -m scripts.seed_reference_data && /app/.venv/bin/python -m scripts.seed_config"
     depends_on:
       postgres:
         condition: service_healthy

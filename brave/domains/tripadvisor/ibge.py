@@ -18,9 +18,13 @@ import math
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rapidfuzz import fuzz, process
 from rapidfuzz import utils as rfuzz_utils
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 # ---------------------------------------------------------------------------
 # IbgeMunicipio dataclass
@@ -76,6 +80,40 @@ def load_ibge_csv(path: Path | str) -> list[IbgeMunicipio]:
                 )
             )
     return records
+
+
+# ---------------------------------------------------------------------------
+# DB loader (reference table — supersedes the CSV loader in the live path)
+# ---------------------------------------------------------------------------
+
+
+def load_ibge_municipios(session: "Session") -> list[IbgeMunicipio]:
+    """Load IBGE municipality reference rows from the ``municipios`` table.
+
+    Returns the SAME ``IbgeMunicipio`` dataclass list as ``load_ibge_csv`` so every
+    downstream resolver (``resolve_municipio``, ``resolve_municipio_national``) is
+    untouched — only the loader source changes (static CSV → DB reference table
+    seeded at migrate time). The mtur fold-in columns (``categoria`` /
+    ``regiao_turistica``) are not part of the resolver dataclass and stay in the DB.
+
+    Args:
+        session: SQLAlchemy synchronous Session.
+
+    Returns:
+        List of IbgeMunicipio records (empty list if the table has no rows).
+    """
+    from brave.core.models import Municipio
+
+    return [
+        IbgeMunicipio(
+            ibge_code=row.ibge_code,
+            nome=row.nome,
+            uf=row.uf,
+            lat=row.lat,
+            lng=row.lng,
+        )
+        for row in session.query(Municipio).all()
+    ]
 
 
 # ---------------------------------------------------------------------------

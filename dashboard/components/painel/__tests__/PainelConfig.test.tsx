@@ -40,9 +40,9 @@ describe("PainelConfig", () => {
     expect(getByTestId("config-mode-LIGADO").getAttribute("data-active")).toBe(
       "true",
     );
-    // sources rendered from the snapshot
-    getByTestId("config-source-mtur");
+    // sources rendered from the snapshot (TripAdvisor surfaced; dormant Places lane off)
     getByTestId("config-source-tripadvisor");
+    getByTestId("config-source-default");
     // save enabled while the weights are valid
     expect(getByTestId("config-save-pesos")).not.toBeDisabled();
   });

@@ -12,7 +12,7 @@ import { StageBadge } from "@/components/cms/StageBadge";
  *   - subState → title-cased FSM label.
  *   - score → banded chip text (one decimal) + band color class
  *     (≥85 mar/green, 40–84.9 dlq/amber, <40 descarte/red).
- *   - source → friendly chip (mtur→Mtur, etc.); unknown source = raw.
+ *   - source → friendly chip (notebooklm→NotebookLM, etc.); unknown source = raw.
  *   - validationPending → "Aguardando" flag chip.
  *   - all colors are CSS-var references, never hardcoded hex.
  *
@@ -91,9 +91,15 @@ describe("D-02 StageBadge", () => {
   });
 
   it("renders friendly source labels and falls back to the raw source", () => {
-    const { unmount } = render(<StageBadge source="mtur" />);
-    expect(screen.getByText("Mtur")).toBeInTheDocument();
+    const { unmount } = render(<StageBadge source="notebooklm" />);
+    expect(screen.getByText("NotebookLM")).toBeInTheDocument();
     unmount();
+
+    // A retired/unknown source (e.g. a historical "mtur" record) still renders
+    // raw via the fallback — dropping the friendly label never hides the record.
+    const { unmount: u2 } = render(<StageBadge source="mtur" />);
+    expect(screen.getByText("mtur")).toBeInTheDocument();
+    u2();
 
     render(<StageBadge source="some_other_source" />);
     expect(screen.getByText("some_other_source")).toBeInTheDocument();
@@ -147,7 +153,7 @@ describe("D-02 StageBadge", () => {
 
   it("uses CSS-var color tokens, never hardcoded hex colors", () => {
     const { container } = render(
-      <StageBadge routing="mar" subState="discovered" score={90} source="mtur" validationPending />,
+      <StageBadge routing="mar" subState="discovered" score={90} source="tripadvisor" validationPending />,
     );
     expect(container.innerHTML).not.toMatch(/#[0-9a-fA-F]{3,6}\b/);
     expect(container.innerHTML).toContain("var(--status-mar)");

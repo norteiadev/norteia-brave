@@ -23,7 +23,10 @@ from __future__ import annotations
 
 import unicodedata
 from datetime import timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 import structlog
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
@@ -117,26 +120,53 @@ def _extract_distrito_from_components(address_components: Any) -> str:
     return ""
 
 
-def build_mtur_ibge_lookup(mtur_rows: list[dict]) -> dict[tuple[str, str], str]:
-    """Build {(normalized_name, UF): ibge_code} lookup dict from all Mtur rows.
+def build_mtur_ibge_lookup(rows: list[dict]) -> dict[tuple[str, str], str]:
+    """Build {(normalized_name, UF): ibge_code} lookup dict from município rows.
 
-    Used to resolve municipality name → IBGE code in-process against the loaded
-    Mtur table. The Places API has no IBGE field; this is the only resolution path.
+    Used to resolve municipality name → IBGE code in-process. The Places API has
+    no IBGE field; this is the only resolution path. Kept as the pure dict-builder
+    behind ``load_municipio_name_ibge_lookup`` (which feeds it rows from the
+    ``municipios`` reference table).
 
     Args:
-        mtur_rows: List of municipality dicts from MturClient.fetch_municipalities().
-                   Each row must have "name", "uf", and "ibge_code" keys.
+        rows: List of municipality dicts, each with "name", "uf", and
+              "ibge_code" keys.
 
     Returns:
         Dict mapping (normalized_municipality_name, "BA") → "2927408" (IBGE code).
     """
     lookup: dict[tuple[str, str], str] = {}
-    for row in mtur_rows:
+    for row in rows:
         name = row.get("name", "")
         uf = row.get("uf", "").upper()
         ibge = row.get("ibge_code", "")
         if name and uf and ibge:
             lookup[(_normalize_name(name), uf)] = ibge
+    return lookup
+
+
+def load_municipio_name_ibge_lookup(session: "Session") -> dict[tuple[str, str], str]:
+    """Build {(normalized_name, UF): ibge_code} from the ``municipios`` reference table.
+
+    Repoints ``build_mtur_ibge_lookup`` (which read the retired mtur CSV) at the
+    seeded DB table. Same lookup-dict shape, so ``RealPlacesClient`` consumes it
+    unchanged: the Places API has no IBGE field, so a normalized name+UF → IBGE
+    lookup is the only resolution path for ``municipio_ibge``.
+
+    Args:
+        session: SQLAlchemy synchronous Session.
+
+    Returns:
+        Dict mapping (normalized_municipality_name, "BA") → "2927408" (IBGE code).
+    """
+    from brave.core.models import Municipio
+
+    lookup: dict[tuple[str, str], str] = {}
+    for nome, uf, ibge_code in session.query(
+        Municipio.nome, Municipio.uf, Municipio.ibge_code
+    ).all():
+        if nome and uf and ibge_code:
+            lookup[(_normalize_name(nome), uf.upper())] = ibge_code
     return lookup
 
 

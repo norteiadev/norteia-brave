@@ -254,12 +254,12 @@ describe("PainelTopbar", () => {
     );
   });
 
-  it("source label renders 'Padrão' by default", async () => {
+  it("source label renders 'TripAdvisor' by default", async () => {
     server.use(engineStatus({ source: null }), taSessionStatus());
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
     expect(await screen.findByTestId("painel-source")).toHaveTextContent(
-      "Padrão",
+      "TripAdvisor",
     );
   });
 

@@ -1,14 +1,18 @@
-"""Unit tests for brave.clients.mtur._map_categoria nomenclature mapping.
+"""Unit tests for scripts.seed_reference_data._map_categoria nomenclature mapping.
 
-Covers old (A–E) and 2025 nomenclature. The 2025 Mapa do Turismo "simplified
-categorization" export uses the SINGULAR top-tier label "Município turístico"
-(not the plural "Municípios turísticos" the README assumed). Real 2025 data has
-622 such rows — they must map to "Oferta Principal", not the Apoio default.
+``_map_categoria`` moved here from the retired ``brave.clients.mtur`` when the Mtur
+destino-seed lane was removed: the mtur turistic categorization is now folded onto
+the ``municipios`` reference table at seed time (see
+``docs/plans/mtur-removal-db-reference-tables.md`` §2). This test covers the old
+(A–E) and 2025 nomenclature. The 2025 Mapa do Turismo "simplified categorization"
+export uses the SINGULAR top-tier label "Município turístico" (not the plural
+"Municípios turísticos" the README assumed). Real 2025 data has 622 such rows —
+they must map to "Oferta Principal", not the Apoio default.
 """
 
 import pytest
 
-from brave.clients.mtur import _map_categoria
+from scripts.seed_reference_data import _map_categoria
 
 
 @pytest.mark.parametrize(

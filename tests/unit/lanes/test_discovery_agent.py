@@ -78,10 +78,11 @@ def _make_mock_session() -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_discovery_skips_when_no_parent_destino() -> None:
-    """DiscoveryAgent skips ingestion when no parent destino in Mar for the place's
-    uf+municipio_ibge. store_raw must NOT be called; quarantine_poison MUST be called
-    with an error containing 'parent_destino_absent'.
+async def test_discovery_materializes_parent_destino_and_ingests() -> None:
+    """DiscoveryAgent no longer skips on a missing Mar parent: it materializes the
+    parent destino on demand via ensure_destino (destino-first, TA-consistent) and
+    ingests the attraction. quarantine_poison MUST NOT be called for a resolvable place,
+    and the payload must carry parent_rio_id + parent_source_ref (Mar id optional).
     """
     from brave.config.settings import ScoreConfig
     from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
@@ -97,9 +98,6 @@ async def test_discovery_skips_when_no_parent_destino() -> None:
     llm_client.extract = AsyncMock(return_value=_make_atrativo_result())
 
     session = _make_mock_session()
-    # MarRecord query returns None — no parent destino in Mar
-    session.scalar.return_value = None
-
     config = ScoreConfig()
 
     agent = DiscoveryAgent(
@@ -109,32 +107,50 @@ async def test_discovery_skips_when_no_parent_destino() -> None:
         config=config,
     )
 
-    with patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
+    parent_rio_id = uuid.uuid4()
+    mock_nascente = MagicMock()
+    mock_nascente.id = uuid.uuid4()
+    mock_nascente.source_ref = "places:BA:ChIJtest001"
+
+    # ensure_destino is patched: the destino round-trip is exercised in the e2e suite;
+    # here we isolate the attraction ingest contract. Returns (rio_id, source_ref, None)
+    # — the ensured destino has not reached Mar yet, so parent_mar_id stays absent.
+    with patch(
+        "brave.lanes.atrativos.discovery_agent.ensure_destino",
+        return_value=(parent_rio_id, "ibge:BA:2919207", None),
+    ) as mock_ensure, \
+         patch("brave.lanes.atrativos.discovery_agent.store_raw", return_value=mock_nascente) as mock_store_raw, \
+         patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
+         patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
          patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
         await agent.produce(uf="BA")
 
-    # store_raw MUST NOT be called when no parent destino
-    mock_store_raw.assert_not_called()
+    # ensure_destino materializes the parent — called with the resolved município
+    mock_ensure.assert_called_once()
+    assert mock_ensure.call_args.kwargs["ibge_code"] == "2919207"
 
-    # quarantine_poison MUST be called with error containing "parent_destino_absent"
-    assert mock_quarantine.call_count >= 1
-    quarantine_kwargs = mock_quarantine.call_args
-    error_msg = quarantine_kwargs[1].get("error", "") or str(quarantine_kwargs[0])
-    assert "parent_destino_absent" in error_msg
+    # attraction ingested (not skipped); no quarantine for a resolvable place
+    assert mock_store_raw.call_count == 1
+    mock_quarantine.assert_not_called()
+
+    payload = mock_store_raw.call_args.kwargs["payload"]
+    assert payload["parent_rio_id"] == str(parent_rio_id)
+    assert payload["parent_source_ref"] == "ibge:BA:2919207"
+    # Mar id absent when the ensured destino has not reached Mar
+    assert "parent_mar_id" not in payload
 
 
 @pytest.mark.asyncio
 async def test_discovery_stores_raw_with_place_id_only() -> None:
-    """DiscoveryAgent stores raw record when MarRecord parent destino exists.
+    """DiscoveryAgent stores raw record after materializing the parent destino.
 
     Verifies:
-    - store_raw is called once
+    - store_raw is called once (for the attraction; ensure_destino is patched)
     - payload["canonical"]["place_id"] is present
     - COMP-03 / D-04: no raw Places fields (addresses, names from Places) stored
       as canonical identity (only AtrativoResult extraction + place_id cache)
     """
     from brave.config.settings import ScoreConfig
-    from brave.core.models import MarRecord
     from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 
     places_result = _make_places_result()
@@ -148,13 +164,6 @@ async def test_discovery_stores_raw_with_place_id_only() -> None:
     llm_client.extract = AsyncMock(return_value=_make_atrativo_result())
 
     session = _make_mock_session()
-
-    # First scalar call = MarRecord query → returns a MarRecord (parent destino exists)
-    mock_mar = MagicMock(spec=MarRecord)
-    mock_mar.canonical = {"municipio_ibge": "2919207", "name": "Porto Seguro"}
-    mock_mar.entity_type = "destination"
-    session.scalar.return_value = mock_mar
-
     config = ScoreConfig()
 
     agent = DiscoveryAgent(
@@ -165,9 +174,14 @@ async def test_discovery_stores_raw_with_place_id_only() -> None:
     )
 
     # FSM-init collaborators (Plan 05-02 Task 1) are patched out: this test isolates the
-    # store_raw payload/parent-guard contract, not the Rio creation + sub_state seeding
-    # (those are covered against a real DB in test_atrativos_lane_e2e.py).
-    with patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
+    # store_raw payload contract, not the Rio creation + sub_state seeding (those are
+    # covered against a real DB in test_atrativos_lane_e2e.py). ensure_destino is also
+    # patched so only the attraction store_raw is asserted.
+    with patch(
+        "brave.lanes.atrativos.discovery_agent.ensure_destino",
+        return_value=(uuid.uuid4(), "ibge:BA:2919207", None),
+    ), \
+         patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
          patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
          patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
          patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
@@ -180,19 +194,15 @@ async def test_discovery_stores_raw_with_place_id_only() -> None:
 
         await agent.produce(uf="BA")
 
-    # quarantine should NOT be called (parent destino exists, extraction succeeded)
+    # quarantine should NOT be called (parent materialized, extraction succeeded)
     mock_quarantine.assert_not_called()
 
-    # store_raw MUST be called exactly once
+    # store_raw MUST be called exactly once (attraction only; ensure_destino patched)
     assert mock_store_raw.call_count == 1
 
     # Verify payload structure: canonical must include place_id
-    call_kwargs = mock_store_raw.call_args[1]
-    payload = call_kwargs.get("payload") or mock_store_raw.call_args[0][5] if mock_store_raw.call_args[0] else {}
-    if not payload:
-        # Try positional args fallback
-        args, kwargs = mock_store_raw.call_args
-        payload = kwargs.get("payload", args[5] if len(args) > 5 else {})
+    call_kwargs = mock_store_raw.call_args.kwargs
+    payload = call_kwargs["payload"]
 
     assert "canonical" in payload
     canonical = payload["canonical"]
@@ -200,8 +210,7 @@ async def test_discovery_stores_raw_with_place_id_only() -> None:
     assert canonical["place_id"] == "ChIJtest001"
 
     # entity_type must be "attraction"
-    assert call_kwargs.get("entity_type") == "attraction" or \
-           (mock_store_raw.call_args[0] and mock_store_raw.call_args[0][3] == "attraction")
+    assert call_kwargs.get("entity_type") == "attraction"
 
 
 @pytest.mark.asyncio
@@ -213,7 +222,6 @@ async def test_discovery_dedup_idempotent() -> None:
     handles dedup internally), and no quarantine is triggered.
     """
     from brave.config.settings import ScoreConfig
-    from brave.core.models import MarRecord
     from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 
     places_result = _make_places_result()
@@ -226,10 +234,6 @@ async def test_discovery_dedup_idempotent() -> None:
     llm_client.extract = AsyncMock(return_value=_make_atrativo_result())
 
     session = _make_mock_session()
-    mock_mar = MagicMock(spec=MarRecord)
-    mock_mar.canonical = {"municipio_ibge": "2919207"}
-    session.scalar.return_value = mock_mar
-
     config = ScoreConfig()
 
     agent = DiscoveryAgent(
@@ -241,7 +245,11 @@ async def test_discovery_dedup_idempotent() -> None:
 
     # FSM-init collaborators (Plan 05-02 Task 1) patched out — see note above; this test
     # asserts store_raw dedup behavior, not Rio creation / sub_state seeding.
-    with patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
+    with patch(
+        "brave.lanes.atrativos.discovery_agent.ensure_destino",
+        return_value=(uuid.uuid4(), "ibge:BA:2919207", None),
+    ), \
+         patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
          patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
          patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
          patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
@@ -270,18 +278,19 @@ async def test_discovery_dedup_idempotent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_ibge_guard_quarantines_without_db_query() -> None:
-    """D-02 guard: places result with empty municipio_ibge must quarantine without
-    querying the DB.
+async def test_empty_ibge_still_calls_ensure_destino_no_quarantine() -> None:
+    """Post-mtur: the parent destino is materialized destino-first via ensure_destino,
+    so the old D-02 ``parent_destino_absent`` quarantine no longer exists.
 
-    When municipio_ibge is empty, _resolve_parent_destino must return None immediately
-    (before calling session.scalar). The caller (produce()) then quarantines with
-    error="parent_destino_absent". session.scalar MUST NOT be called at all.
+    Even with an empty municipio_ibge (Places name→IBGE lookup miss), produce() calls
+    ensure_destino with the resolved fields and proceeds to ingest — it never emits a
+    ``parent_destino_absent`` quarantine. (Empty-ibge hardening is tracked as a
+    follow-up risk; see the §3/§5 report.)
     """
     from brave.config.settings import ScoreConfig
     from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 
-    # Place result with empty municipio_ibge — triggers D-02 guard
+    # Place result with empty municipio_ibge — Places lookup miss.
     places_result = _make_places_result(municipio_ibge="", municipio_nome="")
 
     fake_places = FakePlacesClient(
@@ -292,9 +301,6 @@ async def test_empty_ibge_guard_quarantines_without_db_query() -> None:
     llm_client.extract = AsyncMock(return_value=_make_atrativo_result())
 
     session = _make_mock_session()
-    # The guard must prevent this call entirely
-    session.scalar.return_value = None
-
     config = ScoreConfig()
 
     agent = DiscoveryAgent(
@@ -304,20 +310,27 @@ async def test_empty_ibge_guard_quarantines_without_db_query() -> None:
         config=config,
     )
 
-    with patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
+    mock_nascente = MagicMock()
+    mock_nascente.id = uuid.uuid4()
+    mock_nascente.source_ref = "places:BA:ChIJtest001"
+
+    with patch(
+        "brave.lanes.atrativos.discovery_agent.ensure_destino",
+        return_value=(uuid.uuid4(), "ibge:BA:", None),
+    ) as mock_ensure, \
+         patch("brave.lanes.atrativos.discovery_agent.store_raw", return_value=mock_nascente), \
+         patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
+         patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
          patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
         await agent.produce(uf="BA")
 
-    # D-02 guard: DB must NOT be queried when ibge is empty
-    session.scalar.assert_not_called()
+    # ensure_destino is called even with an empty ibge (no pre-guard quarantine)
+    mock_ensure.assert_called_once()
+    assert mock_ensure.call_args.kwargs["ibge_code"] == ""
 
-    # store_raw must NOT be called (parent_destino_absent quarantine fires first)
-    mock_store_raw.assert_not_called()
-
-    # quarantine_poison must be called with error="parent_destino_absent"
-    assert mock_quarantine.call_count >= 1
-    quarantine_kwargs = mock_quarantine.call_args[1]
-    assert quarantine_kwargs.get("error") == "parent_destino_absent"
+    # No parent_destino_absent quarantine is ever emitted (branch removed)
+    for call in mock_quarantine.call_args_list:
+        assert call.kwargs.get("error") != "parent_destino_absent"
 
 
 # ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ export interface AtrativoListItem {
   sub_state: string | null;
   score: number | null;
   name: string | null;
-  source: string | null; // Nascente origin: tripadvisor | ibge | mtur
+  source: string | null; // Nascente origin: tripadvisor | ibge
   municipio?: string | null; // público-geo município nome (resolved at ingest)
   municipio_id?: string | null; // IBGE code
   validation_pending: boolean; // sub_state === 'aguardando_consulta_whatsapp'

@@ -103,7 +103,9 @@ def test_get_returns_effective_snapshot(db, redis):
     snap = get_config_snapshot(db=db, redis=redis)
     assert snap["score"]["threshold_mar"] == 80.0
     assert snap["score"]["weight_origem"] == 30.0
-    assert snap["sources"] == {"default": True, "tripadvisor": True}
+    # 'default' (Google Places) ships DORMANT — enabled=false by default (re-enablable
+    # via config); tripadvisor is the live lane.
+    assert snap["sources"] == {"default": False, "tripadvisor": True}
     # Clean base default is motor OFF (EngineConfig.mode default DESLIGADO — bug-1 fix,
     # commit a94eec4). db here is an EMPTY FakeConfigSession, so the snapshot is the pure
     # env default with no overlay.

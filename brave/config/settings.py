@@ -464,12 +464,14 @@ class EngineConfig(BaseModel):
 
 
 def _default_sources() -> dict[str, bool]:
-    """Both known collection lanes enabled by default (Phase D).
+    """Collection-lane enablement defaults (Phase D).
 
-    Kept as a module-level factory (not a lambda) so the mutable default is a fresh
-    dict per AppConfig instance and the two known lanes are documented in one place.
+    The ``default`` (Google Places) lane ships DORMANT — its Mtur destino seed is
+    retired and Places always costs, so it stays disabled until re-enabled via
+    config; ``tripadvisor`` is the live lane. Kept as a module-level factory (not a
+    lambda) so the mutable default is a fresh dict per AppConfig instance.
     """
-    return {"default": True, "tripadvisor": True}
+    return {"default": False, "tripadvisor": True}
 
 
 class AppConfig(BaseSettings):

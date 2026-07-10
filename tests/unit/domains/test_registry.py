@@ -12,17 +12,20 @@ from brave.domains.base import SourceDomain
 
 
 def test_all_builtin_sources_resolve():
-    for name in ("mtur", "default", "tripadvisor", "manual"):
+    for name in ("default", "tripadvisor", "manual"):
         domain = get_domain(name)
         assert isinstance(domain, SourceDomain)
 
 
-def test_default_alias_is_the_mtur_domain():
-    assert get_domain("default") is get_domain("mtur")
-    assert get_domain("default").name == "mtur"
+def test_default_is_the_places_domain():
+    from brave.domains.places.controllers import PLACES_DOMAIN
+
+    assert get_domain("default") is PLACES_DOMAIN
+    assert get_domain("default").name == "default"
 
 
 def test_each_domain_reports_its_own_name():
+    assert get_domain("default").name == "default"
     assert get_domain("tripadvisor").name == "tripadvisor"
     assert get_domain("manual").name == "manual"
 
@@ -34,14 +37,15 @@ def test_unknown_source_raises_keyerror():
 
 def test_registered_source_names_includes_builtins():
     names = set(registered_source_names())
-    assert {"mtur", "default", "tripadvisor", "manual"} <= names
+    assert {"default", "tripadvisor", "manual"} <= names
 
 
 def test_enabled_sources_are_sweep_lanes_only():
-    """Default config enables both sweep lanes; manual is never a sweep source."""
+    """TripAdvisor is the live sweep lane; the 'default' (Places) lane ships dormant
+    (source.default.enabled=false) and manual is never a sweep source."""
     enabled = enabled_sources(AppConfig())
-    assert "default" in enabled
     assert "tripadvisor" in enabled
+    assert "default" not in enabled  # dormant by default (re-enablable via config)
     assert "manual" not in enabled
 
 

@@ -213,11 +213,22 @@ def process_nascente_record(
     if nascente.entity_type == "attraction" and "place_id_cache" in payload:
         normalized["place_id_cache"] = payload["place_id_cache"]
 
-    # Attraction-specific: preserve parent_mar_id from payload so harness and downstream
-    # queries can group atrativos by parent destino without a nascente JOIN.
-    # Mirrors the place_id_cache copy above (D-03 / G2 gap fix).
-    if nascente.entity_type == "attraction" and "parent_mar_id" in payload:
-        normalized["parent_mar_id"] = payload["parent_mar_id"]
+    # Attraction-specific: preserve the parent-destino linkage from payload so the CMS
+    # and downstream queries can surface/group atrativos by parent destino without a
+    # nascente JOIN. Both lanes now write the destino-first linkage:
+    #   - parent_rio_id + parent_source_ref: always present (the ensured IBGE destino
+    #     is promoted to Rio unconditionally — see brave/shared/destino.ensure_destino).
+    #   - parent_mar_id: present ONLY when that destino already reached Mar (cms.py's
+    #     detail endpoint loads the parent MarRecord from it).
+    # Copying all three keeps the CMS parent linkage working uniformly whether or not
+    # the destino reached Mar. Mirrors the place_id_cache copy above (D-03 / G2 gap fix).
+    if nascente.entity_type == "attraction":
+        if "parent_rio_id" in payload:
+            normalized["parent_rio_id"] = payload["parent_rio_id"]
+        if "parent_source_ref" in payload:
+            normalized["parent_source_ref"] = payload["parent_source_ref"]
+        if "parent_mar_id" in payload:
+            normalized["parent_mar_id"] = payload["parent_mar_id"]
 
     # Attraction-specific: carry a lane-supplied MASKED WhatsApp candidate (Phase F)
     # from payload["contact"] into normalized["contact"]. Value is already masked at

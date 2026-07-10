@@ -264,7 +264,7 @@ def _seed_values(config: AppConfig) -> dict[str, Any]:
         "score.weight_corroboracao": config.score.weight_corroboracao,
         "score.weight_atualidade": config.score.weight_atualidade,
         "score.weight_validacao_humana": config.score.weight_validacao_humana,
-        "source.default.enabled": config.sources.get("default", True),
+        "source.default.enabled": config.sources.get("default", False),
         "source.tripadvisor.enabled": config.sources.get("tripadvisor", True),
         "engine.mode": config.engine.mode,
         "description_enrichment_enabled": config.description_enrichment_enabled,

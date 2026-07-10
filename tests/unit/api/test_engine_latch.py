@@ -43,6 +43,10 @@ def client(monkeypatch, dispatched):
     from brave.api.deps import get_db, get_redis
 
     get_redis().flushall()
+    # Default /start source is now "tripadvisor", which is gated on a live TA
+    # session (R2). These tests exercise the enabled latch, not the source gate —
+    # seed a valid session so /start reaches the latch logic.
+    get_redis().setex("brave:ta:session", 3600, '{"cookies":{}}')
 
     import brave.tasks.pipeline as pipeline
 

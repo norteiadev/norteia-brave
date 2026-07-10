@@ -36,7 +36,7 @@ export const sampleDedupPairs: DedupPairItem[] = [
     similarity_source: "embedding_stub",
     matched_fields: ["name", "municipio", "uf"],
     diverged_fields: [
-      { field: "source", candidate: "tripadvisor", mar: "mtur" },
+      { field: "source", candidate: "tripadvisor", mar: "places" },
       { field: "coordenadas", candidate: "-3.73,-38.52", mar: "-3.73,-38.53" },
     ],
   },
@@ -53,7 +53,7 @@ export const sampleDedupPairs: DedupPairItem[] = [
     matched_fields: ["municipio", "uf"],
     diverged_fields: [
       { field: "name", candidate: "Mercado Modelo", mar: "Mercado Modelo de Salvador" },
-      { field: "source", candidate: "tripadvisor", mar: "mtur" },
+      { field: "source", candidate: "tripadvisor", mar: "places" },
     ],
   },
 ];

@@ -27,7 +27,7 @@ from tests.fakes.fake_llm import FakeLLMClient
 from tests.fakes.fake_melhores_destinos import FakeMelhoresDestinosClient
 
 PRAIA_URL = "https://guia.melhoresdestinos.com.br/praia-do-forte-54-249-l.html"
-_MODULE = "brave.domains.mtur.description"
+_MODULE = "brave.lanes.atrativos.description"
 
 # Real IBGE DTB CSV — the golden Arraial d'Ajuda (292530307) / Porto Seguro (2925303) case.
 _CSV_PATH = Path(__file__).resolve().parents[3] / "data" / "ibge" / "ibge_distritos.csv"
@@ -68,7 +68,7 @@ def _make_session() -> MagicMock:
 
 
 def _agent(md, llm, session, config=None, md_config=None, distritos=None):
-    from brave.domains.mtur.description import DescriptionEnrichmentAgent
+    from brave.lanes.atrativos.description import DescriptionEnrichmentAgent
 
     return DescriptionEnrichmentAgent(
         md_client=md,

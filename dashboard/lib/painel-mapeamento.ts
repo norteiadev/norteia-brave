@@ -13,27 +13,17 @@
  * buildPreview. No CSS, no React — colors/markup live in the component.
  */
 
-export const SOURCE_KEYS = ["mtur", "tripadvisor", "google_places"] as const;
+export const SOURCE_KEYS = ["tripadvisor", "google_places"] as const;
 
 export type MapSourceKey = (typeof SOURCE_KEYS)[number];
 
 export const SOURCE_LABELS: Record<MapSourceKey, string> = {
-  mtur: "mTur",
   tripadvisor: "TripAdvisor",
   google_places: "Google Places",
 };
 
 /** Raw payload sample per source (design lines 552-556). */
 export const RAW: Record<MapSourceKey, Record<string, string>> = {
-  mtur: {
-    NO_MUNICIPIO: "Fortaleza",
-    SG_UF: "CE",
-    NO_REGIAO_TURISTICA: "Costa do Sol",
-    CO_MUNICIPIO_IBGE: "2304400",
-    NU_LATITUDE: "-3.7319",
-    NU_LONGITUDE: "-38.5267",
-    DS_CATEGORIA: "destino",
-  },
   tripadvisor: {
     name: "Praça do Ferreira",
     "addressObj.city": "Fortaleza",
@@ -85,16 +75,6 @@ export interface MapEntry {
 
 /** Per-source default field→canonical maps (design lines 557-573). */
 export const DEFAULT_MAPS: Record<MapSourceKey, MapEntry[]> = {
-  mtur: [
-    { src: "NO_MUNICIPIO", canonical: "name" },
-    { src: "SG_UF", canonical: "uf" },
-    { src: "NO_MUNICIPIO", canonical: "municipality" },
-    { src: "DS_CATEGORIA", canonical: "type" },
-    { src: "NU_LATITUDE", canonical: "lat" },
-    { src: "NU_LONGITUDE", canonical: "lng" },
-    { src: "CO_MUNICIPIO_IBGE", canonical: "—" },
-    { src: "NO_REGIAO_TURISTICA", canonical: "—" },
-  ],
   tripadvisor: [
     { src: "name", canonical: "name" },
     { src: "addressObj.city", canonical: "municipality" },
@@ -177,7 +157,6 @@ export function buildPreview(
 /** Deep clone of DEFAULT_MAPS so component state can be mutated freely. */
 export function cloneDefaultMaps(): Record<MapSourceKey, MapEntry[]> {
   return {
-    mtur: DEFAULT_MAPS.mtur.map((m) => ({ ...m })),
     tripadvisor: DEFAULT_MAPS.tripadvisor.map((m) => ({ ...m })),
     google_places: DEFAULT_MAPS.google_places.map((m) => ({ ...m })),
   };

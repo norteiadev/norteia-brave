@@ -2,7 +2,7 @@
 
 Shared/kernel home for the distrito enrichment resolver. It lives here — not in a
 domain package — because more than one collection lane needs it: the Places
-discovery lane (``brave.domains.mtur.discovery``) resolves an attraction's
+discovery lane (``brave.lanes.atrativos.discovery_agent``) resolves an attraction's
 ``administrative_area_level_3`` hint, and the TripAdvisor lane reserves the same
 canonical keys. A domain must not import a sibling domain (D-18), so the resolver
 sits in ``brave.shared`` where every domain may reach it.
@@ -20,9 +20,13 @@ import csv
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rapidfuzz import fuzz, process
 from rapidfuzz import utils as rfuzz_utils
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 # ---------------------------------------------------------------------------
 # IbgeDistrito dataclass (IBGE DTB 2025)
@@ -80,6 +84,39 @@ def load_distritos_csv(path: Path | str) -> list[IbgeDistrito]:
                 )
             )
     return records
+
+
+# ---------------------------------------------------------------------------
+# DB loader (reference table — supersedes the CSV loader in the live path)
+# ---------------------------------------------------------------------------
+
+
+def load_distritos(session: "Session") -> list[IbgeDistrito]:
+    """Load IBGE distrito reference rows from the ``distritos`` table.
+
+    Returns the SAME ``IbgeDistrito`` dataclass list as ``load_distritos_csv`` so
+    every downstream resolver (``resolve_distrito``, ``resolve_distrito_place``) is
+    untouched — only the loader source changes (static CSV → DB reference table
+    seeded at migrate time).
+
+    Args:
+        session: SQLAlchemy synchronous Session.
+
+    Returns:
+        List of IbgeDistrito records (empty list if the table has no rows).
+    """
+    from brave.core.models import Distrito
+
+    return [
+        IbgeDistrito(
+            distrito_code=row.distrito_code,
+            nome=row.nome,
+            ibge_code=row.ibge_code,
+            municipio_nome=row.municipio_nome,
+            uf=row.uf,
+        )
+        for row in session.query(Distrito).all()
+    ]
 
 
 # ---------------------------------------------------------------------------

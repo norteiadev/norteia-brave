@@ -29,21 +29,21 @@ afterEach(() => {
 });
 
 describe("PainelOrigem", () => {
-  it("renders a radio row per source (mtur + tripadvisor only — Places is enrichment)", async () => {
+  it("renders TripAdvisor as the sole surfaced source (mtur/default retired, Places is enrichment)", async () => {
     server.use(taSessionStatus());
     renderWithClient(<PainelOrigem open onClose={() => {}} />);
 
-    expect(await screen.findByTestId("origem-radio-mtur")).toBeInTheDocument();
-    expect(screen.getByTestId("origem-radio-tripadvisor")).toBeInTheDocument();
+    expect(await screen.findByTestId("origem-radio-tripadvisor")).toBeInTheDocument();
+    // The dormant Places lane (mtur/default) is no longer surfaced or activatable.
+    expect(screen.queryByTestId("origem-radio-mtur")).toBeNull();
+    expect(screen.queryByTestId("origem-radio-default")).toBeNull();
     // Google Places is ENRICHMENT, not a collection source — no radio row.
     expect(screen.queryByTestId("origem-radio-google_places")).toBeNull();
   });
 
-  it("re-syncs the picker to the persisted source when the modal opens (initialSource resolves after mount)", async () => {
-    // Regression: the modal mounts (open=false) at app load BEFORE the engine
-    // status query resolves, so initialSource is the mount-time default "mtur".
-    // When the persisted source is tripadvisor, opening the modal must reflect it
-    // — useState alone latches "mtur" forever. The open-edge sync fixes this.
+  it("selects TripAdvisor (the sole source) when the modal opens", async () => {
+    // The modal mounts (open=false) at app load BEFORE the engine status query
+    // resolves; the open-edge sync re-latches the surfaced source (TripAdvisor).
     server.use(taSessionStatus());
     setOperatorToken("test-operator-token");
     const client = new QueryClient({
@@ -58,17 +58,12 @@ describe("PainelOrigem", () => {
       </QueryClientProvider>
     );
 
-    // Mount closed with the mount-time default (status not yet resolved → mtur).
-    const { rerender } = render(ui("mtur", false));
-    // Engine status resolves to tripadvisor and the operator opens the modal.
+    // Mount closed, then the operator opens the modal.
+    const { rerender } = render(ui("tripadvisor", false));
     rerender(ui("tripadvisor", true));
 
     const ta = await screen.findByTestId("origem-radio-tripadvisor");
     expect(ta).toHaveAttribute("data-selected", "true");
-    expect(screen.getByTestId("origem-radio-mtur")).not.toHaveAttribute(
-      "data-selected",
-      "true",
-    );
   });
 
   it("renders nothing when closed", () => {
@@ -77,13 +72,16 @@ describe("PainelOrigem", () => {
     expect(screen.queryByTestId("painel-origem")).toBeNull();
   });
 
-  it("reveals the cURL textarea only after TripAdvisor is selected", async () => {
+  it("shows the cURL textarea on open (TripAdvisor is the sole, default-selected source)", async () => {
     server.use(taSessionStatus());
     renderWithClient(<PainelOrigem open onClose={() => {}} />);
 
-    expect(screen.queryByTestId("origem-curl")).toBeNull();
-    fireEvent.click(screen.getByTestId("origem-radio-tripadvisor"));
+    // TripAdvisor is now pre-selected on open, so its cURL textarea is revealed
+    // immediately — no other source to switch away from.
     expect(await screen.findByTestId("origem-curl")).toBeInTheDocument();
+    // Clicking the (already-selected) TripAdvisor row keeps it visible.
+    fireEvent.click(screen.getByTestId("origem-radio-tripadvisor"));
+    expect(screen.getByTestId("origem-curl")).toBeInTheDocument();
   });
 
   it("submits the parsed cURL body (cookies + query_ids + user_agent + acquired_at) to injectTASession", async () => {
@@ -176,22 +174,5 @@ describe("PainelOrigem", () => {
     fireEvent.click(screen.getByTestId("origem-submit"));
 
     await waitFor(() => expect(captured).toMatchObject({ source: "tripadvisor" }));
-  });
-
-  it("saving mtur fires POST /engine/source with {source: 'default'}", async () => {
-    let captured: Record<string, unknown> | null = null;
-    server.use(
-      taSessionStatus(),
-      http.post(ENGINE_SOURCE_URL, async ({ request }) => {
-        captured = (await request.json()) as Record<string, unknown>;
-        return HttpResponse.json({ source: "default" });
-      }),
-    );
-    renderWithClient(<PainelOrigem open onClose={() => {}} />);
-
-    // mtur is already selected by default — just click Salvar
-    fireEvent.click(screen.getByTestId("origem-submit"));
-
-    await waitFor(() => expect(captured).toMatchObject({ source: "default" }));
   });
 });

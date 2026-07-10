@@ -222,7 +222,7 @@ def engine_start(
     # AND ENABLED (enabled_sources). An unknown lane is a 422 (malformed request); a
     # known-but-disabled lane is a 409 (valid name, not currently collectable) — both
     # raised before any engine state mutation so a rejected start never spends.
-    source = body.get("source", "default")
+    source = body.get("source", "tripadvisor")
     cfg = _effective_config(db, redis)
     if source not in cfg.sources:
         raise HTTPException(
@@ -337,7 +337,7 @@ def engine_set_source(
     the config_settings overlay). Invalid source → 422 before any Redis write. No
     RunHistory row — this is a configuration write, not a dispatch.
     """
-    source = body.get("source", "default")
+    source = body.get("source", "tripadvisor")
     valid = enabled_sources(AppConfig())
     if source not in valid:
         raise HTTPException(

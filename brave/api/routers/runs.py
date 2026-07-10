@@ -234,11 +234,11 @@ def reprocess_run(run_id: uuid.UUID, db: Session = Depends(get_db)) -> dict:
         for uf in ufs:
             _dispatch(sweep_tripadvisor, uf, task_label="sweep_tripadvisor")
     else:
-        from brave.tasks.pipeline import discover_atrativo_task, sweep_uf
+        from brave.tasks.pipeline import discover_atrativo_task
 
+        # destinos has no producer (Mtur seed retired; destinos come from DB tables) —
+        # only the atrativos lane re-dispatches for the default (Places) source.
         for uf in ufs:
-            if run.lane in ("destinos", "both"):
-                _dispatch(sweep_uf, uf, task_label="sweep_uf")
             if run.lane in ("atrativos", "both"):
                 _dispatch(discover_atrativo_task, uf, task_label="discover_atrativo_task")
 

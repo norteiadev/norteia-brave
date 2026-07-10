@@ -27,6 +27,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -698,3 +699,83 @@ class ConfigSetting(Base):
 
     def __repr__(self) -> str:
         return f"<ConfigSetting key={self.key!r}>"
+
+
+# ---------------------------------------------------------------------------
+# Reference tables — static carga-inicial territorial base (seeded, not pipeline)
+# ---------------------------------------------------------------------------
+#
+# These three tables replace the mtur destino-seed lane: the collection lanes read
+# their parent destinos / geo resolution from here instead of running static CSV
+# data through the whole Brave pipeline. They are seeded at migrate time by
+# scripts/seed_reference_data.py and are PRESERVED across a reset-brave-db wipe
+# (they carry no pipeline state and nothing FK-references them).
+#
+# Column types are chosen so the resolver dataclasses IbgeMunicipio
+# (brave/domains/tripadvisor/ibge.py) and IbgeDistrito (brave/shared/ibge_distritos.py)
+# round-trip unchanged.
+
+
+class Municipio(Base):
+    """IBGE municipality reference row + folded-in mtur turistic categorization.
+
+    Loaded from data/ibge/ibge_municipios.csv (5571 rows). The nullable
+    ``categoria`` / ``regiao_turistica`` columns carry the mtur turistic signal
+    folded in from data/mtur/municipios_mtur_2025.csv — only ~2922/5571 rows have
+    them, so both are nullable.
+    """
+
+    __tablename__ = "municipios"
+
+    ibge_code: Mapped[str] = mapped_column(String(7), primary_key=True)
+    nome: Mapped[str] = mapped_column(String(128), nullable=False)
+    uf: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    lat: Mapped[float] = mapped_column(Float, nullable=False)
+    lng: Mapped[float] = mapped_column(Float, nullable=False)
+    # mtur fold-in — nullable (only ~2922/5571 rows carry a turistic categorization).
+    categoria: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    regiao_turistica: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    def __repr__(self) -> str:
+        return (
+            f"<Municipio ibge_code={self.ibge_code!r} nome={self.nome!r} "
+            f"uf={self.uf!r}>"
+        )
+
+
+class Distrito(Base):
+    """IBGE distrito reference row (DTB — Divisão Territorial Brasileira).
+
+    Loaded from data/ibge/ibge_distritos.csv (10751 rows). No GPS — distritos are
+    resolved by name only, scoped to the parent município via ``ibge_code``.
+    """
+
+    __tablename__ = "distritos"
+
+    distrito_code: Mapped[str] = mapped_column(String(9), primary_key=True)
+    nome: Mapped[str] = mapped_column(String(128), nullable=False)
+    ibge_code: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    municipio_nome: Mapped[str] = mapped_column(String(128), nullable=False)
+    uf: Mapped[str] = mapped_column(String(2), nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<Distrito distrito_code={self.distrito_code!r} nome={self.nome!r} "
+            f"ibge_code={self.ibge_code!r}>"
+        )
+
+
+class UfGeoid(Base):
+    """TripAdvisor UF → geoId reference row.
+
+    Loaded from data/tripadvisor/uf_geoids.json (27 rows). The DB fallback for
+    resolve_geo_id reads this table on a Redis miss.
+    """
+
+    __tablename__ = "uf_geoids"
+
+    uf: Mapped[str] = mapped_column(String(2), primary_key=True)
+    geo_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<UfGeoid uf={self.uf!r} geo_id={self.geo_id}>"

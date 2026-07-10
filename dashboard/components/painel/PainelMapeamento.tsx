@@ -30,7 +30,7 @@ import {
  * uses the exact design literals it shows (#9fb3d4 subtext, green status dot).
  */
 export function PainelMapeamento() {
-  const [source, setSource] = useState<MapSourceKey>("mtur");
+  const [source, setSource] = useState<MapSourceKey>("tripadvisor");
   const [maps, setMaps] =
     useState<Record<MapSourceKey, MapEntry[]>>(cloneDefaultMaps);
 

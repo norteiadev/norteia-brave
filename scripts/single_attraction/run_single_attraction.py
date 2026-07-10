@@ -267,7 +267,7 @@ def main() -> None:
 
     # Explicit description-enrichment step (normally a post-signal FSM task).
     if not args.no_enrich_description:
-        from brave.domains.mtur.description import DescriptionEnrichmentAgent
+        from brave.lanes.atrativos.description import DescriptionEnrichmentAgent
         from brave.clients.melhores_destinos import RealMelhoresDestinosClient
         from brave.clients.llm import RealLLMClient
 

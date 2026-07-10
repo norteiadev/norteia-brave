@@ -4,9 +4,10 @@ Phase 1: Basic sweep structure defined (stubs).
 Phase 2: Destinos lane — sweep_uf tasks.
 Phase 3: Atrativos lane — sweep_atrativos_by_uf fan-out added.
 Phase D: source-gated — only the lanes in ``enabled_sources(effective config)`` are
-  scheduled. The 'default' (Mtur/Discovery) lane owns the per-UF sweep_uf +
-  discover_atrativo entries; the 'tripadvisor' lane owns the ta-keepalive entry (its
-  only beat task — TA sweeps are start-only). Disabling a lane in ``config_settings``
+  scheduled. The 'default' (Google Places) lane owns the per-UF discover_atrativo
+  entries (the Mtur destino seed is retired; the lane ships dormant by default); the
+  'tripadvisor' lane owns the ta-keepalive entry (its only beat task — TA sweeps are
+  start-only). Disabling a lane in ``config_settings``
   drops its entries on the NEXT beat restart (redbeat persists the schedule in Redis
   and only resyncs entry definitions on process start — see CLAUDE.md).
 
@@ -18,7 +19,6 @@ The schedule is stored in Redis, so multiple beat instances would conflict.
 
 sweep_atrativos_by_uf:
   Fires discover_atrativo_task per UF on a staggered daily schedule (3 AM UTC).
-  Offset by 1 hour from sweep_uf (2 AM) to avoid peak DB contention.
   All 27 UF tasks fan out independently; each UF is a separate Celery message.
 """
 
@@ -54,8 +54,8 @@ def build_beat_schedule(enabled: list[str]) -> dict:
     unions the entries the domain contributes (``beat_entries``). Adding a source's
     schedule is therefore a change in that domain only, never here.
 
-      - ``default`` → the Mtur/Discovery domain's per-UF sweep entries
-        (sweep-{uf}-daily @ 2 AM UTC + sweep-atrativos-{uf}-daily @ 3 AM UTC).
+      - ``default`` → the Google Places domain's per-UF attraction entries
+        (sweep-atrativos-{uf}-daily @ 3 AM UTC).
       - ``tripadvisor`` → the TA session keep-alive beat (its only scheduled task;
         TA sweeps are dispatched on-demand via /engine/start).
 

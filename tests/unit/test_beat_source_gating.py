@@ -1,8 +1,9 @@
 """Phase D: beat schedule is gated by enabled_sources.
 
 Pure, fully-offline unit tests over ``build_beat_schedule(enabled)`` — no Redis, no
-Postgres, no broker. The 'default' lane owns the per-UF sweep entries; the
-'tripadvisor' lane owns the ta-keepalive beat. Disabling a lane drops its entries.
+Postgres, no broker. The 'default' (Google Places) lane owns the per-UF
+discover_atrativo entries; the 'tripadvisor' lane owns the ta-keepalive beat.
+Disabling a lane drops its entries.
 
 Also re-asserts the single-queue invariant (no options.queue) on the gated schedule,
 complementing tests/unit/test_celery_queue_routing.py.
@@ -19,9 +20,9 @@ def _sweep_keys(sched: dict) -> list[str]:
 
 def test_default_only_has_uf_sweeps_no_keepalive():
     sched = build_beat_schedule(["default"])
-    # 2 entries per UF (sweep_uf + discover_atrativo), no others.
-    assert len(_sweep_keys(sched)) == 2 * len(UF_LIST)
-    assert f"sweep-{UF_LIST[0].lower()}-daily" in sched
+    # 1 entry per UF (discover_atrativo only — the Mtur sweep_uf seed is retired).
+    assert len(_sweep_keys(sched)) == len(UF_LIST)
+    assert f"sweep-{UF_LIST[0].lower()}-daily" not in sched  # no destino sweep anymore
     assert f"sweep-atrativos-{UF_LIST[0].lower()}-daily" in sched
     assert "ta-keepalive" not in sched  # tripadvisor lane disabled
 
@@ -35,7 +36,7 @@ def test_tripadvisor_only_has_keepalive_no_sweeps():
 def test_both_enabled_has_everything():
     sched = build_beat_schedule(["default", "tripadvisor"])
     assert "ta-keepalive" in sched
-    assert len(_sweep_keys(sched)) == 2 * len(UF_LIST)
+    assert len(_sweep_keys(sched)) == len(UF_LIST)
 
 
 def test_no_lane_enabled_is_empty():

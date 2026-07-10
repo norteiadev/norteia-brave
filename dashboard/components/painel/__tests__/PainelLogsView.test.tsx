@@ -1,4 +1,3 @@
-import { fireEvent } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { PainelLogsView } from "@/components/painel/PainelLogsView";
@@ -24,16 +23,19 @@ describe("PainelLogsView", () => {
     expect(queryByTestId("painel-logs-panel")).toBeNull();
   });
 
-  it("switches the active log source", async () => {
+  it("surfaces TripAdvisor as the sole active log source", async () => {
     server.use(logsLines());
 
-    const { getByTestId, findByTestId } = renderWithClient(<PainelLogsView />);
+    const { getByTestId, queryByTestId, findByTestId } = renderWithClient(
+      <PainelLogsView />,
+    );
     await findByTestId("painel-logs-inline");
 
-    const defaultBtn = getByTestId("logs-source-default");
-    expect(defaultBtn.getAttribute("data-active")).toBe("false");
-
-    fireEvent.click(defaultBtn);
-    expect(defaultBtn.getAttribute("data-active")).toBe("true");
+    // TripAdvisor is the only surfaced lane and is active by default; the retired
+    // mtur/default lane is no longer offered as a selectable log source.
+    const taBtn = getByTestId("logs-source-tripadvisor");
+    expect(taBtn.getAttribute("data-active")).toBe("true");
+    expect(queryByTestId("logs-source-default")).toBeNull();
+    expect(queryByTestId("logs-source-mtur")).toBeNull();
   });
 });

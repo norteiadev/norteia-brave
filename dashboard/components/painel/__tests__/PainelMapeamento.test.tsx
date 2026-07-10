@@ -5,41 +5,42 @@ import { PainelMapeamento } from "@/components/painel/PainelMapeamento";
 import { renderWithClient } from "@/components/cms/__tests__/test-utils";
 
 describe("PainelMapeamento", () => {
-  it("renders the default mTur rows", () => {
+  it("renders the default TripAdvisor rows", () => {
     renderWithClient(<PainelMapeamento />);
-    // NO_MUNICIPIO maps to both name + municipality → appears twice.
-    expect(screen.getAllByText("NO_MUNICIPIO")).toHaveLength(2);
-    expect(screen.getByText("DS_CATEGORIA")).toBeInTheDocument();
-    // 8 mtur mapping entries → 8 rows.
-    expect(screen.getAllByTestId("map-row")).toHaveLength(8);
+    // TripAdvisor is the default (and sole surfaced collection) source.
+    expect(screen.getByText("numReviews")).toBeInTheDocument();
+    expect(screen.getByText("locationId")).toBeInTheDocument();
+    // 9 tripadvisor mapping entries → 9 rows.
+    expect(screen.getAllByTestId("map-row")).toHaveLength(9);
   });
 
   it("updates the preview panel when a select changes", () => {
     renderWithClient(<PainelMapeamento />);
-    // mtur has no 'rating' canonical by default → no preview row keyed 'rating'.
-    const before = screen
+    // TripAdvisor maps 'name' by default → the preview carries a 'name' row.
+    const nameBefore = screen
       .getAllByTestId("map-preview-row")
-      .map((el) => within(el).getAllByText(/.+/)[0].textContent);
-    expect(before).not.toContain("rating");
+      .find((el) => within(el).queryByText("name"));
+    expect(nameBefore).toBeTruthy();
 
-    // Route the first row (NO_MUNICIPIO) to 'rating'.
+    // Route the first row (name) to '—' (ignore) → the 'name' canonical drops.
     const firstSelect = screen.getAllByTestId("map-select")[0];
-    fireEvent.change(firstSelect, { target: { value: "rating" } });
+    fireEvent.change(firstSelect, { target: { value: "—" } });
 
-    const ratingRow = screen
+    const nameAfter = screen
       .getAllByTestId("map-preview-row")
-      .find((el) => within(el).queryByText("rating"));
-    expect(ratingRow).toBeTruthy();
+      .find((el) => within(el).queryByText("name"));
+    expect(nameAfter).toBeFalsy();
   });
 
   it("swaps rows when a different source is selected", () => {
     renderWithClient(<PainelMapeamento />);
-    expect(screen.queryByText("numReviews")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("map-source-tripadvisor"));
-
-    // 'numReviews' is a tripadvisor-only source field.
+    // Default TripAdvisor exposes numReviews; Google Places does not.
     expect(screen.getByText("numReviews")).toBeInTheDocument();
-    expect(screen.queryByText("NO_MUNICIPIO")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("map-source-google_places"));
+
+    // 'userRatingCount' is a google_places-only source field.
+    expect(screen.getByText("userRatingCount")).toBeInTheDocument();
+    expect(screen.queryByText("numReviews")).not.toBeInTheDocument();
   });
 });

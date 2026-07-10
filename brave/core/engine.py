@@ -70,7 +70,8 @@ _INFLIGHT_KEY = "brave:engine:producers_inflight"
 _DISPATCH_DONE_KEY = "brave:engine:dispatch_done"
 
 # Source selects which ingest lane the orchestrator dispatches:
-#   default      — existing Mtur/Discovery lane (sweep_uf + discover_atrativo_task)
+#   default      — Google Places attraction lane (discover_atrativo_task; dormant by
+#                  default — the Mtur destino seed is retired)
 #   tripadvisor  — TripAdvisor lane (sweep_tripadvisor task, plan 11-03)
 _VALID_SOURCES = frozenset({"default", "tripadvisor"})
 

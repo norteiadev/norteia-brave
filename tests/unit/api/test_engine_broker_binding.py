@@ -1,8 +1,8 @@
 """Regression test for the API Celery broker binding (engine/start dispatch).
 
 Bug: `brave/api/main.py` did not bind the Redis-configured Celery app as the
-process global-default app, so every `@shared_task` (engine_sweep_run, sweep_uf,
-…) resolved to Celery's stock DEFAULT app — broker amqp://localhost:5672
+process global-default app, so every `@shared_task` (engine_sweep_run,
+discover_atrativo, …) resolved to Celery's stock DEFAULT app — broker amqp://localhost:5672
 (RabbitMQ). Under RUN_REAL_EXTERNALS, `engine_sweep_run.delay()` then failed with
 "[Errno 61] Connection refused" and engine/start returned 503 "broker
 unavailable", even though the configured broker is Redis and reachable.

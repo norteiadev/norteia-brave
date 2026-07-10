@@ -13,11 +13,11 @@ import { SOURCE_LABELS, type EngineSource } from "@/lib/engine-api";
  * itself keeps its slide-over behavior for the PainelTopbar terminal icon; here we
  * pass `inline` so it drops the overlay/fixed chrome and lives inside the shell.
  *
- * The log ring buffer is keyed by collection source (engine lane); we offer the
- * two lanes this milestone ships (Padrão / TripAdvisor).
+ * The log ring buffer is keyed by collection source (engine lane); we surface the
+ * sole lane this milestone ships (TripAdvisor).
  */
 
-const SOURCE_OPTIONS: EngineSource[] = ["default", "tripadvisor"];
+const SOURCE_OPTIONS: EngineSource[] = ["tripadvisor"];
 
 export function PainelLogsView() {
   const [source, setSource] = useState<EngineSource>("tripadvisor");

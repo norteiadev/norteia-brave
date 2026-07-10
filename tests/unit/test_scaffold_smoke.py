@@ -201,7 +201,6 @@ EXPECTED_PROTOCOLS = [
     "PlacesClientProtocol",
     "OTAClientProtocol",
     "WhatsAppClientProtocol",
-    "MturClientProtocol",
 ]
 
 

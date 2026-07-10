@@ -318,7 +318,7 @@ def test_failures_payload_not_exposed(client, db_session: Session):
 
     pq = PoisonQuarantine(
         id=uuid.uuid4(),
-        task_name="brave.sweep_uf",
+        task_name="brave.discover_atrativo",
         error_message="payload exposure test",
         payload={"internal_data": "must-not-be-exposed", "nascente_id": str(uuid.uuid4())},
     )
