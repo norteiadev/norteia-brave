@@ -16,16 +16,29 @@ Covers:
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from brave.config.settings import ScoreConfig
+from brave.shared.ibge_distritos import IbgeDistrito, load_distritos_csv
 from tests.fakes.fake_llm import FakeLLMClient
 from tests.fakes.fake_melhores_destinos import FakeMelhoresDestinosClient
 
 PRAIA_URL = "https://guia.melhoresdestinos.com.br/praia-do-forte-54-249-l.html"
 _MODULE = "brave.domains.mtur.description"
+
+# Real IBGE DTB CSV — the golden Arraial d'Ajuda (292530307) / Porto Seguro (2925303) case.
+_CSV_PATH = Path(__file__).resolve().parents[3] / "data" / "ibge" / "ibge_distritos.csv"
+
+
+@pytest.fixture(scope="module")
+def distritos() -> list[IbgeDistrito]:
+    """Load the real ibge_distritos.csv once for the distrito-breadcrumb tests."""
+    records = load_distritos_csv(_CSV_PATH)
+    assert records, "ibge_distritos.csv loaded empty"
+    return records
 
 
 def _make_rio(sub_state: str = "signals_gathered", completude: float = 75.0) -> MagicMock:
@@ -54,7 +67,7 @@ def _make_session() -> MagicMock:
     return session
 
 
-def _agent(md, llm, session, config=None, md_config=None):
+def _agent(md, llm, session, config=None, md_config=None, distritos=None):
     from brave.domains.mtur.description import DescriptionEnrichmentAgent
 
     return DescriptionEnrichmentAgent(
@@ -63,6 +76,7 @@ def _agent(md, llm, session, config=None, md_config=None):
         session=session,
         config=config,
         md_config=md_config,
+        distritos=distritos,
     )
 
 
@@ -230,3 +244,70 @@ async def test_rescore_promotes_borderline_to_mar() -> None:
     assert rio.normalized["completude_value"] == 90.0
     assert rio.routing == "mar"
     assert rio.sub_state == "description_enriched"
+
+
+# ---------------------------------------------------------------------------
+# Distrito relation via the MD breadcrumb <Place> (IBGE DTB, scoped to município)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_distrito_breadcrumb_resolves_and_writes_relation(distritos) -> None:
+    """Breadcrumb <Place> "Arraial d'Ajuda" + município 2925303 → distrito relation written.
+
+    Golden: place "Arraial d'Ajuda" cross-referenced against Porto Seguro's distritos
+    resolves to distrito 292530307, and the agent writes distrito_code +
+    distrito_municipio_ibge (the parent município relation) + distrito_source.
+    """
+    md = FakeMelhoresDestinosClient(
+        url_by_name={"Praia do Forte": PRAIA_URL},
+        description_by_url={PRAIA_URL: "Prosa."},
+        place_by_url={PRAIA_URL: "Arraial d'Ajuda"},
+    )
+    llm = FakeLLMClient(generate_result="Voz Norteia.")
+    rio = _make_rio()
+    rio.municipio_id = "2925303"  # Porto Seguro — scopes the distrito candidate set.
+
+    agent = _agent(md, llm, _make_session(), distritos=distritos)
+    with patch(f"{_MODULE}.write_audit"), patch(f"{_MODULE}.route_by_score"):
+        await agent.run(rio)
+
+    assert rio.normalized["distrito_name"] == "Arraial D'Ajuda"
+    assert rio.normalized["distrito_code"] == "292530307"
+    assert rio.normalized["distrito_municipio_ibge"] == "2925303"
+    assert rio.normalized["distrito_source"] == "md_breadcrumb"
+    assert rio.normalized["subdistrito_name"] is None
+    assert rio.normalized["subdistrito_code"] is None
+    assert md.breadcrumb_calls == [PRAIA_URL]
+
+
+@pytest.mark.asyncio
+async def test_distrito_seat_place_writes_no_relation(distritos) -> None:
+    """Breadcrumb <Place> == the parent município seat ("Porto Seguro") → no distrito keys.
+
+    The seat guard (resolve_distrito_place) drops a match whose name folds to the
+    município's own name — assigning the seat adds no finer-than-município signal, so
+    every distrito_* key stays absent (floor preserved).
+    """
+    md = FakeMelhoresDestinosClient(
+        url_by_name={"Praia do Forte": PRAIA_URL},
+        description_by_url={PRAIA_URL: "Prosa."},
+        place_by_url={PRAIA_URL: "Porto Seguro"},
+    )
+    llm = FakeLLMClient(generate_result="Voz Norteia.")
+    rio = _make_rio()
+    rio.municipio_id = "2925303"
+
+    agent = _agent(md, llm, _make_session(), distritos=distritos)
+    with patch(f"{_MODULE}.write_audit"), patch(f"{_MODULE}.route_by_score"):
+        await agent.run(rio)
+
+    for key in (
+        "distrito_name",
+        "distrito_code",
+        "distrito_municipio_ibge",
+        "distrito_source",
+        "subdistrito_name",
+        "subdistrito_code",
+    ):
+        assert key not in rio.normalized

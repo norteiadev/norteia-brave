@@ -311,6 +311,7 @@ class TestTripAdvisorAtrativosIngest:
             # TA/IBGE cards carry no sub-município text → always None (see Places lane).
             "distrito_name": None,
             "distrito_code": None,
+            "distrito_municipio_ibge": None,
             "subdistrito_name": None,
             "subdistrito_code": None,
         }

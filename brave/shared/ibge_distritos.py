@@ -169,3 +169,44 @@ def resolve_distrito(
 
     # Step 3: unresolved → keys stay null.
     return None
+
+
+def resolve_distrito_place(
+    place: str,
+    municipio_ibge_code: str,
+    distritos: list[IbgeDistrito],
+    *,
+    threshold: int = 88,
+) -> IbgeDistrito | None:
+    """Resolve a Melhores Destinos breadcrumb <Place> to a genuinely sub-município distrito.
+
+    The MD breadcrumb flattens município AND distrito into a single <Place> level
+    ("Arraial d'Ajuda" sits under Bahia as a peer of Porto Seguro). Scoped to the
+    attraction's parent município, this layers a SEAT-GUARD over ``resolve_distrito``:
+    every município has a seat distrito that carries the município's own name (Porto
+    Seguro the município has a Porto Seguro seat distrito), and assigning that seat adds
+    no finer-than-município signal. So when the match name equals the parent município
+    name (accent/case-folded), it is the seat → return None. Only a sub-município
+    distrito (Arraial d'Ajuda != Porto Seguro) is a genuine distrito assignment.
+
+    Args:
+        place:               Breadcrumb <Place> text (município OR flattened distrito).
+        municipio_ibge_code: 7-digit parent município code to scope candidates.
+        distritos:           Full list of IbgeDistrito records (from load_distritos_csv).
+        threshold:           rapidfuzz score_cutoff (default 88, mirrors resolve_distrito).
+
+    Returns:
+        Matching IbgeDistrito record (whose ``ibge_code`` is the parent município code),
+        or None when place is falsy, nothing matches, or the match is the seat distrito.
+    """
+    # Falsy place → nothing to resolve (guarded here too, though resolve_distrito guards).
+    if not place:
+        return None
+    match = resolve_distrito(place, municipio_ibge_code, distritos, threshold=threshold)
+    if match is None:
+        return None
+    # Seat guard: a match whose name folds to the parent município name is the seat
+    # distrito (município-level, not finer) → drop it.
+    if _fold_accents(match.nome).casefold() == _fold_accents(match.municipio_nome).casefold():
+        return None
+    return match

@@ -223,17 +223,83 @@ async def test_fetch_description_no_description_returns_none(
 
 
 # ---------------------------------------------------------------------------
+# Breadcrumb <Place> extraction (IBGE-distrito anchor)
+# ---------------------------------------------------------------------------
+
+# Guia Melhores Destinos → Brasil → <Region> → <State> → <Place> → <Attraction>.
+# Here <Place> is a distrito (Arraial d'Ajuda) sitting as a peer under Bahia (POC golden).
+BREADCRUMB_DISTRITO_HTML = (
+    "<!doctype html><html><body>"
+    '<nav id="breadcrumbs">'
+    "<a>Guia Melhores Destinos</a><a>Brasil</a><a>Nordeste</a><a>Bahia</a>"
+    "<a>Arraial d'Ajuda</a><span>Igreja Nossa Senhora d'Ajuda</span>"
+    "</nav></body></html>"
+)
+# <Place> is a município (Belo Horizonte) — same index-2 position in the chain.
+BREADCRUMB_MUNICIPIO_HTML = (
+    "<!doctype html><html><body>"
+    '<nav id="breadcrumbs">'
+    "<a>Guia Melhores Destinos</a><a>Brasil</a><a>Sudeste</a><a>Minas Gerais</a>"
+    "<a>Belo Horizonte</a><span>Igreja de São Francisco de Assis</span>"
+    "</nav></body></html>"
+)
+
+
+def test_extract_breadcrumb_place_distrito() -> None:
+    """A distrito <Place> (Arraial d'Ajuda, peer of Porto Seguro) is returned."""
+    from brave.clients.melhores_destinos import _extract_breadcrumb_place
+
+    assert _extract_breadcrumb_place(BREADCRUMB_DISTRITO_HTML) == "Arraial d'Ajuda"
+
+
+def test_extract_breadcrumb_place_municipio() -> None:
+    """A município-only <Place> (Belo Horizonte) is returned (same chain index 2)."""
+    from brave.clients.melhores_destinos import _extract_breadcrumb_place
+
+    assert _extract_breadcrumb_place(BREADCRUMB_MUNICIPIO_HTML) == "Belo Horizonte"
+
+
+def test_extract_breadcrumb_place_no_breadcrumb_returns_none() -> None:
+    """HTML without an id="breadcrumbs" block → None (no place)."""
+    from brave.clients.melhores_destinos import _extract_breadcrumb_place
+
+    assert _extract_breadcrumb_place("<html><body><p>sem trilha</p></body></html>") is None
+
+
+async def test_fetch_breadcrumb_place_extracts_and_caches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fetch_breadcrumb_place returns the <Place> and caches it (2nd call → no 2nd GET)."""
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    from brave.clients.melhores_destinos import RealMelhoresDestinosClient
+
+    redis = fakeredis.FakeRedis()
+    with respx.mock:
+        route = respx.get(PRAIA_URL).mock(
+            return_value=httpx.Response(200, text=BREADCRUMB_DISTRITO_HTML)
+        )
+        client = RealMelhoresDestinosClient(config=_cfg(), redis=redis)
+        place = await client.fetch_breadcrumb_place(PRAIA_URL)
+        place2 = await client.fetch_breadcrumb_place(PRAIA_URL)
+
+    assert place == "Arraial d'Ajuda"
+    assert place2 == "Arraial d'Ajuda"
+    assert route.call_count == 1, "second breadcrumb fetch must hit the cache"
+
+
+# ---------------------------------------------------------------------------
 # Null client
 # ---------------------------------------------------------------------------
 
 
 async def test_null_client_returns_none() -> None:
-    """NullMelhoresDestinosClient returns None for both methods (no network)."""
+    """NullMelhoresDestinosClient returns None for every method (no network)."""
     from brave.clients.null_melhores_destinos import NullMelhoresDestinosClient
 
     client = NullMelhoresDestinosClient()
     assert await client.find_attraction_url("Praia do Forte", "X", "BA") is None
     assert await client.fetch_description(PRAIA_URL) is None
+    assert await client.fetch_breadcrumb_place(PRAIA_URL) is None
 
 
 def test_protocol_compliance() -> None:

@@ -42,11 +42,13 @@ from sqlalchemy.orm.attributes import flag_modified
 from brave.config.settings import ScoreConfig
 from brave.core.rio.routing import route_by_score
 from brave.observability.audit import write_audit
+from brave.shared.ibge_distritos import resolve_distrito_place
 
 if TYPE_CHECKING:
     from brave.clients.base import LLMClientProtocol, MelhoresDestinosClientProtocol
     from brave.config.settings import MelhoresDestinosConfig
     from brave.core.models import RioRecord
+    from brave.shared.ibge_distritos import IbgeDistrito
 
 logger = structlog.get_logger(__name__)
 
@@ -113,6 +115,9 @@ class DescriptionEnrichmentAgent:
         session:    SQLAlchemy synchronous Session.
         config:     ScoreConfig with reliability weights (for the re-score).
         md_config:  MelhoresDestinosConfig (for the voice model slug). Optional.
+        distritos:  IBGE DTB distrito reference table for the breadcrumb-<Place> →
+                    IBGE distrito relation (loaded once, mirrors DiscoveryAgent). None
+                    → distrito enrichment is a no-op and the distrito_* keys stay absent.
     """
 
     def __init__(
@@ -122,12 +127,14 @@ class DescriptionEnrichmentAgent:
         session: Session,
         config: ScoreConfig | None = None,
         md_config: MelhoresDestinosConfig | None = None,
+        distritos: list[IbgeDistrito] | None = None,
     ) -> None:
         self._md_client = md_client
         self._llm_client = llm_client
         self._session = session
         self._config = config or ScoreConfig()
         self._md_config = md_config
+        self._distritos = distritos or []
 
     async def run(self, rio: RioRecord) -> None:
         """Enrich one atrativo and advance to description_enriched.
@@ -158,6 +165,7 @@ class DescriptionEnrichmentAgent:
         # the record short of description_enriched (the client contract is "never raises",
         # but this consumer-side guard is the belt-and-suspenders that preserves the FSM).
         scraped: str | None = None
+        url: str | None = None
         try:
             url = await self._md_client.find_attraction_url(nome, municipio, uf) if nome else None
             if url:
@@ -207,6 +215,39 @@ class DescriptionEnrichmentAgent:
         else:
             # No page matched, no scraped text, or an MD failure above → keep the floor.
             logger.info("md_kept_floor", rio_id=str(rio.id), uf=uf)
+
+        # Step 5b: distrito relation — cross the MD breadcrumb <Place> against the IBGE
+        # DTB scoped to the parent município (rio.municipio_id). Best-effort, decoupled
+        # from the description step: any miss (no matched url, no <Place>, no distrito
+        # match) leaves every distrito_* key ABSENT (floor preserved), and any external
+        # failure is swallowed — mirrors the descricao_editorial graceful-degradation
+        # path so a scraper/parse defect can never strand the record short of
+        # description_enriched. Writes distrito_municipio_ibge (the parent município
+        # relation) alongside the distrito_* keys DiscoveryAgent also emits.
+        if url and self._distritos and rio.municipio_id:
+            match: IbgeDistrito | None = None
+            try:
+                place = await self._md_client.fetch_breadcrumb_place(url)
+                match = (
+                    resolve_distrito_place(place, rio.municipio_id, self._distritos)
+                    if place
+                    else None
+                )
+            except Exception:  # noqa: BLE001 — breadcrumb/distrito failure keeps the floor
+                logger.warning("md_breadcrumb_failed_kept_floor", rio_id=str(rio.id))
+                match = None
+            if match:
+                new_normalized["distrito_name"] = match.nome
+                new_normalized["distrito_code"] = match.distrito_code
+                new_normalized["distrito_municipio_ibge"] = match.ibge_code
+                new_normalized["distrito_source"] = "md_breadcrumb"
+                new_normalized["subdistrito_name"] = None
+                new_normalized["subdistrito_code"] = None
+                logger.info(
+                    "md_distrito_resolved",
+                    rio_id=str(rio.id),
+                    distrito_code=match.distrito_code,
+                )
 
         # Step 6: mutate normalized + advance sub_state.
         rio.normalized = new_normalized

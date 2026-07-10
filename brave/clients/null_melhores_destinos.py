@@ -1,8 +1,8 @@
 """In-package offline Melhores Destinos stub (production-safe).
 
-Used when AppConfig.run_real_externals is False (CI default). Both methods return
-None (no match / no description) so the DescriptionEnrichmentAgent degrades to the
-floor (keeps the synthetic ``posicionamento``) without any network I/O.
+Used when AppConfig.run_real_externals is False (CI default). Every method returns
+None (no match / no description / no breadcrumb place) so the DescriptionEnrichmentAgent
+degrades to the floor (keeps the synthetic ``posicionamento``) without any network I/O.
 
 This lives in brave/ (NOT tests/) so production code never imports from the test
 tree. Tests use tests/fakes/FakeMelhoresDestinosClient for call-recording assertions.
@@ -17,7 +17,7 @@ from __future__ import annotations
 class NullMelhoresDestinosClient:
     """No-network Melhores Destinos stub (structural protocol match).
 
-    Returns None for both methods — no httpx call, no Redis write, no throttle.
+    Returns None for every method — no httpx call, no Redis write, no throttle.
     Safe to use when RUN_REAL_EXTERNALS is unset/false.
     """
 
@@ -29,6 +29,10 @@ class NullMelhoresDestinosClient:
 
     async def fetch_description(self, url: str) -> str | None:
         """Return None — offline stub performs no fetching (no network)."""
+        return None
+
+    async def fetch_breadcrumb_place(self, url: str) -> str | None:
+        """Return None — offline stub performs no breadcrumb fetching (no network)."""
         return None
 
 

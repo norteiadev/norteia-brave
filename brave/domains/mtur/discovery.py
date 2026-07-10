@@ -232,6 +232,7 @@ class DiscoveryAgent:
         return {
             "distrito_name": match.nome if match else None,
             "distrito_code": match.distrito_code if match else None,
+            "distrito_municipio_ibge": match.ibge_code if match else None,
             "subdistrito_name": None,
             "subdistrito_code": None,
             "distrito_source": "places_admin_area_level_3" if match else None,

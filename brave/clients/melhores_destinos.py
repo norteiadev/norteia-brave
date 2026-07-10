@@ -51,9 +51,11 @@ logger = structlog.get_logger(__name__)
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-# Redis keys: sitemap index (one long-lived list of (slug, url) pairs) + per-page cache.
+# Redis keys: sitemap index (one long-lived list of (slug, url) pairs) + per-page cache
+# + per-page breadcrumb-<Place> cache.
 MD_SITEMAP_CACHE_KEY: str = "brave:md:sitemap"
 MD_PAGE_CACHE_KEY_PREFIX: str = "brave:md:page:"
+MD_BREADCRUMB_CACHE_KEY_PREFIX: str = "brave:md:breadcrumb:"
 
 # The ``-l`` attraction page suffix (POC §2 URL grammar): <slug>-<cityCode>-<attrId>-l.html
 _L_PAGE_RE = re.compile(r"/([^/]+?)-\d+-\d+-l\.html$")
@@ -79,6 +81,19 @@ _BOILERPLATE_RE = re.compile(
     r"|equipe de jornalistas|guias gr[áa]tis",
     re.IGNORECASE,
 )
+
+# Breadcrumb block on a ``-l`` page: an ``id="breadcrumbs"`` container whose text nodes
+# spell out Guia Melhores Destinos → Brasil → <Region> → <State> → <Place> → <Attraction>
+# (POC: <Place> is the município OR distrito, flattened — the IBGE-distrito anchor).
+# Non-greedy up to the first closing nav/ul/ol/div so the whole crumb list is captured.
+_BREADCRUMB_BLOCK_RE = re.compile(
+    r'id=["\']breadcrumbs["\'].*?</(?:nav|ul|ol|div)>',
+    re.IGNORECASE | re.DOTALL,
+)
+# One text node between tags (separators like ">"/"»" are dropped downstream — no word char).
+_BREADCRUMB_ITEM_RE = re.compile(r">([^<>]+)<")
+# The two fixed prefixes every crumb starts with (dropped before indexing the chain).
+_BREADCRUMB_PREFIXES: frozenset[str] = frozenset({"Guia Melhores Destinos", "Brasil"})
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +219,38 @@ def _extract_description(html_text: str) -> str | None:
     if not cleaned:
         return None
     return max(cleaned, key=len)
+
+
+def _extract_breadcrumb_place(html_text: str) -> str | None:
+    """Recover the breadcrumb ``<Place>`` level from a ``-l`` page (ONLY stdlib re).
+
+    The ``id="breadcrumbs"`` container spells out Guia Melhores Destinos → Brasil →
+    <Region> → <State> → <Place> → <Attraction>. The ``<Place>`` level (POC: município
+    OR distrito, flattened — e.g. "Arraial d'Ajuda" as a peer of Porto Seguro under
+    Bahia) is the anchor the caller crosses against ibge_distritos.csv (scoped to the
+    parent município) to recover the IBGE distrito.
+
+    Locates the block, collects its text nodes, unescapes entities, drops empties, pure
+    separators (no word char), and the two fixed prefixes, then returns index 2 of the
+    remaining [Region, State, Place, Attraction] chain. Returns None on no breadcrumb, a
+    short chain, or an empty place. Never raises. Mirrors _extract_article_body style.
+    """
+    if not html_text:
+        return None
+
+    m = _BREADCRUMB_BLOCK_RE.search(html_text)
+    if m is None:
+        return None
+
+    chain = [
+        item
+        for item in (html.unescape(t).strip() for t in _BREADCRUMB_ITEM_RE.findall(m.group(0)))
+        if item and re.search(r"\w", item) and item not in _BREADCRUMB_PREFIXES
+    ]
+    # Need [Region, State, Place] at minimum so index 2 (the Place) exists.
+    if len(chain) < 3:
+        return None
+    return chain[2] or None
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +411,41 @@ class RealMelhoresDestinosClient:
         payload = {"description": description} if description else {"__no_desc": True}
         self._redis.setex(key, self._cache_ttl, json.dumps(payload))
         return description
+
+    @retry(
+        retry=retry_if_exception(_is_retryable),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    async def fetch_breadcrumb_place(self, url: str) -> str | None:
+        """GET a page URL and return its breadcrumb ``<Place>`` level, or None (Redis-cached).
+
+        The breadcrumb ``<Place>`` (POC: município OR distrito, flattened) is the anchor
+        for the IBGE-distrito relation — the caller crosses it against ibge_distritos.csv
+        scoped to the parent município. Server-rendered HTML (same plumbing as
+        fetch_description). Caches the extracted place STRING (JSON, not raw HTML) to
+        avoid re-fetching within TTL. Any fetch/parse miss returns None (never raises).
+        """
+        if not url:
+            return None
+
+        key = f"{MD_BREADCRUMB_CACHE_KEY_PREFIX}{url}"
+        raw = _decode(self._redis.get(key))
+        if raw:
+            cached = json.loads(raw)
+            return None if cached.get("__no_place") else cached.get("place")
+
+        await self._throttle()
+        headers = {"User-Agent": self._config.user_agent}
+        async with httpx.AsyncClient(**self._http_kwargs()) as hc:
+            resp = await hc.get(url, headers=headers)
+        resp.raise_for_status()
+
+        place = _extract_breadcrumb_place(resp.text)
+        payload = {"place": place} if place else {"__no_place": True}
+        self._redis.setex(key, self._cache_ttl, json.dumps(payload))
+        return place
 
 
 # ---------------------------------------------------------------------------

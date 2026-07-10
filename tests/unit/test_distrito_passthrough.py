@@ -53,9 +53,12 @@ def _attraction_payload(*, with_distrito: bool) -> dict:
     }
     if with_distrito:
         # Written by the Places discovery lane after resolve_distrito matches the
-        # admin_area_level_3 hint. subdistrito_* are reserved-null (no signal).
+        # admin_area_level_3 hint. distrito_municipio_ibge is the parent-município
+        # relation (the matched distrito's 7-digit ibge_code). subdistrito_* are
+        # reserved-null (no signal).
         canonical["distrito_name"] = _DISTRITO_NAME
         canonical["distrito_code"] = _DISTRITO_CODE
+        canonical["distrito_municipio_ibge"] = _PORTO_SEGURO_IBGE
         canonical["subdistrito_name"] = None
         canonical["subdistrito_code"] = None
         canonical["distrito_source"] = "places_admin_area_level_3"
@@ -129,6 +132,7 @@ def test_distrito_threads_through_rio_normalize():
     assert rio.routing == "mar"  # score floor intact (100 ≥ 80)
     assert rio.normalized["distrito_name"] == _DISTRITO_NAME
     assert rio.normalized["distrito_code"] == _DISTRITO_CODE
+    assert rio.normalized["distrito_municipio_ibge"] == _PORTO_SEGURO_IBGE
     assert rio.normalized["distrito_source"] == "places_admin_area_level_3"
     # Reserved-null subdistrito keys carry no value → not cherry-picked into normalized.
     assert "subdistrito_name" not in rio.normalized
@@ -148,11 +152,14 @@ def test_distrito_survives_promote_to_mar_and_push_payload():
     assert mar is not None
     assert mar.canonical["distrito_code"] == _DISTRITO_CODE
     assert mar.canonical["distrito_name"] == _DISTRITO_NAME
+    assert mar.canonical["distrito_municipio_ibge"] == _PORTO_SEGURO_IBGE
 
     push = build_push_payload(mar, rio).model_dump()
     assert push["entity_type"] == "attraction"
     assert push["canonical"]["distrito_code"] == _DISTRITO_CODE
     assert push["canonical"]["distrito_name"] == _DISTRITO_NAME
+    # The NEW parent-município relation survives the full Rio→Mar→push chain.
+    assert push["canonical"]["distrito_municipio_ibge"] == _PORTO_SEGURO_IBGE
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +173,13 @@ def test_attraction_without_distrito_promotes_clean_no_floor_regression():
 
     assert rio.routing == "mar"
     assert float(rio.score) == 100.0
-    for key in ("distrito_name", "distrito_code", "subdistrito_name", "subdistrito_code"):
+    for key in (
+        "distrito_name",
+        "distrito_code",
+        "distrito_municipio_ibge",
+        "subdistrito_name",
+        "subdistrito_code",
+    ):
         assert key not in rio.normalized
 
     rio.normalized["most_recent_review_at"] = (
@@ -176,7 +189,13 @@ def test_attraction_without_distrito_promotes_clean_no_floor_regression():
 
     assert mar is not None
     assert mar.entity_type == "attraction"
-    for key in ("distrito_name", "distrito_code", "subdistrito_name", "subdistrito_code"):
+    for key in (
+        "distrito_name",
+        "distrito_code",
+        "distrito_municipio_ibge",
+        "subdistrito_name",
+        "subdistrito_code",
+    ):
         assert key not in mar.canonical
 
     push = build_push_payload(mar, rio).model_dump()

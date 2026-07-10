@@ -402,6 +402,23 @@ class MelhoresDestinosClientProtocol(Protocol):
         """
         ...
 
+    async def fetch_breadcrumb_place(self, url: str) -> str | None:
+        """Fetch and extract the breadcrumb ``<Place>`` level from a page URL.
+
+        The ``-l`` page breadcrumb spells out Guia Melhores Destinos → Brasil →
+        <Region> → <State> → <Place> → <Attraction>; the ``<Place>`` level (município
+        OR distrito, flattened) is the anchor for the IBGE-distrito relation — the
+        caller crosses it against ibge_distritos.csv scoped to the parent município.
+
+        Args:
+            url: An absolute Melhores Destinos ``-l.html`` page URL.
+
+        Returns:
+            The breadcrumb ``<Place>`` string, or None when the page has no breadcrumb,
+            a short chain, or an empty place (or on any fetch/parse failure — never raises).
+        """
+        ...
+
 
 class GeocoderClientProtocol(Protocol):
     """OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14).

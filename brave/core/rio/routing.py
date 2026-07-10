@@ -193,6 +193,9 @@ def process_nascente_record(
     _distrito_code = _canonical.get("distrito_code")
     if _distrito_code:
         normalized["distrito_code"] = _distrito_code
+    _distrito_municipio_ibge = _canonical.get("distrito_municipio_ibge")
+    if _distrito_municipio_ibge:
+        normalized["distrito_municipio_ibge"] = _distrito_municipio_ibge
     _subdistrito_name = _canonical.get("subdistrito_name")
     if _subdistrito_name:
         normalized["subdistrito_name"] = _subdistrito_name
