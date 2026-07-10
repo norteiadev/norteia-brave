@@ -80,7 +80,7 @@ def test_domains_never_import_sibling_domains() -> None:
         if p.is_dir() and p.name != "__pycache__"
     }
     # Sanity: the three built-in domains must exist so this guard is meaningful.
-    assert {"mtur", "tripadvisor", "manual"} <= domain_names, domain_names
+    assert {"places", "tripadvisor", "manual"} <= domain_names, domain_names
 
     violations: list[tuple[Path, int, str]] = []
     for py_file, lines in _iter_py(domains_root):

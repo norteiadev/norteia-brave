@@ -47,7 +47,7 @@ async def lifespan(_app):
 
 # Bind the configured Celery app as the process GLOBAL-DEFAULT app at startup. Without
 # this, the API process never instantiates the Redis-configured Celery() as the *default*
-# app, so every `@shared_task` (engine_sweep_run, sweep_uf, …) resolves to Celery's stock
+# app, so every `@shared_task` (engine_sweep_run, discover_atrativo, …) resolves to Celery's stock
 # DEFAULT app — whose broker is amqp://localhost:5672 (RabbitMQ). Real dispatch (`.delay()`
 # under RUN_REAL_EXTERNALS) then fails with "[Errno 61] Connection refused" → engine/start
 # 503 "broker unavailable", even though the configured broker is Redis and is up.

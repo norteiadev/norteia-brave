@@ -40,7 +40,6 @@ import {
 /** Fonte (source) filter options — "" = Todas. */
 const SOURCE_OPTIONS: { key: string; label: string }[] = [
   { key: "", label: "Todas" },
-  { key: "mtur", label: "Mtur" },
   { key: "tripadvisor", label: "TripAdvisor" },
 ];
 

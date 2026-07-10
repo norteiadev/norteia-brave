@@ -23,7 +23,7 @@ export const sampleFunnel: FunnelData = {
   ingested: [
     { source: "places", uf: "BA", entity_type: "attraction", count: 1200 },
     { source: "ota", uf: "RJ", entity_type: "destination", count: 800 },
-    { source: "mtur", uf: "SP", entity_type: "attraction", count: 400 },
+    { source: "tripadvisor", uf: "SP", entity_type: "attraction", count: 400 },
   ],
   routing: [
     { routing: "in_progress", uf: "BA", count: 900 },

@@ -17,7 +17,7 @@ import pytest
 
 EXPECTED_TASKS = [
     "brave.engine_sweep_run",
-    "brave.sweep_uf",
+    "brave.discover_atrativo",
     "brave.process_nascente",
     "brave.push_mar",
 ]

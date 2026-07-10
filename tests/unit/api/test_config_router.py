@@ -103,7 +103,9 @@ def test_get_returns_effective_snapshot(db, redis):
     snap = get_config_snapshot(db=db, redis=redis)
     assert snap["score"]["threshold_mar"] == 80.0
     assert snap["score"]["weight_origem"] == 30.0
-    assert snap["sources"] == {"default": True, "tripadvisor": True}
+    # 'default' (Google Places) ships DORMANT — enabled=false by default (re-enablable
+    # via config); tripadvisor is the live lane.
+    assert snap["sources"] == {"default": False, "tripadvisor": True}
     # Clean base default is motor OFF (EngineConfig.mode default DESLIGADO — bug-1 fix,
     # commit a94eec4). db here is an EMPTY FakeConfigSession, so the snapshot is the pure
     # env default with no overlay.
@@ -173,6 +175,23 @@ def test_patch_toggles_source_enabled(db, redis):
     )
     assert out["config"]["sources"]["tripadvisor"] is False
     assert db.rows["source.tripadvisor.enabled"].value == {"v": False}
+
+
+def test_patch_toggles_description_enrichment(db, redis):
+    out = update_config(
+        body={"description_enrichment_enabled": False}, db=db, redis=redis
+    )
+    # The overlay flows through load_effective_config into the returned snapshot.
+    assert out["config"]["description_enrichment_enabled"] is False
+    assert db.rows["description_enrichment_enabled"].value == {"v": False}
+
+
+def test_patch_rejects_non_bool_description_enrichment(db, redis):
+    with pytest.raises(HTTPException) as exc:
+        update_config(
+            body={"description_enrichment_enabled": "yes"}, db=db, redis=redis
+        )
+    assert exc.value.status_code == 422
 
 
 def test_patch_accepts_weight_set_summing_100(db, redis):

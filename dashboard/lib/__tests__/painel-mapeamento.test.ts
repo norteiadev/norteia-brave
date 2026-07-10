@@ -12,12 +12,12 @@ import {
 describe("buildMapRows", () => {
   it("returns one row per default mapping entry with resolved raw value", () => {
     const maps = cloneDefaultMaps();
-    const rows = buildMapRows(maps, "mtur");
-    expect(rows).toHaveLength(DEFAULT_MAPS.mtur.length);
+    const rows = buildMapRows(maps, "tripadvisor");
+    expect(rows).toHaveLength(DEFAULT_MAPS.tripadvisor.length);
     expect(rows[0]).toMatchObject({
       index: 0,
-      src: "NO_MUNICIPIO",
-      value: RAW.mtur.NO_MUNICIPIO,
+      src: "name",
+      value: RAW.tripadvisor.name,
       canonical: "name",
       dimmed: false,
     });
@@ -25,8 +25,8 @@ describe("buildMapRows", () => {
 
   it("flags rows mapped to '—' as dimmed", () => {
     const maps = cloneDefaultMaps();
-    const rows = buildMapRows(maps, "mtur");
-    const ignored = rows.find((r) => r.src === "CO_MUNICIPIO_IBGE");
+    const rows = buildMapRows(maps, "tripadvisor");
+    const ignored = rows.find((r) => r.src === "locationId");
     expect(ignored?.canonical).toBe("—");
     expect(ignored?.dimmed).toBe(true);
   });
@@ -56,10 +56,10 @@ describe("buildPreview", () => {
 
   it("omits canonical fields with no mapped source", () => {
     const maps = cloneDefaultMaps();
-    maps.mtur.forEach((m) => {
+    maps.tripadvisor.forEach((m) => {
       if (m.canonical === "name") m.canonical = "—";
     });
-    const rows = buildPreview(maps, "mtur");
+    const rows = buildPreview(maps, "tripadvisor");
     expect(rows.find((r) => r.key === "name")).toBeUndefined();
   });
 });
@@ -67,8 +67,8 @@ describe("buildPreview", () => {
 describe("cloneDefaultMaps", () => {
   it("is a deep copy — mutating the result does not touch DEFAULT_MAPS", () => {
     const clone = cloneDefaultMaps();
-    clone.mtur[0].canonical = "MUTATED";
-    expect(DEFAULT_MAPS.mtur[0].canonical).toBe("name");
-    expect(clone.mtur[0]).not.toBe(DEFAULT_MAPS.mtur[0]);
+    clone.tripadvisor[0].canonical = "MUTATED";
+    expect(DEFAULT_MAPS.tripadvisor[0].canonical).toBe("name");
+    expect(clone.tripadvisor[0]).not.toBe(DEFAULT_MAPS.tripadvisor[0]);
   });
 });

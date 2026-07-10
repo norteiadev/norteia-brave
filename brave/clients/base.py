@@ -7,15 +7,14 @@ Protocols use structural typing — no isinstance() checks anywhere.
 Runtime-checkable is intentionally False: Protocol is the static boundary,
 not a runtime check.
 
-Eight protocols (CORE-11 + TA-01 + TA-14):
+Seven protocols (CORE-11 + TA-01 + TA-14):
   1. LLMClientProtocol          — LLM extraction (OpenRouter/DeepSeek + Anthropic)
   2. NorteiaApiClientProtocol   — Mar push to norteia-api
   3. PlacesClientProtocol       — Google Places (New API) search/details
   4. OTAClientProtocol          — OTA price check (ticketed attractions)
   5. WhatsAppClientProtocol     — WhatsApp Business API template messages
-  6. MturClientProtocol         — Mtur municipality catalog
-  7. TripAdvisorClientProtocol  — TripAdvisor GraphQL hybrid scraper (Phase 11)
-  8. GeocoderClientProtocol     — OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14)
+  6. TripAdvisorClientProtocol  — TripAdvisor GraphQL hybrid scraper (Phase 11)
+  7. GeocoderClientProtocol     — OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14)
 """
 
 from collections.abc import AsyncIterator
@@ -174,25 +173,6 @@ class WhatsAppClientProtocol(Protocol):
 
         Returns:
             Delivery status dict from BSP (message_sid, status, ...).
-        """
-        ...
-
-
-class MturClientProtocol(Protocol):
-    """Mtur municipality catalog client — Destinos lane (Phase 2).
-
-    Fetches the categorized Mtur municipality list (Oferta Principal/
-    Complementar/Apoio) which seeds the Destinos lane with origem=100.
-    """
-
-    async def fetch_municipalities(self, uf: str) -> list[dict[str, Any]]:
-        """Fetch Mtur-categorized municipalities for a UF.
-
-        Args:
-            uf: Two-letter state code.
-
-        Returns:
-            List of municipality dicts (ibge_code, name, category, ...).
         """
         ...
 
@@ -399,6 +379,23 @@ class MelhoresDestinosClientProtocol(Protocol):
         Returns:
             The cleaned editorial description text, or None when the page has no
             usable description (or on any fetch/parse failure — never raises).
+        """
+        ...
+
+    async def fetch_breadcrumb_place(self, url: str) -> str | None:
+        """Fetch and extract the breadcrumb ``<Place>`` level from a page URL.
+
+        The ``-l`` page breadcrumb spells out Guia Melhores Destinos → Brasil →
+        <Region> → <State> → <Place> → <Attraction>; the ``<Place>`` level (município
+        OR distrito, flattened) is the anchor for the IBGE-distrito relation — the
+        caller crosses it against ibge_distritos.csv scoped to the parent município.
+
+        Args:
+            url: An absolute Melhores Destinos ``-l.html`` page URL.
+
+        Returns:
+            The breadcrumb ``<Place>`` string, or None when the page has no breadcrumb,
+            a short chain, or an empty place (or on any fetch/parse failure — never raises).
         """
         ...
 

@@ -62,6 +62,7 @@ from brave.domains.tripadvisor.scoring import (
 )
 from brave.domains.tripadvisor.uf_names import state_name_to_uf
 from brave.observability.record_events import record_event_once
+from brave.shared.destino import ensure_destino
 
 if TYPE_CHECKING:
     from brave.clients.base import GeocoderClientProtocol, TripAdvisorClientProtocol
@@ -256,41 +257,18 @@ class TripAdvisorAtrativosIngest:
         Returns:
             (rio_id, source_ref) for the created (or existing) destino RioRecord.
         """
-        source_ref = f"ibge:{ibge_match.uf}:{ibge_match.ibge_code}"
-        payload: dict[str, Any] = {
-            "name": ibge_match.nome,
-            "municipio_id": ibge_match.ibge_code,
-            "uf": ibge_match.uf,
-            "origem_value": 100.0,
-            "completude_value": 40.0,
-            "corroboracao_value": 0.0,
-            "atualidade_value": 0.0,
-            "validacao_humana_value": 0.0,
-            "canonical": {
-                "name": ibge_match.nome,
-                "uf": ibge_match.uf,
-                "municipio": ibge_match.nome,
-                "ibge_code": ibge_match.ibge_code,
-            },
-        }
-        nascente = store_raw(
-            session=self._session,
-            source="ibge",
-            source_ref=source_ref,
-            entity_type="destination",
+        # Delegate to the shared helper (brave.shared.destino.ensure_destino),
+        # which returns (parent_rio_id, parent_source_ref, parent_mar_id | None).
+        # TA keeps its historical two-tuple external contract — callers cache
+        # (rio_id, source_ref) into destino_rio_map — so drop the optional Mar id.
+        parent_rio_id, parent_source_ref, _parent_mar_id = ensure_destino(
+            self._session,
+            self._config,
+            ibge_code=ibge_match.ibge_code,
+            nome=ibge_match.nome,
             uf=ibge_match.uf,
-            payload=payload,
         )
-        # The parent linkage contract needs a rio_id, and there is none without Rio —
-        # so the synthesized destino is ALWAYS promoted to Rio, even when the atrativo
-        # sweep runs Nascente-only (run_rio=False). This is intentional: a parent
-        # destino must exist for the atrativo to reference. Idempotent per município.
-        rio = process_nascente_record(
-            session=self._session,
-            nascente=nascente,
-            config=self._config,
-        )
-        return (rio.id, source_ref)
+        return (parent_rio_id, parent_source_ref)
 
     async def _ingest_one(
         self,
@@ -604,6 +582,13 @@ class TripAdvisorAtrativosIngest:
                 "municipio": ibge_match.nome,
                 "ibge_code": ibge_match.ibge_code,
                 "source": "tripadvisor",
+                # Reserved distrito/subdistrito keys — uniform wire shape across lanes.
+                # TA cards carry no sub-município text → stay None (see Places lane).
+                "distrito_name": None,
+                "distrito_code": None,
+                "distrito_municipio_ibge": None,
+                "subdistrito_name": None,
+                "subdistrito_code": None,
             },
         }
 
@@ -794,6 +779,13 @@ class TripAdvisorAtrativosIngest:
                 "municipio": ibge_match.nome,
                 "ibge_code": ibge_match.ibge_code,
                 "source": "tripadvisor",
+                # Reserved distrito/subdistrito keys — uniform wire shape across lanes.
+                # TA cards carry no sub-município text → stay None (see Places lane).
+                "distrito_name": None,
+                "distrito_code": None,
+                "distrito_municipio_ibge": None,
+                "subdistrito_name": None,
+                "subdistrito_code": None,
             },
         }
 

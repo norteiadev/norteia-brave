@@ -27,7 +27,7 @@ export type EngineState = "idle" | "running" | "stopping";
 /**
  * Pipeline depth — the operator-chosen cost checkpoint for a sweep run.
  * Values are identical to the backend contract (brave/core/engine.py):
- *   nascente          — ingest + reliability score only (free, Mtur seed only)
+ *   nascente          — ingest + reliability score only (free, no external calls)
  *   nascente_rio      — + Places + LLM validation up to Rio routing (paid)
  *   nascente_rio_mar  — full pipeline incl. the idempotent Mar push
  */
@@ -42,14 +42,15 @@ export const DEPTH_LABELS: Record<EngineDepth, string> = {
 
 /**
  * Collection source — which lane the sweep uses to ingest territorial data.
- *   default      — standard lane (Mtur seed + Places validation)
- *   tripadvisor  — TripAdvisor GraphQL scraper lane (Phase 11)
+ *   tripadvisor  — TripAdvisor GraphQL scraper lane (the sole surfaced source)
+ *
+ * The dormant Places lane keeps the backend `"default"` slug valid but is never
+ * surfaced or activatable from the dashboard, so it is not part of this union.
  */
-export type EngineSource = "default" | "tripadvisor";
+export type EngineSource = "tripadvisor";
 
 /** PT-BR labels for the source enum — reused by the selector AND the running-state read-back. */
 export const SOURCE_LABELS: Record<EngineSource, string> = {
-  default: "Padrão",
   tripadvisor: "TripAdvisor",
 };
 
@@ -248,7 +249,7 @@ export function injectTASession(
 /**
  * Persist the active collection source WITHOUT starting a run.
  * Calls POST /api/v1/engine/source — validates + writes to Redis source key so
- * the next /start picks up the correct sweep lane (default vs tripadvisor).
+ * the next /start picks up the correct sweep lane (tripadvisor).
  */
 export function setEngineSource(
   source: EngineSource,

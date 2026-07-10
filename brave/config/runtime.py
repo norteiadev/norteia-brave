@@ -66,6 +66,7 @@ _SCORE_OVERLAY_KEYS: dict[str, str] = {
 _SOURCE_PREFIX = "source."
 _SOURCE_SUFFIX = ".enabled"
 _ENGINE_MODE_KEY = "engine.mode"
+_DESC_ENRICH_KEY = "description_enrichment_enabled"
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +100,7 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
     score_update: dict[str, Any] = {}
     sources_update: dict[str, bool] = dict(base.sources)
     engine_update: dict[str, Any] = {}
+    desc_enrich: bool | None = None
 
     for dotted, value in overlays.items():
         attr = _SCORE_OVERLAY_KEYS.get(dotted)
@@ -110,6 +112,8 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
                 sources_update[name] = bool(value)
         elif dotted == _ENGINE_MODE_KEY:
             engine_update["mode"] = value
+        elif dotted == _DESC_ENRICH_KEY:
+            desc_enrich = bool(value)
         # Unknown keys are ignored (forward-compat with future config surfaces).
 
     updates: dict[str, Any] = {}
@@ -119,6 +123,8 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
         updates["sources"] = sources_update
     if engine_update:
         updates["engine"] = base.engine.model_copy(update=engine_update)
+    if desc_enrich is not None and desc_enrich != base.description_enrichment_enabled:
+        updates["description_enrichment_enabled"] = desc_enrich
 
     if not updates:
         return base
@@ -258,9 +264,10 @@ def _seed_values(config: AppConfig) -> dict[str, Any]:
         "score.weight_corroboracao": config.score.weight_corroboracao,
         "score.weight_atualidade": config.score.weight_atualidade,
         "score.weight_validacao_humana": config.score.weight_validacao_humana,
-        "source.default.enabled": config.sources.get("default", True),
+        "source.default.enabled": config.sources.get("default", False),
         "source.tripadvisor.enabled": config.sources.get("tripadvisor", True),
         "engine.mode": config.engine.mode,
+        "description_enrichment_enabled": config.description_enrichment_enabled,
     }
 
 

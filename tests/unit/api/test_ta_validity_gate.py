@@ -91,13 +91,16 @@ def test_ta_start_valid_session_returns_202(client, fake_redis):
     assert resp.json().get("source") == "tripadvisor"
 
 
-def test_default_source_no_session_returns_202(client, fake_redis):
-    """source='default' with no TA session in Redis → 202 (gate not invoked)."""
-    # No session seeded — gate must be skipped for 'default'
+def test_default_source_disabled_returns_409(client, fake_redis):
+    """source='default' → 409: the Places lane ships dormant (enabled=false).
+
+    The TA-session R2 gate only applies to source='tripadvisor'; the 'default'
+    (Google Places) lane never reaches it because it is rejected earlier by the
+    disabled-source gate (409). Re-enable via config to activate the dormant lane.
+    """
     resp = client.post(
         "/api/v1/engine/start",
         headers=STEWARD_HEADERS,
         json={"depth": "nascente", "source": "default"},
     )
-    assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
-    assert resp.json().get("source") == "default"
+    assert resp.status_code == 409, f"Expected 409, got {resp.status_code}: {resp.text}"

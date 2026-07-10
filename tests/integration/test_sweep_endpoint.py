@@ -10,8 +10,8 @@ path (T-05-09).
 
 These tests are 100% offline / keyless (D-06 / ORCH-04):
   - run_real_externals defaults to False → the broker error is swallowed and the
-    task would run inline; here sweep_uf.delay / discover_atrativo_task.delay are
-    monkeypatched with spies so neither a broker nor a DB is required.
+    task would run inline; here discover_atrativo_task.delay is monkeypatched with a
+    spy so neither a broker nor a DB is required.
   - outreach_task.delay is spied to assert the endpoint NEVER triggers outreach.
 """
 
@@ -41,11 +41,10 @@ def client():
 
 @pytest.fixture
 def spies(monkeypatch):
-    """Spy sweep_uf/discover_atrativo_task .delay and outreach_task .delay (no broker/DB)."""
+    """Spy discover_atrativo_task .delay and outreach_task .delay (no broker/DB)."""
     from brave.tasks import pipeline
 
-    calls = {"sweep": [], "atrativo": [], "outreach": []}
-    monkeypatch.setattr(pipeline.sweep_uf, "delay", lambda uf: calls["sweep"].append(uf))
+    calls = {"atrativo": [], "outreach": []}
     monkeypatch.setattr(
         pipeline.discover_atrativo_task, "delay", lambda uf: calls["atrativo"].append(uf)
     )
@@ -67,7 +66,6 @@ def test_sweep_without_bearer_returns_401(client, spies):
     """
     r = client.post("/api/v1/sweep", params={"uf": "BA"})
     assert r.status_code == 401, f"Expected 401 without Bearer, got {r.status_code}: {r.text}"
-    assert spies["sweep"] == []
     assert spies["atrativo"] == []
 
 
@@ -79,7 +77,6 @@ def test_sweep_with_invalid_bearer_returns_401(client, spies):
         headers={"Authorization": "Bearer wrong-token"},
     )
     assert r.status_code == 401
-    assert spies["sweep"] == []
     assert spies["atrativo"] == []
 
 
@@ -88,24 +85,22 @@ def test_sweep_with_invalid_bearer_returns_401(client, spies):
 # ---------------------------------------------------------------------------
 
 
-def test_sweep_with_bearer_returns_202_both_lanes(client, spies):
-    """A valid Bearer → 202 and dispatches BOTH sweep_uf and discover_atrativo_task."""
+def test_sweep_with_bearer_returns_202_atrativos(client, spies):
+    """A valid Bearer → 202 and dispatches discover_atrativo_task (destinos has no producer)."""
     r = client.post("/api/v1/sweep", params={"uf": "BA"}, headers=BEARER_HEADERS)
     assert r.status_code == 202, f"Expected 202, got {r.status_code}: {r.text}"
     body = r.json()
     assert body["status"] == "accepted"
     assert body["uf"] == "BA"
-    assert spies["sweep"] == ["BA"]
     assert spies["atrativo"] == ["BA"]
 
 
-def test_sweep_lane_destinos_only(client, spies):
-    """`lane=destinos` dispatches only sweep_uf."""
+def test_sweep_lane_destinos_dispatches_nothing(client, spies):
+    """`lane=destinos` dispatches nothing (Mtur seed retired; destinos come from the DB)."""
     r = client.post(
         "/api/v1/sweep", params={"uf": "BA", "lane": "destinos"}, headers=BEARER_HEADERS
     )
     assert r.status_code == 202
-    assert spies["sweep"] == ["BA"]
     assert spies["atrativo"] == []
 
 
@@ -115,7 +110,6 @@ def test_sweep_lane_atrativos_only(client, spies):
         "/api/v1/sweep", params={"uf": "BA", "lane": "atrativos"}, headers=BEARER_HEADERS
     )
     assert r.status_code == 202
-    assert spies["sweep"] == []
     assert spies["atrativo"] == ["BA"]
 
 
@@ -124,7 +118,7 @@ def test_sweep_uf_uppercased(client, spies):
     r = client.post("/api/v1/sweep", params={"uf": "ba"}, headers=BEARER_HEADERS)
     assert r.status_code == 202
     assert r.json()["uf"] == "BA"
-    assert spies["sweep"] == ["BA"]
+    assert spies["atrativo"] == ["BA"]
 
 
 def test_sweep_unknown_lane_returns_422(client, spies):
@@ -133,7 +127,6 @@ def test_sweep_unknown_lane_returns_422(client, spies):
         "/api/v1/sweep", params={"uf": "BA", "lane": "bogus"}, headers=BEARER_HEADERS
     )
     assert r.status_code == 422
-    assert spies["sweep"] == []
     assert spies["atrativo"] == []
 
 

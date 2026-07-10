@@ -955,15 +955,16 @@ class TestAtrativosEnrichCommitGranularity:
                 return MagicMock(id=uuid.uuid4())  # destino nascente
             raise RuntimeError("boom: atrativo store_raw failed")
 
+        # _ensure_destino delegates the parent-destino store_raw / rio to
+        # brave.shared.destino — patch BOTH namespaces with the SAME mock so the
+        # destino call (call 1) and the atrativo call (call 2) share one counter.
+        mock_store_raw = MagicMock(side_effect=_store_raw_side_effect)
+        mock_rio = MagicMock(return_value=MagicMock(id=uuid.uuid4()))
         with (
-            patch(
-                "brave.lanes.tripadvisor.atrativos.store_raw",
-                side_effect=_store_raw_side_effect,
-            ),
-            patch(
-                "brave.lanes.tripadvisor.atrativos.process_nascente_record",
-                return_value=MagicMock(id=uuid.uuid4()),
-            ),
+            patch("brave.lanes.tripadvisor.atrativos.store_raw", new=mock_store_raw),
+            patch("brave.shared.destino.store_raw", new=mock_store_raw),
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record", new=mock_rio),
+            patch("brave.shared.destino.process_nascente_record", new=mock_rio),
             patch(
                 "brave.lanes.tripadvisor.atrativos.quarantine_poison"
             ) as mock_quarantine,
@@ -1093,15 +1094,16 @@ class TestAtrativosEnrichCommitGranularity:
                     raise RuntimeError("boom: first atrativo failed")
             return MagicMock(id=uuid.uuid4())
 
+        # _ensure_destino delegates the parent-destino store_raw (source="ibge") to
+        # brave.shared.destino — patch BOTH namespaces with the SAME mock so the
+        # ibge-source calls are recorded and counted here.
+        mock_store_raw = MagicMock(side_effect=_store_raw_side_effect)
+        mock_rio = MagicMock(return_value=MagicMock(id=uuid.uuid4()))
         with (
-            patch(
-                "brave.lanes.tripadvisor.atrativos.store_raw",
-                side_effect=_store_raw_side_effect,
-            ) as mock_store_raw,
-            patch(
-                "brave.lanes.tripadvisor.atrativos.process_nascente_record",
-                return_value=MagicMock(id=uuid.uuid4()),
-            ),
+            patch("brave.lanes.tripadvisor.atrativos.store_raw", new=mock_store_raw),
+            patch("brave.shared.destino.store_raw", new=mock_store_raw),
+            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record", new=mock_rio),
+            patch("brave.shared.destino.process_nascente_record", new=mock_rio),
             patch("brave.lanes.tripadvisor.atrativos.quarantine_poison"),
         ):
             ingest = TripAdvisorAtrativosIngest(

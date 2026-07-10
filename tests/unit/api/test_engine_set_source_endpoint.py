@@ -66,22 +66,28 @@ def test_engine_set_source_valid(client):
     assert collection_engine.get_source(rc) == "tripadvisor"
 
 
-def test_engine_set_source_default(client):
-    """POST /engine/source {source: 'default'} → 200 + persists 'default'."""
+def test_engine_set_source_default_disabled_422(client):
+    """POST /engine/source {source: 'default'} → 422: the Places lane ships dormant.
+
+    /engine/source only accepts ENABLED sources (``enabled_sources(AppConfig())``);
+    the 'default' (Google Places) lane is disabled by default, so it is rejected and
+    the Redis source key is left untouched. Re-enable via config to select it.
+    """
     from brave.api.deps import get_redis
     from brave.core import engine as collection_engine
+
+    rc = get_redis()
+    before = collection_engine.get_source(rc)
 
     resp = client.post(
         "/api/v1/engine/source",
         headers=STEWARD_HEADERS,
         json={"source": "default"},
     )
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
-    body = resp.json()
-    assert body.get("source") == "default"
+    assert resp.status_code == 422, f"Expected 422, got {resp.status_code}: {resp.text}"
 
-    rc = get_redis()
-    assert collection_engine.get_source(rc) == "default"
+    # Redis source key untouched by the rejected write.
+    assert collection_engine.get_source(rc) == before
 
 
 def test_engine_set_source_invalid_422(client):

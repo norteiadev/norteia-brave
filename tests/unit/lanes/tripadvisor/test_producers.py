@@ -217,6 +217,11 @@ class TestTripAdvisorAtrativosIngest:
         with (
             patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
             patch("brave.lanes.tripadvisor.atrativos.process_nascente_record") as mock_rio,
+            # _ensure_destino now delegates to brave.shared.destino.ensure_destino,
+            # which calls store_raw / process_nascente_record in ITS OWN namespace —
+            # funnel both into the same mocks so the call assertions still hold.
+            patch("brave.shared.destino.store_raw", new=mock_store_raw),
+            patch("brave.shared.destino.process_nascente_record", new=mock_rio),
             patch("brave.lanes.tripadvisor.atrativos.quarantine_poison") as mock_quarantine,
         ):
             mock_nascente = MagicMock()
@@ -275,6 +280,10 @@ class TestTripAdvisorAtrativosIngest:
         with (
             patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
             patch("brave.lanes.tripadvisor.atrativos.process_nascente_record") as mock_rio,
+            # _ensure_destino delegates to brave.shared.destino.ensure_destino —
+            # funnel both namespaces into the same mocks.
+            patch("brave.shared.destino.store_raw", new=mock_store_raw),
+            patch("brave.shared.destino.process_nascente_record", new=mock_rio),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -307,6 +316,13 @@ class TestTripAdvisorAtrativosIngest:
             "uf": "BA",
             "municipio": "Salvador",
             "ibge_code": "2927408",
+            # Reserved distrito/subdistrito keys — uniform wire shape across lanes.
+            # TA/IBGE cards carry no sub-município text → always None (see Places lane).
+            "distrito_name": None,
+            "distrito_code": None,
+            "distrito_municipio_ibge": None,
+            "subdistrito_name": None,
+            "subdistrito_code": None,
         }
 
     @pytest.mark.asyncio

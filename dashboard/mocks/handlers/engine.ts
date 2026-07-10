@@ -59,7 +59,7 @@ export function engineModeSuccess() {
 
 export function engineStartSuccess(
   state: EngineState = "running",
-  source: EngineSource = "default",
+  source: EngineSource = "tripadvisor",
 ) {
   return http.post(`${BASE}/start`, () =>
     HttpResponse.json(

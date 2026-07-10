@@ -76,14 +76,17 @@ def test_no_row_on_invalid_source(monkeypatch):
 def test_no_row_on_already_running_409(monkeypatch):
     """start_run() returning False (engine already running) → 409, no RunHistory.add."""
     fake = fakeredis.FakeStrictRedis()
-    # Engine already running → start_run() will return False → 409.
+    # Engine already running → start_run() will return False → 409. Use tripadvisor
+    # (the live lane; 'default'/Places ships dormant) with a seeded session so the
+    # 409 comes from the already-running check, not source validation.
     fake.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
+    fake.setex("brave:ta:session", 3600, '{"cookies":{}}')
     db = MagicMock()
 
     with pytest.raises(Exception) as exc:
         engine_start(
             redis=fake,
-            body={"ufs": ["BA"], "depth": "nascente", "source": "default"},
+            body={"ufs": ["BA"], "depth": "nascente", "source": "tripadvisor"},
             db=db,
         )
     assert getattr(exc.value, "status_code", None) == 409
@@ -105,11 +108,14 @@ def test_one_row_after_successful_start(monkeypatch):
     monkeypatch.setattr(pipeline.engine_sweep_run, "delay", lambda *a, **k: None)
 
     fake = fakeredis.FakeStrictRedis()
+    # 'default' (Places) ships dormant — tripadvisor is the live sweep lane. Seed a
+    # valid TA session so the R2 gate passes.
+    fake.setex("brave:ta:session", 3600, '{"cookies":{}}')
     db = MagicMock()
 
     result = engine_start(
         redis=fake,
-        body={"ufs": ["BA", "SE"], "depth": "nascente_rio", "source": "default", "lane": "both"},
+        body={"ufs": ["BA", "SE"], "depth": "nascente_rio", "source": "tripadvisor", "lane": "both"},
         db=db,
     )
     assert result["status"] == "started"
@@ -119,7 +125,7 @@ def test_one_row_after_successful_start(monkeypatch):
     run = rows[0]
     assert run.status == "running"
     assert run.ufs == ["BA", "SE"]
-    assert run.source == "default"
+    assert run.source == "tripadvisor"
     assert run.depth == "nascente_rio"
     assert run.lane == "both"
     assert run.ufs_total == 2
@@ -138,13 +144,15 @@ def test_start_proceeds_when_runs_history_write_fails(monkeypatch):
     monkeypatch.setattr(pipeline.engine_sweep_run, "delay", lambda *a, **k: None)
 
     fake = fakeredis.FakeStrictRedis()
+    # tripadvisor is the live sweep lane ('default'/Places ships dormant); seed its session.
+    fake.setex("brave:ta:session", 3600, '{"cookies":{}}')
     db = MagicMock()
     db.commit.side_effect = RuntimeError("db down")
 
     # Must NOT raise — the write is best-effort.
     result = engine_start(
         redis=fake,
-        body={"ufs": ["BA"], "depth": "nascente", "source": "default"},
+        body={"ufs": ["BA"], "depth": "nascente", "source": "tripadvisor"},
         db=db,
     )
     assert result["status"] == "started"
@@ -191,7 +199,6 @@ def test_finalize_swallows_write_error_and_completes(monkeypatch, running_engine
 
     # Faked producer tasks so the loop dispatches without real work. They decrement
     # inflight on .delay (instant completion) so the orchestrator finally finalizes.
-    monkeypatch.setattr(pipeline, "sweep_uf", _FakeTask(running_engine))
     monkeypatch.setattr(pipeline, "discover_atrativo_task", _FakeTask(running_engine))
     monkeypatch.setattr(pipeline, "sweep_tripadvisor", _FakeTask(running_engine))
 
@@ -220,7 +227,6 @@ def test_finalize_skipped_when_no_run_id(monkeypatch, running_engine):
     """When run_id is None (no DB trail), finalize is skipped entirely (no _get_session)."""
     from brave.tasks import pipeline
 
-    monkeypatch.setattr(pipeline, "sweep_uf", _FakeTask(running_engine))
     monkeypatch.setattr(pipeline, "discover_atrativo_task", _FakeTask(running_engine))
     monkeypatch.setattr(pipeline, "sweep_tripadvisor", _FakeTask(running_engine))
 

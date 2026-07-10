@@ -27,7 +27,8 @@ export const sampleConfig: AppConfigSnapshot = {
     threshold_mar: 85,
   },
   engine: { mode: "LIGADO" },
-  sources: { mtur: true, tripadvisor: true, places: false },
+  sources: { tripadvisor: true, default: false },
+  description_enrichment_enabled: true,
 };
 
 export function configGetSuccess(

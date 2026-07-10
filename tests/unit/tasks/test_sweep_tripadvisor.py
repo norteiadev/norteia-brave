@@ -90,7 +90,7 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
     - patch AppConfig to return run_real_externals=True so the real-client branch runs.
     - patch redis.from_url to return fakeredis (for both the client and _mark_needs_bootstrap).
     - patch _get_session (SQLAlchemy factory) to return mock DB session/engine.
-    - patch load_ibge_csv to return empty list.
+    - patch load_ibge_municipios to return empty list.
     - patch TripAdvisorAtrativosIngest so that its produce() raises the exception from
       the stub client directly (destinos step removed — oa3).
     """
@@ -145,8 +145,8 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
 
     # Patch load_ibge_csv to return empty list
     monkeypatch.setattr(
-        "brave.lanes.tripadvisor.ibge.load_ibge_csv",
-        lambda path: [],
+        "brave.lanes.tripadvisor.ibge.load_ibge_municipios",
+        lambda session: [],
     )
 
     # Patch the atrativos produce() to actually call the stub client
@@ -340,8 +340,8 @@ class TestSweepTripAdvisorPerUfDestinoBuild:
             lambda: (mock_db_session, mock_db_engine),
         )
         monkeypatch.setattr(
-            "brave.lanes.tripadvisor.ibge.load_ibge_csv",
-            lambda path: [],
+            "brave.lanes.tripadvisor.ibge.load_ibge_municipios",
+            lambda session: [],
         )
         monkeypatch.setattr(
             "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
@@ -501,8 +501,8 @@ def _run_bulk_sweep(
         lambda: MagicMock(spec=TripAdvisorConfig),
     )
     monkeypatch.setattr(
-        "brave.lanes.tripadvisor.ibge.load_ibge_csv",
-        lambda path: _IBGE_RECORDS,
+        "brave.lanes.tripadvisor.ibge.load_ibge_municipios",
+        lambda session: _IBGE_RECORDS,
     )
 
     if pre_seed is not None:
@@ -744,8 +744,8 @@ class TestSweepTripAdvisorTaConfig:
             lambda: (mock_db_session, mock_db_engine),
         )
         monkeypatch.setattr(
-            "brave.lanes.tripadvisor.ibge.load_ibge_csv",
-            lambda path: [],
+            "brave.lanes.tripadvisor.ibge.load_ibge_municipios",
+            lambda session: [],
         )
         # Patch TripAdvisorAtrativosIngest at module level so the lazy import in
         # pipeline.py picks up the capturing class.

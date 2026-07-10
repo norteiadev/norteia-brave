@@ -61,7 +61,6 @@ const SUB_STATE_CLASS: Record<string, string> = {
 };
 
 const SOURCE_LABEL: Record<string, string> = {
-  mtur: "Mtur",
   notebooklm: "NotebookLM",
   desmembramento: "Desmemb.",
   places_discovery: "Places",

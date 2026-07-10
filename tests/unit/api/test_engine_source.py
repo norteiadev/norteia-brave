@@ -5,7 +5,7 @@ Tests the source validation added to the engine /start endpoint:
   - Valid source='tripadvisor' returns 202 with source echoed
   - GET /engine/status includes 'source' key
   - engine_sweep_run dispatches sweep_tripadvisor when source='tripadvisor'
-  - engine_sweep_run dispatches sweep_uf when source='default' (no regression)
+  - engine_sweep_run dispatches discover_atrativo_task when source='default'
 """
 
 from __future__ import annotations
@@ -105,16 +105,20 @@ def test_engine_start_tripadvisor_source_returns_202(client, dispatched):
     assert body.get("source") == "tripadvisor"
 
 
-def test_engine_start_default_source_returns_202(client, dispatched):
-    """POST /engine/start with source='default' (or omitted) → 202 — no regression."""
+def test_engine_start_default_source_disabled_returns_409(client, dispatched):
+    """POST /engine/start with source='default' → 409: the Places lane ships dormant.
+
+    The 'default' (Google Places) lane is a REGISTERED but DISABLED source
+    (source.default.enabled=false), so /start rejects it with 409 (valid name, not
+    currently collectable) before any engine state mutation. Re-enable via config to
+    activate the dormant lane.
+    """
     resp = client.post(
         "/api/v1/engine/start",
         headers=STEWARD_HEADERS,
         json={"depth": "nascente", "source": "default"},
     )
-    assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
-    body = resp.json()
-    assert body.get("source") == "default"
+    assert resp.status_code == 409, f"Expected 409, got {resp.status_code}: {resp.text}"
 
 
 def test_engine_status_includes_source_key():
@@ -162,11 +166,9 @@ def test_engine_sweep_run_tripadvisor_dispatches_sweep_tripadvisor(monkeypatch, 
     from brave.core import engine as collection_engine
 
     ta_calls = []
-    uf_calls = []
     discover_calls = []
 
     monkeypatch.setattr(pipeline, "sweep_tripadvisor", _FakeTask(ta_calls))
-    monkeypatch.setattr(pipeline, "sweep_uf", _FakeTask(uf_calls))
     monkeypatch.setattr(pipeline, "discover_atrativo_task", _FakeTask(discover_calls))
 
     pipeline.engine_sweep_run.run(
@@ -174,26 +176,23 @@ def test_engine_sweep_run_tripadvisor_dispatches_sweep_tripadvisor(monkeypatch, 
     )
 
     assert len(ta_calls) == 1, f"Expected 1 sweep_tripadvisor call, got {len(ta_calls)}"
-    assert len(uf_calls) == 0, "sweep_uf must NOT be called when source=tripadvisor"
     assert len(discover_calls) == 0, "discover_atrativo_task must NOT be called when source=tripadvisor"
 
 
-def test_engine_sweep_run_default_dispatches_sweep_uf(monkeypatch, running_engine):
-    """engine_sweep_run(source='default') dispatches sweep_uf (no regression)."""
+def test_engine_sweep_run_default_dispatches_discover_atrativo(monkeypatch, running_engine):
+    """engine_sweep_run(source='default') dispatches discover_atrativo_task (Places lane)."""
     from brave.tasks import pipeline
     from brave.core import engine as collection_engine
 
     ta_calls = []
-    uf_calls = []
     discover_calls = []
 
     monkeypatch.setattr(pipeline, "sweep_tripadvisor", _FakeTask(ta_calls))
-    monkeypatch.setattr(pipeline, "sweep_uf", _FakeTask(uf_calls))
     monkeypatch.setattr(pipeline, "discover_atrativo_task", _FakeTask(discover_calls))
 
     pipeline.engine_sweep_run.run(
         ufs=["BA"], lane="both", depth=collection_engine.NASCENTE_RIO, source="default"
     )
 
-    assert len(uf_calls) == 1, f"Expected 1 sweep_uf call, got {len(uf_calls)}"
+    assert len(discover_calls) == 1, f"Expected 1 discover_atrativo call, got {len(discover_calls)}"
     assert len(ta_calls) == 0, "sweep_tripadvisor must NOT be called when source=default"

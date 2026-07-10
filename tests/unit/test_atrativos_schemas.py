@@ -137,14 +137,14 @@ def _full_atrativo(**overrides):
 
 def test_completude_ceiling_without_description_is_75() -> None:
     """All five discovery fields, no descricao_editorial → 75.0 (unchanged floor)."""
-    from brave.domains.mtur.discovery import _compute_completude
+    from brave.lanes.atrativos.discovery_agent import _compute_completude
 
     assert _compute_completude(_full_atrativo()) == 75.0
 
 
 def test_completude_new_degrau_with_description_is_90() -> None:
     """All five fields + a curated descricao_editorial → the new 90.0 degrau."""
-    from brave.domains.mtur.discovery import _compute_completude
+    from brave.lanes.atrativos.discovery_agent import _compute_completude
 
     result = _full_atrativo(
         descricao_editorial="Descrição editorial curada, na voz da Norteia."
@@ -154,7 +154,7 @@ def test_completude_new_degrau_with_description_is_90() -> None:
 
 def test_completude_description_below_ceiling_stays_50() -> None:
     """Missing ibge/place_id keeps the 50 degrau even with a description (no jump)."""
-    from brave.domains.mtur.discovery import _compute_completude
+    from brave.lanes.atrativos.discovery_agent import _compute_completude
 
     from brave.lanes.atrativos.schemas import AtrativoResult
 

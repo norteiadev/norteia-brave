@@ -72,7 +72,6 @@ TA_DESTINO_ORIGEM_VALUE = 65.0
 class TripAdvisorDestinosIngest:
     """TripAdvisor destinations ingestion lane — ingests destinos into Nascente.
 
-    Mirrors MturSeedIngest (brave/lanes/destinos/mtur.py) in structure.
     For each destination returned by the TA client, validates via
     TripAdvisorDestinoPayload, resolves IBGE, writes a NascenteRecord via
     store_raw, and (when run_rio=True) triggers the Rio pipeline.

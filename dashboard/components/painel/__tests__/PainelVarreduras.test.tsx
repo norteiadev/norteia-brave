@@ -37,7 +37,7 @@ describe("PainelVarreduras", () => {
     expect(rows).toHaveLength(sampleRuns.length);
 
     // Columns: source / depth label / synced / failed are present.
-    expect(rows[0]).toHaveTextContent("mtur");
+    expect(rows[0]).toHaveTextContent("tripadvisor");
     expect(rows[0]).toHaveTextContent("Nascente → Rio → Mar");
     expect(rows[0]).toHaveTextContent("138"); // synced
     expect(rows[0]).toHaveTextContent("CE"); // uf

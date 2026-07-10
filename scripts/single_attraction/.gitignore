@@ -1,0 +1,2 @@
+# Live TripAdvisor session cookie jar (DataDome credential) — never commit.
+*.curl

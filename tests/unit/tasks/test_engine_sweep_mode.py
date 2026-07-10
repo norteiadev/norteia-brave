@@ -39,13 +39,14 @@ class _FakeTask:
 def _patch_producers(monkeypatch):
     from brave.tasks import pipeline
 
-    uf_calls: list = []
     discover_calls: list = []
     ta_calls: list = []
-    monkeypatch.setattr(pipeline, "sweep_uf", _FakeTask(uf_calls))
     monkeypatch.setattr(pipeline, "discover_atrativo_task", _FakeTask(discover_calls))
     monkeypatch.setattr(pipeline, "sweep_tripadvisor", _FakeTask(ta_calls))
-    return uf_calls, discover_calls, ta_calls
+    # The default (Places) lane dispatches discover_atrativo_task per UF; the retired
+    # Mtur sweep_uf producer is gone. Returned first so existing call-sites read the
+    # default lane's producer as the primary spy.
+    return discover_calls, discover_calls, ta_calls
 
 
 def _run(ufs=("BA", "RJ", "SP")):

@@ -4,7 +4,7 @@ The single place that knows every collection source. Adding a source = a new
 ``brave/domains/<fonte>/`` package + one ``_LAZY`` line here.
 
 ``get_domain(name)`` returns the :class:`~brave.domains.base.SourceDomain`
-descriptor for a source (``"mtur"`` / its legacy alias ``"default"`` /
+descriptor for a source (``"default"`` = the Google Places attraction track /
 ``"tripadvisor"`` / ``"manual"``). ``enabled_sources(config)`` returns the
 sweepable lanes that are enabled in config (delegates to
 ``brave.config.runtime`` — the config overlay stays the source of truth;
@@ -31,11 +31,11 @@ from brave.domains.base import SourceDomain, build_score_input
 if TYPE_CHECKING:
     from brave.config.settings import AppConfig
 
-# name -> (module, attribute). "default" is the legacy engine source name for the
-# Mtur/Places track (brave.core.engine `_VALID_SOURCES`, brave:engine:source).
+# name -> (module, attribute). "default" is the engine source name for the Google
+# Places attraction track (brave.core.engine `_VALID_SOURCES`, brave:engine:source);
+# the retired Mtur destino-seed no longer registers a domain.
 _LAZY: dict[str, tuple[str, str]] = {
-    "mtur": ("brave.domains.mtur.controllers", "MTUR_DOMAIN"),
-    "default": ("brave.domains.mtur.controllers", "MTUR_DOMAIN"),
+    "default": ("brave.domains.places.controllers", "PLACES_DOMAIN"),
     "tripadvisor": ("brave.domains.tripadvisor.controllers", "TRIPADVISOR_DOMAIN"),
     "manual": ("brave.domains.manual.controllers", "MANUAL_DOMAIN"),
 }
@@ -85,7 +85,7 @@ def get_domain(name: str) -> SourceDomain:
 
 
 def registered_source_names() -> list[str]:
-    """All registered source names (including aliases like ``"default"``), sorted."""
+    """All registered source names (``"default"`` / ``"tripadvisor"`` / ``"manual"``), sorted."""
     return sorted(set(_LAZY))
 
 

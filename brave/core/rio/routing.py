@@ -182,6 +182,30 @@ def process_nascente_record(
     if _descricao:
         normalized["descricao_editorial"] = _descricao
 
+    # Carry distrito/subdistrito localization (IBGE DTB) from canonical into normalized so
+    # it survives the Rio cherry-pick and flows Mar→push→drawer. These are PUBLIC geo-
+    # territorial fields (same class as município) — NOT PII; do NOT add to any exclusion/
+    # blocklist. On discovery/TA lanes without a distrito signal they are absent → key
+    # simply not set (floor preserved), exactly like descricao_editorial above.
+    _distrito_name = _canonical.get("distrito_name")
+    if _distrito_name:
+        normalized["distrito_name"] = _distrito_name
+    _distrito_code = _canonical.get("distrito_code")
+    if _distrito_code:
+        normalized["distrito_code"] = _distrito_code
+    _distrito_municipio_ibge = _canonical.get("distrito_municipio_ibge")
+    if _distrito_municipio_ibge:
+        normalized["distrito_municipio_ibge"] = _distrito_municipio_ibge
+    _subdistrito_name = _canonical.get("subdistrito_name")
+    if _subdistrito_name:
+        normalized["subdistrito_name"] = _subdistrito_name
+    _subdistrito_code = _canonical.get("subdistrito_code")
+    if _subdistrito_code:
+        normalized["subdistrito_code"] = _subdistrito_code
+    _distrito_source = _canonical.get("distrito_source")
+    if _distrito_source:
+        normalized["distrito_source"] = _distrito_source
+
     # Attraction-specific: preserve place_id_cache so ContactFinderAgent and SignalAgent
     # can look up Place Details without repeating text_search (D-04, COMP-03).
     # This cache key is written by DiscoveryAgent into the nascente payload; copying it
@@ -189,11 +213,22 @@ def process_nascente_record(
     if nascente.entity_type == "attraction" and "place_id_cache" in payload:
         normalized["place_id_cache"] = payload["place_id_cache"]
 
-    # Attraction-specific: preserve parent_mar_id from payload so harness and downstream
-    # queries can group atrativos by parent destino without a nascente JOIN.
-    # Mirrors the place_id_cache copy above (D-03 / G2 gap fix).
-    if nascente.entity_type == "attraction" and "parent_mar_id" in payload:
-        normalized["parent_mar_id"] = payload["parent_mar_id"]
+    # Attraction-specific: preserve the parent-destino linkage from payload so the CMS
+    # and downstream queries can surface/group atrativos by parent destino without a
+    # nascente JOIN. Both lanes now write the destino-first linkage:
+    #   - parent_rio_id + parent_source_ref: always present (the ensured IBGE destino
+    #     is promoted to Rio unconditionally — see brave/shared/destino.ensure_destino).
+    #   - parent_mar_id: present ONLY when that destino already reached Mar (cms.py's
+    #     detail endpoint loads the parent MarRecord from it).
+    # Copying all three keeps the CMS parent linkage working uniformly whether or not
+    # the destino reached Mar. Mirrors the place_id_cache copy above (D-03 / G2 gap fix).
+    if nascente.entity_type == "attraction":
+        if "parent_rio_id" in payload:
+            normalized["parent_rio_id"] = payload["parent_rio_id"]
+        if "parent_source_ref" in payload:
+            normalized["parent_source_ref"] = payload["parent_source_ref"]
+        if "parent_mar_id" in payload:
+            normalized["parent_mar_id"] = payload["parent_mar_id"]
 
     # Attraction-specific: carry a lane-supplied MASKED WhatsApp candidate (Phase F)
     # from payload["contact"] into normalized["contact"]. Value is already masked at

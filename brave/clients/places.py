@@ -23,7 +23,10 @@ from __future__ import annotations
 
 import unicodedata
 from datetime import timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 import structlog
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
@@ -99,26 +102,71 @@ def _extract_municipio_from_components(address_components: Any) -> tuple[str, st
     return municipio_nome, uf_short
 
 
-def build_mtur_ibge_lookup(mtur_rows: list[dict]) -> dict[tuple[str, str], str]:
-    """Build {(normalized_name, UF): ibge_code} lookup dict from all Mtur rows.
+def _extract_distrito_from_components(address_components: Any) -> str:
+    """Return the distrito name (long_text) from Places API addressComponents.
 
-    Used to resolve municipality name → IBGE code in-process against the loaded
-    Mtur table. The Places API has no IBGE field; this is the only resolution path.
+    Type:
+      "administrative_area_level_3" → distrito name (long_text)
+        e.g. "Arraial d'Ajuda" (distrito of município Porto Seguro/BA)
+
+    DTB has no GPS, so this NAME text is the only distrito signal Places returns.
+    Callers name-match it against the município's distritos (resolve_distrito).
+
+    Returns "" if components are missing or do not contain the expected type.
+    """
+    for comp in address_components:
+        if "administrative_area_level_3" in list(comp.types):
+            return comp.long_text
+    return ""
+
+
+def build_mtur_ibge_lookup(rows: list[dict]) -> dict[tuple[str, str], str]:
+    """Build {(normalized_name, UF): ibge_code} lookup dict from município rows.
+
+    Used to resolve municipality name → IBGE code in-process. The Places API has
+    no IBGE field; this is the only resolution path. Kept as the pure dict-builder
+    behind ``load_municipio_name_ibge_lookup`` (which feeds it rows from the
+    ``municipios`` reference table).
 
     Args:
-        mtur_rows: List of municipality dicts from MturClient.fetch_municipalities().
-                   Each row must have "name", "uf", and "ibge_code" keys.
+        rows: List of municipality dicts, each with "name", "uf", and
+              "ibge_code" keys.
 
     Returns:
         Dict mapping (normalized_municipality_name, "BA") → "2927408" (IBGE code).
     """
     lookup: dict[tuple[str, str], str] = {}
-    for row in mtur_rows:
+    for row in rows:
         name = row.get("name", "")
         uf = row.get("uf", "").upper()
         ibge = row.get("ibge_code", "")
         if name and uf and ibge:
             lookup[(_normalize_name(name), uf)] = ibge
+    return lookup
+
+
+def load_municipio_name_ibge_lookup(session: "Session") -> dict[tuple[str, str], str]:
+    """Build {(normalized_name, UF): ibge_code} from the ``municipios`` reference table.
+
+    Repoints ``build_mtur_ibge_lookup`` (which read the retired mtur CSV) at the
+    seeded DB table. Same lookup-dict shape, so ``RealPlacesClient`` consumes it
+    unchanged: the Places API has no IBGE field, so a normalized name+UF → IBGE
+    lookup is the only resolution path for ``municipio_ibge``.
+
+    Args:
+        session: SQLAlchemy synchronous Session.
+
+    Returns:
+        Dict mapping (normalized_municipality_name, "BA") → "2927408" (IBGE code).
+    """
+    from brave.core.models import Municipio
+
+    lookup: dict[tuple[str, str], str] = {}
+    for nome, uf, ibge_code in session.query(
+        Municipio.nome, Municipio.uf, Municipio.ibge_code
+    ).all():
+        if nome and uf and ibge_code:
+            lookup[(_normalize_name(nome), uf.upper())] = ibge_code
     return lookup
 
 
@@ -267,6 +315,10 @@ class RealPlacesClient:
             )
             ibge_key = (_normalize_name(municipio_nome), uf.upper())
             municipio_ibge = self._ibge_lookup.get(ibge_key, "")
+            # distrito name text (admin_area_level_3) — name-matched downstream
+            distrito_hint = _extract_distrito_from_components(
+                place.address_components or []
+            )
 
             result = {
                 "place_id": place.id,
@@ -279,6 +331,7 @@ class RealPlacesClient:
                 },
                 "municipio_nome": municipio_nome,
                 "municipio_ibge": municipio_ibge,
+                "distrito_hint": distrito_hint,
             }
             results.append(result)
 
@@ -351,6 +404,9 @@ class RealPlacesClient:
         if place.regular_opening_hours:
             weekday_text = list(place.regular_opening_hours.weekday_descriptions)
 
+        # distrito name text (admin_area_level_3) — name-matched downstream
+        distrito_hint = _extract_distrito_from_components(place.address_components or [])
+
         result = {
             "place_id": place.id,
             "name": place.display_name.text if place.display_name else "",
@@ -360,6 +416,7 @@ class RealPlacesClient:
             "business_status": place.business_status.name if place.business_status else "UNKNOWN",
             "weekday_text": weekday_text,
             "reviews": reviews,
+            "distrito_hint": distrito_hint,
         }
 
         logger.info("places_place_details_ok", place_id=place_id)

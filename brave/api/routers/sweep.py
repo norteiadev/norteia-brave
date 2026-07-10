@@ -6,8 +6,8 @@ POST /api/v1/sweep  — kick a UF sweep for destinos and/or atrativos without
 This is the OPTIONAL D-05 nice-to-have surface (the `brave.cli sweep` subcommand
 is the required one). It MUST be Bearer-guarded so an unauthenticated caller
 cannot fan out expensive LLM/Places sweeps (T-05-07). It only kicks the existing
-producer/chain tasks — sweep_uf (producer-only) and discover_atrativo_task (which
-auto-chains and STOPS at the WhatsApp gate). It never auto-validates, never
+producer/chain tasks — discover_atrativo_task (which auto-chains and STOPS at the
+WhatsApp gate; the destinos lane has no producer). It never auto-validates, never
 bypasses the reliability gate, and never reaches the WhatsApp send path (T-05-09, D-02/D-07).
 
 Dispatch uses the prod-vs-offline fallback variant (mirrors atrativos_gate.py:376-396):
@@ -68,19 +68,16 @@ def trigger_sweep(
     Bearer-guarded (require_steward_or_bearer) so an unauthenticated caller cannot
     fan out expensive LLM/Places sweeps (T-05-07). Returns 202 Accepted.
 
-    - lane=destinos  → sweep_uf (producer-only; records land via reliability scoring / DLQ).
+    - lane=destinos  → no producer (Mtur seed retired; destinos come from the DB tables).
     - lane=atrativos → discover_atrativo_task (auto-chains, STOPS at the gate).
-    - lane=both      → both (default).
+    - lane=both      → atrativos only (default).
 
     Never dispatches outreach / reaches the WhatsApp send path (T-05-09, D-02/D-07).
     """
     uf = uf.upper()
 
-    if lane in ("destinos", "both"):
-        from brave.tasks.pipeline import sweep_uf
-
-        _dispatch(sweep_uf, uf, task_label="sweep_uf")
-
+    # destinos: no producer to dispatch — the Mtur destino seed is retired and parent
+    # destinos are resolved from the DB reference tables. Only the atrativos lane fans out.
     if lane in ("atrativos", "both"):
         from brave.tasks.pipeline import discover_atrativo_task
 

@@ -40,9 +40,9 @@ describe("PainelConfig", () => {
     expect(getByTestId("config-mode-LIGADO").getAttribute("data-active")).toBe(
       "true",
     );
-    // sources rendered from the snapshot
-    getByTestId("config-source-mtur");
+    // sources rendered from the snapshot (TripAdvisor surfaced; dormant Places lane off)
     getByTestId("config-source-tripadvisor");
+    getByTestId("config-source-default");
     // save enabled while the weights are valid
     expect(getByTestId("config-save-pesos")).not.toBeDisabled();
   });
@@ -110,6 +110,32 @@ describe("PainelConfig", () => {
         requests.some(
           (r) =>
             r.method === "PATCH" && r.url.includes("/api/api/v1/config"),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("renders the description-enrichment toggle from the snapshot (on by default)", async () => {
+    server.use(configGetSuccess(), configPatchSuccess());
+
+    const { getByTestId } = renderWithClient(<PainelConfig />);
+
+    await waitFor(() => getByTestId("config-enrichment-toggle"));
+    expect(getByTestId("config-enrichment-toggle")).toBeChecked();
+  });
+
+  it("toggling description enrichment off PATCHes /config", async () => {
+    server.use(configGetSuccess(), configPatchSuccess());
+
+    const { getByTestId } = renderWithClient(<PainelConfig />);
+
+    await waitFor(() => getByTestId("config-enrichment-toggle"));
+    fireEvent.click(getByTestId("config-enrichment-toggle"));
+
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (r) => r.method === "PATCH" && r.url.includes("/api/api/v1/config"),
         ),
       ).toBe(true),
     );

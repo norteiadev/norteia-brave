@@ -44,6 +44,12 @@ import sys
 # look un-migrated. It is NEVER truncated by this script.
 PROTECTED_TABLES = {"alembic_version"}
 
+# Static carga-inicial reference tables (seeded at migrate time by
+# scripts.seed_reference_data). These are NOT pipeline data — the collection lanes
+# read their parent destinos / geo resolution from them, and nothing FK-references
+# them. A reset preserves them so a re-seed is not needed after every wipe.
+REFERENCE_TABLES = {"municipios", "distritos", "uf_geoids"}
+
 
 def _repo_root() -> str:
     # scripts/ lives at <repo>/.claude/skills/reset-brave-db/scripts/reset_db.py
@@ -106,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         print("ERROR: SQLAlchemy not importable — run with the project venv (.venv/bin/python).", file=sys.stderr)
         return 2
 
-    keep = PROTECTED_TABLES | {t.strip() for t in args.keep}
+    keep = PROTECTED_TABLES | REFERENCE_TABLES | {t.strip() for t in args.keep}
     engine = create_engine(db_url)
 
     # Discover the data tables (everything in public except the protected/kept set).
@@ -128,9 +134,11 @@ def main(argv: list[str] | None = None) -> int:
     print("\nWill TRUNCATE (RESTART IDENTITY CASCADE):")
     for t in targets:
         print(f"  - {t:32} {counts_before[t]} rows")
-    if keep - PROTECTED_TABLES:
-        print("Keeping (not truncated): " + ", ".join(sorted(keep - PROTECTED_TABLES)))
-    print("Always preserved: " + ", ".join(sorted(PROTECTED_TABLES)))
+    always_preserved = PROTECTED_TABLES | REFERENCE_TABLES
+    user_kept = keep - always_preserved
+    if user_kept:
+        print("Keeping (not truncated): " + ", ".join(sorted(user_kept)))
+    print("Always preserved: " + ", ".join(sorted(always_preserved)))
 
     if not targets:
         print("\nNothing to truncate.")

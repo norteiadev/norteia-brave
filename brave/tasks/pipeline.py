@@ -671,8 +671,17 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
         # Select Places client based on run_real_externals flag
         if app_config.run_real_externals:
             places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
-            from brave.clients.places import RealPlacesClient
-            places_client = RealPlacesClient(api_key=places_api_key)
+            from brave.clients.places import (
+                RealPlacesClient,
+                load_municipio_name_ibge_lookup,
+            )
+            # Places API has no IBGE field — wire the name→IBGE lookup from the
+            # municipios reference table so attractions get a resolved municipio_ibge
+            # (required for parent-destino linkage via ensure_destino).
+            places_client = RealPlacesClient(
+                api_key=places_api_key,
+                ibge_lookup=load_municipio_name_ibge_lookup(session),
+            )
         else:
             from brave.clients.null_places import NullPlacesClient
             places_client = NullPlacesClient()
@@ -688,11 +697,19 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
             from brave.clients.null_llm import NullLLMClient
             llm_client = NullLLMClient()
 
+        # Load the IBGE DTB distrito reference once — threads into the discovery agent
+        # for admin_area_level_3 → distrito name-match enrichment, mirroring how the
+        # municipios reference is loaded and passed in the TA lane. Reads the seeded
+        # distritos reference table (was a static CSV before §3).
+        from brave.shared.ibge_distritos import load_distritos
+        distritos = load_distritos(session)
+
         agent = DiscoveryAgent(
             places_client=places_client,
             llm_client=llm_client,
             session=session,
             config=config,
+            distritos=distritos,
         )
 
         asyncio.run(agent.produce(uf))
@@ -771,118 +788,6 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
         engine.dispose()
 
 
-# ---------------------------------------------------------------------------
-# Phase 5 — Destinos recurring sweep (ORCH-01, D-01/D-02)
-# ---------------------------------------------------------------------------
-
-
-@shared_task(
-    bind=True,
-    max_retries=3,
-    default_retry_delay=60,
-    name="brave.sweep_uf",  # MUST be exactly this — beat_schedule.py expects it (D-01)
-    acks_late=True,
-    reject_on_worker_lost=True,
-    time_limit=600,  # producers fan out per-município; allow headroom
-)
-def sweep_uf(self, uf: str, depth: str | None = None) -> None:
-    """Recurring Destinos sweep for one UF (ORCH-01, D-01/D-02).
-
-    Runs the single destino producer:
-      1. MturSeedIngest.produce(uf) — idempotent seed re-ingest (origem=100).
-
-    Depth gate (plan 10-02): depth arrives as an explicit task arg (never read
-    from Redis here — the orchestrator owns the read). Under depth=NASCENTE the
-    Mtur seed runs Nascente-only (run_rio=False) — zero external cost. At the rio
-    depths it also runs Rio routing. depth=None (legacy/direct call) defaults to the
-    full path.
-
-    Producer-only (D-02): the producer calls store_raw + process_nascente_record
-    internally, so records land in DLQ/Mar/descarte by reliability scoring automatically. This task
-    adds NO scoring/validation branch — promotion to Mar stays behind reliability scoring + the human
-    DLQ steward gate.
-
-    Idempotency: store_raw dedups by (source, source_ref, content_hash) (D-01), so a
-    replayed sweep for the same UF is a no-op.
-    Error handling: a missing Mtur CSV (FileNotFoundError) or other PermanentError is
-    quarantined (PoisonQuarantine), not lost; transient errors retry then quarantine.
-
-    Args:
-        uf: Two-letter Brazilian state code (e.g. "BA", "RJ").
-    """
-    from brave.clients.mtur import MturClient
-    from brave.core import engine as collection_engine
-    from brave.core.quarantine import quarantine_poison as _quarantine
-    from brave.lanes.destinos.mtur import MturSeedIngest
-
-    # Depth derivation — nascente is the free Nascente-only path: no Rio.
-    run_rio = depth != collection_engine.NASCENTE
-
-    session, engine = _get_session()
-    try:
-        config = load_effective_config(session).score
-
-        try:
-            # Mtur seed re-ingest (idempotent — store_raw dedups by content_hash).
-            # run_rio=False under nascente: Nascente + reliability score only, no Rio.
-            # redis lets the producer honor a mid-run Motor Pausado/Desligado
-            # (engine.should_halt_producer) instead of inserting the whole UF.
-            import redis as _seed_redis_lib  # noqa: PLC0415
-            _seed_rc = _seed_redis_lib.from_url(
-                os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-            )
-            seed = MturSeedIngest(MturClient(), session, config)
-            asyncio.run(seed.produce(uf, run_rio=run_rio, redis=_seed_rc))
-        except FileNotFoundError as exc:
-            # A missing Mtur seed CSV is permanent — quarantine, never retry (T-05-03).
-            raise PermanentError(f"Mtur seed CSV missing for sweep {uf}: {exc}") from exc
-
-        session.commit()
-
-    except PermanentError as exc:
-        session.rollback()
-        q_session, q_engine = _get_session()
-        try:
-            _quarantine(
-                session=q_session,
-                nascente_id=None,
-                task_name="brave.sweep_uf",
-                error=str(exc),
-                payload={"uf": uf},
-            )
-            q_session.commit()
-        finally:
-            q_session.close()
-            q_engine.dispose()
-
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            q_session, q_engine = _get_session()
-            try:
-                _quarantine(
-                    session=q_session,
-                    nascente_id=None,
-                    task_name="brave.sweep_uf",
-                    error=str(exc),
-                    payload={"uf": uf},
-                )
-                q_session.commit()
-            finally:
-                q_session.close()
-                q_engine.dispose()
-
-    finally:
-        # Producer-completes lifecycle: this producer was dispatched by engine_sweep_run
-        # (incr_inflight before .delay); decrement here so the LAST producer completes
-        # the run. Best-effort, never breaks the task (single outermost finally).
-        _producer_finally_lifecycle()
-        session.close()
-        engine.dispose()
-
-
 @shared_task(
     bind=True,
     max_retries=3,
@@ -943,7 +848,7 @@ def sweep_tripadvisor(
     from brave.lanes.tripadvisor import sweep_progress
     from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
     from brave.lanes.tripadvisor.client import SessionExpiredError, SessionMissingError
-    from brave.lanes.tripadvisor.ibge import load_ibge_csv
+    from brave.lanes.tripadvisor.ibge import load_ibge_municipios
 
     run_rio = depth != collection_engine.NASCENTE
 
@@ -989,13 +894,9 @@ def sweep_tripadvisor(
             from brave.clients.null_nominatim import NullGeocoderClient
             geocoder = NullGeocoderClient()
 
-        # Load IBGE records (static CSV) — used by both destinos + atrativos
-        import os as _os
-        _project_root = _os.path.dirname(
-            _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-        )
-        ibge_csv_path = _os.path.join(_project_root, "data", "ibge", "ibge_municipios.csv")
-        ibge_records = load_ibge_csv(ibge_csv_path)
+        # Load IBGE records — used by both destinos + atrativos. Reads the seeded
+        # municipios reference table (was a static CSV before §3).
+        ibge_records = load_ibge_municipios(session)
 
         if bulk_national:
             # ---- Bulk national branch (Phase 15, TA-12) -----------------------
@@ -1434,7 +1335,7 @@ def enrich_description_task(self, rio_id: str) -> None:
         rio_id: UUID string of the RioRecord to enrich.
     """
     from brave.core.quarantine import quarantine_poison as _quarantine
-    from brave.domains.mtur.description import DescriptionEnrichmentAgent
+    from brave.lanes.atrativos.description import DescriptionEnrichmentAgent
 
     session, engine = _get_session()
     try:
@@ -1444,14 +1345,19 @@ def enrich_description_task(self, rio_id: str) -> None:
             raise PermanentError(f"RioRecord {rio_id} not found")
 
         app_config = AppConfig()
-        config = load_effective_config(session).score
+        effective = load_effective_config(session)
+        config = effective.score
         md_config = app_config.melhores_destinos
 
         redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         import redis as redis_lib
         redis_client = redis_lib.from_url(redis_url)
 
-        if app_config.run_real_externals:
+        # Real clients require BOTH run_real_externals AND the operator-toggleable
+        # description_enrichment_enabled flag (config_settings overlay, /painel). When the
+        # flag is off, the Null clients keep the floor and the agent still advances
+        # sub_state + re-scores — a real local sweep runs with ZERO LLM spend on descriptions.
+        if app_config.run_real_externals and effective.description_enrichment_enabled:
             from brave.clients.melhores_destinos import RealMelhoresDestinosClient
             md_client = RealMelhoresDestinosClient(config=md_config, redis=redis_client)
             from brave.clients.llm import RealLLMClient
@@ -1462,10 +1368,19 @@ def enrich_description_task(self, rio_id: str) -> None:
                 lane="melhores_destinos",
             )
         else:
+            if app_config.run_real_externals and not effective.description_enrichment_enabled:
+                logger.info("description_enrichment_disabled", rio_id=rio_id)
             from brave.clients.null_melhores_destinos import NullMelhoresDestinosClient
             md_client = NullMelhoresDestinosClient()
             from brave.clients.null_llm import NullLLMClient
             llm_client = NullLLMClient()
+
+        # Load the IBGE DTB distrito reference once — threads into the enrichment agent
+        # for the MD breadcrumb <Place> → distrito name-match, scoped to the atrativo's
+        # parent município. Mirrors the discovery lane's distrito load. Reads the seeded
+        # distritos reference table (was a static CSV before §3).
+        from brave.shared.ibge_distritos import load_distritos
+        distritos = load_distritos(session)
 
         agent = DescriptionEnrichmentAgent(
             md_client=md_client,
@@ -1473,6 +1388,7 @@ def enrich_description_task(self, rio_id: str) -> None:
             session=session,
             config=config,
             md_config=md_config,
+            distritos=distritos,
         )
 
         asyncio.run(agent.run(rio))
@@ -2198,10 +2114,9 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
 # Maps a domain's SweepDispatch.task_name (stable public celery name) to the
 # producer task's ATTRIBUTE in THIS module. The dispatch loop resolves the producer
 # via ``globals()[attr]`` (not the celery registry) so a test that monkeypatches
-# ``pipeline.sweep_uf`` / ``pipeline.sweep_tripadvisor`` / ``pipeline.discover_atrativo_task``
+# ``pipeline.discover_atrativo_task`` / ``pipeline.sweep_tripadvisor``
 # still intercepts the ``.delay`` — the registry indirection stays transparent.
 _PRODUCER_ATTR_BY_TASK_NAME: dict[str, str] = {
-    "brave.sweep_uf": "sweep_uf",
     "brave.discover_atrativo": "discover_atrativo_task",
     "brave.sweep_tripadvisor": "sweep_tripadvisor",
 }
@@ -2224,18 +2139,20 @@ def engine_sweep_run(
 ) -> dict:
     """Operator-started full sweep orchestrator (engine ON).
 
-    Fans out the existing producer tasks per UF — sweep_uf (destinos) and
-    discover_atrativo_task (atrativos, which auto-chains and STOPS at the WhatsApp
-    gate). Between UFs it re-reads the Redis engine state and breaks the loop the
-    moment Stop is requested: already-dispatched UF tasks finish on the workers
-    (graceful drain), no further UFs are fanned out, and the engine returns to idle.
+    Fans out the per-source producer tasks per UF — for the ``default`` (Google
+    Places) lane that is discover_atrativo_task (atrativos, which auto-chains and
+    STOPS at the WhatsApp gate); for ``tripadvisor`` it is sweep_tripadvisor. The
+    domain owns its lane→producer routing (``sweep_plan``). Between UFs it re-reads
+    the Redis engine state and breaks the loop the moment Stop is requested:
+    already-dispatched UF tasks finish on the workers (graceful drain), no further
+    UFs are fanned out, and the engine returns to idle.
 
     Depth gate (plan 10-02): depth is read ONCE at the authenticated /start edge
     (plan 10-01) and passed in as an arg — never re-read from Redis in this loop,
     so a stale/mutated Redis depth mid-run cannot escalate spend (T-10-04). It is
-    threaded down to sweep_uf / discover_atrativo_task as their own depth arg:
-      - NASCENTE: dispatch ONLY sweep_uf (Mtur-only, run_rio=False); atrativos are
-        NEVER dispatched regardless of lane (they have no free source); no LLM.
+    threaded down to each producer as its own depth arg:
+      - NASCENTE: the ``default`` lane has NO free producer (the Mtur destino seed is
+        retired; Places always costs) → nothing is dispatched for it under NASCENTE.
       - NASCENTE_RIO / NASCENTE_RIO_MAR: honor lane as today. The difference is
         downstream: nascente_rio runs producers + Rio but does not kick the
         atrativos WhatsApp-gate chain; nascente_rio_mar kicks it.

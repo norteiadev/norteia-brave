@@ -72,7 +72,7 @@ export const sampleDestinoDetail: DestinoDetail = {
     municipality: "Salvador",
     type: "historic_district",
   },
-  source: "mtur",
+  source: "ibge",
   audit_log: [
     {
       action: "dlq_reprocessed",

@@ -162,12 +162,14 @@ class _BrokerDownTask:
 
 
 def test_reprocess_default_source_runs_inline(monkeypatch):
-    """reprocess for a default-source run dispatches sweep_uf + discover inline (no raise)."""
+    """reprocess for a default-source run dispatches discover inline (no raise).
+
+    The Mtur destino seed is retired — the destinos lane has no producer, so only
+    discover_atrativo_task re-dispatches for the default (Places) source.
+    """
     from brave.tasks import pipeline
 
-    sweep = _BrokerDownTask()
     discover = _BrokerDownTask()
-    monkeypatch.setattr(pipeline, "sweep_uf", sweep)
     monkeypatch.setattr(pipeline, "discover_atrativo_task", discover)
 
     db = MagicMock()
@@ -178,8 +180,7 @@ def test_reprocess_default_source_runs_inline(monkeypatch):
 
     assert result["status"] == "accepted"
     assert result["ufs"] == ["BA", "SE"]
-    # both producers ran inline for each UF
-    assert sweep.ran == ["BA", "SE"]
+    # the atrativos producer ran inline for each UF
     assert discover.ran == ["BA", "SE"]
     # audited + committed
     db.commit.assert_called()
@@ -190,9 +191,9 @@ def test_reprocess_tripadvisor_source_runs_inline(monkeypatch):
     from brave.tasks import pipeline
 
     ta = _BrokerDownTask()
-    sweep = _BrokerDownTask()
+    discover = _BrokerDownTask()
     monkeypatch.setattr(pipeline, "sweep_tripadvisor", ta)
-    monkeypatch.setattr(pipeline, "sweep_uf", sweep)
+    monkeypatch.setattr(pipeline, "discover_atrativo_task", discover)
 
     db = MagicMock()
     run = _run(ufs=["BA"], source="tripadvisor", lane="both")
@@ -201,7 +202,7 @@ def test_reprocess_tripadvisor_source_runs_inline(monkeypatch):
     result = runs_router.reprocess_run(run_id=run.id, db=db)
     assert result["status"] == "accepted"
     assert ta.ran == ["BA"]
-    assert sweep.ran == []  # default-lane producers not used for TA source
+    assert discover.ran == []  # default-lane producers not used for TA source
 
 
 def test_reprocess_unknown_run_404():

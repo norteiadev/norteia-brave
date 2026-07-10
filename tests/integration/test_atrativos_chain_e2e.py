@@ -25,7 +25,7 @@ select FakePlaces/FakeLLM. We patch those fakes at their import sites to inject 
 borderline fixtures (mirrors the score math in test_atrativos_lane_e2e.py::test_sc4).
 
 Isolation: the chain tasks call session.commit() internally, so we use the SAVEPOINT-isolated
-session pattern established in test_sweep_uf.py — every commit only releases a savepoint and the
+session pattern established in the destinos-lane integration tests — every commit only releases a savepoint and the
 outer rollback at teardown discards everything (no leakage into the shared docker-compose DB).
 
 Sync-fallback fidelity: there is no Celery worker in the test, so we force the production

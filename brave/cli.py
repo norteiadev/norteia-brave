@@ -7,9 +7,10 @@ Commands:
 
     sweep          Kick an on-demand UF sweep without waiting for the beat (ORCH-03):
                    sweep <UF> [--lane destinos|atrativos|both]
-                   Dispatches sweep_uf (destinos) and/or discover_atrativo_task
-                   (atrativos), falling back to a synchronous inline run when no
-                   Celery broker is reachable.
+                   Dispatches discover_atrativo_task (atrativos), falling back to a
+                   synchronous inline run when no Celery broker is reachable. The
+                   destinos lane has no producer (Mtur seed retired — destinos come
+                   from the DB reference tables).
 
 Usage:
     python -m brave.cli run-fixture
@@ -149,7 +150,7 @@ def _run_sweep(uf: str, lane: str = "both") -> None:
     swallow-all dispatch-then-inline pattern in dlq.py:104-114). This only kicks
     the SAME producer/chain tasks the beat drives — it does NOT auto-validate, does
     NOT bypass the reliability gate, and never reaches the WhatsApp send path (D-02/D-07):
-      - destinos  → sweep_uf            (producer-only; records land via reliability scoring)
+      - destinos  → no producer (Mtur seed retired; destinos come from the DB tables)
       - atrativos → discover_atrativo_task (auto-chains, STOPS at the WhatsApp gate)
 
     The inline path runs the real task, which calls _get_session() and needs
@@ -162,24 +163,8 @@ def _run_sweep(uf: str, lane: str = "both") -> None:
     """
     db_url = os.environ.get("BRAVE_DB_URL")
 
-    if lane in ("destinos", "both"):
-        try:
-            from brave.tasks.pipeline import sweep_uf
-
-            sweep_uf.delay(uf)
-            print(f"sweep[destinos] {uf}: dispatched sweep_uf.delay (Celery)")
-        except Exception:
-            if not db_url:
-                print(
-                    f"sweep[destinos] {uf}: BRAVE_DB_URL not set — "
-                    "cannot run inline sweep (set BRAVE_DB_URL or start a Celery broker)"
-                )
-            else:
-                from brave.tasks.pipeline import sweep_uf
-
-                sweep_uf.run(uf)
-                print(f"sweep[destinos] {uf}: no broker — ran sweep_uf inline (synchronous)")
-
+    # destinos: the Mtur destino seed is retired — parent destinos come from the DB
+    # reference tables (no producer to dispatch). Only the atrativos lane fans out.
     if lane in ("atrativos", "both"):
         try:
             from brave.tasks.pipeline import discover_atrativo_task

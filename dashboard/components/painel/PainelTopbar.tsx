@@ -24,7 +24,7 @@ import {
 import { ENGINE_MODE_LABELS, type EngineMode } from "@/lib/config-api";
 import { BR_UFS } from "@/lib/painel-data";
 import { PainelLogs } from "@/components/painel/PainelLogs";
-import { PainelOrigem, type OrigemSource } from "@/components/painel/PainelOrigem";
+import { PainelOrigem } from "@/components/painel/PainelOrigem";
 
 /**
  * PainelTopbar — 58px chrome row of the Painel Brave shell.
@@ -68,11 +68,6 @@ const DEPTH_ORDER: EngineDepth[] = [
 
 /** TA session expiry warn band (seconds) — mirrors the design's 5-min warn. */
 const TA_WARN_SECONDS = 5 * 60;
-
-/** Map the engine source enum onto the Origem modal's source preselect. */
-function origemSourceFor(source: EngineSource): OrigemSource {
-  return source === "tripadvisor" ? "tripadvisor" : "mtur";
-}
 
 /** Format a seconds count as m:ss. */
 function fmtMMSS(seconds: number): string {
@@ -149,8 +144,8 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
 
   // START requires a pipeline depth (backend 422s a depthless start) — the
   // operator picks one from the depth menu, which is threaded into startEngine.
-  // source is already in scope from line below (data?.source ?? "default") and
-  // is passed so the selected origem lane actually reaches the sweep orchestrator.
+  // source is already in scope from line below (data?.source ?? "tripadvisor")
+  // and is passed so the selected origem lane actually reaches the sweep orchestrator.
   const start = useMutation({
     mutationFn: (vars: { depth: EngineDepth; ufs?: string[] }) =>
       startEngine({ depth: vars.depth, source, ufs: vars.ufs }),
@@ -171,7 +166,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   });
 
   const state: EngineState = data?.state ?? "idle";
-  const source: EngineSource = data?.source ?? "default";
+  const source: EngineSource = data?.source ?? "tripadvisor";
   const mode: EngineMode = data?.mode ?? "DESLIGADO";
   const pending = start.isPending || setMode.isPending;
   // motorOn is driven by the operator-intent latch (enabled), not the transient
@@ -514,7 +509,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
       <PainelOrigem
         open={origemOpen}
         onClose={() => setOrigemOpen(false)}
-        initialSource={origemSourceFor(source)}
+        initialSource="tripadvisor"
       />
 
       {/* Log ring buffer sidebar */}
