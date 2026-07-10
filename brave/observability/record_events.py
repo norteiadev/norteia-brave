@@ -14,7 +14,7 @@ record does not re-emit DB-stage events.
 Stage vocabulary:
   tripadvisor_synced, review_enriched, municipio_resolved, geo_enriched,
   parent_destino_linked, validated, ingested, deduped, scored, routed,
-  quarantined.
+  description_enriched, quarantined.
 
 Status vocabulary: 'ok' | 'fail' | 'skip'.
 
