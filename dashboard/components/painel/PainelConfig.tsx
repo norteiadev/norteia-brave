@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { ApiError } from "@/lib/api-client";
+import { type EngineSource, SOURCE_LABELS } from "@/lib/engine-api";
 import {
   type ConfigPatchBody,
   type EngineMode,
@@ -89,7 +90,12 @@ export function PainelConfig() {
 
   const sum = weightsSum(form.weights);
   const valid = weightsValid(form.weights);
-  const sources = Object.entries(data.sources);
+  // Only surface sources the dashboard actually exposes (SOURCE_LABELS). The
+  // dormant "default"/Places lane stays in the backend config but is not shown
+  // or toggled here — TripAdvisor is the only operator-facing source.
+  const sources = Object.entries(data.sources).filter(
+    ([name]) => name in SOURCE_LABELS,
+  );
   const activeMode = data.engine.mode;
 
   function setWeight(key: WeightKey, value: number) {
@@ -164,7 +170,7 @@ export function PainelConfig() {
                   className="flex items-center justify-between rounded-[8px] px-[10px] py-[9px] hover:bg-[var(--painel-chip)]"
                 >
                   <span className="text-[13px] font-medium text-[var(--painel-text)]">
-                    {name}
+                    {SOURCE_LABELS[name as EngineSource] ?? name}
                   </span>
                   <input
                     type="checkbox"
