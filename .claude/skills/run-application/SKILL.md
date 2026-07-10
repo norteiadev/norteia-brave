@@ -5,10 +5,19 @@ description: Start/stop/restart the full norteia-brave local stack — FastAPI A
 
 # Run the norteia-brave application
 
-The whole local stack is managed by **`scripts/app.sh`** — always drive it through that
-script, never launch the services ad-hoc (ad-hoc processes aren't tracked and cause port
-conflicts). Postgres + Redis are **external dependencies** the script only checks; they must
-already be running (Homebrew or Docker).
+Two ways to run the stack:
+
+- **Docker (recommended for the team)** — `docker compose up` runs everything (postgres +
+  redis + api + worker + beat + dashboard) with zero host deps. Use this when the user has no
+  local Python/Node/Postgres/Redis, or asks to "run it in Docker". See the README "Docker"
+  section; alt host ports via `BRAVE_API_PORT` / `BRAVE_DASH_PORT` / `BRAVE_PG_PORT` /
+  `BRAVE_REDIS_PORT`. Migrations + config seed run automatically (the `migrate` service).
+- **Host-native via `scripts/app.sh`** — the rest of this skill. Faster iteration/debug, but
+  needs Python/uv + Node/bun + Postgres + Redis on the host.
+
+For the host path, drive everything through **`scripts/app.sh`** — never launch services
+ad-hoc (untracked, causes port conflicts). Postgres + Redis are **external dependencies** the
+script only checks; they must already be running (Homebrew or Docker).
 
 Services managed: `api` (uvicorn `brave.api.main:app`, :8000) · `worker` (Celery) ·
 `beat` (Celery beat / RedBeat) · `dashboard` (Next.js dev, :3000). PIDs + logs live under

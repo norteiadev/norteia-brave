@@ -1,0 +1,20 @@
+# Backend image build context — keep it lean and never bake host state/secrets.
+.git
+.gitignore
+.venv
+.run
+.env
+.env.*
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+node_modules
+dashboard/node_modules
+dashboard/.next
+dashboard/coverage
+**/*.curl
+.claude/worktrees
+htmlcov
+*.log

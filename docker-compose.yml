@@ -1,12 +1,48 @@
+# Full local stack for norteia-brave — a new dev needs ONLY Docker installed.
+#
+#   docker compose up            # postgres(pgvector) + redis + migrate + api + worker + beat + dashboard
+#   docker compose up -d
+#   docker compose logs -f api
+#   docker compose down          # stop (keep data);  down -v also wipes DB/redis volumes
+#
+# Live source is bind-mounted; deps live in named volumes (.venv / node_modules) seeded from
+# the image build, so host and container never clash. Edit code → uvicorn --reload / next dev
+# pick it up. Secrets/toggles come from ./.env via ${VAR:-default} — the stack boots with dev
+# defaults even with no .env; set OPENROUTER_API_KEY / ANTHROPIC_API_KEY + RUN_REAL_EXTERNALS=1
+# there when you want real external calls.
+
+# Shared backend env (api + worker + beat + migrate). DB/redis point at the compose service
+# names; secrets fall back to safe dev defaults / empty.
+x-backend-env: &backend-env
+  # DB/redis are FIXED to the compose service names — NOT read from host ./.env (which
+  # points at localhost and would be wrong inside a container).
+  BRAVE_DB_URL: postgresql+psycopg://brave:brave@postgres:5432/norteia_brave
+  BRAVE_DB_REDIS_URL: redis://redis:6379/0
+  # Real external calls OFF by default (no keys needed). Enable per-run:
+  #   RUN_REAL_EXTERNALS=1 OPENROUTER_API_KEY=... ANTHROPIC_API_KEY=... docker compose up
+  RUN_REAL_EXTERNALS: ${RUN_REAL_EXTERNALS:-0}
+  BRAVE_DASHBOARD_BEARER_TOKEN: ${BRAVE_DASHBOARD_BEARER_TOKEN:-dev-local-token}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+# Shared backend build + live-source mounts (api/worker/beat/migrate share one image).
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: Dockerfile
+  volumes:
+    - ./:/app
+    - venv:/app/.venv          # container's linux venv (seeded from the image build)
+
 services:
   postgres:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:pg17   # pgvector required for Rio dedup — do NOT swap for plain postgres
     environment:
       POSTGRES_DB: norteia_brave
       POSTGRES_USER: brave
       POSTGRES_PASSWORD: brave
     ports:
-      - "5432:5432"
+      - "${BRAVE_PG_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +54,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${BRAVE_REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -27,44 +63,81 @@ services:
       timeout: 3s
       retries: 10
 
-  worker:
-    # TODO: add `build: .` once a Dockerfile is present in the project root.
-    # Until then, run the worker locally with:
-    #   .venv/bin/celery -A brave.tasks.celery_app:app worker --loglevel=info
-    image: python:3.12-slim
-    command: celery -A brave.tasks.celery_app:app worker --loglevel=info
-    # No -Q flag: worker consumes the default 'celery' queue (single-queue model).
+  # One-shot: schema migrations + config seed, then exits. Gate for api/worker/beat.
+  migrate:
+    <<: *backend
+    environment: *backend-env
+    command:
+      - /bin/sh
+      - -lc
+      - "/app/.venv/bin/alembic upgrade head && /app/.venv/bin/python -m scripts.seed_config"
     depends_on:
       postgres:
         condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *backend
+    environment: *backend-env
+    command:
+      ["/app/.venv/bin/uvicorn", "brave.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    ports:
+      - "${BRAVE_API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     restart: unless-stopped
-    environment:
-      BRAVE_DB_URL: ${BRAVE_DB_URL:-postgresql+psycopg://brave:brave@postgres:5432/norteia_brave}
-      BRAVE_DB_REDIS_URL: ${BRAVE_DB_REDIS_URL:-redis://redis:6379/0}
-      RUN_REAL_EXTERNALS: "0"
-      # BRAVE_USE_FAKEREDIS is intentionally NOT set — worker reaches real Redis via the
-      # 'redis' service hostname.
+
+  worker:
+    <<: *backend
+    environment: *backend-env
+    # No -Q flag: worker consumes the default 'celery' queue (single-queue model).
+    command:
+      ["/app/.venv/bin/celery", "-A", "brave.tasks.celery_app:app", "worker", "--loglevel=info"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   beat:
-    # Only one beat instance should run — redbeat enforces this via Redis lock.
-    # TODO: add `build: .` once a Dockerfile is present in the project root.
-    # Until then, run beat locally with:
-    #   .venv/bin/celery -A brave.tasks.beat_schedule beat --loglevel=info
-    image: python:3.12-slim
-    command: celery -A brave.tasks.beat_schedule beat --loglevel=info
+    <<: *backend
+    environment: *backend-env
     # Module target is beat_schedule (not celery_app): importing it executes the
     # BRAVE_BEAT_SCHEDULE builder and registers entries into the RedBeatScheduler.
+    # Only one beat instance should run — redbeat enforces this via a Redis lock.
+    command:
+      ["/app/.venv/bin/celery", "-A", "brave.tasks.beat_schedule", "beat", "--loglevel=info"]
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
     environment:
-      BRAVE_DB_REDIS_URL: ${BRAVE_DB_REDIS_URL:-redis://redis:6379/0}
-      # BRAVE_USE_FAKEREDIS is intentionally NOT set — beat reaches real Redis via the
-      # 'redis' service hostname.
+      # The BFF (app/api/[...path]/route.ts) proxies the browser's /api/* to FastAPI
+      # server-side, so the base URL is the compose service name, not localhost.
+      BRAVE_API_URL: http://api:8000
+      BRAVE_DASHBOARD_BEARER_TOKEN: ${BRAVE_DASHBOARD_BEARER_TOKEN:-dev-local-token}
+    ports:
+      - "${BRAVE_DASH_PORT:-3000}:3000"
+    volumes:
+      - ./dashboard:/app/dashboard
+      - dashnode:/app/dashboard/node_modules   # container's linux node_modules
+      - dashnext:/app/dashboard/.next           # keep the build cache off the host mount
+    depends_on:
+      - api
+    restart: unless-stopped
 
 volumes:
   postgres-data:
   redis-data:
+  venv:
+  dashnode:
+  dashnext:

@@ -23,6 +23,30 @@ Next.js (dashboard). Testes 100% offline (pytest + mocks; sem chamadas a APIs re
 
 ## Rodando localmente
 
+Dois caminhos: **Docker** (recomendado para o time — zero dependências no host) ou **host
+nativo** (mais rápido pra debug, exige Python/Node instalados).
+
+### Docker (recomendado para o time)
+
+Sobe a stack inteira — Postgres (pgvector) + Redis + API + worker + beat + dashboard. Um dev
+novo precisa **só do Docker** instalado. Código é bind-mount com hot-reload (edite → recarrega).
+
+```bash
+docker compose up            # sobe tudo (migrations + seed rodam antes via serviço `migrate`)
+docker compose up -d         # em background
+docker compose logs -f api   # segue o log de um serviço
+docker compose down          # para (mantém dados);  down -v também apaga os volumes (DB/redis)
+```
+
+- API: http://localhost:8000/api/v1/health · Dashboard: http://localhost:3000/painel
+- Sem `.env` a stack sobe com defaults de dev (bearer `dev-local-token`, `RUN_REAL_EXTERNALS=0`).
+  Pra chamadas reais: `RUN_REAL_EXTERNALS=1 OPENROUTER_API_KEY=... ANTHROPIC_API_KEY=... docker compose up`.
+- Portas configuráveis: `BRAVE_API_PORT`, `BRAVE_DASH_PORT`, `BRAVE_PG_PORT`, `BRAVE_REDIS_PORT`
+  (útil se já houver Postgres/Redis no host — ex.: `BRAVE_PG_PORT=5433 docker compose up`).
+- Reset da base no Docker: `docker compose exec api /app/.venv/bin/python .claude/skills/reset-brave-db/scripts/reset_db.py --yes`
+
+### Host nativo
+
 A aplicação são **quatro serviços**: API (FastAPI), worker (Celery), beat (Celery beat/RedBeat)
 e dashboard (Next.js). **Postgres** e **Redis** são dependências externas (Homebrew ou Docker) —
 precisam estar de pé antes de subir a app.

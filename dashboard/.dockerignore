@@ -1,0 +1,8 @@
+# Dashboard image build context.
+node_modules
+.next
+coverage
+.turbo
+*.log
+.env
+.env.*
