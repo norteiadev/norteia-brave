@@ -328,8 +328,9 @@ def set_mode(redis: Any, mode: str, *, session: Any = None) -> None:
     Mode is orthogonal to the runtime state (idle|running|stopping) and does NOT by
     itself drive state transitions — with one deliberate exception:
 
-      - DESLIGADO is a hard off, so it ALSO returns the engine to idle (mark_idle)
-        and clears the operator-intent enabled latch (set_enabled False).
+      - DESLIGADO is a hard off, so it ALSO returns the engine to idle (mark_idle),
+        clears the operator-intent enabled latch (set_enabled False), and zeroes the
+        producer inflight counter so the sync badge cannot stay "syncing" after OFF.
       - PAUSADO leaves the runtime AS-IS — a running sweep drains gracefully on its
         next mode check — and does NOT clear the enabled latch.
       - LIGADO only records the mode.
@@ -354,6 +355,12 @@ def set_mode(redis: Any, mode: str, *, session: Any = None) -> None:
     if mode == DESLIGADO:
         mark_idle(redis)
         set_enabled(redis, False)
+        # Hard off must also zero the producer inflight counter. get_status derives
+        # sync_phase="syncing" while get_inflight > 0, so without this the badge stays
+        # "Sincronizando" after OFF — either through drain lag or, if a producer leaked a
+        # +1 by never reaching its finally, permanently. decr_inflight clamps at 0, so a
+        # still-draining producer that finishes after OFF cannot underflow this reset.
+        redis.set(_INFLIGHT_KEY, "0")
     if session is not None:
         # Lazy import keeps brave.core.engine importable without brave.config.runtime
         # at module load (mirrors brave.core.dlq.service, which already depends on it).
