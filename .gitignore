@@ -32,3 +32,6 @@ redis-data/
 
 # Agent tooling per-machine state (oh-my-claudecode)
 .omc/
+
+# Local stack runtime state (scripts/app.sh pids + logs)
+.run/
