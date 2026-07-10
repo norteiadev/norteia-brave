@@ -136,7 +136,8 @@ class TripAdvisorAtrativosIngest:
         run_rio: bool = True,
         enrich_reviews: bool = False,
         redis: Any | None = None,
-    ) -> None:
+        max_per_uf: int | None = None,
+    ) -> list[str]:
         """Ingest one full UF sweep for TripAdvisor attractions.
 
         Paginates ALL TripAdvisor attractions for the UF's geoId via the GraphQL
@@ -163,11 +164,26 @@ class TripAdvisorAtrativosIngest:
                             ``fetch_recent_review`` call so ``most_recent_review_at`` is
                             populated and atualidade lifts the reliability score (per-UF path).
                             Off (today's Nascente behavior) for bulk / Nascente-only.
+            max_per_uf:     Optional operator test-run cap — stop after N attractions have
+                            been PROCESSED for this UF (successes + poison both count) and
+                            break pagination so no further pages are fetched. ``None``
+                            (default) = full sweep, behavior unchanged.
+
+        Returns:
+            The RioRecord ids (str) of every atrativo successfully ingested into Rio
+            this sweep (empty when run_rio=False). The task layer dispatches description
+            enrichment for these — the TA lane's only path to descricao_editorial.
         """
         # Resolve geoId for this UF, then paginate the GraphQL listing. Every page
         # yields (offset, cards); _ingest_one per card keeps the per-entity
         # try/quarantine so a single poison card never aborts the sweep.
         geo_id = await self._client.resolve_geo_id(uf)
+
+        # Operator test-run throttle: count attractions PROCESSED (success + poison)
+        # and stop once the cap is hit. None = uncapped (full sweep).
+        processed = 0
+        # Rio ids of atrativos ingested this sweep — returned for description enrichment.
+        ingested_ids: list[str] = []
 
         async for _offset, cards in self._client.fetch_attractions_paginated_gql(geo_id):
             # Mid-sweep pause/off/stop: this producer was fanned out per UF and keeps
@@ -178,6 +194,7 @@ class TripAdvisorAtrativosIngest:
             if redis is not None and collection_engine.should_halt_producer(redis):
                 logger.info("ta_atrativos_producer_halt", uf=uf, offset=_offset)
                 break
+            reached_cap = False
             for entity in cards:
                 # Snapshot the destino cache keys BEFORE the attempt so that, on the
                 # enrich path, a rollback can evict any destino cached by _ensure_destino
@@ -186,9 +203,11 @@ class TripAdvisorAtrativosIngest:
                 # exist. Snapshot only when enrich_reviews (per-atrativo rollback path).
                 keys_before = set(self._destino_rio_map) if enrich_reviews else None
                 try:
-                    await self._ingest_one(
+                    _rio_id = await self._ingest_one(
                         uf, entity, run_rio=run_rio, enrich_reviews=enrich_reviews
                     )
+                    if _rio_id is not None:
+                        ingested_ids.append(_rio_id)
                     if enrich_reviews:
                         # Per-atrativo durability: persist this atrativo's rows now.
                         self._session.commit()
@@ -231,12 +250,31 @@ class TripAdvisorAtrativosIngest:
                     if enrich_reviews:
                         # Persist the poison row independently (durable per-atrativo).
                         self._session.commit()
+                # Count this attraction as processed (success + poison both count) and
+                # trip the operator cap once N have been handled for this UF.
+                processed += 1
+                if max_per_uf is not None and processed >= max_per_uf:
+                    reached_cap = True
+                    break
             if not enrich_reviews:
                 # Live kanban: commit each page's ingested rows immediately so they become
                 # visible in the /painel board WHILE the sweep is still running (mirrors
                 # produce_paginated's per-page commit). Without this the per-UF producer
                 # committed only once at the very end and nothing showed mid-processing.
                 self._session.commit()
+            if reached_cap:
+                # Operator test-run cap hit: commit the partial page above (already done
+                # for the non-enrich path; per-atrativo commits cover enrich) then stop
+                # paginating — no further TripAdvisor pages are fetched for this UF.
+                logger.info(
+                    "ta_atrativos_producer_cap_reached",
+                    uf=uf,
+                    processed=processed,
+                    max_per_uf=max_per_uf,
+                )
+                break
+
+        return ingested_ids
 
     def _ensure_destino(self, ibge_match: IbgeMunicipio) -> tuple[uuid.UUID, str]:
         """Create the parent destino for an IBGE município on demand (destino-first).
@@ -277,7 +315,7 @@ class TripAdvisorAtrativosIngest:
         *,
         run_rio: bool,
         enrich_reviews: bool = False,
-    ) -> None:
+    ) -> str | None:
         """Ingest a single TripAdvisor attraction entity.
 
         When ``enrich_reviews`` is True and the card carries a numeric locationId,
@@ -285,6 +323,11 @@ class TripAdvisorAtrativosIngest:
         only: totalCount + newest publishedDate + rating) so ``atualidade_from_recency``
         lifts the reliability score; ``review_count``/``rating`` are overridden from that
         precise container when present. Off → today's behavior (recency None).
+
+        Returns the created/updated atrativo's RioRecord id (str) when ``run_rio`` is
+        True, else None — the caller (produce) collects these so the task layer can
+        dispatch description enrichment for this sweep's atrativos (TA lane never enters
+        the Places FSM chain, so this is its ONLY description-enrichment entry point).
         """
         location_id = str(entity.get("locationId", ""))
         name = str(entity.get("name", ""))
@@ -615,11 +658,13 @@ class TripAdvisorAtrativosIngest:
         )
 
         if run_rio:
-            process_nascente_record(
+            rio = process_nascente_record(
                 session=self._session,
                 nascente=nascente,
                 config=self._config,
             )
+            return str(rio.id)
+        return None
 
     # -----------------------------------------------------------------------
     # Bulk national ingest path (Phase 15, TA-12) — DISTINCT from _ingest_one.

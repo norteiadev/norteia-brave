@@ -88,7 +88,13 @@ class TripAdvisorDomain:
         return build_score_input(payload)
 
     def sweep_plan(
-        self, uf: str, *, depth: str, lane: str, nascente_only: bool
+        self,
+        uf: str,
+        *,
+        depth: str,
+        lane: str,
+        nascente_only: bool,
+        max_per_uf: int | None = None,
     ) -> list[SweepDispatch]:
         """Route TripAdvisor to its single per-UF producer (atrativos-only).
 
@@ -96,10 +102,18 @@ class TripAdvisorDomain:
         first — the oa3 fix), so ``lane`` does not branch the plan. The depth gate is
         applied INSIDE ``sweep_tripadvisor`` (``run_rio`` derived from ``depth``), and
         TA's bespoke session/bootstrap lifecycle stays owned by that task — the domain
-        does not flatten it into a generic path. Mirrors the former
-        ``if source == "tripadvisor"`` branch byte-for-byte.
+        does not flatten it into a generic path.
+
+        ``max_per_uf`` (operator test-run throttle, ``None`` = no cap) is threaded into
+        the producer kwargs so ``sweep_tripadvisor`` can stop each UF after N attractions.
         """
-        return [SweepDispatch("brave.sweep_tripadvisor", (uf,), {"depth": depth})]
+        return [
+            SweepDispatch(
+                "brave.sweep_tripadvisor",
+                (uf,),
+                {"depth": depth, "max_per_uf": max_per_uf},
+            )
+        ]
 
     def beat_entries(self, uf_list: list[str]) -> dict[str, dict]:
         """The TA session keep-alive beat — TA's ONLY scheduled task.

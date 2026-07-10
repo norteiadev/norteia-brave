@@ -148,9 +148,14 @@ class DescriptionEnrichmentAgent:
           5. Write descricao_editorial + bump completude (75 → 90) on the ceiling.
           6. flag_modified, advance sub_state, re-score (route_by_score), bounce on dlq.
         """
-        # Step 1: idempotency guard.
-        if rio.sub_state != "signals_gathered":
+        # Step 1: idempotency guard. Accept the Places-chain entry ("signals_gathered")
+        # AND the TA-lane direct entry (sub_state is None): TA atrativos never pass
+        # through find_contacts/gather_signals, so sweep_tripadvisor dispatches this
+        # agent straight on the freshly-Rio'd record. Any other state
+        # ("description_enriched", etc.) is terminal here → idempotent no-op.
+        if rio.sub_state not in ("signals_gathered", None):
             return
+        prior_sub_state = rio.sub_state
 
         normalized = rio.normalized or {}
         nome: str = normalized.get("name") or ""
@@ -260,7 +265,7 @@ class DescriptionEnrichmentAgent:
             action="sub_state_advanced",
             entity_type="attraction",
             record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
-            before_state={"sub_state": "signals_gathered"},
+            before_state={"sub_state": prior_sub_state},
             after_state={
                 "sub_state": "description_enriched",
                 "descricao_editorial_set": description_written,

@@ -41,7 +41,13 @@ class ManualDomain:
         return build_score_input(payload)
 
     def sweep_plan(
-        self, uf: str, *, depth: str, lane: str, nascente_only: bool
+        self,
+        uf: str,
+        *,
+        depth: str,
+        lane: str,
+        nascente_only: bool,
+        max_per_uf: int | None = None,
     ) -> list[SweepDispatch]:
         """No producers: manual records are authored on demand, never swept per-UF."""
         return []

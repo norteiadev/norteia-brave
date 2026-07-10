@@ -83,9 +83,18 @@ class PlacesDomain:
         return build_score_input(payload)
 
     def sweep_plan(
-        self, uf: str, *, depth: str, lane: str, nascente_only: bool
+        self,
+        uf: str,
+        *,
+        depth: str,
+        lane: str,
+        nascente_only: bool,
+        max_per_uf: int | None = None,
     ) -> list[SweepDispatch]:
         """Route the ``default`` lane to the Google Places attraction producer.
+
+        ``max_per_uf`` is accepted for protocol compatibility but not honored here —
+        the per-UF attraction cap is a TripAdvisor-lane feature only (out of scope).
 
         The Mtur destino seed is retired — there is NO free NASCENTE producer for
         this lane (Places always costs), so ``nascente_only`` and the ``destinos``

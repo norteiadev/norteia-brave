@@ -151,11 +151,14 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
 
     # Patch the atrativos produce() to actually call the stub client
     # and propagate its errors (destinos step removed — oa3).
-    async def _stub_produce(uf, run_rio=True, enrich_reviews=False, redis=None):
+    async def _stub_produce(
+        uf, run_rio=True, enrich_reviews=False, redis=None, max_per_uf=None
+    ):
         # Errors originate from the atrativos path (no destinos step — oa3).
         # enrich_reviews accepted because the per-UF path now passes enrich_reviews=True.
         # redis accepted because the per-UF path now passes redis= for the mid-run
         # Motor Pausado/Desligado halt gate (engine.should_halt_producer).
+        # max_per_uf accepted because the per-UF path now threads the operator cap.
         await stub_client.fetch_attractions(geo_id=0)
 
     mock_atrativos_ingest = MagicMock()
@@ -657,6 +660,10 @@ class TestR1EngineOffOnSessionExpiry:
         assert collection_engine.get_state(fake_redis) == collection_engine.IDLE, (
             "R1: engine state must be idle after SessionMissingError"
         )
+        assert collection_engine.get_mode(fake_redis) == collection_engine.DESLIGADO, (
+            "R1: operator mode must be DESLIGADO — leaving it LIGADO while enabled=0 "
+            "makes the topbar 'Ligar' a no-op (stuck UI)"
+        )
 
     def test_r1_session_expired_disables_engine(self, monkeypatch):
         """SessionExpiredError during per-UF sweep → engine latch set OFF + state=idle."""
@@ -675,6 +682,10 @@ class TestR1EngineOffOnSessionExpiry:
         )
         assert collection_engine.get_state(fake_redis) == collection_engine.IDLE, (
             "R1: engine state must be idle after SessionExpiredError"
+        )
+        assert collection_engine.get_mode(fake_redis) == collection_engine.DESLIGADO, (
+            "R1: operator mode must be DESLIGADO — leaving it LIGADO while enabled=0 "
+            "makes the topbar 'Ligar' a no-op (stuck UI)"
         )
 
 
@@ -723,11 +734,13 @@ class TestSweepTripAdvisorTaConfig:
                 run_rio: bool = True,
                 enrich_reviews: bool = False,
                 redis: Any = None,
+                max_per_uf: int | None = None,
             ) -> None:
                 # Record produce() kwargs so the per-UF enrich_reviews wiring is assertable.
                 captured["produce_enrich_reviews"] = enrich_reviews
                 captured["produce_run_rio"] = run_rio
                 captured["produce_redis_passed"] = redis is not None
+                captured["produce_max_per_uf"] = max_per_uf
 
         mock_app_config = MagicMock()
         mock_app_config.run_real_externals = real_externals
@@ -818,3 +831,89 @@ class TestSweepTripAdvisorTaConfig:
         assert ta_config_received is None, (
             f"expected ta_config=None in offline mode, got {ta_config_received!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TA-lane description enrichment: sweep_tripadvisor dispatches enrich_description_task
+# for every atrativo produce() ingested, at rio depths (run_rio), NOT at nascente-only.
+# ---------------------------------------------------------------------------
+
+
+class TestSweepTripAdvisorDescriptionDispatch:
+    """The TA lane never enters the Places FSM chain, so sweep_tripadvisor is the ONLY
+    place that kicks description enrichment for TA atrativos. It dispatches
+    enrich_description_task for each Rio id produce() returns, at every rio depth."""
+
+    def _run(self, monkeypatch, *, depth, produce_ids):
+        fake_redis = fakeredis.FakeRedis()
+        mock_db_session = MagicMock()
+        mock_db_session.execute.return_value = MagicMock(all=lambda: [])
+
+        class _StubIngest:
+            def __init__(self, **kw: Any) -> None:
+                pass
+
+            async def produce(self, uf: str, **kw: Any) -> list[str]:
+                # Return ids ONLY when run_rio (mirror the real producer: nascente-only
+                # creates no Rio records, so no enrichment is dispatched).
+                return list(produce_ids) if kw.get("run_rio") else []
+
+        mock_app_config = MagicMock()
+        mock_app_config.run_real_externals = False
+
+        monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
+        monkeypatch.setattr(
+            "brave.tasks.pipeline.load_effective_config",
+            lambda session, redis=None: MagicMock(),
+        )
+        monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
+        monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setattr(
+            "brave.tasks.pipeline._get_session",
+            lambda: (mock_db_session, MagicMock()),
+        )
+        monkeypatch.setattr(
+            "brave.lanes.tripadvisor.ibge.load_ibge_municipios", lambda session: []
+        )
+        monkeypatch.setattr(
+            "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
+            lambda **kw: _StubIngest(**kw),
+        )
+        # Capture enrich_description_task dispatches.
+        enrich_mock = MagicMock()
+        monkeypatch.setattr(
+            "brave.tasks.pipeline.enrich_description_task", enrich_mock
+        )
+
+        mock_self = MagicMock()
+        mock_self.MaxRetriesExceededError = type("MRE", (Exception,), {})
+        mock_self.retry.side_effect = lambda **kw: mock_self.MaxRetriesExceededError()
+
+        from brave.tasks.pipeline import sweep_tripadvisor  # noqa: PLC0415
+
+        raw_fn = sweep_tripadvisor.__wrapped__.__func__
+        try:
+            raw_fn(mock_self, uf="ES", depth=depth)
+        except Exception:
+            pass
+        return enrich_mock
+
+    def test_dispatches_enrich_for_each_id_at_nascente_rio(self, monkeypatch):
+        ids = [str(uuid.uuid4()) for _ in range(3)]
+        enrich_mock = self._run(monkeypatch, depth="nascente_rio", produce_ids=ids)
+        dispatched = [c.args[0] for c in enrich_mock.delay.call_args_list]
+        assert dispatched == ids, (
+            "sweep_tripadvisor must dispatch enrich_description_task for every ingested "
+            f"Rio id at nascente_rio; got {dispatched}"
+        )
+
+    def test_dispatches_enrich_at_nascente_rio_mar_too(self, monkeypatch):
+        ids = [str(uuid.uuid4()) for _ in range(2)]
+        enrich_mock = self._run(monkeypatch, depth="nascente_rio_mar", produce_ids=ids)
+        assert enrich_mock.delay.call_count == 2
+
+    def test_no_enrich_at_nascente_only(self, monkeypatch):
+        """depth=nascente → run_rio False → produce returns [] → no enrichment."""
+        ids = [str(uuid.uuid4()) for _ in range(3)]
+        enrich_mock = self._run(monkeypatch, depth="nascente", produce_ids=ids)
+        enrich_mock.delay.assert_not_called()

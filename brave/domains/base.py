@@ -128,7 +128,13 @@ class SourceDomain(Protocol):
         ...
 
     def sweep_plan(
-        self, uf: str, *, depth: str, lane: str, nascente_only: bool
+        self,
+        uf: str,
+        *,
+        depth: str,
+        lane: str,
+        nascente_only: bool,
+        max_per_uf: int | None = None,
     ) -> list[SweepDispatch]:
         """Return the ordered producer dispatches for one UF of this source.
 
@@ -145,6 +151,9 @@ class SourceDomain(Protocol):
             lane: ``"destinos" | "atrativos" | "both"`` — the requested entity families.
             nascente_only: ``True`` when ``depth`` is the free NASCENTE reach (no
                 Places/LLM) — sources collapse to their free producer only.
+            max_per_uf: Optional operator-set cap on attractions ingested per UF
+                (test-run throttle). ``None`` = no cap. A domain that supports it
+                threads it into the producer's kwargs; others ignore it.
         """
         ...
 
