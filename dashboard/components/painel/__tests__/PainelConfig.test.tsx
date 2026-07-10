@@ -28,7 +28,9 @@ describe("PainelConfig", () => {
   it("seeds the form from the snapshot: weights sum 100, sources + active mode", async () => {
     server.use(configGetSuccess(), configPatchSuccess());
 
-    const { getByTestId } = renderWithClient(<PainelConfig />);
+    const { getByTestId, getByText, queryByTestId } = renderWithClient(
+      <PainelConfig />,
+    );
 
     await waitFor(() =>
       expect(getByTestId("config-weight-sum")).toHaveTextContent("100"),
@@ -40,9 +42,11 @@ describe("PainelConfig", () => {
     expect(getByTestId("config-mode-LIGADO").getAttribute("data-active")).toBe(
       "true",
     );
-    // sources rendered from the snapshot (TripAdvisor surfaced; dormant Places lane off)
+    // Only the surfaced source (TripAdvisor) renders, with its friendly label.
+    // The dormant "default"/Places lane is in the snapshot but filtered out here.
     getByTestId("config-source-tripadvisor");
-    getByTestId("config-source-default");
+    getByText("TripAdvisor");
+    expect(queryByTestId("config-source-default")).toBeNull();
     // save enabled while the weights are valid
     expect(getByTestId("config-save-pesos")).not.toBeDisabled();
   });
