@@ -32,10 +32,12 @@ D-18 boundary: no imports from brave.lanes.destinos or brave.tasks.
 
 from __future__ import annotations
 
+import unicodedata
 import uuid
 from typing import TYPE_CHECKING
 
 import structlog
+from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -52,6 +54,18 @@ if TYPE_CHECKING:
     from brave.shared.ibge_distritos import IbgeDistrito
 
 logger = structlog.get_logger(__name__)
+
+# token_set_ratio cutoff for the matched page's breadcrumb <Place> vs the atrativo
+# município name (seat/município-level page). Below it we fall back to the distrito
+# check before deciding the page belongs to a DIFFERENT place.
+_MUNI_NAME_THRESHOLD: int = 85
+
+
+def _fold_lower(s: str) -> str:
+    """NFKD accent-fold + lowercase (município/place name comparison)."""
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", s or "") if unicodedata.category(c) != "Mn"
+    ).strip().lower()
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +151,32 @@ class DescriptionEnrichmentAgent:
         self._md_config = md_config
         self._distritos = distritos or []
 
+    def _breadcrumb_municipio_ok(
+        self, place: str | None, municipio: str, municipio_id: str | None
+    ) -> bool:
+        """True if the matched MD page belongs to the atrativo's município.
+
+        The client validates the breadcrumb STATE (UF), but a nationwide WRatio match can
+        still land on a same-state DIFFERENT place — most likely for generic names. This
+        crosses the page's breadcrumb <Place> against the atrativo município: accept when
+        <Place> matches the município name (seat/município-level page) OR resolves as a
+        distrito of the parent município (rio.municipio_id). No extra GET — <Place> is the
+        breadcrumb already fetched in run(). Falls back to accept (client state guard only)
+        when the page has no <Place>, or no distrito reference is loaded to disambiguate a
+        non-name-matching <Place>.
+        """
+        if not place:
+            return True
+        if (
+            municipio
+            and fuzz.token_set_ratio(_fold_lower(municipio), _fold_lower(place))
+            >= _MUNI_NAME_THRESHOLD
+        ):
+            return True
+        if self._distritos and municipio_id:
+            return resolve_distrito_place(place, municipio_id, self._distritos) is not None
+        return True
+
     async def run(self, rio: RioRecord) -> None:
         """Enrich one atrativo and advance to description_enriched.
 
@@ -172,10 +212,27 @@ class DescriptionEnrichmentAgent:
         # but this consumer-side guard is the belt-and-suspenders that preserves the FSM).
         scraped: str | None = None
         url: str | None = None
+        place: str | None = None
         try:
             url = await self._md_client.find_attraction_url(nome, municipio, uf) if nome else None
             if url:
-                scraped = await self._md_client.fetch_description(url)
+                # Fetch the breadcrumb ONCE (cached by the client's UF guard) and reuse it
+                # for BOTH the município guard here and the distrito step below.
+                place = await self._md_client.fetch_breadcrumb_place(url)
+                # Município guard: the client validates STATE, but WRatio can still match a
+                # same-state DIFFERENT place (generic names like "Igreja Matriz"). Accept
+                # only when the page's breadcrumb <Place> matches the atrativo município OR
+                # resolves as a distrito of it; else keep the floor — never write a
+                # wrong-place description onto a canonical record.
+                if not self._breadcrumb_municipio_ok(place, municipio, rio.municipio_id):
+                    logger.info(
+                        "md_municipio_mismatch_kept_floor",
+                        rio_id=str(rio.id),
+                        municipio=municipio,
+                    )
+                    url = None
+                else:
+                    scraped = await self._md_client.fetch_description(url)
         except Exception:  # noqa: BLE001 — MD failure keeps the floor, never blocks the FSM
             logger.warning("md_scrape_failed_kept_floor", rio_id=str(rio.id))
             scraped = None
@@ -233,7 +290,7 @@ class DescriptionEnrichmentAgent:
         if url and self._distritos and rio.municipio_id:
             match: IbgeDistrito | None = None
             try:
-                place = await self._md_client.fetch_breadcrumb_place(url)
+                # Reuse the breadcrumb <Place> already fetched above (one GET per page).
                 match = (
                     resolve_distrito_place(place, rio.municipio_id, self._distritos)
                     if place
