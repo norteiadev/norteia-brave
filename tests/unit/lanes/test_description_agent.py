@@ -349,11 +349,18 @@ async def test_distrito_seat_place_writes_no_relation(distritos) -> None:
     llm = FakeLLMClient(generate_result="Voz Norteia.")
     rio = _make_rio()
     rio.municipio_id = "2925303"
+    # The breadcrumb <Place> IS the seat → the município guard accepts it via the
+    # name-match path (so the description IS written), and the distrito seat guard then
+    # drops the finer relation.
+    rio.normalized["municipio"] = "Porto Seguro"
 
     agent = _agent(md, llm, _make_session(), distritos=distritos)
     with patch(f"{_MODULE}.write_audit"), patch(f"{_MODULE}.route_by_score"):
         await agent.run(rio)
 
+    assert rio.normalized["descricao_editorial"] == "Voz Norteia.", (
+        "seat page is the correct município → description is written"
+    )
     for key in (
         "distrito_name",
         "distrito_code",
@@ -363,3 +370,30 @@ async def test_distrito_seat_place_writes_no_relation(distritos) -> None:
         "subdistrito_code",
     ):
         assert key not in rio.normalized
+
+
+@pytest.mark.asyncio
+async def test_municipio_guard_rejects_wrong_place_keeps_floor(distritos) -> None:
+    """A same-state WRatio hit whose breadcrumb <Place> is a DIFFERENT município (neither
+    the atrativo município name nor a distrito of it) is rejected — no wrong-place
+    description reaches the record. The distrito reference is loaded so the guard can
+    positively disambiguate."""
+    md = FakeMelhoresDestinosClient(
+        url_by_name={"Igreja Matriz": PRAIA_URL},
+        description_by_url={PRAIA_URL: "Prosa de OUTRA cidade."},
+        place_by_url={PRAIA_URL: "São João del-Rei"},  # not Ouro Preto, not its distrito
+    )
+    llm = FakeLLMClient(generate_result="Voz Norteia.")
+    rio = _make_rio()
+    rio.normalized["name"] = "Igreja Matriz"
+    rio.normalized["municipio"] = "Ouro Preto"
+    rio.municipio_id = "2925303"  # a município whose distritos do NOT include the place
+
+    agent = _agent(md, llm, _make_session(), distritos=distritos)
+    with patch(f"{_MODULE}.write_audit"), patch(f"{_MODULE}.route_by_score"):
+        await agent.run(rio)
+
+    assert "descricao_editorial" not in rio.normalized, (
+        "wrong-município page must be rejected — floor kept, no LLM-written description"
+    )
+    assert md.fetch_calls == [], "rejected before fetch_description — no scrape/LLM spend"

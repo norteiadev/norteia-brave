@@ -42,6 +42,10 @@ from rapidfuzz import fuzz, process
 from rapidfuzz import utils as rfuzz_utils
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+# Leaf state-name → UF util (pure dict + NFKD fold, no runtime deps). Client→domain
+# import is allowed by the boundary guard (only kernel purity + cross-domain are barred).
+from brave.domains.tripadvisor.uf_names import state_name_to_uf
+
 if TYPE_CHECKING:
     from brave.config.settings import MelhoresDestinosConfig
 
@@ -52,10 +56,17 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 # Redis keys: sitemap index (one long-lived list of (slug, url) pairs) + per-page cache
-# + per-page breadcrumb-<Place> cache.
+# + per-page breadcrumb-CHAIN cache. The breadcrumb entry stores the whole cleaned
+# chain [Region, State, Place, Attraction] once, so the UF guard (State = chain[1]) and
+# the distrito step (Place = chain[2]) share ONE page GET per url.
 MD_SITEMAP_CACHE_KEY: str = "brave:md:sitemap"
 MD_PAGE_CACHE_KEY_PREFIX: str = "brave:md:page:"
 MD_BREADCRUMB_CACHE_KEY_PREFIX: str = "brave:md:breadcrumb:"
+
+# Cost cap: max breadcrumb-State GETs the UF guard will make per find_attraction_url on
+# the MISS path (a match returns on the first state hit). Bounds per-atrativo cost on a
+# whole-Brazil sweep where most names have no MD page but several may clear the score.
+_MAX_UF_CHECKS: int = 4
 
 # The ``-l`` attraction page suffix (POC §2 URL grammar): <slug>-<cityCode>-<attrId>-l.html
 _L_PAGE_RE = re.compile(r"/([^/]+?)-\d+-\d+-l\.html$")
@@ -221,19 +232,15 @@ def _extract_description(html_text: str) -> str | None:
     return max(cleaned, key=len)
 
 
-def _extract_breadcrumb_place(html_text: str) -> str | None:
-    """Recover the breadcrumb ``<Place>`` level from a ``-l`` page (ONLY stdlib re).
+def _extract_breadcrumb_chain(html_text: str) -> list[str] | None:
+    """Recover the cleaned breadcrumb chain from a ``-l`` page (ONLY stdlib re).
 
     The ``id="breadcrumbs"`` container spells out Guia Melhores Destinos → Brasil →
-    <Region> → <State> → <Place> → <Attraction>. The ``<Place>`` level (POC: município
-    OR distrito, flattened — e.g. "Arraial d'Ajuda" as a peer of Porto Seguro under
-    Bahia) is the anchor the caller crosses against ibge_distritos.csv (scoped to the
-    parent município) to recover the IBGE distrito.
-
-    Locates the block, collects its text nodes, unescapes entities, drops empties, pure
-    separators (no word char), and the two fixed prefixes, then returns index 2 of the
-    remaining [Region, State, Place, Attraction] chain. Returns None on no breadcrumb, a
-    short chain, or an empty place. Never raises. Mirrors _extract_article_body style.
+    <Region> → <State> → <Place> → <Attraction>. Locates the block, collects its text
+    nodes, unescapes entities, drops empties, pure separators (no word char), and the
+    two fixed prefixes, then returns the remaining [Region, State, Place, Attraction]
+    chain. Returns None on no breadcrumb or a chain shorter than 2 (so index 1 — the
+    State — exists). Never raises. Mirrors _extract_article_body style.
     """
     if not html_text:
         return None
@@ -247,10 +254,36 @@ def _extract_breadcrumb_place(html_text: str) -> str | None:
         for item in (html.unescape(t).strip() for t in _BREADCRUMB_ITEM_RE.findall(m.group(0)))
         if item and re.search(r"\w", item) and item not in _BREADCRUMB_PREFIXES
     ]
-    # Need [Region, State, Place] at minimum so index 2 (the Place) exists.
-    if len(chain) < 3:
+    # Need [Region, State] at minimum so index 1 (the State, for the UF guard) exists.
+    if len(chain) < 2:
+        return None
+    return chain
+
+
+def _extract_breadcrumb_place(html_text: str) -> str | None:
+    """The breadcrumb ``<Place>`` level (chain index 2) — the IBGE-distrito anchor.
+
+    POC: <Place> is the município OR distrito, flattened — e.g. "Arraial d'Ajuda" as a
+    peer of Porto Seguro under Bahia. Returns None on no breadcrumb, a chain shorter
+    than 3, or an empty place. Never raises.
+    """
+    chain = _extract_breadcrumb_chain(html_text)
+    if chain is None or len(chain) < 3:
         return None
     return chain[2] or None
+
+
+def _extract_breadcrumb_state(html_text: str) -> str | None:
+    """The breadcrumb ``<State>`` level (chain index 1) — the UF-guard anchor.
+
+    A bare Portuguese state name (e.g. "Espírito Santo") the caller maps to a 2-letter
+    UF via ``state_name_to_uf`` to reject cross-state matches. Returns None on no
+    breadcrumb, a chain shorter than 2, or an empty state. Never raises.
+    """
+    chain = _extract_breadcrumb_chain(html_text)
+    if chain is None or len(chain) < 2:
+        return None
+    return chain[1] or None
 
 
 # ---------------------------------------------------------------------------
@@ -343,11 +376,19 @@ class RealMelhoresDestinosClient:
     ) -> str | None:
         """Fuzzy-match an atrativo name to its ``-l.html`` page URL, or None.
 
-        The site URL slug carries the attraction name only (POC §2: the cityCode is
-        site-internal, distrito-level, NOT IBGE), so matching is fuzzy on the
-        slugified ``nome`` against the sitemap slugs (rapidfuzz token_sort_ratio,
-        accent-folded, threshold from config). ``municipio``/``uf`` are logged for
-        traceability; a miss returns None → the agent keeps the floor.
+        The URL slug carries the attraction name only, so matching is fuzzy on the
+        slugified ``nome`` against the sitemap slugs — ``rapidfuzz.fuzz.WRatio``
+        (weighted partial/token_set/token_sort blend; tolerates extra/missing tokens
+        like "Convento **Nossa Senhora da** Penha"), accent-folded, cutoff from config.
+
+        Because matching is BLIND/nationwide over ~4522 slugs, a loosened cutoff would
+        risk grabbing a same-name attraction in another state. Guard against that: take
+        the top-K candidates ≥ cutoff and return the first whose page breadcrumb State
+        maps to the requested ``uf`` (``state_name_to_uf``). A candidate that clears the
+        score but sits in the wrong state is logged ``md_uf_rejected`` and skipped. When
+        ``uf`` is empty/unknown the top candidate is accepted unverified. Every miss logs
+        the best slug + score (diagnostic: near-threshold vs genuine MD coverage gap).
+        A miss returns None → the agent keeps the floor.
         """
         if not nome or not nome.strip():
             return None
@@ -363,21 +404,80 @@ class RealMelhoresDestinosClient:
 
         query = _fold_accents(_slugify(nome))
         choices = [_fold_accents(slug) for slug, _ in index]
-        result = process.extractOne(
+        # No score_cutoff here — we want the best candidates WITH scores so a miss can
+        # log how close it was (threshold-tuning vs coverage-gap signal).
+        candidates = process.extract(
             query,
             choices,
-            scorer=fuzz.token_sort_ratio,
-            score_cutoff=self._config.match_threshold,
+            scorer=fuzz.WRatio,
+            limit=8,
             processor=rfuzz_utils.default_process,
         )
-        if result is None:
-            logger.info("md_no_match", uf=uf, municipio=municipio)
+
+        threshold = self._config.match_threshold
+        if not candidates or candidates[0][1] < threshold:
+            best = candidates[0] if candidates else None
+            logger.info(
+                "md_no_match",
+                uf=uf,
+                municipio=municipio,
+                best_slug=(index[best[2]][0] if best else None),
+                best_score=(round(best[1], 1) if best else None),
+                top3=[(index[c[2]][0], round(c[1], 1)) for c in candidates[:3]],
+            )
             return None
 
-        _matched, _score, idx = result
-        url = index[idx][1]
-        logger.info("md_matched", uf=uf, municipio=municipio, score=_score)
-        return url
+        uf_norm = (uf or "").strip().upper()
+        uf_checks = 0
+        for _choice, _score, _idx in candidates:
+            if _score < threshold:
+                break
+            url = index[_idx][1]
+            # Empty/unknown UF → cannot validate; accept the top qualifying candidate.
+            if not uf_norm:
+                logger.info(
+                    "md_matched", uf=uf, municipio=municipio, score=round(_score, 1),
+                    uf_unverified=True,
+                )
+                return url
+            # Cost cap: a match returns on the FIRST state hit, but a miss would otherwise
+            # fetch a breadcrumb per qualifying candidate. On a whole-Brazil sweep most
+            # atrativos have no MD page, so bound the per-miss GETs (the real match, if any,
+            # is near the top by name similarity).
+            if uf_checks >= _MAX_UF_CHECKS:
+                logger.info(
+                    "md_uf_check_capped", uf=uf, municipio=municipio, checked=uf_checks
+                )
+                break
+            uf_checks += 1  # noqa: SIM113 — conditional counter, not a loop index (enumerate would miscount)
+            try:
+                state = await self.fetch_breadcrumb_state(url)
+            except Exception:  # noqa: BLE001 — a breadcrumb miss just skips this candidate
+                state = None
+            candidate_uf = state_name_to_uf(state) if state else None
+            if candidate_uf == uf_norm:
+                logger.info("md_matched", uf=uf, municipio=municipio, score=round(_score, 1))
+                return url
+            logger.info(
+                "md_uf_rejected",
+                uf=uf,
+                municipio=municipio,
+                score=round(_score, 1),
+                slug=index[_idx][0],
+                state=state,
+                candidate_uf=candidate_uf,
+            )
+
+        # Candidates cleared the score but none matched the UF → keep the floor.
+        logger.info(
+            "md_no_match",
+            uf=uf,
+            municipio=municipio,
+            reason="uf_unmatched",
+            best_slug=index[candidates[0][2]][0],
+            best_score=round(candidates[0][1], 1),
+        )
+        return None
 
     @retry(
         retry=retry_if_exception(_is_retryable),
@@ -418,14 +518,15 @@ class RealMelhoresDestinosClient:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    async def fetch_breadcrumb_place(self, url: str) -> str | None:
-        """GET a page URL and return its breadcrumb ``<Place>`` level, or None (Redis-cached).
+    async def _fetch_breadcrumb_chain(self, url: str) -> list[str] | None:
+        """GET a page URL and return its cleaned breadcrumb CHAIN, or None (Redis-cached).
 
-        The breadcrumb ``<Place>`` (POC: município OR distrito, flattened) is the anchor
-        for the IBGE-distrito relation — the caller crosses it against ibge_distritos.csv
-        scoped to the parent município. Server-rendered HTML (same plumbing as
-        fetch_description). Caches the extracted place STRING (JSON, not raw HTML) to
-        avoid re-fetching within TTL. Any fetch/parse miss returns None (never raises).
+        One GET per url serves BOTH the UF guard (State = chain[1]) and the distrito step
+        (Place = chain[2]). Server-rendered HTML (same plumbing as fetch_description).
+        Caches the extracted chain (JSON, not raw HTML) under ``brave:md:breadcrumb:<url>``
+        as ``{"chain": [...]}`` (or ``{"__no_chain": True}``). Legacy ``{"place": …}`` /
+        ``{"__no_place": …}`` entries lack a "chain"/"__no_chain" key → treated as a cache
+        miss and re-fetched. Any fetch/parse miss returns None (never raises here).
         """
         if not url:
             return None
@@ -434,7 +535,11 @@ class RealMelhoresDestinosClient:
         raw = _decode(self._redis.get(key))
         if raw:
             cached = json.loads(raw)
-            return None if cached.get("__no_place") else cached.get("place")
+            if "chain" in cached:
+                return cached["chain"]
+            if cached.get("__no_chain"):
+                return None
+            # else: legacy place-only cache entry → fall through and re-fetch as a chain.
 
         await self._throttle()
         headers = {"User-Agent": self._config.user_agent}
@@ -442,10 +547,32 @@ class RealMelhoresDestinosClient:
             resp = await hc.get(url, headers=headers)
         resp.raise_for_status()
 
-        place = _extract_breadcrumb_place(resp.text)
-        payload = {"place": place} if place else {"__no_place": True}
+        chain = _extract_breadcrumb_chain(resp.text)
+        payload = {"chain": chain} if chain else {"__no_chain": True}
         self._redis.setex(key, self._cache_ttl, json.dumps(payload))
-        return place
+        return chain
+
+    async def fetch_breadcrumb_place(self, url: str) -> str | None:
+        """The breadcrumb ``<Place>`` level (chain index 2), or None (Redis-cached).
+
+        The IBGE-distrito anchor — the caller crosses it against ibge_distritos.csv scoped
+        to the parent município. Shares the one cached breadcrumb chain per url.
+        """
+        chain = await self._fetch_breadcrumb_chain(url)
+        if chain and len(chain) >= 3:
+            return chain[2] or None
+        return None
+
+    async def fetch_breadcrumb_state(self, url: str) -> str | None:
+        """The breadcrumb ``<State>`` level (chain index 1), or None (Redis-cached).
+
+        The UF-guard anchor — a bare Portuguese state name the matcher maps via
+        ``state_name_to_uf``. Shares the one cached breadcrumb chain per url.
+        """
+        chain = await self._fetch_breadcrumb_chain(url)
+        if chain and len(chain) >= 2:
+            return chain[1] or None
+        return None
 
 
 # ---------------------------------------------------------------------------

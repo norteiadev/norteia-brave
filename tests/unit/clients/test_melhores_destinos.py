@@ -63,6 +63,11 @@ async def test_find_attraction_url_matches(monkeypatch: pytest.MonkeyPatch) -> N
     redis = fakeredis.FakeRedis()
     with respx.mock:
         respx.get(SITEMAP_URL).mock(return_value=httpx.Response(200, text=SITEMAP_XML))
+        # UF guard: find_attraction_url now GETs the candidate page to read its
+        # breadcrumb State — Bahia → BA matches the requested uf, so it is accepted.
+        respx.get(PRAIA_URL).mock(
+            return_value=httpx.Response(200, text=BREADCRUMB_DISTRITO_HTML)
+        )
         client = RealMelhoresDestinosClient(config=_cfg(), redis=redis)
         url = await client.find_attraction_url("Praia do Forte", "Mata de São João", "BA")
 
@@ -96,6 +101,13 @@ async def test_sitemap_cached(monkeypatch: pytest.MonkeyPatch) -> None:
     with respx.mock:
         route = respx.get(SITEMAP_URL).mock(
             return_value=httpx.Response(200, text=SITEMAP_XML)
+        )
+        # Each find now GETs its candidate page for the UF-guard breadcrumb (Bahia → BA).
+        respx.get(PRAIA_URL).mock(
+            return_value=httpx.Response(200, text=BREADCRUMB_DISTRITO_HTML)
+        )
+        respx.get(MERCADO_URL).mock(
+            return_value=httpx.Response(200, text=BREADCRUMB_DISTRITO_HTML)
         )
         client = RealMelhoresDestinosClient(config=_cfg(), redis=redis)
         await client.find_attraction_url("Praia do Forte", "X", "BA")
@@ -285,6 +297,186 @@ async def test_fetch_breadcrumb_place_extracts_and_caches(
     assert place == "Arraial d'Ajuda"
     assert place2 == "Arraial d'Ajuda"
     assert route.call_count == 1, "second breadcrumb fetch must hit the cache"
+
+
+# ---------------------------------------------------------------------------
+# Breadcrumb State (chain index 1) + UF guard
+# ---------------------------------------------------------------------------
+
+# A -l page whose slug drops the "Nossa Senhora da" tokens — the extra-token class that
+# token_sort_ratio@88 missed but WRatio@82 catches. Breadcrumb State = Espírito Santo.
+CONVENTO_URL = "https://guia.melhoresdestinos.com.br/convento-da-penha-45-901-l.html"
+CONVENTO_SITEMAP_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>{CONVENTO_URL}</loc></url>
+  <url><loc>{MERCADO_URL}</loc></url>
+</urlset>
+"""
+BREADCRUMB_ES_HTML = (
+    "<!doctype html><html><body>"
+    '<nav id="breadcrumbs">'
+    "<a>Guia Melhores Destinos</a><a>Brasil</a><a>Sudeste</a><a>Espírito Santo</a>"
+    "<a>Vila Velha</a><span>Convento da Penha</span>"
+    "</nav></body></html>"
+)
+# Same-name candidate sitting in the WRONG state (São Paulo), for the reject test.
+BREADCRUMB_SP_HTML = (
+    "<!doctype html><html><body>"
+    '<nav id="breadcrumbs">'
+    "<a>Guia Melhores Destinos</a><a>Brasil</a><a>Sudeste</a><a>São Paulo</a>"
+    "<a>Guarujá</a><span>Praia do Forte</span>"
+    "</nav></body></html>"
+)
+
+
+def test_extract_breadcrumb_state_returns_state_level() -> None:
+    """_extract_breadcrumb_state returns chain index 1 (the State name)."""
+    from brave.clients.melhores_destinos import _extract_breadcrumb_state
+
+    assert _extract_breadcrumb_state(BREADCRUMB_DISTRITO_HTML) == "Bahia"
+    assert _extract_breadcrumb_state(BREADCRUMB_MUNICIPIO_HTML) == "Minas Gerais"
+    assert _extract_breadcrumb_state("<html><body><p>sem trilha</p></body></html>") is None
+
+
+async def test_fetch_breadcrumb_state_extracts_and_caches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fetch_breadcrumb_state returns the <State> and shares the one cached chain."""
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    from brave.clients.melhores_destinos import RealMelhoresDestinosClient
+
+    redis = fakeredis.FakeRedis()
+    with respx.mock:
+        route = respx.get(PRAIA_URL).mock(
+            return_value=httpx.Response(200, text=BREADCRUMB_DISTRITO_HTML)
+        )
+        client = RealMelhoresDestinosClient(config=_cfg(), redis=redis)
+        state = await client.fetch_breadcrumb_state(PRAIA_URL)
+        # Second call for the PLACE reads the SAME cached chain — no 2nd GET.
+        place = await client.fetch_breadcrumb_place(PRAIA_URL)
+
+    assert state == "Bahia"
+    assert place == "Arraial d'Ajuda"
+    assert route.call_count == 1, "State + Place share one cached breadcrumb chain"
+
+
+async def test_find_attraction_url_wratio_matches_extra_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """WRatio matches a name with extra tokens ('Convento Nossa Senhora da Penha') to a
+    shorter slug ('convento-da-penha') that token_sort_ratio@88 would have missed; the
+    breadcrumb State (Espírito Santo → ES) matches uf=ES so it is accepted."""
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    from brave.clients.melhores_destinos import RealMelhoresDestinosClient
+
+    redis = fakeredis.FakeRedis()
+    with respx.mock:
+        respx.get(SITEMAP_URL).mock(
+            return_value=httpx.Response(200, text=CONVENTO_SITEMAP_XML)
+        )
+        respx.get(CONVENTO_URL).mock(
+            return_value=httpx.Response(200, text=BREADCRUMB_ES_HTML)
+        )
+        client = RealMelhoresDestinosClient(config=_cfg(), redis=redis)
+        url = await client.find_attraction_url(
+            "Convento Nossa Senhora da Penha", "Vila Velha", "ES"
+        )
+
+    assert url == CONVENTO_URL
+
+
+async def test_find_attraction_url_uf_guard_rejects_wrong_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A high-score candidate whose breadcrumb State ≠ the atrativo UF is rejected —
+    prevents a same-name attraction in another state feeding a wrong description."""
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    from brave.clients.melhores_destinos import RealMelhoresDestinosClient
+
+    redis = fakeredis.FakeRedis()
+    with respx.mock:
+        respx.get(SITEMAP_URL).mock(return_value=httpx.Response(200, text=SITEMAP_XML))
+        # The only ≥threshold candidate (praia-do-forte) sits in São Paulo, but we want
+        # BA. mercado-modelo scores below threshold so it is never fetched (not mocked).
+        respx.get(PRAIA_URL).mock(return_value=httpx.Response(200, text=BREADCRUMB_SP_HTML))
+        client = RealMelhoresDestinosClient(config=_cfg(), redis=redis)
+        url = await client.find_attraction_url("Praia do Forte", "Mata de São João", "BA")
+
+    assert url is None, "cross-state candidate must be rejected (kept floor)"
+
+
+async def test_find_attraction_url_empty_uf_accepts_top_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty uf → state cannot be validated → accept the top qualifying candidate with NO
+    page GET (uf_unverified). Only the sitemap is fetched (no breadcrumb route mocked)."""
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    from brave.clients.melhores_destinos import RealMelhoresDestinosClient
+
+    redis = fakeredis.FakeRedis()
+    with respx.mock:
+        respx.get(SITEMAP_URL).mock(return_value=httpx.Response(200, text=SITEMAP_XML))
+        client = RealMelhoresDestinosClient(config=_cfg(), redis=redis)
+        url = await client.find_attraction_url("Praia do Forte", "X", "")
+
+    # No breadcrumb route mocked: if a page GET were issued respx would raise, so this
+    # both asserts the URL AND that the empty-uf path skips the UF-guard fetch.
+    assert url == PRAIA_URL
+
+
+async def test_fetch_breadcrumb_place_migrates_legacy_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-existing legacy {"place": …} breadcrumb cache entry (no "chain" key) is
+    treated as a miss and re-fetched as the full chain — 30-day TTL means legacy entries
+    coexist under the same key after deploy; trusting one would drop the State/UF guard."""
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    import json
+
+    from brave.clients.melhores_destinos import (
+        MD_BREADCRUMB_CACHE_KEY_PREFIX,
+        RealMelhoresDestinosClient,
+    )
+
+    redis = fakeredis.FakeRedis()
+    redis.set(
+        f"{MD_BREADCRUMB_CACHE_KEY_PREFIX}{PRAIA_URL}",
+        json.dumps({"place": "Stale Legacy Value"}),
+    )
+    with respx.mock:
+        route = respx.get(PRAIA_URL).mock(
+            return_value=httpx.Response(200, text=BREADCRUMB_DISTRITO_HTML)
+        )
+        client = RealMelhoresDestinosClient(config=_cfg(), redis=redis)
+        place = await client.fetch_breadcrumb_place(PRAIA_URL)
+        state = await client.fetch_breadcrumb_state(PRAIA_URL)
+
+    assert place == "Arraial d'Ajuda", "legacy entry must be re-fetched, not trusted"
+    assert state == "Bahia"
+    assert route.call_count == 1, "one re-fetch, then the migrated chain is cached"
+
+
+async def test_find_attraction_url_miss_logs_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A below-threshold miss logs the best candidate slug + score (the threshold-vs-
+    coverage signal that justified dropping score_cutoff)."""
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    from structlog.testing import capture_logs
+
+    from brave.clients.melhores_destinos import RealMelhoresDestinosClient
+
+    redis = fakeredis.FakeRedis()
+    with respx.mock, capture_logs() as logs:
+        respx.get(SITEMAP_URL).mock(return_value=httpx.Response(200, text=SITEMAP_XML))
+        client = RealMelhoresDestinosClient(config=_cfg(), redis=redis)
+        url = await client.find_attraction_url("Zzz Totalmente Diferente Xyz", "L", "BA")
+
+    assert url is None
+    miss = [e for e in logs if e.get("event") == "md_no_match"]
+    assert miss, "a below-threshold miss must log md_no_match"
+    assert miss[0].get("best_slug") is not None
+    assert miss[0].get("best_score") is not None
 
 
 # ---------------------------------------------------------------------------

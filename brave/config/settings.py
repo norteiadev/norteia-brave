@@ -415,10 +415,14 @@ class MelhoresDestinosConfig(BaseSettings):
         ),
     )
     match_threshold: int = Field(
-        default=88,
+        default=82,
         description=(
-            "rapidfuzz token_sort_ratio cutoff for atrativo name → page slug matching "
-            "(BRAVE_MD_MATCH_THRESHOLD). Values below 80 risk false matches."
+            "rapidfuzz WRatio cutoff for atrativo name → page slug matching "
+            "(BRAVE_MD_MATCH_THRESHOLD). Lowered from 88 to 82 now that find_attraction_url "
+            "uses the token-tolerant WRatio scorer AND a breadcrumb-State UF guard "
+            "(cross-state candidates are rejected), so a looser cutoff no longer risks "
+            "matching a same-name attraction in another state. Values below ~78 risk "
+            "in-state false matches."
         ),
     )
     proxy_url: str = Field(
