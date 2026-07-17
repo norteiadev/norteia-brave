@@ -95,14 +95,15 @@ def promote_to_mar(
         session.flush()
         return None
 
-    # Build canonical payload from normalized record. most_recent_review_at and
-    # contact (Phase F) are internal/board-only fields — exclude them alongside the
-    # five reliability *_value criteria so the norteia-api Mar push shape stays byte-identical.
+    # Build canonical payload from normalized record. most_recent_review_at, contact
+    # (Phase F), and google_enriched (the Places-enrichment idempotency marker) are
+    # internal/board-only — exclude them alongside the five reliability *_value criteria
+    # so the norteia-api Mar push shape stays byte-identical.
     canonical: dict[str, Any] = {
         k: v for k, v in normalized.items()
         if k not in ("origem_value", "completude_value", "corroboracao_value",
                      "atualidade_value", "validacao_humana_value",
-                     "most_recent_review_at", "contact")
+                     "most_recent_review_at", "contact", "google_enriched")
     }
 
     # Build provenance (D-06) — full per-criterion breakdown + score_version

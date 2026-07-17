@@ -1419,10 +1419,12 @@ def enrich_description_task(self, rio_id: str) -> None:
         session.commit()
 
         # Chain the Google Places enrichment step (TA lane only): opening hours + review
-        # liveness. Only for a TA-sourced record that advanced to description_enriched —
-        # the Places-FSM lane already has Google signals (SignalAgent) and the agent's own
-        # cross-lane guard would no-op it anyway, so skip the needless dispatch here.
-        if (rio.canonical_key or "").startswith("tripadvisor:") and rio.sub_state == "description_enriched":
+        # liveness. Dispatched for EVERY TA-sourced record after description — NOT gated on
+        # sub_state: a TA atrativo scores ~55 < 80 and dlq-bounces sub_state to None here,
+        # so a sub_state gate would skip Places entirely (the agent keys idempotency on its
+        # own google_enriched marker). The Places-FSM lane is skipped by the agent's
+        # cross-lane guard (it already carries Google signals from SignalAgent).
+        if (rio.canonical_key or "").startswith("tripadvisor:"):
             try:
                 enrich_places_task.delay(rio_id)
             except Exception:  # broker down → inline fallback (mirror the TA description dispatch)
