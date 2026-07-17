@@ -47,6 +47,10 @@ ATRATIVO_SUB_STATE_EDGES: frozenset[tuple[str | None, str | None]] = frozenset(
         ("signals_gathered", "description_enriched"),
         ("description_enriched", "aguardando_consulta_whatsapp"),
         ("description_enriched", None),  # re-score → dlq (bounce back to DLQ)
+        # Places-enrichment step (TA lane only, post-Description): resolve place_id →
+        # Google opening hours + review liveness → re-score. See PlacesEnrichmentAgent.
+        ("description_enriched", "places_enriched"),
+        ("places_enriched", None),  # re-score → dlq, or CLOSED_* descarte (bounce)
         ("signals_gathered", "aguardando_consulta_whatsapp"),
         ("aguardando_consulta_whatsapp", "whatsapp_in_progress"),
         # Phase F manual WhatsApp gate moves (DLQ = routing="dlq", sub_state=None):

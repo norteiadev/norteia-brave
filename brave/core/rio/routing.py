@@ -212,6 +212,10 @@ def process_nascente_record(
     # to normalized ensures subsequent FSM tasks have it available.
     if nascente.entity_type == "attraction" and "place_id_cache" in payload:
         normalized["place_id_cache"] = payload["place_id_cache"]
+        # google_place_id: same id as a clean platform-facing canonical field (flows to
+        # norteia-api). place_id_cache stays the internal FSM lookup key. The TA lane
+        # writes google_place_id in PlacesEnrichmentAgent (it has no place_id at Nascente).
+        normalized["google_place_id"] = payload["place_id_cache"]
 
     # Attraction-specific: preserve the parent-destino linkage from payload so the CMS
     # and downstream queries can surface/group atrativos by parent destino without a
