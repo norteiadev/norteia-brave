@@ -407,6 +407,12 @@ class RealPlacesClient:
         # distrito name text (admin_area_level_3) — name-matched downstream
         distrito_hint = _extract_distrito_from_components(place.address_components or [])
 
+        # Precise point coordinates (field 'location' is in _GET_PLACE_FIELD_MASK).
+        # Google's lat/lng are more precise than TA's — PlacesEnrichmentAgent adopts them.
+        location: dict[str, float] | None = None
+        if place.location:
+            location = {"lat": place.location.latitude, "lng": place.location.longitude}
+
         result = {
             "place_id": place.id,
             "name": place.display_name.text if place.display_name else "",
@@ -416,6 +422,7 @@ class RealPlacesClient:
             "business_status": place.business_status.name if place.business_status else "UNKNOWN",
             "weekday_text": weekday_text,
             "reviews": reviews,
+            "location": location,
             "distrito_hint": distrito_hint,
         }
 

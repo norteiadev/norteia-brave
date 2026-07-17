@@ -514,6 +514,21 @@ class AppConfig(BaseSettings):
     # the /painel config surface. Defaults True (production behavior unchanged).
     description_enrichment_enabled: bool = True
 
+    # places_enrichment_enabled gates the Google Places enrichment lane for TA atrativos
+    # (Text Search → place_id → opening hours + review-recency liveness). When False the
+    # enrich task uses the Null Places client → TA floor kept, record still advances,
+    # ZERO Google Places spend. Overlay key ``places_enrichment_enabled``
+    # (brave.config.runtime); toggled in the /painel config surface. Defaults True.
+    places_enrichment_enabled: bool = True
+
+    # places_match_max_distance_km: Text-Search match radius (km) between the atrativo's
+    # coordinates and a candidate Google place. The name threshold (rapidfuzz ≥85) is the
+    # PRIMARY guard; this only disambiguates + rejects a gross wrong-city match. Kept
+    # generous (20 km) because TA coords are often geocode-drifted toward the município
+    # seat while the attraction sits in an outlying distrito (e.g. Arraial d'Ajuda ~8 km
+    # from Porto Seguro seat) — a tight radius would silently skip correct matches.
+    places_match_max_distance_km: float = 20.0
+
     model_config = SettingsConfigDict(env_prefix="")
 
     @classmethod

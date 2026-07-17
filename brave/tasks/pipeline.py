@@ -1418,6 +1418,16 @@ def enrich_description_task(self, rio_id: str) -> None:
         asyncio.run(agent.run(rio))
         session.commit()
 
+        # Chain the Google Places enrichment step (TA lane only): opening hours + review
+        # liveness. Only for a TA-sourced record that advanced to description_enriched —
+        # the Places-FSM lane already has Google signals (SignalAgent) and the agent's own
+        # cross-lane guard would no-op it anyway, so skip the needless dispatch here.
+        if (rio.canonical_key or "").startswith("tripadvisor:") and rio.sub_state == "description_enriched":
+            try:
+                enrich_places_task.delay(rio_id)
+            except Exception:  # broker down → inline fallback (mirror the TA description dispatch)
+                enrich_places_task.run(rio_id)
+
     except PermanentError as exc:
         session.rollback()
         q_session, q_engine = _get_session()
@@ -1445,6 +1455,116 @@ def enrich_description_task(self, rio_id: str) -> None:
                     session=q_session,
                     nascente_id=None,
                     task_name="brave.enrich_description",
+                    error=str(exc),
+                    payload={"rio_id": rio_id},
+                )
+                q_session.commit()
+            finally:
+                q_session.close()
+                q_engine.dispose()
+
+    finally:
+        session.close()
+        engine.dispose()
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name="brave.enrich_places",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=300,
+)
+def enrich_places_task(self, rio_id: str) -> None:
+    """Advance one TA RioRecord description_enriched → places_enriched (PlacesEnrichmentAgent).
+
+    Resolves the atrativo to a Google place_id (Text Search + name/proximity match),
+    fetches Place Details, and persists Google opening hours (``weekday_text``) + review
+    liveness (``atualidade`` boost via max, ``most_recent_review_at``, ``place_id_cache``).
+    Graceful degradation: no confident match / no details keeps the TA floor and the
+    record still advances + re-scores. CLOSED_* on a confident match → descarte.
+
+    Idempotency guard: PlacesEnrichmentAgent.run() short-circuits if
+    sub_state != "description_enriched" (and no-ops a Places-FSM record). Client
+    selection: real Places client only when run_real_externals=True AND
+    places_enrichment_enabled (D-18); else NullPlacesClient (ZERO Google spend).
+
+    Args:
+        rio_id: UUID string of the RioRecord to enrich.
+    """
+    from brave.core.quarantine import quarantine_poison as _quarantine
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    session, engine = _get_session()
+    try:
+        rio_uuid = uuid.UUID(rio_id)
+        rio = session.get(RioRecord, rio_uuid)
+        if rio is None:
+            raise PermanentError(f"RioRecord {rio_id} not found")
+
+        app_config = AppConfig()
+        effective = load_effective_config(session)
+        config = effective.score
+
+        # Real Places client requires BOTH run_real_externals AND the operator-toggleable
+        # places_enrichment_enabled flag (config_settings overlay, /painel). When off, the
+        # Null client keeps the TA floor and the agent still advances sub_state + re-scores
+        # — a real local sweep runs with ZERO Google Places spend on enrichment.
+        if app_config.run_real_externals and effective.places_enrichment_enabled:
+            places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
+            from brave.clients.places import (
+                RealPlacesClient,
+                load_municipio_name_ibge_lookup,
+            )
+            places_client = RealPlacesClient(
+                api_key=places_api_key,
+                ibge_lookup=load_municipio_name_ibge_lookup(session),
+            )
+        else:
+            if app_config.run_real_externals and not effective.places_enrichment_enabled:
+                logger.info("places_enrichment_disabled", rio_id=rio_id)
+            from brave.clients.null_places import NullPlacesClient
+            places_client = NullPlacesClient()
+
+        agent = PlacesEnrichmentAgent(
+            places_client=places_client,
+            session=session,
+            config=config,
+            max_distance_km=app_config.places_match_max_distance_km,
+        )
+
+        asyncio.run(agent.run(rio))
+        session.commit()
+
+    except PermanentError as exc:
+        session.rollback()
+        q_session, q_engine = _get_session()
+        try:
+            _quarantine(
+                session=q_session,
+                nascente_id=None,
+                task_name="brave.enrich_places",
+                error=str(exc),
+                payload={"rio_id": rio_id},
+            )
+            q_session.commit()
+        finally:
+            q_session.close()
+            q_engine.dispose()
+
+    except Exception as exc:
+        session.rollback()
+        try:
+            raise self.retry(exc=exc, max_retries=3)
+        except self.MaxRetriesExceededError:
+            q_session, q_engine = _get_session()
+            try:
+                _quarantine(
+                    session=q_session,
+                    nascente_id=None,
+                    task_name="brave.enrich_places",
                     error=str(exc),
                     payload={"rio_id": rio_id},
                 )

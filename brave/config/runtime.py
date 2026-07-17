@@ -67,6 +67,7 @@ _SOURCE_PREFIX = "source."
 _SOURCE_SUFFIX = ".enabled"
 _ENGINE_MODE_KEY = "engine.mode"
 _DESC_ENRICH_KEY = "description_enrichment_enabled"
+_PLACES_ENRICH_KEY = "places_enrichment_enabled"
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +102,7 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
     sources_update: dict[str, bool] = dict(base.sources)
     engine_update: dict[str, Any] = {}
     desc_enrich: bool | None = None
+    places_enrich: bool | None = None
 
     for dotted, value in overlays.items():
         attr = _SCORE_OVERLAY_KEYS.get(dotted)
@@ -114,6 +116,8 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
             engine_update["mode"] = value
         elif dotted == _DESC_ENRICH_KEY:
             desc_enrich = bool(value)
+        elif dotted == _PLACES_ENRICH_KEY:
+            places_enrich = bool(value)
         # Unknown keys are ignored (forward-compat with future config surfaces).
 
     updates: dict[str, Any] = {}
@@ -125,6 +129,8 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
         updates["engine"] = base.engine.model_copy(update=engine_update)
     if desc_enrich is not None and desc_enrich != base.description_enrichment_enabled:
         updates["description_enrichment_enabled"] = desc_enrich
+    if places_enrich is not None and places_enrich != base.places_enrichment_enabled:
+        updates["places_enrichment_enabled"] = places_enrich
 
     if not updates:
         return base
@@ -268,6 +274,7 @@ def _seed_values(config: AppConfig) -> dict[str, Any]:
         "source.tripadvisor.enabled": config.sources.get("tripadvisor", True),
         "engine.mode": config.engine.mode,
         "description_enrichment_enabled": config.description_enrichment_enabled,
+        "places_enrichment_enabled": config.places_enrichment_enabled,
     }
 
 
