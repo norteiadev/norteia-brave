@@ -158,20 +158,27 @@ class PlacesEnrichmentAgent:
         self._max_distance_km = max_distance_km
 
     async def run(self, rio: RioRecord) -> None:
-        """Enrich one atrativo with Google Places signals and advance to places_enriched.
+        """Enrich one atrativo with Google Places signals (hours + review liveness).
+
+        Runs for a TA atrativo REGARDLESS of routing — a dlq'd record (TA scores
+        ~55 < 80 and only reaches Mar via steward validation) still gets Google hours,
+        coords, and google_place_id, all valuable the moment a steward validates it to
+        Mar. Idempotency is keyed on the ``google_enriched`` normalized marker, NOT
+        sub_state (the description step dlq-bounces sub_state to None, so a sub_state
+        gate would never fire). This step does NOT participate in the sub_state FSM.
 
         Pipeline:
-          1. Idempotency guard (sub_state == "description_enriched") + Places-FSM skip.
+          1. Idempotency (marker) + Places-FSM cross-lane skip.
           2. Resolve place_id: use place_id_cache if present, else Text Search + match.
-             No confident match → keep the TA floor (no write), advance + re-score.
-          3. place_details → business_status CLOSED_* (confident match) → descarte + return.
-          4. weekday_text (hours) + atualidade = max(TA, Google) + most_recent_review_at.
-          5. flag_modified, advance sub_state, re-score (route_by_score), dlq bounce.
+          3. place_details → business_status CLOSED_* (confident match) → descarte.
+          4. weekday_text (hours) + Google coords + atualidade=max(TA,Google) +
+             most_recent_review_at + place_id_cache/google_place_id.
+          5. Mark google_enriched, flag_modified, re-score (route_by_score).
         """
-        # Step 1: idempotency + cross-lane guard.
-        if rio.sub_state != "description_enriched":
-            return
+        # Step 1: idempotency (marker) + cross-lane guard. NO sub_state gate.
         normalized = rio.normalized or {}
+        if normalized.get("google_enriched"):
+            return
         if normalized.get("place_id_cache") and normalized.get("weekday_text"):
             # Already enriched by the Places-FSM SignalAgent — not a TA-lane record.
             return
@@ -186,7 +193,7 @@ class PlacesEnrichmentAgent:
         ref_date = self._now or datetime.now(UTC)
 
         # Step 2+3: resolve place_id, fetch details. ANY external failure degrades to the
-        # TA floor — a Places defect can never strand the record short of places_enriched.
+        # TA floor — a Places defect can never strand the record.
         details: dict[str, Any] = {}
         place_id: str = normalized.get("place_id_cache") or ""
         try:
@@ -206,16 +213,18 @@ class PlacesEnrichmentAgent:
 
             # Step 3: CLOSED_* on a confident match → hard descarte (mirror SignalAgent).
             if business_status in CLOSED_STATUSES:
+                new_normalized["google_enriched"] = True
+                rio.normalized = new_normalized
+                flag_modified(rio, "normalized")
                 rio.routing = "descarte"
                 rio.dlq_reason = "closed_place"
-                rio.sub_state = None
                 write_audit(
                     session=self._session,
-                    action="hard_descarte",
+                    action="places_hard_descarte",
                     entity_type="attraction",
                     record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
-                    before_state={"sub_state": "description_enriched"},
-                    after_state={"routing": "descarte", "sub_state": None, "reason": "closed_place"},
+                    before_state={"routing": rio.routing},
+                    after_state={"routing": "descarte", "reason": "closed_place"},
                     actor="places_enrichment_agent",
                 )
                 self._session.flush()
@@ -260,19 +269,19 @@ class PlacesEnrichmentAgent:
         else:
             logger.info("places_enrich_kept_floor", rio_id=str(rio.id), uf=uf)
 
-        # Step 5: mutate normalized + advance sub_state.
+        # Step 5: mark enriched (idempotency), mutate normalized, re-score. sub_state is
+        # left untouched — a dlq record stays in the plain DLQ (sub_state=None) queue.
+        new_normalized["google_enriched"] = True
         rio.normalized = new_normalized
         flag_modified(rio, "normalized")
-        rio.sub_state = "places_enriched"
 
         write_audit(
             session=self._session,
-            action="sub_state_advanced",
+            action="places_enriched",
             entity_type="attraction",
             record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
-            before_state={"sub_state": "description_enriched"},
+            before_state={"routing": rio.routing},
             after_state={
-                "sub_state": "places_enriched",
                 "weekday_text_set": hours_written,
                 "atualidade_value": new_normalized.get("atualidade_value"),
             },
@@ -280,23 +289,9 @@ class PlacesEnrichmentAgent:
         )
         self._session.flush()
 
-        # Re-score: atualidade may have changed → borderline record can move mar↔dlq.
+        # Re-score: atualidade may have changed (boost). Routing may improve; never worse.
         route_by_score(self._session, rio, self._config)
         self._session.flush()
-
-        # dlq bounce — mirror the SignalAgent/Description post-score convention.
-        if rio.routing == "dlq":
-            rio.sub_state = None
-            write_audit(
-                session=self._session,
-                action="sub_state_advanced",
-                entity_type="attraction",
-                record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
-                before_state={"sub_state": "places_enriched"},
-                after_state={"sub_state": None, "routing": "dlq"},
-                actor="places_enrichment_agent",
-            )
-            self._session.flush()
 
         # Append-only Log-tab timeline event (keyed by canonical_key — the drawer key).
         # LGPD: public-geo / engineering fields only — never review text.
@@ -322,6 +317,5 @@ class PlacesEnrichmentAgent:
             "places_enriched",
             rio_id=str(rio.id),
             routing=rio.routing,
-            sub_state=rio.sub_state,
             hours_written=hours_written,
         )
