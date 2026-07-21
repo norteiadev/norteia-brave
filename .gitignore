@@ -35,3 +35,7 @@ redis-data/
 
 # Local stack runtime state (scripts/app.sh pids + logs)
 .run/
+
+# POC de imagens — índice do acervo MTur (7,2 MB, regenerável em ~2 min)
+# .venv/bin/python -m scripts.poc_images.harvest_mtur
+scripts/poc_images/out/mtur_index.json
