@@ -1139,8 +1139,10 @@ def test_sc7_owner_validation_reaches_mar(db_session: Session) -> None:
         "after owner validation → Mar promotion (D-10)"
     )
     push_call = fake_norteia.push_attraction_calls[0]
-    assert push_call.get("entity_type") == "attraction", (
-        f"push_attraction payload entity_type should be 'attraction', got '{push_call.get('entity_type')}'"
+    # Flat contract: attraction payloads carry `destino` (resolve-or-create) and
+    # `place` (Google enrichment) sub-objects; destination payloads do not.
+    assert "destino" in push_call and "place" in push_call, (
+        f"attraction push payload should carry destino+place blocks, got keys {sorted(push_call)}"
     )
     assert push_call.get("source_ref") == source_ref, (
         f"push_attraction payload source_ref should be '{source_ref}', got '{push_call.get('source_ref')}'"

@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 
 from brave.core.models import MarRecord, RioRecord
 from brave.core.repositories import SqlAlchemyMarRepository, SqlAlchemyRioRepository
-from brave.shared.dtos import FlatProvenance, MarPushPayload
 
 # Stateless data-access seam (Phase A). The Session is passed per call and the
 # caller still owns the transaction — these repos flush but never commit.
@@ -203,61 +202,92 @@ def reopen_from_error_report(
 def build_push_payload(
     mar_record: MarRecord,
     rio_record: RioRecord,
-) -> MarPushPayload:
-    """Build the flat-provenance Mar push payload (the D-16 Pact contract shape).
+) -> dict[str, Any]:
+    """Build the flat push payload norteia-api's ingestion contract expects.
 
-    Moved out of ``brave.tasks.pipeline._build_push_payload`` (which now delegates
-    here via ``.model_dump()``) so the wire shape lives in one typed place. The
-    returned model's ``model_dump()`` is byte-identical to the dict the pipeline
-    shim used to build.
-
-    The Pact contract requires flat per-criterion provenance keys::
-
-        {"origem": float, "completude": float, "corroboracao": float,
-         "atualidade": float, "validacao_humana": float}
-
-    promote_to_mar stores provenance as::
-
-        {"score_breakdown": {...flat criteria...}, "score_version": str,
-         "nascente_id": str, "rio_id": str}
-
-    This flattens score_breakdown to the top-level provenance keys.
+    The Laravel API is the source of truth for shape: flat top-level fields (no
+    ``canonical`` envelope). Territory is resolved by ``municipio_ibge``; the
+    parent destino rides in ``destino`` for resolve-or-create; Google Places
+    enrichment rides in ``place`` (lands in the separate attraction_place_details
+    table). Provenance is flattened per-criterion (was D-16).
 
     Args:
         mar_record: MarRecord returned by promote_to_mar.
-        rio_record: Source RioRecord. Part of the historical signature and kept
-            for call-site compatibility; the payload derives entirely from
-            mar_record.
+        rio_record: Source RioRecord (kept for signature compatibility).
 
     Returns:
-        MarPushPayload matching the Pact contract Mar push shape.
+        Dict matching the norteia-api ingestion contract (attraction or
+        destination depending on ``mar_record.entity_type``).
     """
     provenance_raw = mar_record.provenance or {}
     score_breakdown = provenance_raw.get("score_breakdown", {})
-    score_version = provenance_raw.get("score_version", mar_record.score_version or "v1.0")
+    flat_provenance = {
+        "origem": float(score_breakdown.get("origem", 0.0)),
+        "completude": float(score_breakdown.get("completude", 0.0)),
+        "corroboracao": float(score_breakdown.get("corroboracao", 0.0)),
+        "atualidade": float(score_breakdown.get("atualidade", 0.0)),
+        "validacao_humana": float(score_breakdown.get("validacao_humana", 0.0)),
+    }
 
-    # Flat per-criterion provenance (the Pact contract shape, D-16)
-    flat_provenance = FlatProvenance(
-        origem=float(score_breakdown.get("origem", 0.0)),
-        completude=float(score_breakdown.get("completude", 0.0)),
-        corroboracao=float(score_breakdown.get("corroboracao", 0.0)),
-        atualidade=float(score_breakdown.get("atualidade", 0.0)),
-        validacao_humana=float(score_breakdown.get("validacao_humana", 0.0)),
-    )
-
-    # Extract source from source_ref (format "source:UF:id"): "mtur:BA:123" → "mtur"
+    # source_ref format "source:UF:id" → "mtur:BA:123"
     source_ref = mar_record.source_ref or ""
-    source_parts = source_ref.split(":", 1)
-    source = source_parts[0] if source_parts else "unknown"
+    parts = source_ref.split(":")
+    source = parts[0] if parts and parts[0] else "unknown"
+    uf = parts[1] if len(parts) >= 2 else ""
 
     canonical = mar_record.canonical or {}
+    reliability = float(mar_record.reliability_score)
 
-    return MarPushPayload(
-        source=source,
-        source_ref=source_ref,
-        entity_type=mar_record.entity_type,
-        canonical=canonical,
-        reliability_score=float(mar_record.reliability_score),
-        score_version=score_version,
-        provenance=flat_provenance,
-    )
+    if mar_record.entity_type == "destination":
+        return {
+            "source_ref": source_ref,
+            "source": source,
+            "tourist_name": canonical.get("name") or canonical.get("municipio") or "",
+            "municipio_ibge": canonical.get("ibge_code") or canonical.get("municipio_id"),
+            "reliability_score": reliability,
+            "provenance": flat_provenance,
+        }
+
+    # attraction
+    municipio_ibge = canonical.get("municipio_id") or canonical.get("ibge_code")
+    contacts = canonical.get("contacts") or {}
+    signal = canonical.get("signal") or {}
+    # Parent destino link (destino-first). Fall back to the canonical IBGE ref so
+    # the API can resolve-or-create even when a lane didn't stamp parent_source_ref.
+    parent_ref = canonical.get("parent_source_ref") or f"ibge:{uf}:{municipio_ibge}"
+
+    return {
+        "source_ref": source_ref,
+        "source": source,
+        "name": canonical.get("name") or canonical.get("nome") or "",
+        # ponytail: label_entity is a Phase-1 stub, so `tipo` (carried from the
+        # lane in routing) is the only type signal; "outros" until NLP labeling lands.
+        "type": canonical.get("tipo") or canonical.get("type") or "outros",
+        "municipio_ibge": municipio_ibge,
+        "description": canonical.get("descricao_editorial"),
+        "latitude": canonical.get("lat"),
+        "longitude": canonical.get("lon"),
+        "instagram": contacts.get("ig_handle"),
+        "whatsapp": contacts.get("phone_e164"),
+        "website": contacts.get("website"),
+        "reliability_score": reliability,
+        "provenance": flat_provenance,
+        "destino": {
+            "source_ref": parent_ref,
+            "source": parent_ref.split(":")[0] if parent_ref else source,
+            "tourist_name": canonical.get("municipio") or canonical.get("municipio_nome") or "",
+            "municipio_ibge": municipio_ibge,
+        },
+        "place": {
+            "place_id": canonical.get("google_place_id")
+            or canonical.get("place_id_cache")
+            or canonical.get("place_id"),
+            "business_status": signal.get("business_status"),
+            "opening_hours": canonical.get("weekday_text") or signal.get("weekday_text"),
+            "price_level": canonical.get("price_level"),
+            "reviews_recent_count": signal.get("reviews_recent_count"),
+            "distrito_code": canonical.get("distrito_code"),
+            "distrito_name": canonical.get("distrito_name"),
+            "distrito_municipio_ibge": canonical.get("distrito_municipio_ibge"),
+        },
+    }

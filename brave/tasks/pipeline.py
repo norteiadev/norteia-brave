@@ -371,7 +371,7 @@ def _build_push_payload(mar_record: Any, rio_record: RioRecord) -> dict[str, Any
     """
     from brave.core.mar.service import build_push_payload
 
-    return build_push_payload(mar_record, rio_record).model_dump()
+    return build_push_payload(mar_record, rio_record)
 
 
 @shared_task(
