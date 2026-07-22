@@ -76,6 +76,7 @@ ATTRACTION_PAYLOAD = {
     "description": "Uma das quedas d'agua mais altas do Brasil, no coracao da Chapada.",
     "latitude": -12.6,
     "longitude": -41.4,
+    "address": "Vale do Capao, s/n, Palmeiras - BA",
     "website": "https://example.com",
     "reliability_score": 90.0,
     "provenance": {
@@ -102,6 +103,9 @@ ATTRACTION_PAYLOAD = {
         "distrito_name": "Arraial D'Ajuda",
         "distrito_code": "292530307",
         "distrito_municipio_ibge": "2925303",
+        "subdistrito_name": None,
+        "subdistrito_code": None,
+        "distrito_source": "places_admin_area_level_3",
     },
 }
 

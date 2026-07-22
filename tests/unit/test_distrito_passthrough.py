@@ -65,6 +65,7 @@ def _attraction_payload(*, with_distrito: bool) -> dict:
 
     return {
         "name": "Igreja Nossa Senhora d'Ajuda",
+        "address": "Praca Central, Arraial d'Ajuda, Porto Seguro - BA",
         "lat": -16.4886,
         "lng": -39.0736,
         "municipio_id": _PORTO_SEGURO_IBGE,
@@ -160,6 +161,11 @@ def test_distrito_survives_promote_to_mar_and_push_payload():
     assert push["place"]["distrito_name"] == _DISTRITO_NAME
     # The NEW parent-município relation survives the full Rio→Mar→push chain.
     assert push["place"]["distrito_municipio_ibge"] == _PORTO_SEGURO_IBGE
+    # Full distrito family: distrito_source flows; subdistrito is reserved-null.
+    assert push["place"]["distrito_source"] == "places_admin_area_level_3"
+    assert push["place"]["subdistrito_name"] is None
+    # address flows as a top-level attraction field (normalize_address title-cases it).
+    assert push["address"] and "Arraial" in push["address"]
 
 
 # ---------------------------------------------------------------------------
