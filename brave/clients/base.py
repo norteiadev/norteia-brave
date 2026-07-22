@@ -56,15 +56,19 @@ class LLMClientProtocol(Protocol):
         self,
         messages: list[dict[str, Any]],
         model: str = "claude-sonnet-4-5",
+        *,
+        system: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str:
         """Generate a free-form text response (Sonnet PT-BR conversation, D-08).
 
-        Used by WhatsAppAgent ask_followup_node to generate PT-BR follow-up
-        questions via Claude Sonnet 4.5 (native Anthropic SDK, not OpenRouter).
+        Used by WhatsAppAgent ask_followup_node and TourismCopywriter.
 
         Args:
             messages: Conversation history list [{role, content}].
             model:    Model identifier (default: claude-sonnet-4-5).
+            system:   Optional system prompt.
+            tools:    Optional tool defs (e.g. server-side web_search).
 
         Returns:
             Generated text response string.
@@ -340,62 +344,6 @@ class TripAdvisorClientProtocol(Protocol):
         Raises:
             SessionMissingError: When no session is in Redis.
             SessionExpiredError: On 403 or 429 HTTP status.
-        """
-        ...
-
-
-class MelhoresDestinosClientProtocol(Protocol):
-    """Guia Melhores Destinos scraper — description-enrichment lane (post-Signal).
-
-    A plain GET scraper (no session/DataDome bootstrap): it fuzzy-matches an
-    atrativo to its ``guia.melhoresdestinos.com.br`` ``-l.html`` editorial page via
-    the public sitemap, then pulls the article's editorial description for the
-    Norteia-voice LLM rewrite. Consumers accept this protocol; production code uses
-    RealMelhoresDestinosClient or NullMelhoresDestinosClient (offline/CI). Both
-    methods return None on a miss so the agent degrades gracefully to the floor.
-    """
-
-    async def find_attraction_url(
-        self, nome: str, municipio: str, uf: str
-    ) -> str | None:
-        """Fuzzy-match an atrativo to its Melhores Destinos ``-l.html`` page URL.
-
-        Args:
-            nome:      Attraction name (fuzzy-matched against the page slug).
-            municipio: Municipality name (context to narrow candidates).
-            uf:        Two-letter Brazilian state code.
-
-        Returns:
-            The absolute ``-l.html`` page URL on a confident match, else None.
-        """
-        ...
-
-    async def fetch_description(self, url: str) -> str | None:
-        """Fetch and extract the editorial description from a page URL.
-
-        Args:
-            url: An absolute Melhores Destinos ``-l.html`` page URL.
-
-        Returns:
-            The cleaned editorial description text, or None when the page has no
-            usable description (or on any fetch/parse failure — never raises).
-        """
-        ...
-
-    async def fetch_breadcrumb_place(self, url: str) -> str | None:
-        """Fetch and extract the breadcrumb ``<Place>`` level from a page URL.
-
-        The ``-l`` page breadcrumb spells out Guia Melhores Destinos → Brasil →
-        <Region> → <State> → <Place> → <Attraction>; the ``<Place>`` level (município
-        OR distrito, flattened) is the anchor for the IBGE-distrito relation — the
-        caller crosses it against ibge_distritos.csv scoped to the parent município.
-
-        Args:
-            url: An absolute Melhores Destinos ``-l.html`` page URL.
-
-        Returns:
-            The breadcrumb ``<Place>`` string, or None when the page has no breadcrumb,
-            a short chain, or an empty place (or on any fetch/parse failure — never raises).
         """
         ...
 

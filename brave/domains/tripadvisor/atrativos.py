@@ -120,6 +120,7 @@ class TripAdvisorAtrativosIngest:
         destino_rio_map: dict[str, tuple[uuid.UUID, str]] | None = None,
         geocoder: GeocoderClientProtocol | None = None,
         ta_config: TripAdvisorConfig | None = None,
+        places_agent: Any | None = None,
     ) -> None:
         self._client = ta_client
         self._session = session
@@ -128,6 +129,10 @@ class TripAdvisorAtrativosIngest:
         self._destino_rio_map: dict[str, tuple[uuid.UUID, str]] = destino_rio_map or {}
         self._geocoder = geocoder
         self._ta_config = ta_config
+        # PlacesEnrichmentAgent (description + distrito + hours/contact/price + liveness),
+        # run INLINE per record after Rio routing — like the other completude steps. None
+        # (unit tests / bulk path) → no enrichment, record just routes on its TA floor.
+        self._places_agent = places_agent
 
     async def produce(
         self,
@@ -663,6 +668,15 @@ class TripAdvisorAtrativosIngest:
                 nascente=nascente,
                 config=self._config,
             )
+            # Inline enrichment (description + distrito + hours/contact/price + liveness),
+            # run here — like geo/review/município above — so the stored score reflects it
+            # and a later task-kill can't strand it (the old post-produce dispatch could).
+            # The agent flushes into this session; produce() owns the commit. Its own
+            # re-score is the final word on routing. Never raises (keeps the TA floor).
+            if self._places_agent is not None and (rio.canonical_key or "").startswith(
+                "tripadvisor:"
+            ):
+                await self._places_agent.run(rio)
             return str(rio.id)
         return None
 

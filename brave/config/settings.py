@@ -363,90 +363,6 @@ class NominatimConfig(BaseSettings):
     # CR-02: NO Field(alias=...) anywhere in this class.
 
 
-class MelhoresDestinosConfig(BaseSettings):
-    """Guia Melhores Destinos scraper configuration (description-enrichment lane).
-
-    Powers the DescriptionEnrichmentAgent: a plain GET scraper (no session/DataDome
-    complexity — template is NominatimConfig, not TripAdvisorConfig) that fuzzy-matches
-    an atrativo to its ``guia.melhoresdestinos.com.br`` ``-l.html`` page via the public
-    sitemap and pulls the editorial description for the Norteia-voice LLM rewrite.
-
-    No env-var aliases (CR-02): each field resolves from its exact BRAVE_MD_ prefixed
-    name only. An alias would let a bare env var shadow the prefixed key (secret-shadowing).
-
-    Env prefix: BRAVE_MD_
-      BRAVE_MD_BASE_URL          — site root (default public guia.melhoresdestinos.com.br)
-      BRAVE_MD_USER_AGENT        — identifiable UA string
-      BRAVE_MD_TIMEOUT_SECONDS   — httpx timeout (default 15)
-      BRAVE_MD_THROTTLE_SECONDS  — min seconds between page GETs (default 1.0)
-      BRAVE_MD_CACHE_TTL         — sitemap/page Redis TTL seconds (default 30 days)
-      BRAVE_MD_MATCH_THRESHOLD   — rapidfuzz token_sort_ratio cutoff (default 88)
-      BRAVE_MD_PROXY_URL         — optional proxy (empty = none)
-      BRAVE_MD_VOICE_MODEL_SLUG  — Anthropic model for the voice rewrite (default Sonnet)
-    """
-
-    base_url: str = Field(
-        default="https://guia.melhoresdestinos.com.br",
-        description="Guia Melhores Destinos site root (BRAVE_MD_BASE_URL).",
-    )
-    user_agent: str = Field(
-        default="norteia-brave/1.0 (leandro.freire08@gmail.com)",
-        description=(
-            "HTTP User-Agent sent to guia.melhoresdestinos.com.br "
-            "(BRAVE_MD_USER_AGENT). Identifiable per polite-scraping practice."
-        ),
-    )
-    timeout_seconds: float = Field(
-        default=15.0,
-        description="httpx request timeout in seconds (BRAVE_MD_TIMEOUT_SECONDS).",
-    )
-    throttle_seconds: float = Field(
-        default=1.0,
-        description=(
-            "Minimum seconds between consecutive page GETs (BRAVE_MD_THROTTLE_SECONDS). "
-            "Politeness on the sitemap-driven sweep. 0 disables throttling (tests)."
-        ),
-    )
-    cache_ttl: int = Field(
-        default=86_400 * 30,
-        description=(
-            "Redis TTL for the cached sitemap index and fetched pages in seconds "
-            "(BRAVE_MD_CACHE_TTL). Default 30 days — editorial pages are stable."
-        ),
-    )
-    match_threshold: int = Field(
-        default=82,
-        description=(
-            "rapidfuzz WRatio cutoff for atrativo name → page slug matching "
-            "(BRAVE_MD_MATCH_THRESHOLD). Lowered from 88 to 82 now that find_attraction_url "
-            "uses the token-tolerant WRatio scorer AND a breadcrumb-State UF guard "
-            "(cross-state candidates are rejected), so a looser cutoff no longer risks "
-            "matching a same-name attraction in another state. Values below ~78 risk "
-            "in-state false matches."
-        ),
-    )
-    proxy_url: str = Field(
-        default="",
-        description=(
-            "Optional proxy URL (BRAVE_MD_PROXY_URL). Empty = no proxy (default). "
-            "Never emitted in logs."
-        ),
-    )
-    voice_model_slug: str = Field(
-        default="claude-haiku-4-5",
-        description=(
-            "Anthropic model slug for the Norteia-voice description rewrite "
-            "(BRAVE_MD_VOICE_MODEL_SLUG). Default Haiku 4.5 — cheapest active model "
-            "($1/$5 per 1M tok); the rewrite is a short factual PT-BR task and "
-            "completude scores presence, not quality. Bump to a Sonnet/Opus slug if "
-            "the editorial voice needs it."
-        ),
-    )
-
-    model_config = SettingsConfigDict(env_prefix="BRAVE_MD_")
-    # CR-02: NO Field(alias=...) anywhere in this class.
-
-
 class EngineConfig(BaseModel):
     """Engine operator-mode overlay (Phase D, config_settings key ``engine.mode``).
 
@@ -491,9 +407,6 @@ class AppConfig(BaseSettings):
     ramp: RampConfig = Field(default_factory=RampConfig)
     tripadvisor: TripAdvisorConfig = Field(default_factory=TripAdvisorConfig)
     nominatim: NominatimConfig = Field(default_factory=NominatimConfig)
-    melhores_destinos: MelhoresDestinosConfig = Field(
-        default_factory=MelhoresDestinosConfig
-    )
 
     # Per-source enable flags (Phase D overlay key ``source.<name>.enabled``).
     # Both known lanes enabled by default → effective config == pre-Phase-D behavior.
@@ -506,13 +419,17 @@ class AppConfig(BaseSettings):
     # run_real_externals=True enables real API calls (tests and CI default to False)
     run_real_externals: bool = False
 
-    # description_enrichment_enabled gates the LLM description-enrichment lane
-    # (Melhores Destinos scrape + Norteia-voice rewrite + breadcrumb→distrito). When
-    # False the enrich task uses the Null clients → floor kept, record still advances,
-    # ZERO LLM spend. Lets a real local sweep run without paying per-attraction Haiku.
-    # Overlay key ``description_enrichment_enabled`` (brave.config.runtime); toggled in
-    # the /painel config surface. Defaults True (production behavior unchanged).
+    # description_enrichment_enabled gates the TourismCopywriter sub-step INSIDE the Places
+    # enrichment agent (Google Places editorialSummary + web_search → Norteia-voice prose).
+    # When False the copywriter is skipped → Places still writes hours/distrito/liveness and
+    # the record advances, but no descricao_editorial + ZERO copywriter LLM/web-search spend.
+    # Overlay key ``description_enrichment_enabled`` (brave.config.runtime); toggled in the
+    # /painel config surface. Defaults True (production behavior unchanged).
     description_enrichment_enabled: bool = True
+
+    # atrativo_voice_model_slug: Anthropic model for the TourismCopywriter. A Sonnet slug —
+    # the server-side web_search tool runs there. (Was MelhoresDestinosConfig.voice_model_slug.)
+    atrativo_voice_model_slug: str = "claude-sonnet-4-5"
 
     # places_enrichment_enabled gates the Google Places enrichment lane for TA atrativos
     # (Text Search → place_id → opening hours + review-recency liveness). When False the

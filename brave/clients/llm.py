@@ -56,6 +56,10 @@ logger = structlog.get_logger(__name__)
 _SONNET_4_5_INPUT_USD_PER_MTOK: float = 3.0
 _SONNET_4_5_OUTPUT_USD_PER_MTOK: float = 15.0
 
+# Bound on pause_turn resumes when a server-side tool (web_search) is enabled — a backstop
+# so a runaway server-side loop can never spin generate() forever.
+_MAX_TOOL_TURNS: int = 4
+
 
 # ---------------------------------------------------------------------------
 # instructor mode map — valid mode strings → instructor.Mode enum
@@ -286,10 +290,14 @@ class RealLLMClient:
         self,
         messages: list[dict[str, Any]],
         model: str = "claude-sonnet-4-5",
+        *,
+        system: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str:
         """Generate a free-form text response via native AsyncAnthropic (D-05a).
 
-        Used by WhatsAppAgent ask_followup_node for PT-BR conversation turns.
+        Used by WhatsAppAgent ask_followup_node for PT-BR conversation turns, and by
+        TourismCopywriter (atrativo descriptions) with the server-side web_search tool.
         NOT via OpenRouter — uses the native Anthropic SDK for direct quota control.
 
         max_tokens=2048 is REQUIRED — anthropic 0.109.x has no default (RESEARCH.md Pitfall 7).
@@ -297,9 +305,13 @@ class RealLLMClient:
         Args:
             messages: Conversation history list [{role, content}].
             model:    Model identifier (default: claude-sonnet-4-5).
+            system:   Optional system prompt (copywriter persona / guards).
+            tools:    Optional tool defs, e.g. the server-side web_search tool. When passed,
+                      the server-side sampling loop may stop_reason=="pause_turn"; we resume
+                      up to _MAX_TOOL_TURNS times, then extract text from all text blocks.
 
         Returns:
-            Generated text response string (response.content[0].text).
+            Generated text (concatenated text blocks; empty string if none).
 
         Raises:
             CostGuardError: If daily USD budget exceeded before dispatch.
@@ -308,15 +320,35 @@ class RealLLMClient:
         if self._redis_client is not None:
             pre_dispatch_check(self._redis_client, self._config)
 
-        response = await self._anthropic_client.messages.create(
-            model=model,
-            max_tokens=2048,
-            messages=messages,  # type: ignore[arg-type]
-        )
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": 2048,
+            "messages": list(messages),
+        }
+        if system is not None:
+            create_kwargs["system"] = system
+        if tools:
+            create_kwargs["tools"] = tools
 
-        text: str = response.content[0].text  # type: ignore[union-attr]
-        prompt_tokens: int = response.usage.input_tokens
-        completion_tokens: int = response.usage.output_tokens
+        response = await self._anthropic_client.messages.create(**create_kwargs)  # type: ignore[arg-type]
+
+        # Server-side tools (web_search) can pause the turn at the 10-iteration cap; resume
+        # by re-sending the assistant content until it ends naturally (bounded — never loop).
+        prompt_tokens = response.usage.input_tokens
+        completion_tokens = response.usage.output_tokens
+        _turns = 0
+        while response.stop_reason == "pause_turn" and _turns < _MAX_TOOL_TURNS:
+            _turns += 1
+            messages = list(messages) + [{"role": "assistant", "content": response.content}]
+            create_kwargs["messages"] = messages
+            response = await self._anthropic_client.messages.create(**create_kwargs)  # type: ignore[arg-type]
+            prompt_tokens += response.usage.input_tokens
+            completion_tokens += response.usage.output_tokens
+
+        # Extract text from all text-type blocks (skips server_tool_use / *_tool_result).
+        text = "".join(
+            getattr(block, "text", "") for block in response.content if block.type == "text"
+        )
 
         # Anthropic does NOT return a cost field — compute from price table
         # (RESEARCH.md Pitfall 7). Prices are for Sonnet 4.5 (2026-06).

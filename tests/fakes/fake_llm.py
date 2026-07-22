@@ -76,19 +76,27 @@ class FakeLLMClient:
         self,
         messages: list[dict[str, Any]],
         model: str = "claude-sonnet-4-5",
+        *,
+        system: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str:
         """Record the generate call and return the fixture generate_result.
 
-        Simulates Sonnet PT-BR conversation turn generation (D-08).
+        Simulates Sonnet PT-BR conversation turn generation (D-08) and the
+        TourismCopywriter description call (system + web_search tool).
 
         Args:
             messages: Conversation history [{role, content}].
             model:    Model identifier (recorded but not used by fake).
+            system:   Optional system prompt (recorded).
+            tools:    Optional tool defs (recorded).
 
         Returns:
             generate_result passed at construction time (default PT-BR follow-up).
         """
-        self.generate_calls.append({"messages": messages, "model": model})
+        self.generate_calls.append(
+            {"messages": messages, "model": model, "system": system, "tools": tools}
+        )
         if self._raise_on_call is not None:
             raise self._raise_on_call
         return self._generate_result

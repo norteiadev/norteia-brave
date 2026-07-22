@@ -265,30 +265,35 @@ def main() -> None:
     print(f"descricao_editorial (before enrichment): "
           f"{(rio.normalized or {}).get('descricao_editorial')!r}")
 
-    # Explicit description-enrichment step (normally a post-signal FSM task).
+    # Explicit enrichment step (normally inline in produce() / the enrich_places task):
+    # PlacesEnrichmentAgent does description (copywriter) + distrito + hours/contact/price
+    # + liveness off one Google place_details call. The MD lane was removed.
     if not args.no_enrich_description:
-        from brave.lanes.atrativos.description import DescriptionEnrichmentAgent
-        from brave.clients.melhores_destinos import RealMelhoresDestinosClient
         from brave.clients.llm import RealLLMClient
+        from brave.clients.places import (
+            RealPlacesClient,
+            load_municipio_name_ibge_lookup,
+        )
+        from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+        from brave.shared.ibge_distritos import load_distritos
 
-        # The agent's idempotency guard requires sub_state == "signals_gathered".
-        rio.sub_state = "signals_gathered"
+        # The agent accepts entry sub_state None (TA inline) or "signals_gathered".
+        rio.sub_state = None
         session.commit()
-        from brave.shared.ibge_distritos import load_distritos_csv
-        md_client = RealMelhoresDestinosClient(config=app_config.melhores_destinos, redis=redis_client)
+        places_client = RealPlacesClient(
+            api_key=os.environ.get("BRAVE_PLACES_API_KEY", ""),
+            ibge_lookup=load_municipio_name_ibge_lookup(session),
+        )
         llm_client = RealLLMClient(
             config=app_config.llm, redis_client=redis_client,
-            session=session, lane="melhores_destinos",
+            session=session, lane="atrativo_copywriter",
         )
-        # Pass the DTB distritos so the agent can resolve the MD breadcrumb <Place> →
-        # IBGE distrito (mirrors how enrich_description_task wires it in production).
-        distritos = load_distritos_csv(_REPO_ROOT / "data" / "ibge" / "ibge_distritos.csv")
-        agent = DescriptionEnrichmentAgent(
-            md_client=md_client, llm_client=llm_client, session=session,
-            config=score_config, md_config=app_config.melhores_destinos,
-            distritos=distritos,
+        agent = PlacesEnrichmentAgent(
+            places_client=places_client, session=session, config=score_config,
+            llm_client=llm_client, distritos=load_distritos(session),
+            voice_model_slug=app_config.atrativo_voice_model_slug,
         )
-        print("\n>>> Running DescriptionEnrichmentAgent (Melhores Destinos → Norteia voice)...")
+        print("\n>>> Running PlacesEnrichmentAgent (Google Places + copywriter web_search)...")
         try:
             asyncio.run(agent.run(rio))
             session.commit()
@@ -300,9 +305,8 @@ def main() -> None:
         if descricao:
             print(f"descricao_editorial (after enrichment):\n{descricao}")
         else:
-            print("descricao_editorial (after enrichment): None — no Melhores Destinos "
-                  "article matched this attraction (floor kept). Expected for a specific "
-                  "church; try a municipio-level name to see the voice rewrite.")
+            print("descricao_editorial (after enrichment): None — no confident Places "
+                  "match and web search produced nothing usable (floor kept).")
 
         if args.rescore_after_enrich:
             from brave.core.rio.routing import reprocess_record

@@ -44,8 +44,8 @@ _G_LAT, _G_LNG = -16.4893, -39.0727
 
 def _make_rio(
     *,
+    sub_state: str | None = None,
     routing: str = "dlq",
-    sub_state=None,
     extra_normalized: dict | None = None,
 ) -> MagicMock:
     """Minimal TA-attraction RioRecord mock — defaults to the realistic post-description

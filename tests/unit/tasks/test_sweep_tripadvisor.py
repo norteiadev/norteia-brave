@@ -834,37 +834,42 @@ class TestSweepTripAdvisorTaConfig:
 
 
 # ---------------------------------------------------------------------------
-# TA-lane description enrichment: sweep_tripadvisor dispatches enrich_description_task
-# for every atrativo produce() ingested, at rio depths (run_rio), NOT at nascente-only.
+# TA-lane enrichment is now INLINE: sweep_tripadvisor builds a PlacesEnrichmentAgent
+# (description + distrito + hours/contact/price + liveness) and threads it into the
+# ingest ctor, which runs it per record inside produce(). No post-produce dispatch.
 # ---------------------------------------------------------------------------
 
 
-class TestSweepTripAdvisorDescriptionDispatch:
-    """The TA lane never enters the Places FSM chain, so sweep_tripadvisor is the ONLY
-    place that kicks description enrichment for TA atrativos. It dispatches
-    enrich_description_task for each Rio id produce() returns, at every rio depth."""
+class TestSweepTripAdvisorInlineEnrichment:
+    """sweep_tripadvisor threads a non-None places_agent into TripAdvisorAtrativosIngest
+    at every rio depth so enrichment runs inline per record (not as a separate task)."""
 
-    def _run(self, monkeypatch, *, depth, produce_ids):
+    def _run(self, monkeypatch, *, depth):
         fake_redis = fakeredis.FakeRedis()
         mock_db_session = MagicMock()
         mock_db_session.execute.return_value = MagicMock(all=lambda: [])
 
+        captured: dict[str, Any] = {}
+
         class _StubIngest:
             def __init__(self, **kw: Any) -> None:
-                pass
+                captured.update(kw)
 
             async def produce(self, uf: str, **kw: Any) -> list[str]:
-                # Return ids ONLY when run_rio (mirror the real producer: nascente-only
-                # creates no Rio records, so no enrichment is dispatched).
-                return list(produce_ids) if kw.get("run_rio") else []
+                return []
 
         mock_app_config = MagicMock()
         mock_app_config.run_real_externals = False
+        mock_app_config.atrativo_voice_model_slug = "claude-sonnet-4-5"
+        mock_app_config.places_match_max_distance_km = 20.0
 
         monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
         monkeypatch.setattr(
             "brave.tasks.pipeline.load_effective_config",
             lambda session, redis=None: MagicMock(),
+        )
+        monkeypatch.setattr(
+            "brave.shared.ibge_distritos.load_distritos", lambda session: []
         )
         monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
         monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
@@ -879,11 +884,6 @@ class TestSweepTripAdvisorDescriptionDispatch:
             "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
             lambda **kw: _StubIngest(**kw),
         )
-        # Capture enrich_description_task dispatches.
-        enrich_mock = MagicMock()
-        monkeypatch.setattr(
-            "brave.tasks.pipeline.enrich_description_task", enrich_mock
-        )
 
         mock_self = MagicMock()
         mock_self.MaxRetriesExceededError = type("MRE", (Exception,), {})
@@ -896,24 +896,15 @@ class TestSweepTripAdvisorDescriptionDispatch:
             raw_fn(mock_self, uf="ES", depth=depth)
         except Exception:
             pass
-        return enrich_mock
+        return captured
 
-    def test_dispatches_enrich_for_each_id_at_nascente_rio(self, monkeypatch):
-        ids = [str(uuid.uuid4()) for _ in range(3)]
-        enrich_mock = self._run(monkeypatch, depth="nascente_rio", produce_ids=ids)
-        dispatched = [c.args[0] for c in enrich_mock.delay.call_args_list]
-        assert dispatched == ids, (
-            "sweep_tripadvisor must dispatch enrich_description_task for every ingested "
-            f"Rio id at nascente_rio; got {dispatched}"
+    def test_inline_places_agent_at_nascente_rio(self, monkeypatch):
+        captured = self._run(monkeypatch, depth="nascente_rio")
+        assert captured.get("places_agent") is not None, (
+            "sweep_tripadvisor must thread a places_agent into the ingest for inline "
+            "enrichment at nascente_rio"
         )
 
-    def test_dispatches_enrich_at_nascente_rio_mar_too(self, monkeypatch):
-        ids = [str(uuid.uuid4()) for _ in range(2)]
-        enrich_mock = self._run(monkeypatch, depth="nascente_rio_mar", produce_ids=ids)
-        assert enrich_mock.delay.call_count == 2
-
-    def test_no_enrich_at_nascente_only(self, monkeypatch):
-        """depth=nascente → run_rio False → produce returns [] → no enrichment."""
-        ids = [str(uuid.uuid4()) for _ in range(3)]
-        enrich_mock = self._run(monkeypatch, depth="nascente", produce_ids=ids)
-        enrich_mock.delay.assert_not_called()
+    def test_inline_places_agent_at_nascente_rio_mar(self, monkeypatch):
+        captured = self._run(monkeypatch, depth="nascente_rio_mar")
+        assert captured.get("places_agent") is not None

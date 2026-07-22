@@ -795,7 +795,11 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
     name="brave.sweep_tripadvisor",
     acks_late=True,
     reject_on_worker_lost=True,
-    time_limit=600,
+    # 1h: enrichment now runs INLINE per record (place_details + copywriter web_search,
+    # ~3-10s/record), so a whole-UF sweep serializes far more work than the old 600s.
+    # Per-record commit inside produce() keeps progress durable if this limit is ever hit.
+    time_limit=3600,
+    soft_time_limit=3540,
 )
 def sweep_tripadvisor(
     self,
@@ -1003,6 +1007,71 @@ def sweep_tripadvisor(
             if row.municipio_id
         }
 
+        # Build the INLINE Places enrichment agent (description + distrito + hours/contact/
+        # price + liveness), run per-record inside produce() after Rio routing — like the
+        # other completude steps. Constructed once per sweep behind run_real_externals + the
+        # operator flags; the Null clients keep the TA floor + advance the record offline
+        # (ZERO external spend). Replaces the old post-produce enrich_description/_places
+        # dispatch, which the 600s time_limit could kill before it ran.
+        effective = load_effective_config(session)
+        # Build resiliently: a client-construction failure (e.g. a missing key) disables
+        # inline enrichment for this sweep and logs — it must never crash the ingest.
+        places_agent = None
+        try:
+            from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+            from brave.shared.ibge_distritos import load_distritos
+
+            _distritos = load_distritos(session)
+            if app_config.run_real_externals and effective.places_enrichment_enabled:
+                from brave.clients.places import (
+                    RealPlacesClient,
+                    load_municipio_name_ibge_lookup,
+                )
+                _places_client = RealPlacesClient(
+                    api_key=os.environ.get("BRAVE_PLACES_API_KEY", ""),
+                    ibge_lookup=load_municipio_name_ibge_lookup(session),
+                )
+            else:
+                from brave.clients.null_places import NullPlacesClient
+                _places_client = NullPlacesClient()
+
+            # Copywriter LLM: real Anthropic (web_search) only under run_real_externals +
+            # description_enrichment_enabled; else Null. description_enabled is gated on
+            # run_real_externals so an offline/CI sweep never writes the Null canned string.
+            _desc_on = (
+                app_config.run_real_externals and effective.description_enrichment_enabled
+            )
+            if _desc_on:
+                import redis as _copy_redis_lib  # noqa: PLC0415
+
+                from brave.clients.llm import RealLLMClient
+                _copy_llm = RealLLMClient(
+                    config=app_config.llm,
+                    redis_client=_copy_redis_lib.from_url(
+                        os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+                    ),
+                    session=session,
+                    lane="atrativo_copywriter",
+                )
+            else:
+                from brave.clients.null_llm import NullLLMClient
+                _copy_llm = NullLLMClient()
+
+            places_agent = PlacesEnrichmentAgent(
+                places_client=_places_client,
+                session=session,
+                config=config,
+                llm_client=_copy_llm,
+                distritos=_distritos,
+                voice_model_slug=app_config.atrativo_voice_model_slug,
+                description_enabled=_desc_on,
+                enable_web_search=app_config.run_real_externals,
+                max_distance_km=app_config.places_match_max_distance_km,
+            )
+        except Exception:  # noqa: BLE001 — enrichment build must not crash the sweep
+            logger.warning("inline_enrichment_build_failed", uf=uf)
+            places_agent = None
+
         # Run atrativos producer using destino_rio_map.
         # ta_config=ta_config wires the TripAdvisorConfig instance so the
         # fetch_attraction_geo ftx geo-linkage guard activates under real externals.
@@ -1014,6 +1083,7 @@ def sweep_tripadvisor(
             destino_rio_map=destino_rio_map,
             geocoder=geocoder,
             ta_config=ta_config,
+            places_agent=places_agent,
         )
         # Per-UF path enriches review recency (fetch_recent_review per card) so
         # atualidade lifts the reliability score. The bulk_national branch above leaves
@@ -1037,20 +1107,9 @@ def sweep_tripadvisor(
 
         session.commit()
 
-        # Description enrichment for TA atrativos. The TA lane never enters the Places
-        # FSM chain (find_contacts → gather_signals → enrich_description), so this is
-        # its ONLY path to descricao_editorial — dispatched at every Rio depth
-        # (run_rio: nascente_rio AND nascente_rio_mar), NOT gated to _mar. It is
-        # description-ONLY: no contact-finder/signal/WhatsApp steps (TA carries no
-        # Google place_id). The agent is idempotent (its own sub_state guard) and the
-        # actual MD-scrape + LLM spend stays behind run_real_externals +
-        # description_enrichment_enabled (checked inside enrich_description_task).
-        if run_rio and ingested_rio_ids:
-            for _rio_id in ingested_rio_ids:
-                try:
-                    enrich_description_task.delay(_rio_id)
-                except Exception:  # broker down → inline fallback (mirror Places lane)
-                    enrich_description_task.run(_rio_id)
+        # Enrichment now runs INLINE inside produce() (per record, via places_agent) — no
+        # post-produce dispatch. This survives a task-kill (per-record commit) where the old
+        # dispatch loop was never reached when the 600s time_limit fired mid-produce.
 
     except (SessionMissingError, SessionExpiredError) as exc:
         # Operator error: session not injected (Missing) or expired at DataDome (Expired).
@@ -1285,14 +1344,14 @@ def gather_signals_task(self, rio_id: str) -> None:
         # ORCH-02 / D-03: continue the chain only if this record actually advanced to
         # signals_gathered (a CLOSED / no-recent-reviews record is terminal DLQ with
         # sub_state=None, and must NOT be enriched). Re-read after commit and dispatch
-        # enrich_description_task with the same dispatch-then-inline-fallback. Keyed on
-        # sub_state (D-03); replay-safe via the description agent's own guard (D-04).
+        # enrich_places_task (the single enrichment agent — description + distrito + hours +
+        # liveness). Keyed on sub_state; replay-safe via the Places agent's own guard.
         session.refresh(rio)
         if rio.sub_state == "signals_gathered":
             try:
-                enrich_description_task.delay(str(rio_id))
+                enrich_places_task.delay(str(rio_id))
             except Exception:
-                enrich_description_task.run(str(rio_id))
+                enrich_places_task.run(str(rio_id))
 
     except PermanentError as exc:
         session.rollback()
@@ -1338,166 +1397,31 @@ def gather_signals_task(self, rio_id: str) -> None:
     bind=True,
     max_retries=3,
     default_retry_delay=60,
-    name="brave.enrich_description",
-    acks_late=True,
-    reject_on_worker_lost=True,
-    time_limit=300,
-)
-def enrich_description_task(self, rio_id: str) -> None:
-    """Advance one RioRecord signals_gathered → description_enriched (DescriptionEnrichmentAgent).
-
-    Fuzzy-matches the atrativo to its Guia Melhores Destinos editorial page, scrapes
-    the description, rewrites it in the Norteia voice, persists descricao_editorial,
-    and re-scores. Graceful degradation: no MD page / no text / rewrite failure keeps
-    the floor (posicionamento) and the record still advances.
-
-    Idempotency guard: DescriptionEnrichmentAgent.run() short-circuits if
-    sub_state != "signals_gathered". Client selection: real clients only when
-    run_real_externals=True (D-18).
-
-    Args:
-        rio_id: UUID string of the RioRecord to enrich.
-    """
-    from brave.core.quarantine import quarantine_poison as _quarantine
-    from brave.lanes.atrativos.description import DescriptionEnrichmentAgent
-
-    session, engine = _get_session()
-    try:
-        rio_uuid = uuid.UUID(rio_id)
-        rio = session.get(RioRecord, rio_uuid)
-        if rio is None:
-            raise PermanentError(f"RioRecord {rio_id} not found")
-
-        app_config = AppConfig()
-        effective = load_effective_config(session)
-        config = effective.score
-        md_config = app_config.melhores_destinos
-
-        redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-        import redis as redis_lib
-        redis_client = redis_lib.from_url(redis_url)
-
-        # Real clients require BOTH run_real_externals AND the operator-toggleable
-        # description_enrichment_enabled flag (config_settings overlay, /painel). When the
-        # flag is off, the Null clients keep the floor and the agent still advances
-        # sub_state + re-scores — a real local sweep runs with ZERO LLM spend on descriptions.
-        if app_config.run_real_externals and effective.description_enrichment_enabled:
-            from brave.clients.melhores_destinos import RealMelhoresDestinosClient
-            md_client = RealMelhoresDestinosClient(config=md_config, redis=redis_client)
-            from brave.clients.llm import RealLLMClient
-            llm_client = RealLLMClient(
-                config=app_config.llm,
-                redis_client=redis_client,
-                session=session,
-                lane="melhores_destinos",
-            )
-        else:
-            if app_config.run_real_externals and not effective.description_enrichment_enabled:
-                logger.info("description_enrichment_disabled", rio_id=rio_id)
-            from brave.clients.null_melhores_destinos import NullMelhoresDestinosClient
-            md_client = NullMelhoresDestinosClient()
-            from brave.clients.null_llm import NullLLMClient
-            llm_client = NullLLMClient()
-
-        # Load the IBGE DTB distrito reference once — threads into the enrichment agent
-        # for the MD breadcrumb <Place> → distrito name-match, scoped to the atrativo's
-        # parent município. Mirrors the discovery lane's distrito load. Reads the seeded
-        # distritos reference table (was a static CSV before §3).
-        from brave.shared.ibge_distritos import load_distritos
-        distritos = load_distritos(session)
-
-        agent = DescriptionEnrichmentAgent(
-            md_client=md_client,
-            llm_client=llm_client,
-            session=session,
-            config=config,
-            md_config=md_config,
-            distritos=distritos,
-        )
-
-        asyncio.run(agent.run(rio))
-        session.commit()
-
-        # Chain the Google Places enrichment step (TA lane only): opening hours + review
-        # liveness. Dispatched for EVERY TA-sourced record after description — NOT gated on
-        # sub_state: a TA atrativo scores ~55 < 80 and dlq-bounces sub_state to None here,
-        # so a sub_state gate would skip Places entirely (the agent keys idempotency on its
-        # own google_enriched marker). The Places-FSM lane is skipped by the agent's
-        # cross-lane guard (it already carries Google signals from SignalAgent).
-        if (rio.canonical_key or "").startswith("tripadvisor:"):
-            try:
-                enrich_places_task.delay(rio_id)
-            except Exception:  # broker down → inline fallback (mirror the TA description dispatch)
-                enrich_places_task.run(rio_id)
-
-    except PermanentError as exc:
-        session.rollback()
-        q_session, q_engine = _get_session()
-        try:
-            _quarantine(
-                session=q_session,
-                nascente_id=None,
-                task_name="brave.enrich_description",
-                error=str(exc),
-                payload={"rio_id": rio_id},
-            )
-            q_session.commit()
-        finally:
-            q_session.close()
-            q_engine.dispose()
-
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            q_session, q_engine = _get_session()
-            try:
-                _quarantine(
-                    session=q_session,
-                    nascente_id=None,
-                    task_name="brave.enrich_description",
-                    error=str(exc),
-                    payload={"rio_id": rio_id},
-                )
-                q_session.commit()
-            finally:
-                q_session.close()
-                q_engine.dispose()
-
-    finally:
-        session.close()
-        engine.dispose()
-
-
-@shared_task(
-    bind=True,
-    max_retries=3,
-    default_retry_delay=60,
     name="brave.enrich_places",
     acks_late=True,
     reject_on_worker_lost=True,
     time_limit=300,
 )
 def enrich_places_task(self, rio_id: str) -> None:
-    """Advance one TA RioRecord description_enriched → places_enriched (PlacesEnrichmentAgent).
+    """Enrich one atrativo (PlacesEnrichmentAgent): description + distrito + hours/contact/
+    price + review liveness, off one Google place_details call.
 
-    Resolves the atrativo to a Google place_id (Text Search + name/proximity match),
-    fetches Place Details, and persists Google opening hours (``weekday_text``) + review
-    liveness (``atualidade`` boost via max, ``most_recent_review_at``, ``place_id_cache``).
-    Graceful degradation: no confident match / no details keeps the TA floor and the
-    record still advances + re-scores. CLOSED_* on a confident match → descarte.
+    Standalone entry for the Places-FSM discovery lane (gather_signals → here) AND manual
+    DLQ re-enrich / 90-day refresh backfill. The TA sweep runs the SAME agent INLINE inside
+    produce() — this task is the non-inline path. Graceful degradation: no confident match /
+    no details keeps the TA floor and the record still advances + re-scores. CLOSED_* on a
+    confident match → descarte.
 
-    Idempotency guard: PlacesEnrichmentAgent.run() short-circuits if
-    sub_state != "description_enriched" (and no-ops a Places-FSM record). Client
-    selection: real Places client only when run_real_externals=True AND
-    places_enrichment_enabled (D-18); else NullPlacesClient (ZERO Google spend).
+    Idempotency guard: PlacesEnrichmentAgent.run() short-circuits unless
+    sub_state in (None, "signals_gathered"). Client selection: real Places/LLM clients only
+    when run_real_externals=True AND the respective flag (D-18); else Null (ZERO spend).
 
     Args:
         rio_id: UUID string of the RioRecord to enrich.
     """
     from brave.core.quarantine import quarantine_poison as _quarantine
     from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.shared.ibge_distritos import load_distritos
 
     session, engine = _get_session()
     try:
@@ -1530,10 +1454,34 @@ def enrich_places_task(self, rio_id: str) -> None:
             from brave.clients.null_places import NullPlacesClient
             places_client = NullPlacesClient()
 
+        # Copywriter LLM (description sub-step): real Anthropic (web_search) only under
+        # run_real_externals + description_enrichment_enabled; else Null (skipped).
+        _desc_on = app_config.run_real_externals and effective.description_enrichment_enabled
+        if _desc_on:
+            import redis as _copy_redis_lib  # noqa: PLC0415
+
+            from brave.clients.llm import RealLLMClient
+            copy_llm = RealLLMClient(
+                config=app_config.llm,
+                redis_client=_copy_redis_lib.from_url(
+                    os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+                ),
+                session=session,
+                lane="atrativo_copywriter",
+            )
+        else:
+            from brave.clients.null_llm import NullLLMClient
+            copy_llm = NullLLMClient()
+
         agent = PlacesEnrichmentAgent(
             places_client=places_client,
             session=session,
             config=config,
+            llm_client=copy_llm,
+            distritos=load_distritos(session),
+            voice_model_slug=app_config.atrativo_voice_model_slug,
+            description_enabled=_desc_on,
+            enable_web_search=app_config.run_real_externals,
             max_distance_km=app_config.places_match_max_distance_km,
         )
 
