@@ -48,6 +48,9 @@ class NullLLMClient:
         self,
         messages: list[dict[str, Any]],
         model: str = "claude-sonnet-4-5",
+        *,
+        system: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str:
         """Return canned PT-BR string — offline stub performs no generation.
 
@@ -57,6 +60,8 @@ class NullLLMClient:
         Args:
             messages: Conversation history (ignored).
             model: Model identifier (ignored).
+            system: Optional system prompt (ignored).
+            tools: Optional tool defs (ignored — offline stub never searches).
 
         Returns:
             Fixed canned PT-BR follow-up string.

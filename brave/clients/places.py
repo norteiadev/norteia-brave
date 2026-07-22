@@ -62,7 +62,9 @@ _GET_PLACE_FIELD_MASK = (
     "regularOpeningHours,"
     "reviews,"
     "internationalPhoneNumber,"
-    "websiteUri"
+    "websiteUri,"
+    "editorialSummary,"
+    "priceLevel"
 )
 
 
@@ -413,6 +415,20 @@ class RealPlacesClient:
         if place.location:
             location = {"lat": place.location.latitude, "lng": place.location.longitude}
 
+        # editorialSummary: Google's own short blurb (thin coverage in BR — best-effort
+        # grounding material for the copywriter, never the final descricao text).
+        editorial_summary: str = ""
+        if getattr(place, "editorial_summary", None) and place.editorial_summary.text:
+            editorial_summary = place.editorial_summary.text
+
+        # priceLevel: enum PRICE_LEVEL_* → persisted as a structured field (never in prose).
+        price_level: str | None = None
+        if getattr(place, "price_level", None):
+            _pl = place.price_level
+            price_level = _pl.name if hasattr(_pl, "name") else str(_pl)
+            if price_level in ("PRICE_LEVEL_UNSPECIFIED", "0"):
+                price_level = None
+
         result = {
             "place_id": place.id,
             "name": place.display_name.text if place.display_name else "",
@@ -424,6 +440,8 @@ class RealPlacesClient:
             "reviews": reviews,
             "location": location,
             "distrito_hint": distrito_hint,
+            "editorial_summary": editorial_summary,
+            "price_level": price_level,
         }
 
         logger.info("places_place_details_ok", place_id=place_id)

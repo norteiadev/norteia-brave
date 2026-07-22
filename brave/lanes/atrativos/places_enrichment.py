@@ -44,6 +44,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from brave.clients.places import _normalize_name
 from brave.config.settings import ScoreConfig
 from brave.core.rio.routing import route_by_score
+from brave.lanes.atrativos.copywriter import TourismCopywriter
 from brave.lanes.atrativos.signal_agent import (
     CLOSED_STATUSES,
     _compute_atualidade,
@@ -51,10 +52,16 @@ from brave.lanes.atrativos.signal_agent import (
 )
 from brave.observability.audit import write_audit
 from brave.observability.record_events import record_event
+from brave.shared.ibge_distritos import resolve_distrito
 
 if TYPE_CHECKING:
-    from brave.clients.base import PlacesClientProtocol
+    from brave.clients.base import LLMClientProtocol, PlacesClientProtocol
     from brave.core.models import RioRecord
+    from brave.shared.ibge_distritos import IbgeDistrito
+
+# completude ceiling once a descricao_editorial is written (mirrors the old
+# DescriptionEnrichmentAgent degrau: 75 floor → 90 with description).
+_COMPLETUDE_WITH_DESCRIPTION: float = 90.0
 
 logger = structlog.get_logger(__name__)
 
@@ -128,19 +135,31 @@ def _best_match(
 
 
 class PlacesEnrichmentAgent:
-    """Enriches a TA atrativo with Google Places opening hours + review liveness.
+    """The single atrativo enrichment agent: description + distrito + hours/contact/price +
+    review liveness, all off one Google Places ``place_details`` call.
 
-    Advances sub_state from "description_enriched" to "places_enriched".
-    Idempotency guard: returns immediately if sub_state != "description_enriched".
-    Cross-lane guard: a record that already carries place_id_cache AND weekday_text
-    was enriched by the Places-FSM SignalAgent — leave it untouched (no-op).
+    Advances sub_state (None | "signals_gathered") → "places_enriched". Serves both the TA
+    inline path (sub_state None, dispatched by sweep_tripadvisor) and the Places-FSM discovery
+    path (sub_state "signals_gathered"). Cross-lane guard: a record that already carries
+    place_id_cache AND weekday_text was enriched by the Places-FSM SignalAgent — no-op.
+
+    Description: written by TourismCopywriter (Places editorialSummary + web_search, Norteia
+    voice) when ``description_enabled`` and the record has no descricao_editorial yet. Gated
+    separately from the Places call so an operator can disable the LLM/web-search spend while
+    still getting hours/distrito/liveness. Distrito comes from Places addressComponents
+    (distrito_hint → resolve_distrito), replacing the old MD-breadcrumb resolver.
 
     Args:
-        places_client:   PlacesClientProtocol implementation (real/null/fake).
-        session:         SQLAlchemy synchronous Session.
-        config:          ScoreConfig with reliability weights (for the re-score).
-        now:             Injectable reference clock (atualidade / recency). None → now.
-        max_distance_km: Text-Search match radius in km (AppConfig.places_match_max_distance_km).
+        places_client:      PlacesClientProtocol implementation (real/null/fake).
+        session:            SQLAlchemy synchronous Session.
+        config:             ScoreConfig with reliability weights (for the re-score).
+        llm_client:         LLMClientProtocol for the copywriter. None → no description.
+        distritos:          IBGE DTB distrito reference (resolve_distrito). None → distrito no-op.
+        voice_model_slug:   Anthropic slug for the copywriter (a Sonnet slug).
+        description_enabled: Gate the copywriter sub-step (description_enrichment_enabled).
+        enable_web_search:   Offer the web_search tool to the copywriter (real sweeps only).
+        now:                Injectable reference clock (atualidade / recency). None → now.
+        max_distance_km:    Text-Search match radius in km (places_match_max_distance_km).
     """
 
     def __init__(
@@ -148,14 +167,29 @@ class PlacesEnrichmentAgent:
         places_client: PlacesClientProtocol,
         session: Session,
         config: ScoreConfig | None = None,
+        llm_client: LLMClientProtocol | None = None,
+        distritos: list[IbgeDistrito] | None = None,
+        voice_model_slug: str = "claude-sonnet-4-5",
+        description_enabled: bool = True,
+        enable_web_search: bool = True,
         now: datetime | None = None,
         max_distance_km: float = 20.0,
     ) -> None:
         self._places_client = places_client
         self._session = session
         self._config = config or ScoreConfig()
+        self._llm_client = llm_client
+        self._distritos = distritos or []
+        self._description_enabled = description_enabled
         self._now = now
         self._max_distance_km = max_distance_km
+        self._copywriter = (
+            TourismCopywriter(
+                llm_client, model=voice_model_slug, enable_web_search=enable_web_search
+            )
+            if llm_client is not None
+            else None
+        )
 
     async def run(self, rio: RioRecord) -> None:
         """Enrich one atrativo with Google Places signals (hours + review liveness).
@@ -185,6 +219,8 @@ class PlacesEnrichmentAgent:
 
         nome: str = normalized.get("name") or ""
         uf: str = rio.uf or normalized.get("uf") or ""
+        municipio: str = normalized.get("municipio") or ""
+        municipio_ibge: str = normalized.get("municipio_id") or ""
         lat = normalized.get("lat")
         lng = normalized.get("lon")  # routing.normalize stores longitude under "lon"
 
@@ -266,8 +302,58 @@ class PlacesEnrichmentAgent:
             # field → flows to norteia-api (both lanes write it — see routing.normalize).
             new_normalized["place_id_cache"] = place_id
             new_normalized["google_place_id"] = place_id
+
+            # Structured operational fields (discrete keys, NEVER in the description prose).
+            phone = details.get("international_phone_number")
+            website = details.get("website")
+            price_level = details.get("price_level")
+            if phone:
+                new_normalized["phone"] = phone
+            if website:
+                new_normalized["website"] = website
+            if price_level:
+                new_normalized["price_level"] = price_level
+
+            # Distrito from Places addressComponents (admin_area_level_3 → resolve_distrito),
+            # replacing the old MD-breadcrumb resolver. Same six canonical keys the discovery
+            # lane writes; all None when there's no hint / no reference table / no match.
+            distrito_hint = details.get("distrito_hint")
+            match = (
+                resolve_distrito(distrito_hint, municipio_ibge, self._distritos)
+                if (self._distritos and distrito_hint and municipio_ibge)
+                else None
+            )
+            if match is not None:
+                new_normalized["distrito_name"] = match.nome
+                new_normalized["distrito_code"] = match.distrito_code
+                new_normalized["distrito_municipio_ibge"] = match.ibge_code
+                new_normalized["subdistrito_name"] = None
+                new_normalized["subdistrito_code"] = None
+                new_normalized["distrito_source"] = "places_admin_area_level_3"
         else:
             logger.info("places_enrich_kept_floor", rio_id=str(rio.id), uf=uf)
+
+        # Description (TourismCopywriter): grounded in the Places context + web search, in the
+        # Norteia voice. Gated by description_enabled; skipped if a description already exists
+        # (idempotent refresh). Runs even without a Places match — web_search can still ground
+        # it from name+município+UF. Never raises (copywriter returns None on any failure).
+        description_written = bool(new_normalized.get("descricao_editorial"))
+        if (
+            self._description_enabled
+            and self._copywriter is not None
+            and not description_written
+            and nome
+        ):
+            prose = await self._copywriter.write(
+                nome, municipio, uf, places_context=details
+            )
+            if prose:
+                new_normalized["descricao_editorial"] = prose
+                new_normalized["completude_value"] = max(
+                    float(new_normalized.get("completude_value", 0.0)),
+                    _COMPLETUDE_WITH_DESCRIPTION,
+                )
+                description_written = True
 
         # Step 5: mark enriched (idempotency), mutate normalized, re-score. sub_state is
         # left untouched — a dlq record stays in the plain DLQ (sub_state=None) queue.
@@ -283,13 +369,15 @@ class PlacesEnrichmentAgent:
             before_state={"routing": rio.routing},
             after_state={
                 "weekday_text_set": hours_written,
+                "descricao_editorial_set": description_written,
                 "atualidade_value": new_normalized.get("atualidade_value"),
+                "completude_value": new_normalized.get("completude_value"),
             },
             actor="places_enrichment_agent",
         )
         self._session.flush()
 
-        # Re-score: atualidade may have changed (boost). Routing may improve; never worse.
+        # Re-score: atualidade/completude may have changed → borderline record can move mar↔dlq.
         route_by_score(self._session, rio, self._config)
         self._session.flush()
 
@@ -301,12 +389,13 @@ class PlacesEnrichmentAgent:
             source=canonical_key.split(":", 1)[0] if canonical_key else "unknown",
             source_ref=canonical_key,
             stage="places_enriched",
-            status="ok" if hours_written else "skip",
+            status="ok" if (hours_written or description_written) else "skip",
             entity_type="attraction",
             uf=rio.uf,
             rio_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
             data={
                 "hours_written": hours_written,
+                "description_written": description_written,
                 "atualidade_value": new_normalized.get("atualidade_value"),
                 "routing": rio.routing,
             },
@@ -318,4 +407,5 @@ class PlacesEnrichmentAgent:
             rio_id=str(rio.id),
             routing=rio.routing,
             hours_written=hours_written,
+            description_written=description_written,
         )

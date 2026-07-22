@@ -42,14 +42,23 @@ ATRATIVO_SUB_STATE_EDGES: frozenset[tuple[str | None, str | None]] = frozenset(
         (None, "discovered"),
         ("discovered", "contacts_found"),
         ("contacts_found", "signals_gathered"),
-        # Description-enrichment step (post-Signal): fetch MD → Norteia-voice rewrite →
-        # descricao_editorial → re-score. Inserted between signals_gathered and the gate.
+        # Enrichment step (PlacesEnrichmentAgent — description + distrito + hours/contact/
+        # price + liveness). Single agent, two entries: the discovery FSM (signals_gathered)
+        # and the TA inline path (None). Re-scores then dlq-bounces (→ None) or descartes.
+        ("signals_gathered", "places_enriched"),
+        (None, "places_enriched"),
+        ("places_enriched", None),  # re-score → dlq, or CLOSED_* descarte (bounce)
+        ("places_enriched", "aguardando_consulta_whatsapp"),
+        ("signals_gathered", "aguardando_consulta_whatsapp"),
+        # Legacy description_enriched edges — the MD description lane was removed and this
+        # sub_state is no longer reachable, but the edges are harmless (validate-only) and
+        # kept so any in-flight/historical record can still transition out.
         ("signals_gathered", "description_enriched"),
         ("description_enriched", "aguardando_consulta_whatsapp"),
         ("description_enriched", None),  # re-score → dlq (bounce back to DLQ)
+        ("description_enriched", "places_enriched"),  # legacy → new copywriter/Places path
         # Note: the Google Places enrichment step (PlacesEnrichmentAgent) is NOT an FSM
         # transition — it runs independent of sub_state, keyed on a normalized marker.
-        ("signals_gathered", "aguardando_consulta_whatsapp"),
         ("aguardando_consulta_whatsapp", "whatsapp_in_progress"),
         # Phase F manual WhatsApp gate moves (DLQ = routing="dlq", sub_state=None):
         (None, "aguardando_consulta_whatsapp"),   # dlq -> gate (manual move in)
