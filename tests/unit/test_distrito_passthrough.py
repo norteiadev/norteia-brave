@@ -154,12 +154,12 @@ def test_distrito_survives_promote_to_mar_and_push_payload():
     assert mar.canonical["distrito_name"] == _DISTRITO_NAME
     assert mar.canonical["distrito_municipio_ibge"] == _PORTO_SEGURO_IBGE
 
-    push = build_push_payload(mar, rio).model_dump()
-    assert push["entity_type"] == "attraction"
-    assert push["canonical"]["distrito_code"] == _DISTRITO_CODE
-    assert push["canonical"]["distrito_name"] == _DISTRITO_NAME
+    # Flat contract: distrito rides in the `place` sub-object (→ attraction_place_details).
+    push = build_push_payload(mar, rio)
+    assert push["place"]["distrito_code"] == _DISTRITO_CODE
+    assert push["place"]["distrito_name"] == _DISTRITO_NAME
     # The NEW parent-município relation survives the full Rio→Mar→push chain.
-    assert push["canonical"]["distrito_municipio_ibge"] == _PORTO_SEGURO_IBGE
+    assert push["place"]["distrito_municipio_ibge"] == _PORTO_SEGURO_IBGE
 
 
 # ---------------------------------------------------------------------------
@@ -198,5 +198,5 @@ def test_attraction_without_distrito_promotes_clean_no_floor_regression():
     ):
         assert key not in mar.canonical
 
-    push = build_push_payload(mar, rio).model_dump()
-    assert "distrito_code" not in push["canonical"]
+    push = build_push_payload(mar, rio)
+    assert push["place"]["distrito_code"] is None

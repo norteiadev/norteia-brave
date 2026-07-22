@@ -210,6 +210,15 @@ def process_nascente_record(
     # can look up Place Details without repeating text_search (D-04, COMP-03).
     # This cache key is written by DiscoveryAgent into the nascente payload; copying it
     # to normalized ensures subsequent FSM tasks have it available.
+    # Attraction-specific: carry the lane taxonomy `tipo` (AtrativoResult.tipo:
+    # praia/cachoeira/trilha/…) from canonical into normalized so it survives the
+    # Rio cherry-pick and lands in the Mar canonical → norteia-api `type` (required).
+    # label_entity is a Phase-1 stub, so this is the only type signal today.
+    if nascente.entity_type == "attraction":
+        _tipo = _canonical.get("tipo")
+        if _tipo:
+            normalized["tipo"] = _tipo
+
     if nascente.entity_type == "attraction" and "place_id_cache" in payload:
         normalized["place_id_cache"] = payload["place_id_cache"]
         # google_place_id: same id as a clean platform-facing canonical field (flows to

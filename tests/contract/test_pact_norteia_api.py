@@ -48,22 +48,16 @@ PACT_DIR.mkdir(exist_ok=True)
 # Fixture payloads (matching the Pact contract shape — D-16)
 # ---------------------------------------------------------------------------
 
-# D-10 (Phase 2): ibge_code added to canonical to support IBGE → municipality_id
-# resolution in norteia-api. Breaking change from Phase 1 frozen contract — coordinate
-# with norteia-api Laravel team (Trilha 5) to update provider verification.
-# source_ref format updated to "mtur:{uf}:{ibge_code}" (IBGE code replaces sequential id).
+# Flat ingestion contract (norteia-api is the source of truth for shape). Territory
+# resolves by municipio_ibge → municipalities.ibge_code; the parent destino rides in
+# `destino` for resolve-or-create; Google Places enrichment rides in `place` (lands in
+# the separate attraction_place_details table). Provenance is flattened per-criterion.
 DESTINATION_PAYLOAD = {
-    "source": "mtur",
-    "source_ref": "mtur:BA:2927408",
-    "entity_type": "destination",
-    "canonical": {
-        "name": "Trancoso",
-        "uf": "BA",
-        "municipio": "Porto Seguro",
-        "ibge_code": "2927408",
-    },
+    "source": "ibge",
+    "source_ref": "ibge:BA:2927408",
+    "tourist_name": "Porto Seguro",
+    "municipio_ibge": "2927408",
     "reliability_score": 87.5,
-    "score_version": "v1.0",
     "provenance": {
         "origem": 30.0,
         "completude": 20.0,
@@ -74,44 +68,40 @@ DESTINATION_PAYLOAD = {
 }
 
 ATTRACTION_PAYLOAD = {
-    "source": "mtur",
-    "source_ref": "mtur:BA:atr:001",
-    "entity_type": "attraction",
-    "canonical": {
-        "name": "Chapada Diamantina",
-        "uf": "BA",
-        "municipio": "Lencois",
-        # Curated editorial description in the Norteia voice (DescriptionEnrichmentAgent).
-        # Schemaless in the medallion; documents the new key on the wire so the
-        # norteia-api (Laravel) ingestion can accept/persist it. Cross-repo: coordinate
-        # provider verification (precedent: ibge_code on the destination payload).
-        "descricao_editorial": "Um dos maiores parques nacionais da Bahia, a Chapada "
-        "Diamantina reune cachoeiras, grutas e trilhas em um cenario de serras.",
-        # Distrito/subdistrito localization (IBGE DTB 2025), resolved from the Melhores
-        # Destinos breadcrumb <Place> level name-matched against the parent município's
-        # distritos (brave.shared.ibge_distritos.resolve_distrito_place). Public
-        # geo-territorial fields (same class as municipio/ibge_code) — schemaless
-        # passthrough, documented on the wire so norteia-api (Laravel) ingestion can
-        # persist them. distrito_municipio_ibge is the NEW parent-município relation
-        # (= the matched distrito's 7-digit ibge_code, e.g. Porto Seguro 2925303).
-        # distrito_source records the resolver lane ("md_breadcrumb" here). subdistrito_*
-        # are reserved keys (no admin_area_level_4 signal) → always null for now.
-        # Cross-repo: coordinate provider verification (precedent: ibge_code / descricao_editorial).
-        "distrito_name": "Arraial D'Ajuda",
-        "distrito_code": "292530307",
-        "distrito_municipio_ibge": "2925303",
-        "distrito_source": "md_breadcrumb",
-        "subdistrito_name": None,
-        "subdistrito_code": None,
-    },
+    "source": "tripadvisor",
+    "source_ref": "tripadvisor:BA:atr001",
+    "name": "Cachoeira da Fumaca",
+    "type": "cachoeira",
+    "municipio_ibge": "2925303",
+    "description": "Uma das quedas d'agua mais altas do Brasil, no coracao da Chapada.",
+    "latitude": -12.6,
+    "longitude": -41.4,
+    "website": "https://example.com",
     "reliability_score": 90.0,
-    "score_version": "v1.0",
     "provenance": {
         "origem": 30.0,
         "completude": 20.0,
         "corroboracao": 20.0,
         "atualidade": 12.0,
         "validacao_humana": 8.0,
+    },
+    # Parent destino (resolve-or-create by source_ref on the API side).
+    "destino": {
+        "source_ref": "ibge:BA:2925303",
+        "source": "ibge",
+        "tourist_name": "Porto Seguro",
+        "municipio_ibge": "2925303",
+    },
+    # Google Places enrichment → attraction_place_details table.
+    "place": {
+        "place_id": "ChIJexample_place_id",
+        "business_status": "OPERATIONAL",
+        "opening_hours": ["Mon: 08:00-18:00"],
+        "price_level": 2,
+        "reviews_recent_count": 12,
+        "distrito_name": "Arraial D'Ajuda",
+        "distrito_code": "292530307",
+        "distrito_municipio_ibge": "2925303",
     },
 }
 
@@ -131,7 +121,7 @@ def test_push_destination_contract():
         .with_header("Authorization", "Bearer test-service-token")
         .with_body(DESTINATION_PAYLOAD)
         .will_respond_with(200)
-        .with_body({"id": "550e8400-e29b-41d4-a716-446655440000", "source_ref": "mtur:BA:2927408"})
+        .with_body({"id": 42, "created": True})
     )
 
     with pact.serve() as mock:
@@ -145,8 +135,8 @@ def test_push_destination_contract():
 
     pact.write_file(str(PACT_DIR))
 
-    assert "source_ref" in result
-    assert result["source_ref"] == "mtur:BA:2927408"
+    assert "id" in result
+    assert result["created"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +157,7 @@ def test_push_destination_idempotent_contract():
         .with_header("Authorization", "Bearer test-service-token")
         .with_body(DESTINATION_PAYLOAD)
         .will_respond_with(200)
-        .with_body({"id": "550e8400-e29b-41d4-a716-446655440001", "source_ref": "mtur:BA:2927408"})
+        .with_body({"id": 42, "created": False})
     )
 
     with pact.serve() as mock:
@@ -181,7 +171,7 @@ def test_push_destination_idempotent_contract():
 
     pact.write_file(str(PACT_DIR))
 
-    assert "source_ref" in result
+    assert "id" in result
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +189,7 @@ def test_push_attraction_contract():
         .with_header("Authorization", "Bearer test-service-token")
         .with_body(ATTRACTION_PAYLOAD)
         .will_respond_with(200)
-        .with_body({"id": "550e8400-e29b-41d4-a716-446655440002", "source_ref": "mtur:BA:atr:001"})
+        .with_body({"id": 99, "created": True})
     )
 
     with pact.serve() as mock:
@@ -213,8 +203,8 @@ def test_push_attraction_contract():
 
     pact.write_file(str(PACT_DIR))
 
-    assert "source_ref" in result
-    assert result["source_ref"] == "mtur:BA:atr:001"
+    assert "id" in result
+    assert result["created"] is True
 
 
 # ---------------------------------------------------------------------------
