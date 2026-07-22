@@ -27,6 +27,7 @@ em `place.*`, aterrissando na tabela separada `attraction_place_details`.
 | `municipio_ibge` | `canonical.municipio_id` | resolve → `attractions.destination_id` |
 | `description` | `descricao_editorial` | `attractions.description` |
 | `latitude` / `longitude` | `canonical.lat` / `lon` | `attractions.latitude` / `longitude` |
+| `address` | `canonical.address` | `attractions.address` |
 | `instagram` | `contacts.ig_handle` | `attractions.instagram` |
 | `whatsapp` | `contacts.phone_e164` | `attractions.whatsapp` |
 | `website` | `contacts.website` | `attractions.website` |
@@ -42,6 +43,8 @@ em `place.*`, aterrissando na tabela separada `attraction_place_details`.
 | `place.price_level` | `canonical.price_level` | `attraction_place_details.price_level` |
 | `place.reviews_recent_count` | `signal.reviews_recent_count` | `attraction_place_details.reviews_recent_count` |
 | `place.distrito_code` / `name` / `municipio_ibge` | `canonical.distrito_*` | `attraction_place_details.distrito_*` |
+| `place.subdistrito_name` / `subdistrito_code` | `canonical.subdistrito_*` | `attraction_place_details.subdistrito_*` |
+| `place.distrito_source` | `canonical.distrito_source` | `attraction_place_details.distrito_source` |
 
 ### Destino → `POST /territorial/destinations`
 
@@ -91,9 +94,6 @@ Brave envia o destino mínimo, então ficam sem informação: `description`,
 
 | Campo Brave | Situação |
 |---|---|
-| `subdistrito_name`, `subdistrito_code` | Brave carrega (reserved-null hoje), não enviados |
-| `distrito_source` | rastreio do resolver (ex `md_breadcrumb`), não enviado |
-| `address` | canonical tem, sem coluna dedicada na API (só lat/lon) |
 | `uf` | embutido em `source_ref`/IBGE, não como campo próprio |
 | `municipio` (nome) no atrativo | vai só como `destino.tourist_name`; o atrativo manda IBGE, não o nome |
 | `score_version` | era top-level no shape antigo; API não tem campo |

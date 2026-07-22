@@ -267,6 +267,7 @@ def build_push_payload(
         "description": canonical.get("descricao_editorial"),
         "latitude": canonical.get("lat"),
         "longitude": canonical.get("lon"),
+        "address": canonical.get("address"),
         "instagram": contacts.get("ig_handle"),
         "whatsapp": contacts.get("phone_e164"),
         "website": contacts.get("website"),
@@ -289,5 +290,8 @@ def build_push_payload(
             "distrito_code": canonical.get("distrito_code"),
             "distrito_name": canonical.get("distrito_name"),
             "distrito_municipio_ibge": canonical.get("distrito_municipio_ibge"),
+            "subdistrito_name": canonical.get("subdistrito_name"),
+            "subdistrito_code": canonical.get("subdistrito_code"),
+            "distrito_source": canonical.get("distrito_source"),
         },
     }
