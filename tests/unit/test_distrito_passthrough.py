@@ -196,6 +196,50 @@ def test_website_top_level_reaches_push_payload():
 
 
 # ---------------------------------------------------------------------------
+# Phone split: Places celular → whatsapp, anything else → telefone.
+# ---------------------------------------------------------------------------
+
+
+def test_split_phone_for_push_classifies_celular_vs_fixo():
+    from brave.core.mar.service import _split_phone_for_push
+
+    # BR celular (11 national, subscriber starts 9) → whatsapp, telefone None
+    assert _split_phone_for_push("+55 73 99999-0001") == ("+5573999990001", None)
+    # BR fixo (landline, 10 national) → telefone, whatsapp None
+    assert _split_phone_for_push("+55 27 3329-0420") == (None, "+552733290420")
+    # Bare national celular (11 digits) normalises to +55 E.164 whatsapp
+    assert _split_phone_for_push("73999990001") == ("+5573999990001", None)
+    # Non-BR / unknown shape → surfaced as telefone verbatim, never guessed whatsapp
+    assert _split_phone_for_push("+1 415 555 0123") == (None, "+1 415 555 0123")
+    # Empty / None → both None
+    assert _split_phone_for_push("") == (None, None)
+    assert _split_phone_for_push(None) == (None, None)
+
+
+def test_places_celular_reaches_whatsapp_landline_reaches_telefone():
+    """A Places phone routes to whatsapp (celular) or telefone (fixo) in the push."""
+    # Celular case
+    rio = _run_rio(_attraction_payload(with_distrito=False))
+    rio.normalized["most_recent_review_at"] = (
+        datetime.now(timezone.utc) - timedelta(days=1)
+    ).isoformat()
+    rio.normalized["phone"] = "+55 73 99999-0001"
+    push = build_push_payload(_promote(rio), rio)
+    assert push["whatsapp"] == "+5573999990001"
+    assert push["telefone"] is None
+
+    # Landline case
+    rio2 = _run_rio(_attraction_payload(with_distrito=False))
+    rio2.normalized["most_recent_review_at"] = (
+        datetime.now(timezone.utc) - timedelta(days=1)
+    ).isoformat()
+    rio2.normalized["phone"] = "+55 27 3329-0420"
+    push2 = build_push_payload(_promote(rio2), rio2)
+    assert push2["telefone"] == "+552733290420"
+    assert push2["whatsapp"] is None
+
+
+# ---------------------------------------------------------------------------
 # Regression: an attraction with NO distrito signal still promotes cleanly
 # ---------------------------------------------------------------------------
 

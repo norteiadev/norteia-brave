@@ -54,6 +54,40 @@ def _attraction_review_recent(
     return (reference - review_dt) <= timedelta(days=max_age_days)
 
 
+def _split_phone_for_push(phone_raw: str | None) -> tuple[str | None, str | None]:
+    """Classify a raw phone into ``(whatsapp_e164, telefone_e164)`` for the push.
+
+    Google Places returns a single ``internationalPhoneNumber`` with no mobile/landline
+    flag. Product rule: a BR **celular** (11 national digits, subscriber part starting
+    ``9``) is a plausible WhatsApp number → the ``whatsapp`` field; anything else (fixo/
+    other) → the ``telefone`` field. Exactly one slot is filled; the other is None.
+
+    Returns E.164 (``+55…``) for a recognised BR number. A number that isn't a
+    recognisable BR shape (e.g. a foreign line) is surfaced verbatim as ``telefone``
+    (never guessed as WhatsApp). Empty/None → ``(None, None)``.
+    """
+    if not phone_raw:
+        return None, None
+    digits = "".join(c for c in phone_raw if c.isdigit())
+    if not digits:
+        return None, None
+    # Foreign line (explicit non-BR country code, e.g. "+1 415…"): never guess
+    # WhatsApp — pass through verbatim as telefone.
+    if phone_raw.strip().startswith("+") and not digits.startswith("55"):
+        return None, phone_raw
+    if digits.startswith("55") and len(digits) in (12, 13):
+        national = digits[2:]
+    elif len(digits) in (10, 11):
+        national = digits  # bare BR national (no country code)
+    else:
+        # Unrecognisable shape — never guess WhatsApp; pass through as telefone.
+        return None, phone_raw
+    e164 = f"+55{national}"
+    if len(national) == 11 and national[2] == "9":
+        return e164, None  # celular → whatsapp
+    return None, e164  # fixo / other → telefone
+
+
 def promote_to_mar(
     session: Session,
     rio_record: RioRecord,
@@ -252,6 +286,8 @@ def build_push_payload(
     municipio_ibge = canonical.get("municipio_id") or canonical.get("ibge_code")
     contacts = canonical.get("contacts") or {}
     signal = canonical.get("signal") or {}
+    # Split the Places phone: a BR celular → whatsapp, anything else → telefone.
+    wa_from_places, telefone_from_places = _split_phone_for_push(canonical.get("phone"))
     # Parent destino link (destino-first). Fall back to the canonical IBGE ref so
     # the API can resolve-or-create even when a lane didn't stamp parent_source_ref.
     parent_ref = canonical.get("parent_source_ref") or f"ibge:{uf}:{municipio_ibge}"
@@ -273,11 +309,11 @@ def build_push_payload(
         # nests them under "contacts". Read top-level first, fall back to contacts, so
         # Places-enriched atrativos (the standard path) don't silently drop their site.
         "instagram": canonical.get("instagram") or contacts.get("ig_handle"),
-        # whatsapp: still sourced only from the contact_finder "contacts" dict. The
-        # top-level `phone` (public venue phone from Places) is intentionally NOT mapped
-        # here — a public phone is not necessarily a WhatsApp number (pending product
-        # decision: map to whatsapp vs. a dedicated phone column on norteia-api).
-        "whatsapp": contacts.get("phone_e164"),
+        # Phone split (product rule): a contact_finder-supplied phone_e164 (WhatsApp
+        # lane) wins for whatsapp; otherwise a Places celular fills whatsapp and any
+        # non-celular Places number fills telefone.
+        "whatsapp": contacts.get("phone_e164") or wa_from_places,
+        "telefone": telefone_from_places,
         "website": canonical.get("website") or contacts.get("website"),
         "reliability_score": reliability,
         "provenance": flat_provenance,

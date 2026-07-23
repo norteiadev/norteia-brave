@@ -77,6 +77,9 @@ ATTRACTION_PAYLOAD = {
     "latitude": -12.6,
     "longitude": -41.4,
     "address": "Vale do Capao, s/n, Palmeiras - BA",
+    # Phone split: a BR celular → whatsapp; any other (fixo) → telefone.
+    "whatsapp": "+5573999990001",
+    "telefone": "+557332330001",
     "website": "https://example.com",
     "reliability_score": 90.0,
     "provenance": {
