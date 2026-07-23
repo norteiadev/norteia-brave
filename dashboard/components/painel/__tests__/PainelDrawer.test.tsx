@@ -181,17 +181,14 @@ describe("PainelDrawer", () => {
     );
   });
 
-  it("Log tab renders the JSON block + PT-BR pipeline timeline for a rio card", async () => {
+  it("Log tab renders the PT-BR pipeline timeline (JSON lives in Canônico)", async () => {
     server.use(atrativoDetailSuccess());
-    const { getByTestId, findByTestId, findAllByTestId } = renderWithClient(
-      <PainelDrawer card={atrativoRioCard} onClose={vi.fn()} />,
-    );
+    const { getByTestId, findByTestId, findAllByTestId, queryByTestId } =
+      renderWithClient(<PainelDrawer card={atrativoRioCard} onClose={vi.fn()} />);
 
     fireEvent.click(getByTestId("drawer-tab-log"));
 
-    // (1) legible JSON block mirrors the atrativo detail projection.
-    expect(await findByTestId("drawer-log-json")).toBeInTheDocument();
-    // (2) one timeline row per RecordEvent (sampleAtrativoDetail has 7).
+    // (1) one timeline row per RecordEvent (sampleAtrativoDetail has 7).
     const steps = await findAllByTestId("drawer-log-step");
     expect(steps).toHaveLength(7);
     // PT-BR stage labels (not raw slugs).
@@ -200,6 +197,13 @@ describe("PainelDrawer", () => {
       true,
     );
     expect(steps.some((s) => s.textContent?.includes("Roteado"))).toBe(true);
+    // (2) the normalized JSON is NO LONGER in the Log tab.
+    expect(queryByTestId("drawer-log-json")).not.toBeInTheDocument();
+
+    // (3) it now lives in the Canônico tab.
+    fireEvent.click(getByTestId("drawer-tab-canonico"));
+    expect(await findByTestId("drawer-log-json")).toBeInTheDocument();
+    expect(queryByTestId("drawer-log-step")).not.toBeInTheDocument();
   });
 
   it("Log tab (falha card) renders the ibge_unmatched reason + a fail step", async () => {

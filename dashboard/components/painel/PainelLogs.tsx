@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { SOURCE_LABELS, type EngineSource } from "@/lib/engine-api";
 import { fetchLogs, logsKeys, type LogLine } from "@/lib/logs-api";
+import { humanizeLogEvent, formatLogTime } from "@/lib/log-humanize";
 
 interface PainelLogsProps {
   open: boolean;
@@ -118,7 +119,7 @@ export function PainelLogs({
               style={{ color: "var(--painel-muted-2)" }}
               className="mr-[8px] select-none"
             >
-              {String(l.id).padStart(4, "0")}
+              {formatLogTime(l.ts)}
             </span>
             <span
               style={{ color: levelColor(l.level) }}
@@ -126,7 +127,9 @@ export function PainelLogs({
             >
               {l.level?.slice(0, 4)}
             </span>
-            <span style={{ color: "var(--painel-text)" }}>{l.event}</span>
+            <span style={{ color: "var(--painel-text)" }}>
+              {humanizeLogEvent(l)}
+            </span>
           </div>
         ))
       )}

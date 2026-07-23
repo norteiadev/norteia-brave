@@ -66,7 +66,7 @@ function MetricCard({ label, type, m }: MetricCardProps) {
           </div>
           <div className="h-1.5 overflow-hidden rounded-full bg-[var(--painel-chip)]">
             <div
-              className="h-full rounded-full bg-[var(--status-mar)]"
+              className="h-full rounded-full bg-[var(--status-mar)] transition-[width] duration-500 ease-out"
               style={{ width: `${m.pct}%` }}
             />
           </div>
@@ -77,19 +77,17 @@ function MetricCard({ label, type, m }: MetricCardProps) {
 }
 
 export interface PainelMetricsProps {
-  destino: EntityMetric;
   atrativo: EntityMetric;
 }
 
 /**
- * The Painel header's two metric cards. Purely presentational and props-driven:
- * the container (plan 17-05) sources the `EntityMetric`s from `usePainelMetrics`.
- * This component never calls a hook or `buildMetrics`.
+ * The Painel header's Atrativos metric card. Purely presentational and
+ * props-driven: the container (plan 17-05) sources the `EntityMetric` from
+ * `usePainelMetrics`. This component never calls a hook or `buildMetrics`.
  */
-export function PainelMetrics({ destino, atrativo }: PainelMetricsProps) {
+export function PainelMetrics({ atrativo }: PainelMetricsProps) {
   return (
     <div className="flex gap-[14px]">
-      <MetricCard label="Destinos" type="destino" m={destino} />
       <MetricCard label="Atrativos" type="atrativo" m={atrativo} />
     </div>
   );

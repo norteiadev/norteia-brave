@@ -288,6 +288,26 @@ describe("PainelTopbar", () => {
     expect(startBody).not.toHaveProperty("max_atrativos_per_uf");
   });
 
+  it("clicking outside the motor wrapper closes the open depth menu", async () => {
+    server.use(
+      engineStatus({ source: "tripadvisor", enabled: false, state: "idle", mode: "DESLIGADO" }),
+      taSessionStatus({ present: true, expires_in: 1200 }),
+      engineStartSuccess(),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+
+    const ligar = await screen.findByTestId("painel-motor-ligar");
+    await user.click(ligar);
+    await screen.findByTestId("painel-depth-menu");
+
+    // Click somewhere outside the motor wrapper (the page title) → menu closes.
+    await user.click(screen.getByTestId("painel-topbar"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("painel-depth-menu")).toBeNull(),
+    );
+  });
+
   it("opening the depth menu without picking does NOT fire POST /start", async () => {
     let startCalled = false;
     server.use(

@@ -147,7 +147,7 @@ describe("RecordCard", () => {
     expect(onDragStart).toHaveBeenCalledWith(card);
   });
 
-  // --- Phase H: edit-lock + DLQ→WhatsApp selection ---
+  // --- Phase H: edit-lock ---
 
   it("is NOT draggable when editingUnlocked is false (edit-lock)", () => {
     const onDragStart = vi.fn();
@@ -164,50 +164,5 @@ describe("RecordCard", () => {
     // The drag handler is detached, so a native dragstart fires nothing.
     root.dispatchEvent(new Event("dragstart", { bubbles: true }));
     expect(onDragStart).not.toHaveBeenCalled();
-  });
-
-  it("renders a select checkbox on a DLQ atrativo; disabled when ineligible", () => {
-    render(
-      <RecordCard
-        card={makeCard({ type: "atrativo", column: "dlq", whatsappEligible: false })}
-        onDragStart={noop}
-        onRetry={noop}
-        onSelectToggle={vi.fn()}
-      />,
-    );
-    const box = screen.getByTestId("record-card-select") as HTMLInputElement;
-    expect(box.disabled).toBe(true);
-  });
-
-  it("select checkbox toggles selection without opening the drawer (stopPropagation)", async () => {
-    const user = userEvent.setup();
-    const onSelectToggle = vi.fn();
-    const onClick = vi.fn();
-    const card = makeCard({ type: "atrativo", column: "dlq", whatsappEligible: true });
-    render(
-      <RecordCard
-        card={card}
-        onDragStart={noop}
-        onRetry={noop}
-        onClick={onClick}
-        onSelectToggle={onSelectToggle}
-      />,
-    );
-    await user.click(screen.getByTestId("record-card-select"));
-    expect(onSelectToggle).toHaveBeenCalledWith(card);
-    expect(onClick).not.toHaveBeenCalled();
-  });
-
-  it("does NOT render a select checkbox when editing is locked", () => {
-    render(
-      <RecordCard
-        card={makeCard({ type: "atrativo", column: "dlq", whatsappEligible: true })}
-        onDragStart={noop}
-        onRetry={noop}
-        onSelectToggle={vi.fn()}
-        editingUnlocked={false}
-      />,
-    );
-    expect(screen.queryByTestId("record-card-select")).not.toBeInTheDocument();
   });
 });
