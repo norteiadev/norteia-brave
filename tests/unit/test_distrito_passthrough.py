@@ -169,6 +169,33 @@ def test_distrito_survives_promote_to_mar_and_push_payload():
 
 
 # ---------------------------------------------------------------------------
+# D3: website written TOP-LEVEL by Places enrichment (no "contacts" dict) must
+# still reach the Mar push payload (previously read only from canonical["contacts"]).
+# ---------------------------------------------------------------------------
+
+
+def test_website_top_level_reaches_push_payload():
+    """A Places-enriched atrativo (website at normalized top level, no contacts
+    sub-dict) must not silently drop its website in the norteia-api push."""
+    rio = _run_rio(_attraction_payload(with_distrito=False))
+    # SignalAgent recency so the attraction backstop promotes instead of DLQ.
+    rio.normalized["most_recent_review_at"] = (
+        datetime.now(timezone.utc) - timedelta(days=1)
+    ).isoformat()
+    # Places enrichment writes website at the TOP LEVEL of normalized (D3): there is
+    # NO "contacts" sub-dict on this path (only the retiring contact_finder lane nests).
+    rio.normalized["website"] = "https://conventodapenha.org.br/"
+
+    mar = _promote(rio)
+    assert mar is not None
+    assert "contacts" not in mar.canonical  # Places path — no contact_finder nesting
+
+    push = build_push_payload(mar, rio)
+    # Pre-fix this was None (payload read website only from canonical["contacts"]).
+    assert push["website"] == "https://conventodapenha.org.br/"
+
+
+# ---------------------------------------------------------------------------
 # Regression: an attraction with NO distrito signal still promotes cleanly
 # ---------------------------------------------------------------------------
 

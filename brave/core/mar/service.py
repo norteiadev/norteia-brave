@@ -268,9 +268,17 @@ def build_push_payload(
         "latitude": canonical.get("lat"),
         "longitude": canonical.get("lon"),
         "address": canonical.get("address"),
-        "instagram": contacts.get("ig_handle"),
+        # D3: the Places-enrichment lane writes website/instagram at the TOP LEVEL of
+        # normalized (no "contacts" sub-dict); only the retiring contact_finder lane
+        # nests them under "contacts". Read top-level first, fall back to contacts, so
+        # Places-enriched atrativos (the standard path) don't silently drop their site.
+        "instagram": canonical.get("instagram") or contacts.get("ig_handle"),
+        # whatsapp: still sourced only from the contact_finder "contacts" dict. The
+        # top-level `phone` (public venue phone from Places) is intentionally NOT mapped
+        # here — a public phone is not necessarily a WhatsApp number (pending product
+        # decision: map to whatsapp vs. a dedicated phone column on norteia-api).
         "whatsapp": contacts.get("phone_e164"),
-        "website": contacts.get("website"),
+        "website": canonical.get("website") or contacts.get("website"),
         "reliability_score": reliability,
         "provenance": flat_provenance,
         "destino": {
