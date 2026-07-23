@@ -566,6 +566,31 @@ def transition_destino(
 
         validate_and_promote_rio(db, rio)
         db.refresh(rio)
+        if rio.routing != "mar":
+            # D1: the reliability/liveness gate held the record in the Rio (e.g.
+            # dlq_reason=no_recent_reviews). Audit the REAL outcome (not a phantom
+            # transition_mar) and 409 with the reason so the UI shows "segurado no
+            # Rio" instead of a ghost Mar move that reverts on the next poll.
+            write_audit(
+                session=db,
+                action="promote_held",
+                entity_type=rio.entity_type,
+                record_id=rio.id,
+                before_state=before_state,
+                after_state={
+                    "column": _ROUTING_TO_COLUMN.get(rio.routing, rio.routing),
+                    "routing": rio.routing,
+                },
+                actor="steward",
+            )
+            db.commit()
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "registro não cruzou o gate de confiabilidade e permanece no "
+                    f"Rio (motivo: {rio.dlq_reason or 'reprovado'})"
+                ),
+            )
     elif edge == "descarte":
         rio.routing = "descarte"
         rio.dlq_reason = "steward_rejected"
@@ -591,6 +616,29 @@ def transition_destino(
         actor="steward",
     )
     db.commit()
+
+    # D2: a steward promote that reached Mar must publish to norteia-api, same
+    # contract as the pipeline. Commit already happened above (WR-01); the push
+    # task early-returns if routing != "mar" and is idempotent by source_ref.
+    if edge == "promote" and rio.routing == "mar":
+        try:
+            from brave.tasks.pipeline import push_destination_task
+
+            push_destination_task.delay(str(rio_id))
+        except Exception as exc:  # noqa: BLE001 — narrow via run_real_externals below
+            from brave.config.settings import AppConfig
+
+            if AppConfig().run_real_externals:
+                logger.error("destino_push_dispatch_failed", rio_id=str(rio_id), error=str(exc))
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Destino promovido ao Mar, mas a publicação para a "
+                        "norteia-api falhou (broker indisponível). Refaça a "
+                        "promoção quando o broker voltar para redisparar o push."
+                    ),
+                ) from exc
+
     return {"status": "ok", "to": body.to}
 
 

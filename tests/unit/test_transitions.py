@@ -193,9 +193,15 @@ def test_transition_destino_rio_to_mar_reuses_promote_helper():
     rio = _rio(routing="in_progress")
     db = _db_for(rio)
 
-    with patch("brave.core.dlq.service.validate_and_promote_rio") as promote, patch(
-        "brave.api.routers.cms.write_audit"
-    ) as audit:
+    def _promote(_db, _rio):
+        # The gate passes: record crosses into Mar.
+        _rio.routing = "mar"
+
+    with patch(
+        "brave.core.dlq.service.validate_and_promote_rio", side_effect=_promote
+    ) as promote, patch("brave.api.routers.cms.write_audit") as audit, patch(
+        "brave.tasks.pipeline.push_destination_task.delay"
+    ) as push:
         result = transition_destino(
             rio_id=rio.id,
             # Merge: in_progress derives column "dlq" now, so expected="dlq".
@@ -206,7 +212,41 @@ def test_transition_destino_rio_to_mar_reuses_promote_helper():
     promote.assert_called_once()
     assert audit.call_args.kwargs["action"] == "transition_mar"
     db.commit.assert_called_once()
+    # D2: a promote that reached Mar publishes to norteia-api.
+    push.assert_called_once_with(str(rio.id))
     assert result == {"status": "ok", "to": "mar"}
+
+
+def test_transition_destino_promote_held_by_gate_is_409_and_no_push():
+    """D1/D2: promote where the reliability gate holds the record in the Rio.
+
+    validate_and_promote_rio leaves routing != 'mar' → 409, audit
+    action='promote_held' (NOT transition_mar), and NO norteia-api push.
+    """
+    rio = _rio(routing="in_progress", dlq_reason="no_recent_reviews")
+    db = _db_for(rio)
+
+    def _promote(_db, _rio):
+        # Gate holds: record stays in the DLQ/Rio, never reaches Mar.
+        _rio.routing = "dlq"
+
+    with patch(
+        "brave.core.dlq.service.validate_and_promote_rio", side_effect=_promote
+    ), patch("brave.api.routers.cms.write_audit") as audit, patch(
+        "brave.tasks.pipeline.push_destination_task.delay"
+    ) as push, pytest.raises(
+        HTTPException
+    ) as exc:
+        transition_destino(
+            rio_id=rio.id,
+            body=TransitionBody(to="mar", expected="dlq"),
+            db=db,
+        )
+
+    assert exc.value.status_code == 409
+    assert audit.call_args.kwargs["action"] == "promote_held"
+    push.assert_not_called()
+    db.commit.assert_called_once()
 
 
 def test_transition_destino_dlq_to_rio_reuses_reprocess_helper():
@@ -336,9 +376,15 @@ def test_transition_atrativo_rio_to_mar_reuses_validate_and_promote():
     rio = _atr(routing="in_progress")
     db = _db_for(rio)
 
-    with patch("brave.api.routers.atrativos.validate_and_promote_rio") as promote, patch(
-        "brave.api.routers.atrativos.write_audit"
-    ) as audit:
+    # The gate crosses: validate_and_promote_rio flips routing to "mar".
+    def _promote(_db, r):
+        r.routing = "mar"
+
+    with patch(
+        "brave.api.routers.atrativos.validate_and_promote_rio", side_effect=_promote
+    ) as promote, patch("brave.api.routers.atrativos.write_audit") as audit, patch(
+        "brave.tasks.pipeline.push_attraction_task.delay"
+    ) as push:
         result = transition_atrativo(
             rio_id=rio.id,
             # Rio/DLQ merge: an in_progress atrativo now rests in the "dlq"-keyed
@@ -350,7 +396,36 @@ def test_transition_atrativo_rio_to_mar_reuses_validate_and_promote():
     promote.assert_called_once()
     assert audit.call_args.kwargs["action"] == "transition_mar"
     db.commit.assert_called_once()
+    # D2: a steward promote that reached Mar publishes to norteia-api.
+    push.assert_called_once_with(str(rio.id))
     assert result == {"status": "ok", "to": "mar"}
+
+
+def test_transition_atrativo_promote_held_is_409_and_does_not_push():
+    """D1/D2: the gate holds the record in the Rio (routing stays != mar) → 409,
+    audit action is promote_held (NOT transition_mar), and NO push is dispatched."""
+    rio = _atr(routing="in_progress")
+    db = _db_for(rio)
+
+    # The gate does NOT cross: routing stays in_progress, a dlq_reason is set.
+    def _hold(_db, r):
+        r.dlq_reason = "no_recent_reviews"
+
+    with patch(
+        "brave.api.routers.atrativos.validate_and_promote_rio", side_effect=_hold
+    ), patch("brave.api.routers.atrativos.write_audit") as audit, patch(
+        "brave.tasks.pipeline.push_attraction_task.delay"
+    ) as push, pytest.raises(HTTPException) as exc:
+        transition_atrativo(
+            rio_id=rio.id,
+            body=TransitionBody(to="mar", expected="dlq"),
+            db=db,
+        )
+
+    assert exc.value.status_code == 409
+    assert audit.call_args.kwargs["action"] == "promote_held"
+    push.assert_not_called()
+    assert rio.routing != "mar"
 
 
 def test_transition_atrativo_into_whatsapp_delegates_only_from_aguardando():
