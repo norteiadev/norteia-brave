@@ -30,7 +30,7 @@ describe("PainelLogs", () => {
     expect(panel.style.transform).toContain("translateX(0)");
   });
 
-  it("shows log event text from MSW handler", async () => {
+  it("shows humanized log event text from MSW handler", async () => {
     server.use(logsLines());
     renderWithClient(
       <PainelLogs open={true} onClose={vi.fn()} source="tripadvisor" />,
@@ -38,7 +38,9 @@ describe("PainelLogs", () => {
     const lines = await screen.findAllByTestId("log-line");
     expect(lines.length).toBe(2);
     const allText = lines.map((l) => l.textContent ?? "").join(" ");
-    expect(allText).toContain("page_ingested");
+    // Raw slug is prettified by the smart fallback, not shown verbatim.
+    expect(allText).toContain("Page ingested");
+    expect(allText).not.toContain("page_ingested");
   });
 
   it("header shows source label", async () => {

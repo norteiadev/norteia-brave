@@ -228,6 +228,27 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     prevEnabledRef.current = enabled;
   }, [data?.enabled]);
 
+  // Close the depth menu on any click outside its wrapper (Ligar included, so the
+  // Ligar toggle keeps working) or on Escape. Mirrors PainelFilters' popover pattern.
+  const motorRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!depthMenuOpen) return;
+    function onDown(e: MouseEvent) {
+      if (motorRef.current && !motorRef.current.contains(e.target as Node)) {
+        setDepthMenuOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setDepthMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [depthMenuOpen]);
+
   const onLigar = () => {
     if (pending) return;
     // A GENUINELY-running LIGADO is a no-op. But a DESYNCED LIGADO — mode says LIGADO
@@ -439,7 +460,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
                 runtime "Execução …" indicator above — hence "Modo · …", not "Motor · …". */}
             Modo · {ENGINE_MODE_LABELS[mode]}
           </span>
-          <div className="relative">
+          <div className="relative" ref={motorRef}>
             <div
               role="group"
               aria-label="Modo do motor"

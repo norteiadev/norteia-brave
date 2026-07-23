@@ -99,6 +99,13 @@ export interface PainelCard {
   duplicate: boolean;
   error: string | null;
   /**
+   * Ingest/creation timestamp (ISO) used to order a column newest→oldest so
+   * freshly-ingested records surface at the top. nascente→ingested_at,
+   * atrativo→created_at, falha→null (no reliable ts here; sorts last). Optional
+   * so pre-existing PainelCard literals stay valid; absent sorts as null.
+   */
+  createdAt?: string | null;
+  /**
    * DLQ→WhatsApp eligibility (phase H) — only meaningful for a DLQ-column
    * atrativo. False ⇒ the card already has horário/preço and its selection
    * checkbox is disabled. Absent/true ⇒ selectable (the batch 422 is the
@@ -109,11 +116,12 @@ export interface PainelCard {
 
 // --- Constants ---
 
-/** The 5 ordered stage columns (copy matches the design canvas, pt-BR). */
+/** The ordered stage columns (copy matches the design canvas, pt-BR). The
+ *  "whatsapp" key stays a valid target (aguardando_consulta_whatsapp atrativos
+ *  still map to it) but has NO column entry, so it renders nowhere — hidden. */
 export const COLUMN_DEFS: { key: PainelColumnKey; label: string }[] = [
   { key: "nascente", label: "Nascente" },
   { key: "dlq", label: "Rio · revisão" },
-  { key: "whatsapp", label: "WhatsApp · contato" },
   { key: "mar", label: "Mar · publicado" },
   { key: "falha", label: "Falha" },
 ];
@@ -145,14 +153,6 @@ const WHATSAPP_SUB_STATE = "aguardando_consulta_whatsapp";
 /** Map a list item's `routing` to a column key; unknown/empty → "nascente". */
 export function routingToColumn(routing: string): PainelColumnKey {
   return ROUTING_TO_COLUMN.get(routing) ?? "nascente";
-}
-
-/** Destino município best-effort: last `:`-segment of canonical_key, else null. */
-function municipalityFromCanonicalKey(canonicalKey: string | null): string | null {
-  if (!canonicalKey) return null;
-  const parts = canonicalKey.split(":");
-  const last = parts[parts.length - 1];
-  return last ? last : null;
 }
 
 /**
@@ -191,22 +191,7 @@ export function toPainelCards(
     source: n.source,
     duplicate: false,
     error: null,
-  }));
-
-  const destinoCards: PainelCard[] = destinos.map((d) => ({
-    id: d.id,
-    type: "destino" as const,
-    name: d.name,
-    uf: d.uf,
-    // Prefer the resolved município NOME; fall back to the canonical_key segment
-    // (IBGE code) only for legacy records ingested before município was preserved.
-    municipality: d.municipio ?? municipalityFromCanonicalKey(d.canonical_key),
-    routing: d.routing,
-    column: routingToColumn(d.routing),
-    score: d.score,
-    source: d.source,
-    duplicate: dedupCandidateIds.has(d.id),
-    error: null,
+    createdAt: n.ingested_at,
   }));
 
   const atrativoCards: PainelCard[] = atrativos.map((a) => ({
@@ -224,6 +209,7 @@ export function toPainelCards(
     source: a.source,
     duplicate: dedupCandidateIds.has(a.id),
     error: null,
+    createdAt: a.created_at,
     // Phase H DLQ→WhatsApp gate: absent from the list ⇒ eligible (the batch 422
     // is authoritative); false ⇒ already has horário/preço → checkbox disabled.
     whatsappEligible: a.whatsapp_eligible ?? true,
@@ -231,7 +217,10 @@ export function toPainelCards(
 
   const falhaCards = failures.map(failureToCard);
 
-  return [...nascenteCards, ...destinoCards, ...atrativoCards, ...falhaCards];
+  // Destino cards are intentionally excluded from the board (the `destinos`
+  // param is kept for the call/test contract). Only atrativos, unrouted
+  // nascente rows, and falhas render.
+  return [...nascenteCards, ...atrativoCards, ...falhaCards];
 }
 
 /** Infer the entity type of a quarantined task from its task_name (legacy path). */
@@ -266,6 +255,7 @@ function failureToCard(f: FailureCard | FailureItem): PainelCard {
       source: null,
       duplicate: false,
       error: f.error,
+      createdAt: null,
     };
   }
   return {
@@ -281,6 +271,7 @@ function failureToCard(f: FailureCard | FailureItem): PainelCard {
     source: null,
     duplicate: false,
     error: f.error_message,
+    createdAt: null,
   };
 }
 
@@ -304,14 +295,25 @@ export function filterCards(
   });
 }
 
-/** Bucket cards into the 6 ordered stage columns. */
+/**
+ * Compare two cards by createdAt DESCENDING (newest first). Nulls sort last.
+ * String compare of ISO timestamps is order-equivalent to Date.parse and stable.
+ */
+function byCreatedAtDesc(a: PainelCard, b: PainelCard): number {
+  if (a.createdAt === b.createdAt) return 0;
+  if (a.createdAt == null) return 1; // a is oldest → after b
+  if (b.createdAt == null) return -1; // b is oldest → after a
+  return a.createdAt < b.createdAt ? 1 : -1;
+}
+
+/** Bucket cards into the ordered stage columns, newest-first within each. */
 export function buildColumns(
   cards: PainelCard[],
 ): { key: PainelColumnKey; label: string; cards: PainelCard[] }[] {
   return COLUMN_DEFS.map(({ key, label }) => ({
     key,
     label,
-    cards: cards.filter((c) => c.column === key),
+    cards: cards.filter((c) => c.column === key).sort(byCreatedAtDesc),
   }));
 }
 
@@ -423,7 +425,10 @@ export function usePainelBoard(
  * Metrics are UF-scoped when a UF is selected (pass `uf`) so the pills reflect
  * the same slice as the board; with `uf = null` they reflect the WHOLE base.
  */
-export function usePainelMetrics(uf: string | null = null): {
+export function usePainelMetrics(
+  uf: string | null = null,
+  intervalMs: number = ENGINE_REFETCH_INTERVAL_MS,
+): {
   destino: EntityMetric;
   atrativo: EntityMetric;
   nascenteCount: number;
@@ -434,33 +439,33 @@ export function usePainelMetrics(uf: string | null = null): {
   const destinoTotal = useQuery({
     queryKey: destinoKeys.list({ count: "total", uf }),
     queryFn: () => fetchDestinoList({ limit: 1, uf: ufParam }),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
   });
   const destinoMar = useQuery({
     queryKey: destinoKeys.list({ count: "mar", uf }),
     queryFn: () => fetchDestinoList({ routing: "mar", limit: 1, uf: ufParam }),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
   });
   const destinoFalha = useQuery({
     queryKey: destinoKeys.list({ count: "descarte", uf }),
     queryFn: () => fetchDestinoList({ routing: "descarte", limit: 1, uf: ufParam }),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
   });
 
   const atrativoTotal = useQuery({
     queryKey: atrativoKeys.list({ count: "total", uf }),
     queryFn: () => fetchAtrativoList({ limit: 1, uf: ufParam }),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
   });
   const atrativoMar = useQuery({
     queryKey: atrativoKeys.list({ count: "mar", uf }),
     queryFn: () => fetchAtrativoList({ routing: "mar", limit: 1, uf: ufParam }),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
   });
   const atrativoFalha = useQuery({
     queryKey: atrativoKeys.list({ count: "descarte", uf }),
     queryFn: () => fetchAtrativoList({ routing: "descarte", limit: 1, uf: ufParam }),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
   });
 
   // Nascente count from the nascente list ENVELOPE total (current versions
@@ -470,7 +475,7 @@ export function usePainelMetrics(uf: string | null = null): {
   const nascenteTotal = useQuery({
     queryKey: nascenteKeys.list({ count: "total", uf }),
     queryFn: () => fetchNascenteList({ limit: 1, uf: ufParam }),
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchInterval: intervalMs,
   });
 
   const queries = [

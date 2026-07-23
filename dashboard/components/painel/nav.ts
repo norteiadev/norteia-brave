@@ -40,7 +40,7 @@ export const NAV_GROUPS: { group: PainelNavGroup; items: PainelNavItem[] }[] = [
   {
     group: "Processamento",
     items: [
-      { key: "painel", label: "Painel (Kanban)", group: "Processamento" },
+      { key: "painel", label: "Painel de Processamento", group: "Processamento" },
       { key: "duplicados", label: "Duplicados", group: "Processamento" },
       { key: "mapeamento", label: "Mapeamento", group: "Processamento" },
       { key: "varreduras", label: "Varreduras", group: "Processamento" },
@@ -50,7 +50,6 @@ export const NAV_GROUPS: { group: PainelNavGroup; items: PainelNavItem[] }[] = [
     group: "Operação",
     items: [
       { key: "revisao", label: "Rio / Revisão", group: "Operação" },
-      { key: "conversas", label: "Conversas WhatsApp", group: "Operação" },
       { key: "custo", label: "Custo & LLM", group: "Operação" },
     ],
   },

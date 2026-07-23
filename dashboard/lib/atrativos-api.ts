@@ -34,6 +34,7 @@ export interface AtrativoListItem {
   validation_pending: boolean; // sub_state === 'aguardando_consulta_whatsapp'
   mar_id: string | null;
   parent_mar_id: string | null;
+  created_at?: string | null; // Nascente ingest timestamp — board newest-first sort
   contacts_summary: {
     phone_masked: string | null; // NEVER phone_e164 — already masked by backend
     website: string | null;

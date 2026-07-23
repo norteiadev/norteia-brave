@@ -39,9 +39,6 @@ export interface PainelBoardProps {
   isPending?: boolean;
   /** Edit-lock (phase H): forwarded to every card (draggable/selectable gate). */
   editingUnlocked?: boolean;
-  /** DLQ→WhatsApp multi-select state, owned by the container. */
-  selectedIds?: ReadonlySet<string>;
-  onToggleSelect?: (c: PainelCard) => void;
 }
 
 const COLUMN_DOT: Record<PainelColumnKey, string> = {
@@ -69,8 +66,6 @@ interface PainelColumnProps {
   onCardClick?: (c: PainelCard) => void;
   isPending?: boolean;
   editingUnlocked?: boolean;
-  selectedIds?: ReadonlySet<string>;
-  onToggleSelect?: (c: PainelCard) => void;
 }
 
 /**
@@ -87,8 +82,6 @@ function PainelColumn({
   onCardClick,
   isPending,
   editingUnlocked,
-  selectedIds,
-  onToggleSelect,
 }: PainelColumnProps) {
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -103,6 +96,7 @@ function PainelColumn({
   // count is the observable proxy for a data/filter change (simple, no deep
   // compare) — enough to re-cap a re-filtered/reloaded column at 100.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset the render window when the column data/filter identity changes
     setVisibleCount(INITIAL_VISIBLE);
   }, [column.key, column.cards.length]);
 
@@ -171,8 +165,6 @@ function PainelColumn({
             onRetry={onCardRetry}
             onClick={onCardClick}
             editingUnlocked={editingUnlocked}
-            selected={selectedIds?.has(card.id) ?? false}
-            onSelectToggle={onToggleSelect}
           />
         ))}
         {hasMore ? (
@@ -203,8 +195,6 @@ export function PainelBoard({
   onCardClick,
   isPending,
   editingUnlocked,
-  selectedIds,
-  onToggleSelect,
 }: PainelBoardProps) {
   const columns = buildColumns(cards);
 
@@ -222,8 +212,6 @@ export function PainelBoard({
           onCardClick={onCardClick}
           isPending={isPending}
           editingUnlocked={editingUnlocked}
-          selectedIds={selectedIds}
-          onToggleSelect={onToggleSelect}
         />
       ))}
     </div>

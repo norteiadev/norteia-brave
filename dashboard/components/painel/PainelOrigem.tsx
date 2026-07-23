@@ -167,6 +167,7 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
   // selection while the modal is open.
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- re-latch source on the open edge
       setSource(initialSource ?? "tripadvisor");
       setErrorKind(null);
     }

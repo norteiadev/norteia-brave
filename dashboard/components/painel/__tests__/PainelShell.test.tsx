@@ -33,7 +33,7 @@ beforeEach(() => {
 });
 
 describe("PainelShell", () => {
-  it("renders all 6 nav items, both group headers and the operator footer", () => {
+  it("renders all 5 nav items, both group headers and the operator footer", () => {
     renderShell(
       <PainelShell
         active="painel"
@@ -44,12 +44,11 @@ describe("PainelShell", () => {
       </PainelShell>,
     );
 
-    // 6 nav labels (pt-BR, from the design contract)
-    expect(screen.getByText("Painel (Kanban)")).toBeInTheDocument();
+    // 5 nav labels (pt-BR, from the design contract; Conversas WhatsApp retired)
+    expect(screen.getByText("Painel de Processamento")).toBeInTheDocument();
     expect(screen.getByText("Duplicados")).toBeInTheDocument();
     expect(screen.getByText("Mapeamento")).toBeInTheDocument();
     expect(screen.getByText("Varreduras")).toBeInTheDocument();
-    expect(screen.getByText("Conversas WhatsApp")).toBeInTheDocument();
     expect(screen.getByText("Custo & LLM")).toBeInTheDocument();
 
     // group headers
@@ -72,7 +71,7 @@ describe("PainelShell", () => {
       </PainelShell>,
     );
 
-    const activeBtn = screen.getByText("Painel (Kanban)").closest("button");
+    const activeBtn = screen.getByText("Painel de Processamento").closest("button");
     expect(activeBtn).toHaveAttribute("aria-current", "page");
     expect(activeBtn).toHaveAttribute("data-active", "true");
 

@@ -79,6 +79,7 @@ const atrativos: AtrativoListItem[] = [
     mar_id: null,
     parent_mar_id: "mar-1",
     contacts_summary: { phone_masked: "**1234", website: "https://x" },
+    created_at: "2026-06-10T09:00:00Z",
   },
   {
     id: "a-descarte",
@@ -93,6 +94,7 @@ const atrativos: AtrativoListItem[] = [
     mar_id: null,
     parent_mar_id: null,
     contacts_summary: { phone_masked: "**5678", website: null },
+    created_at: "2026-06-11T09:00:00Z",
   },
 ];
 
@@ -119,23 +121,19 @@ describe("routingToColumn", () => {
 });
 
 describe("toPainelCards", () => {
-  it("maps destinos + atrativos into a unified PainelCard[]", () => {
+  it("maps atrativos into a unified PainelCard[] and EXCLUDES destino cards", () => {
     const cards = toPainelCards(destinos, atrativos);
-    expect(cards).toHaveLength(4);
-
-    const mar = cards.find((c) => c.id === "d-mar")!;
-    expect(mar.type).toBe("destino");
-    expect(mar.column).toBe("mar");
-    expect(mar.name).toBe("Copacabana");
-    expect(mar.uf).toBe("RJ");
-    expect(mar.score).toBe(91.2);
-    // destino município derived from canonical_key last segment
-    expect(mar.municipality).toBe("copacabana");
+    // destinos are no longer surfaced on the board — only the 2 atrativos.
+    expect(cards).toHaveLength(2);
+    expect(cards.find((c) => c.id === "d-mar")).toBeUndefined();
+    expect(cards.find((c) => c.id === "d-dlq")).toBeUndefined();
 
     const atr = cards.find((c) => c.id === "a-inprog")!;
     expect(atr.type).toBe("atrativo");
     expect(atr.column).toBe("dlq");
     expect(atr.municipality).toBeNull();
+    // createdAt is projected from the list item's created_at.
+    expect(atr.createdAt).toBe("2026-06-10T09:00:00Z");
   });
 
   it("buckets an atrativo in sub_state aguardando_consulta_whatsapp into the whatsapp column", () => {
@@ -152,6 +150,7 @@ describe("toPainelCards", () => {
       mar_id: null,
       parent_mar_id: null,
       contacts_summary: { phone_masked: "**9999", website: null },
+      created_at: "2026-06-12T09:00:00Z",
     };
     const cards = toPainelCards([], [wa]);
     expect(cards).toHaveLength(1);
@@ -172,6 +171,7 @@ describe("toPainelCards", () => {
       mar_id: null,
       parent_mar_id: null,
       contacts_summary: null,
+      created_at: "2026-06-13T09:00:00Z",
     };
     const [card] = toPainelCards([], [descartado]);
     expect(card.routing).toBe("descarte");
@@ -191,6 +191,7 @@ describe("toPainelCards", () => {
       mar_id: null,
       parent_mar_id: null,
       contacts_summary: null,
+      created_at: "2026-06-14T09:00:00Z",
     };
     const cards = toPainelCards([], [
       { ...base, id: "a-elig", whatsapp_eligible: true },
@@ -270,16 +271,14 @@ describe("toPainelCards", () => {
   });
 
   it("derives `duplicate` from the dedup-candidate id set (a REAL dedup signal), NOT validation_pending", () => {
-    // d-dlq and a-descarte have validation_pending=true but are NOT dedup
-    // candidates. The old code blanket-flagged them ("possível duplicado" on the
-    // whole DLQ column); the fix flags a card ONLY when its rio id is a pending
-    // candidate↔Mar dedup pair (the same source the Duplicados view reads).
-    const dedupCandidateIds = new Set(["d-mar", "a-inprog"]);
+    // a-descarte has validation_pending=true but is NOT a dedup candidate. The
+    // old code blanket-flagged the whole DLQ column; the fix flags a card ONLY
+    // when its rio id is a pending candidate↔Mar dedup pair (the same source the
+    // Duplicados view reads).
+    const dedupCandidateIds = new Set(["a-inprog"]);
     const cards = toPainelCards(destinos, atrativos, [], [], dedupCandidateIds);
-    expect(cards.find((c) => c.id === "d-mar")!.duplicate).toBe(true);
     expect(cards.find((c) => c.id === "a-inprog")!.duplicate).toBe(true);
     // validation_pending=true but not a dedup candidate ⇒ NOT flagged.
-    expect(cards.find((c) => c.id === "d-dlq")!.duplicate).toBe(false);
     expect(cards.find((c) => c.id === "a-descarte")!.duplicate).toBe(false);
     // No dedup set passed (default empty) ⇒ nothing is flagged.
     expect(
@@ -291,8 +290,7 @@ describe("toPainelCards", () => {
     const cards = toPainelCards(destinos, atrativos);
     // Regression: rio/dlq cards used to drop source (always null), leaving
     // TripAdvisor-synced cards with no origin shown. Source now flows from the
-    // list item (destino → ibge, atrativo → tripadvisor here).
-    expect(cards.find((c) => c.id === "d-mar")!.source).toBe("ibge");
+    // list item (atrativo → tripadvisor here).
     expect(cards.find((c) => c.id === "a-inprog")!.source).toBe("tripadvisor");
     for (const c of cards) {
       expect(c.error).toBeNull();
@@ -314,60 +312,85 @@ describe("toPainelCards", () => {
 });
 
 describe("filterCards", () => {
+  // destinos are excluded from the board → only the 2 atrativos remain.
   const cards = toPainelCards(destinos, atrativos);
 
-  it("type 'all' keeps both entity types", () => {
-    expect(filterCards(cards, { type: "all", uf: null })).toHaveLength(4);
+  it("type 'all' keeps every card", () => {
+    expect(filterCards(cards, { type: "all", uf: null })).toHaveLength(2);
   });
 
-  it("type 'destino' / 'atrativo' filters by card.type", () => {
-    expect(filterCards(cards, { type: "destino", uf: null })).toHaveLength(2);
+  it("type 'destino' / 'atrativo' filters by card.type (no destinos on the board)", () => {
+    expect(filterCards(cards, { type: "destino", uf: null })).toHaveLength(0);
     const atr = filterCards(cards, { type: "atrativo", uf: null });
     expect(atr).toHaveLength(2);
     expect(atr.every((c) => c.type === "atrativo")).toBe(true);
   });
 
   it("uf null keeps all UFs; a single UF keeps only cards whose uf === it", () => {
-    expect(filterCards(cards, { type: "all", uf: null })).toHaveLength(4);
+    expect(filterCards(cards, { type: "all", uf: null })).toHaveLength(2);
     const ba = filterCards(cards, { type: "all", uf: "BA" });
     expect(ba.every((c) => c.uf === "BA")).toBe(true);
-    expect(ba).toHaveLength(2); // Pelourinho (destino) + Mercado Modelo (atrativo)
-    // a card with uf==null (none here) would be excluded when a UF is set.
-    expect(filterCards(cards, { type: "all", uf: "RJ" })).toHaveLength(1);
+    expect(ba).toHaveLength(1); // Mercado Modelo (atrativo, BA)
+    // no atrativo in RJ ⇒ empty when scoped to RJ.
+    expect(filterCards(cards, { type: "all", uf: "RJ" })).toHaveLength(0);
   });
 });
 
 describe("buildColumns", () => {
-  it("returns the 5 ordered stage columns with cards bucketed by column", () => {
+  it("returns the ordered stage columns (whatsapp hidden) with cards bucketed by column", () => {
     const cards = toPainelCards(destinos, atrativos);
     const cols = buildColumns(cards);
+    // The WhatsApp column is hidden (no COLUMN_DEFS entry) — 4 columns render.
     expect(cols.map((c) => c.key)).toEqual([
       "nascente",
       "dlq",
-      "whatsapp",
       "mar",
       "falha",
     ]);
     const byKey = Object.fromEntries(cols.map((c) => [c.key, c.cards.length]));
     expect(byKey.nascente).toBe(0);
-    expect(byKey.whatsapp).toBe(0);
-    expect(byKey.mar).toBe(1);
-    // Merged "Rio · revisão" column holds BOTH d-dlq (routing=dlq) AND
-    // a-inprog (routing=in_progress → dlq).
-    expect(byKey.dlq).toBe(2);
-    // Phase H: a-descarte (routing=descarte) now lands in the Falha column.
+    // d-mar is a destino → excluded from the board, so Mar is empty here.
+    expect(byKey.mar).toBe(0);
+    // Only a-inprog (routing=in_progress → dlq); destino d-dlq is excluded.
+    expect(byKey.dlq).toBe(1);
+    // Phase H: a-descarte (routing=descarte) lands in the Falha column.
     expect(byKey.falha).toBe(1);
   });
 
-  it("uses COLUMN_DEFS labels in order (5 columns)", () => {
-    expect(COLUMN_DEFS).toHaveLength(5);
+  it("uses COLUMN_DEFS labels in order (4 columns, whatsapp hidden)", () => {
+    expect(COLUMN_DEFS).toHaveLength(4);
     expect(COLUMN_DEFS.map((c) => c.label)).toEqual([
       "Nascente",
       "Rio · revisão",
-      "WhatsApp · contato",
       "Mar · publicado",
       "Falha",
     ]);
+  });
+
+  it("orders each column newest→oldest by createdAt (nulls sort last)", () => {
+    const mk = (id: string, created_at: string | null): AtrativoListItem => ({
+      id,
+      entity_type: "attraction",
+      uf: "BA",
+      routing: "dlq",
+      sub_state: null,
+      score: 40,
+      name: id,
+      source: "tripadvisor",
+      validation_pending: false,
+      mar_id: null,
+      parent_mar_id: null,
+      contacts_summary: null,
+      created_at,
+    });
+    const cards = toPainelCards([], [
+      mk("old", "2026-06-01T00:00:00Z"),
+      mk("new", "2026-06-30T00:00:00Z"),
+      mk("mid", "2026-06-15T00:00:00Z"),
+      mk("nullish", null),
+    ]);
+    const dlq = buildColumns(cards).find((c) => c.key === "dlq")!;
+    expect(dlq.cards.map((c) => c.id)).toEqual(["new", "mid", "old", "nullish"]);
   });
 });
 
@@ -441,10 +464,13 @@ describe("usePainelBoard", () => {
 
     await waitFor(() => expect(result.current.isPending).toBe(false));
     expect(result.current.isError).toBe(false);
-    // sampleDestinos (2) + sampleAtrativos (2) + 1 unrouted nascente card
+    // Destinos are EXCLUDED from the board: sampleAtrativos (2) + 1 unrouted
+    // nascente card. (sampleDestinos are fetched but never surfaced as cards.)
     expect(result.current.cards).toHaveLength(
-      sampleDestinos.length + sampleAtrativos.length + nascente.length,
+      sampleAtrativos.length + nascente.length,
     );
+    const destinoIds = new Set(sampleDestinos.map((d) => d.id));
+    expect(result.current.cards.some((c) => destinoIds.has(c.id))).toBe(false);
     // The unrouted nascente row is fed into the Nascente column.
     const nascenteCards = result.current.cards.filter(
       (c: PainelCard) => c.column === "nascente",

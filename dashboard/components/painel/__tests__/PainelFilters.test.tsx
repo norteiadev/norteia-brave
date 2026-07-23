@@ -2,38 +2,22 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { PainelFilters } from "@/components/painel/PainelFilters";
-import type { TypeFilter } from "@/lib/painel-data";
 
 function setup(overrides: {
-  type?: TypeFilter;
   uf?: string | null;
-  onTypeChange?: (t: TypeFilter) => void;
   onUfChange?: (uf: string | null) => void;
 } = {}) {
-  const onTypeChange = overrides.onTypeChange ?? vi.fn();
   const onUfChange = overrides.onUfChange ?? vi.fn();
-  render(
-    <PainelFilters
-      type={overrides.type ?? "all"}
-      onTypeChange={onTypeChange}
-      uf={overrides.uf ?? null}
-      onUfChange={onUfChange}
-    />,
-  );
-  return { onTypeChange, onUfChange };
+  render(<PainelFilters uf={overrides.uf ?? null} onUfChange={onUfChange} />);
+  return { onUfChange };
 }
 
-describe("PainelFilters — type segmented control", () => {
-  it("reports the selected type and marks the active button", () => {
-    const { onTypeChange } = setup({ type: "all" });
-
-    expect(screen.getByTestId("filter-type-all")).toHaveAttribute(
-      "data-active",
-      "true",
-    );
-
-    fireEvent.click(screen.getByTestId("filter-type-destino"));
-    expect(onTypeChange).toHaveBeenCalledWith("destino");
+describe("PainelFilters — type control removed", () => {
+  it("no longer renders the type segmented control", () => {
+    setup();
+    expect(screen.queryByTestId("filter-type-all")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("filter-type-destino")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("filter-type-atrativo")).not.toBeInTheDocument();
   });
 });
 

@@ -40,7 +40,7 @@ import { COLUMN_DEFS, type PainelCard } from "@/lib/painel-data";
 /** Atrativo accent has no token (design literal); destino uses the navy var. */
 const ATRATIVO_ACCENT = "#b65a2e";
 
-type DrawerTab = "dados" | "conversa" | "log";
+type DrawerTab = "dados" | "conversa" | "log" | "canonico";
 
 /**
  * PT-BR labels per Brave pipeline stage (RecordEvent.stage) — the Log tab's
@@ -73,6 +73,52 @@ function statusColor(status: string): string {
   if (status === "ok") return "var(--status-mar)";
   if (status === "fail") return "var(--status-descarte)";
   return "var(--painel-muted-2)";
+}
+
+/**
+ * Minimal, dependency-free JSON syntax highlighter for the Canônico tab.
+ * Tokenizes the pretty-printed JSON (strings/keys, numbers, booleans, null) and
+ * wraps each in a colored span; structural chars ({ } [ ] , : whitespace) fall
+ * through in the <pre>'s base color. Colors are scoped painel/status vars +
+ * the two design literals already used in this file.
+ */
+const JSON_TOKEN =
+  /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+
+function highlightJson(value: unknown): React.ReactNode {
+  const json = JSON.stringify(value, null, 2);
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let k = 0;
+  let m: RegExpExecArray | null;
+  JSON_TOKEN.lastIndex = 0;
+  while ((m = JSON_TOKEN.exec(json)) !== null) {
+    if (m.index > last) out.push(json.slice(last, m.index));
+    const tok = m[0];
+    const isKey = m[2] != null; // a quoted string immediately followed by ":"
+    let color = "#b65a2e"; // number (atrativo accent)
+    let weight: string | undefined;
+    if (m[1] != null) {
+      if (isKey) {
+        color = "var(--painel-navy)";
+        weight = "600";
+      } else {
+        color = "#3a5a3f"; // string value (green)
+      }
+    } else if (m[3] === "true" || m[3] === "false") {
+      color = "var(--status-dlq)";
+    } else if (m[3] === "null") {
+      color = "var(--painel-muted-2)";
+    }
+    out.push(
+      <span key={k++} style={{ color, fontWeight: weight }}>
+        {tok}
+      </span>,
+    );
+    last = m.index + tok.length;
+  }
+  if (last < json.length) out.push(json.slice(last));
+  return out;
 }
 
 export interface PainelDrawerProps {
@@ -124,10 +170,11 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
       ? (detail.data.normalized.descricao_editorial as string)
       : null;
 
-  // Log tab source (Decision B): a Falha-column card has no Rio row, so its
-  // timeline comes from the source_ref-keyed failure log; every other card reads
-  // events[] off the atrativo detail. Gated on tab==="log" so it only fires when
-  // the operator opens the Log tab.
+  // Log + Canônico tab source (Decision B): a Falha-column card has no Rio row,
+  // so its timeline comes from the source_ref-keyed failure log; every other card
+  // reads events[] off the atrativo detail. One query feeds both tabs — the Log
+  // tab renders events[], the Canônico tab renders the normalized JSON — so it is
+  // gated on either tab being open.
   const isFailureCard = card?.column === "falha";
   const log = useQuery<AtrativoDetail | FailureCardLog>({
     queryKey: ["record-events", cardId, isFailureCard],
@@ -135,12 +182,12 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
       isFailureCard && card?.sourceRef
         ? fetchFailureCardLog(card.sourceRef)
         : fetchAtrativoDetail(cardId),
-    enabled: tab === "log" && isOpen,
+    enabled: (tab === "log" || tab === "canonico") && isOpen,
     retry: false,
   });
-  // Normalize both response shapes into an event list + a legible JSON block.
-  // FailureCardLog (falha card) → { identity, events }; AtrativoDetail →
-  // { normalized, score_breakdown, dlq_reason, source, processed_at } + events.
+  // Normalize both response shapes into an event list (Log tab) + a legible JSON
+  // block (Canônico tab). FailureCardLog (falha card) → { identity, events };
+  // AtrativoDetail → { normalized, score_breakdown, dlq_reason, source, processed_at } + events.
   const logEvents: RecordEvent[] = log.data?.events ?? [];
   let logJson: Record<string, unknown> = {};
   if (log.data) {
@@ -245,6 +292,7 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
               { key: "dados", label: "Dados" },
               { key: "conversa", label: "Conversa" },
               { key: "log", label: "Log" },
+              { key: "canonico", label: "Canônico" },
             ] as const
           ).map((t) => (
             <button
@@ -414,25 +462,21 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
               </div>
             )}
           </div>
-        ) : (
-          <div className="flex flex-1 flex-col gap-4 overflow-y-auto bg-[#fbfaf8] px-5 py-[18px]">
-            {/* legible JSON block — mirrors the Dados <pre> shape */}
-            <pre
-              data-testid="drawer-log-json"
-              className="m-0 overflow-x-auto rounded-[7px] border border-[var(--painel-border-inner)] bg-[var(--card)] px-3 py-2.5 font-mono text-[10.5px] leading-[1.5] text-[#3a5a3f]"
-            >
-              {JSON.stringify(logJson, null, 2)}
-            </pre>
-
-            {/* per-stage timeline — mirrors PainelLogs log-line styling */}
+        ) : tab === "log" ? (
+          <div className="flex flex-1 flex-col overflow-y-auto bg-[#fbfaf8] px-5 py-[18px]">
+            {/* per-stage timeline — zebra-striped rows for legibility */}
             {logEvents.length > 0 ? (
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col">
                 {logEvents.map((e, i) => (
                   <div
                     key={`${e.stage}-${i}`}
                     data-testid="drawer-log-step"
                     data-status={e.status}
-                    className="flex items-baseline gap-2 font-mono text-[11px] leading-[1.6]"
+                    className="flex items-baseline gap-2 rounded-[4px] px-2 py-[5px] font-mono text-[11px] leading-[1.6]"
+                    style={{
+                      background:
+                        i % 2 === 0 ? "transparent" : "var(--painel-chip)",
+                    }}
                   >
                     <span
                       className="flex-shrink-0 select-none"
@@ -470,6 +514,16 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
                 Nenhum evento de pipeline registrado para este registro ainda.
               </div>
             )}
+          </div>
+        ) : (
+          <div className="flex flex-1 flex-col gap-4 overflow-y-auto bg-[#fbfaf8] px-5 py-[18px]">
+            {/* canonical normalized record — syntax-highlighted JSON code block */}
+            <pre
+              data-testid="drawer-log-json"
+              className="m-0 overflow-x-auto rounded-[7px] border border-[var(--painel-border-inner)] bg-[var(--card)] px-3 py-2.5 font-mono text-[10.5px] leading-[1.5] text-[var(--painel-muted-2)]"
+            >
+              {highlightJson(logJson)}
+            </pre>
           </div>
         )}
 

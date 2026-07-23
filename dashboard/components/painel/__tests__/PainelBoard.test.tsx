@@ -64,9 +64,9 @@ function makeCard(overrides: Partial<PainelCard> = {}): PainelCard {
 
 const noop = () => {};
 
+// The WhatsApp column is hidden (removed from COLUMN_DEFS) — 4 columns render.
 const COLUMN_KEYS = [
   "nascente",
-  "whatsapp",
   "mar",
   "dlq",
   "falha",
@@ -85,7 +85,7 @@ function renderBoard(props: Partial<React.ComponentProps<typeof PainelBoard>> = 
 }
 
 describe("PainelBoard", () => {
-  it("renders all 5 columns and per-column counts from buildColumns", () => {
+  it("renders all 4 columns and per-column counts from buildColumns", () => {
     renderBoard({
       cards: [
         makeCard({ column: "mar", routing: "mar" }),
@@ -128,7 +128,7 @@ describe("PainelBoard", () => {
     expect(onDropToColumn).toHaveBeenCalledWith("falha");
   });
 
-  it("renders 5 columns with an empty cards array without crashing", () => {
+  it("renders 4 columns with an empty cards array without crashing", () => {
     renderBoard({ cards: [] });
     for (const key of COLUMN_KEYS) {
       expect(screen.getByTestId(`painel-col-${key}`)).toBeInTheDocument();
