@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from brave.core.models import MarRecord, RioRecord
 from brave.core.repositories import SqlAlchemyMarRepository, SqlAlchemyRioRepository
+from brave.shared.opening_hours import to_hours_map
 
 # Stateless data-access seam (Phase A). The Session is passed per call and the
 # caller still owns the transaction — these repos flush but never commit.
@@ -291,8 +292,9 @@ def build_push_payload(
     # Parent destino link (destino-first). Fall back to the canonical IBGE ref so
     # the API can resolve-or-create even when a lane didn't stamp parent_source_ref.
     parent_ref = canonical.get("parent_source_ref") or f"ibge:{uf}:{municipio_ibge}"
+    weekday_text = canonical.get("weekday_text") or signal.get("weekday_text")
 
-    return {
+    payload = {
         "source_ref": source_ref,
         "source": source,
         "name": canonical.get("name") or canonical.get("nome") or "",
@@ -328,7 +330,7 @@ def build_push_payload(
             or canonical.get("place_id_cache")
             or canonical.get("place_id"),
             "business_status": signal.get("business_status"),
-            "opening_hours": canonical.get("weekday_text") or signal.get("weekday_text"),
+            "opening_hours": weekday_text,
             "price_level": canonical.get("price_level"),
             "reviews_recent_count": signal.get("reviews_recent_count"),
             "distrito_code": canonical.get("distrito_code"),
@@ -339,3 +341,14 @@ def build_push_payload(
             "distrito_source": canonical.get("distrito_source"),
         },
     }
+
+    # Language-neutral day→hours map for attractions.opening_hours (the raw Google
+    # lines keep riding untouched in place.opening_hours, which the Pact freezes).
+    # OMITTED rather than sent as null when unparseable: the API rule is `sometimes`,
+    # so an absent key leaves an existing/curated value alone, whereas an explicit
+    # null would wipe it on every re-push.
+    hours_map = to_hours_map(weekday_text)
+    if hours_map:
+        payload["opening_hours"] = hours_map
+
+    return payload
