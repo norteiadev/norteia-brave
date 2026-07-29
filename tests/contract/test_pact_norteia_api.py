@@ -81,6 +81,9 @@ ATTRACTION_PAYLOAD = {
     "whatsapp": "+5573999990001",
     "telefone": "+557332330001",
     "website": "https://example.com",
+    # Language-neutral day→hours map → attractions.opening_hours. Built from the raw
+    # Google lines below by brave/shared/opening_hours.py; labels are the frontend's job.
+    "opening_hours": {"mon_fri": "08:00-18:00", "sat": "08:00-12:00", "sun": "closed"},
     "reliability_score": 90.0,
     "provenance": {
         "origem": 30.0,
@@ -100,7 +103,16 @@ ATTRACTION_PAYLOAD = {
     "place": {
         "place_id": "ChIJexample_place_id",
         "business_status": "OPERATIONAL",
-        "opening_hours": ["Mon: 08:00-18:00"],
+        # Raw Google weekdayDescriptions, untouched (the API stores them verbatim).
+        "opening_hours": [
+            "Monday: 8:00 AM – 6:00 PM",
+            "Tuesday: 8:00 AM – 6:00 PM",
+            "Wednesday: 8:00 AM – 6:00 PM",
+            "Thursday: 8:00 AM – 6:00 PM",
+            "Friday: 8:00 AM – 6:00 PM",
+            "Saturday: 8:00 AM – 12:00 PM",
+            "Sunday: Closed",
+        ],
         "price_level": 2,
         "reviews_recent_count": 12,
         "distrito_name": "Arraial D'Ajuda",
