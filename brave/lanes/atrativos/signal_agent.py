@@ -286,6 +286,15 @@ class SignalAgent:
         new_normalized["atualidade_value"] = atualidade_value
         new_normalized["corroboracao_value"] = corroboracao_value
         new_normalized["weekday_text"] = weekday_text
+        # Places formatted_address → the flat `address` push field. Guarded so a Places
+        # blank never wipes the address already in normalized (e.g. from the nascente
+        # payload). Brave-side only: build_push_payload always emits "address" as a literal
+        # key, so a still-empty value is pushed as null and overwrites a curated API value —
+        # a pre-existing trait shared with description/instagram/whatsapp/telefone/website,
+        # not fixed here.
+        address = details.get("formatted_address")
+        if address:
+            new_normalized["address"] = address
         # Phase F: persist the most-recent review timestamp (ISO-8601, UTC) so the
         # promote_to_mar recency BACKSTOP can re-check the 90-day rule at promotion
         # time. Excluded from the Mar `canonical` payload in promote_to_mar so the

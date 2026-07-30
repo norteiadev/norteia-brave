@@ -19,6 +19,7 @@ Covers:
   - idempotency via google_enriched marker → no-op
   - cross-lane guard (place_id_cache + weekday_text) → Places-FSM record left untouched
   - atualidade = max(TA, Google) keeps the higher TA value
+  - description-only backfill (paid Places sub-step already done) → ZERO Places SKU spent
 
 D-18 boundary: no import from brave.lanes.destinos.
 """
@@ -31,6 +32,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.fakes.fake_llm import FakeLLMClient
 from tests.fakes.fake_places import FakePlacesClient
 
 # Pinned reference clock so atualidade buckets + review recency are deterministic.
@@ -101,6 +103,7 @@ def _details(
     return {
         "place_id": "ChIJmatriz001",
         "business_status": business_status,
+        "formatted_address": "Praça Central, Porto Seguro - BA",
         "weekday_text": weekday_text if weekday_text is not None else [
             "segunda-feira: 08:00 – 18:00",
             "domingo: Fechado",
@@ -145,6 +148,10 @@ async def test_match_persists_hours_and_liveness() -> None:
     assert rio.normalized["lat"] == _G_LAT  # Google coords adopted
     assert rio.normalized["lon"] == _G_LNG
     assert rio.normalized["google_enriched"] is True
+    assert rio.normalized["address"] == "Praça Central, Porto Seguro - BA"
+    # build_push_payload reads business_status + reviews_recent_count off this block.
+    assert rio.normalized["signal"]["business_status"] == "OPERATIONAL"
+    assert rio.normalized["signal"]["reviews_recent_count"] == 1  # the 10-day-old review
     assert rio.sub_state is None  # FSM untouched
     assert mock_route.called
     assert fake.place_details_calls == ["ChIJmatriz001"]
@@ -206,6 +213,7 @@ async def test_no_name_match_keeps_floor() -> None:
 
     assert "weekday_text" not in rio.normalized
     assert "place_id_cache" not in rio.normalized
+    assert "signal" not in rio.normalized  # no Places facts → no signal block
     assert rio.normalized["lat"] == _LAT  # TA coords untouched (no match)
     assert rio.normalized["lon"] == _LNG
     assert rio.normalized["google_enriched"] is True  # marker set → no re-run
@@ -249,33 +257,222 @@ async def test_place_id_cache_skips_text_search() -> None:
 
 @pytest.mark.asyncio
 async def test_idempotency_marker_noop() -> None:
-    """google_enriched already set → no-op (no Places calls, normalized untouched)."""
+    """google_enriched set AND a description already written → nothing left to do."""
     from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
-    rio = _make_rio(extra_normalized={"google_enriched": True})
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    fake_llm = FakeLLMClient()
+    rio = _make_rio(extra_normalized={
+        "google_enriched": True,
+        "descricao_editorial": "Prosa já escrita.",
+    })
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+    )
+    mock_route = await _run(agent, rio)
+
+    assert fake.text_search_calls == []
+    assert fake.place_details_calls == []
+    assert fake_llm.generate_calls == []
+    assert not mock_route.called, "nothing left to do → no re-score"
+
+
+@pytest.mark.asyncio
+async def test_cross_lane_places_fsm_record_untouched() -> None:
+    """Places-FSM record that already has a description → agent no-ops entirely."""
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(fixture_details={"ChIJx": _details()})
+    fake_llm = FakeLLMClient()
+    rio = _make_rio(extra_normalized={
+        "place_id_cache": "ChIJx",
+        "weekday_text": ["Monday: 9-5"],
+        "descricao_editorial": "Prosa já escrita.",
+    })
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+    )
+    mock_route = await _run(agent, rio)
+
+    assert "google_enriched" not in rio.normalized  # untouched
+    assert fake.place_details_calls == []
+    assert fake_llm.generate_calls == []
+    assert not mock_route.called
+
+
+@pytest.mark.asyncio
+async def test_description_backfill_spends_no_places_sku() -> None:
+    """GAP-5 regression: marker set + missing description → description-only pass.
+
+    The paid Places sub-step is one-shot, the description sub-step is not: an already
+    Places-enriched record whose copywriter pass never landed gets its prose on a later
+    pass at ZERO Places spend (no Text Search, no Place Details).
+    """
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": _details()},
+    )
+    fake_llm = FakeLLMClient(generate_result="Prosa da Norteia.")
+    rio = _make_rio(extra_normalized={"google_enriched": True, "completude_value": 75.0})
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+    )
+    mock_route = await _run(agent, rio)
+
+    assert rio.normalized["descricao_editorial"] == "Prosa da Norteia."
+    assert rio.normalized["completude_value"] == 90.0  # description degrau
+    assert mock_route.called, "the backfilled description must be re-scored"
+    assert fake.text_search_calls == [], "backfill pass must spend no Text Search SKU"
+    assert fake.place_details_calls == [], "backfill pass must spend no Place Details SKU"
+
+
+@pytest.mark.asyncio
+async def test_cross_lane_record_gets_description_without_redetails() -> None:
+    """Places-FSM record (place_id_cache + weekday_text, no marker) → description only.
+
+    This agent is the ONLY writer of descricao_editorial, so the discovery lane would
+    otherwise never get one — and the Details SKU it already spent is not re-spent.
+    """
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(fixture_details={"ChIJx": _details()})
+    fake_llm = FakeLLMClient(generate_result="Prosa da Norteia.")
+    rio = _make_rio(extra_normalized={
+        "place_id_cache": "ChIJx",
+        "weekday_text": ["Monday: 9-5"],
+    })
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+    )
     await _run(agent, rio)
 
+    assert rio.normalized["descricao_editorial"] == "Prosa da Norteia."
+    assert rio.normalized["weekday_text"] == ["Monday: 9-5"]  # SignalAgent's hours kept
     assert fake.text_search_calls == []
     assert fake.place_details_calls == []
 
 
 @pytest.mark.asyncio
-async def test_cross_lane_places_fsm_record_untouched() -> None:
-    """A record with place_id_cache AND weekday_text (Places-FSM) → agent no-ops."""
+async def test_descarte_record_never_earns_a_description() -> None:
+    """A discarded record (closed place) must not earn an LLM call on a second pass."""
     from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
 
-    fake = FakePlacesClient(fixture_details={"ChIJx": _details()})
+    fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
+    fake_llm = FakeLLMClient(generate_result="Prosa da Norteia.")
+    rio = _make_rio(routing="descarte", extra_normalized={"google_enriched": True})
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+    )
+    mock_route = await _run(agent, rio)
+
+    assert "descricao_editorial" not in rio.normalized
+    assert fake_llm.generate_calls == []
+    assert fake.text_search_calls == []
+    assert not mock_route.called
+
+
+@pytest.mark.asyncio
+async def test_failing_copywriter_retries_are_bounded() -> None:
+    """A copywriter that never returns prose is retried at most 3x, then the record no-ops.
+
+    Without the ``descricao_attempts`` budget, "description absent" re-arms the backfill
+    pass forever: a systemic copywriter failure (outage, cost guard) would re-spend an LLM
+    call + audit + re-score on EVERY sweep, for every already-enriched atrativo.
+    """
+    from brave.lanes.atrativos.places_enrichment import (
+        _MAX_DESCRIPTION_ATTEMPTS,
+        PlacesEnrichmentAgent,
+    )
+
+    fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
+    fake_llm = FakeLLMClient(generate_result="")  # always yields no prose
+    rio = _make_rio(extra_normalized={"google_enriched": True})
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+    )
+
+    for _ in range(_MAX_DESCRIPTION_ATTEMPTS):
+        assert (await _run(agent, rio)).called
+
+    assert len(fake_llm.generate_calls) == _MAX_DESCRIPTION_ATTEMPTS
+    assert rio.normalized["descricao_attempts"] == _MAX_DESCRIPTION_ATTEMPTS
+
+    # Budget spent → full no-op: no LLM call, no re-score, no Places spend.
+    mock_route = await _run(agent, rio)
+    assert len(fake_llm.generate_calls) == _MAX_DESCRIPTION_ATTEMPTS
+    assert not mock_route.called
+    assert fake.text_search_calls == []
+
+
+@pytest.mark.asyncio
+async def test_exhausted_description_budget_is_logged() -> None:
+    """An exhausted budget must be visible in the logs — not a silent no-op forever."""
+    from brave.lanes.atrativos import places_enrichment as pe
+
+    fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
+    fake_llm = FakeLLMClient(generate_result="")
     rio = _make_rio(extra_normalized={
-        "place_id_cache": "ChIJx",
-        "weekday_text": ["Monday: 9-5"],
+        "google_enriched": True,
+        "descricao_attempts": pe._MAX_DESCRIPTION_ATTEMPTS,
     })
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = pe.PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+    )
+    with patch.object(pe.logger, "warning") as mock_warn:
+        await _run(agent, rio)
+
+    event, kwargs = mock_warn.call_args[0][0], mock_warn.call_args[1]
+    assert event == "description_attempts_exhausted"
+    assert kwargs["rio_id"] == str(rio.id)
+    assert kwargs["attempts"] == pe._MAX_DESCRIPTION_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_cost_guard_block_never_burns_attempt_budget() -> None:
+    """Budget tripped BEFORE dispatch → zero spend, so zero attempts consumed.
+
+    The guard raises CostGuardError from pre_dispatch_check, before any API call. Counting
+    that as an attempt would let one budget trip per sweep lock the ENTIRE backlog out of
+    descriptions after _MAX_DESCRIPTION_ATTEMPTS sweeps, at zero LLM spend.
+    """
+    from brave.lanes.atrativos.places_enrichment import (
+        _MAX_DESCRIPTION_ATTEMPTS,
+        PlacesEnrichmentAgent,
+    )
+    from brave.shared.exceptions import CostGuardError
+
+    fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
+    fake_llm = FakeLLMClient(raise_on_call=CostGuardError("daily budget exceeded"))
+    rio = _make_rio(extra_normalized={"google_enriched": True})
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+    )
+
+    for _ in range(_MAX_DESCRIPTION_ATTEMPTS + 2):
+        await _run(agent, rio)  # never raises out of the agent (TA floor kept)
+
+    assert "descricao_attempts" not in rio.normalized  # no permanent lockout
+    # Still re-attempted every pass once the budget resets.
+    assert len(fake_llm.generate_calls) == _MAX_DESCRIPTION_ATTEMPTS + 2
+
+
+@pytest.mark.asyncio
+async def test_successful_description_never_burns_attempt_budget() -> None:
+    """Prose landed → no attempt counter written (the budget is for failures only)."""
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
+    fake_llm = FakeLLMClient(generate_result="Prosa da Norteia.")
+    rio = _make_rio(extra_normalized={"google_enriched": True})
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+    )
     await _run(agent, rio)
 
-    assert "google_enriched" not in rio.normalized  # untouched
-    assert fake.place_details_calls == []
+    assert rio.normalized["descricao_editorial"] == "Prosa da Norteia."
+    assert "descricao_attempts" not in rio.normalized
 
 
 @pytest.mark.asyncio

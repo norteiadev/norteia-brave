@@ -143,6 +143,26 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * c
 
 
+def _nearest_within(
+    lat: float,
+    lng: float,
+    records: list[IbgeMunicipio],
+    max_distance_km: float,
+) -> IbgeMunicipio | None:
+    """Return the closest record by haversine, or None if the closest is out of range.
+
+    Shared by both resolvers so neither can drift back to "first within radius":
+    resolve_municipio (UF-filtered candidates) and resolve_municipio_national
+    (all-Brazil). Ties keep list order (min returns the first minimal element).
+    """
+    best = min(
+        ((haversine_km(lat, lng, r.lat, r.lng), r) for r in records),
+        key=lambda pair: pair[0],
+        default=None,
+    )
+    return best[1] if best is not None and best[0] <= max_distance_km else None
+
+
 # ---------------------------------------------------------------------------
 # Accent-fold helper
 # ---------------------------------------------------------------------------
@@ -185,7 +205,7 @@ def resolve_municipio(
          matching so pure diacritic differences score 100 ('Maringa' ↔ 'Maringá').
          Returned record always carries the original accented IBGE nome.
       3. On miss, haversine fallback if candidate_lat/lng are provided:
-         return the first UF record within max_distance_km.
+         return the NEAREST UF record, and only when it is within max_distance_km.
       4. Return None if neither matches → caller quarantines as "ibge_unmatched".
 
     Args:
@@ -229,12 +249,12 @@ def resolve_municipio(
         _matched_name, _score, index = result
         return uf_records[index]  # original accented record — fold is never written back
 
-    # Step 3: haversine fallback (only when coordinates are provided)
+    # Step 3: haversine fallback (only when coordinates are provided) — NEAREST seat,
+    # never the first one inside the radius. First-match picked Niterói (13.4 km) over
+    # Rio de Janeiro (4.5 km) for Cristo Redentor purely because the IBGE list is
+    # alphabetical, creating a wrong parent destino in norteia-api.
     if candidate_lat is not None and candidate_lng is not None:
-        for r in uf_records:
-            dist = haversine_km(candidate_lat, candidate_lng, r.lat, r.lng)
-            if dist < max_distance_km:
-                return r
+        return _nearest_within(candidate_lat, candidate_lng, uf_records, max_distance_km)
 
     # Step 4: unresolved → caller quarantines as "ibge_unmatched"
     return None
@@ -276,14 +296,4 @@ def resolve_municipio_national(
     if candidate_lat is None or candidate_lng is None:
         return None
 
-    nearest: IbgeMunicipio | None = None
-    nearest_km = float("inf")
-    for r in records:
-        dist = haversine_km(candidate_lat, candidate_lng, r.lat, r.lng)
-        if dist < nearest_km:
-            nearest_km = dist
-            nearest = r
-
-    if nearest is not None and nearest_km <= max_distance_km:
-        return nearest
-    return None
+    return _nearest_within(candidate_lat, candidate_lng, records, max_distance_km)
