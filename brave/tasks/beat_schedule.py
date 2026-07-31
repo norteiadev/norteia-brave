@@ -122,6 +122,16 @@ def maintenance_beat_entries() -> dict:
       - ``prune-record-events-daily`` → RecordEvent retention prune @ 4 AM UTC
         (offset from the 2/3 AM sweep entries to avoid DB contention). Deletes
         aged status='ok'/'skip' events; PRESERVES status='fail' (Decisão C).
+      - ``submit-description-batch-hourly`` / ``collect-description-batches-15min`` →
+        the batched atrativo-description lane. Both no-op unless run_real_externals +
+        the description flags are on, so they are safe to schedule unconditionally.
+        Submit is hourly because a batch can take up to 24h to end; collect is frequent
+        because it is a cheap retrieve() per in-flight batch id. Collect also carries the
+        REAPER, which is why it is NOT gated on the batch flag — turning batch mode off
+        must still unstick records. The reaper does NOT free every stale stamp on time
+        alone: a stamp carrying a real batch id is kept until retrieve() 404s (freeing a
+        live batch would re-bill work already paid for), and while run_real_externals is
+        off there is no client to probe with, so those stay stamped. See reap_stale_claims.
     """
     from celery.schedules import crontab  # noqa: PLC0415
 
@@ -129,6 +139,18 @@ def maintenance_beat_entries() -> dict:
         "prune-record-events-daily": {
             "task": "brave.prune_record_events",
             "schedule": crontab(hour=4, minute=0),  # 4 AM UTC daily
+            "args": (),
+            "kwargs": {},
+        },
+        "submit-description-batch-hourly": {
+            "task": "brave.submit_description_batch",
+            "schedule": crontab(minute=20),  # hourly at :20
+            "args": (),
+            "kwargs": {},
+        },
+        "collect-description-batches-15min": {
+            "task": "brave.collect_description_batches",
+            "schedule": crontab(minute="*/15"),
             "args": (),
             "kwargs": {},
         },

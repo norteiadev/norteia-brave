@@ -194,6 +194,26 @@ def test_patch_rejects_non_bool_description_enrichment(db, redis):
     assert exc.value.status_code == 422
 
 
+def test_patch_toggles_atrativo_description_batch(db, redis):
+    # Defaults OFF: the inline copywriter path is today's behavior until flipped.
+    snap = get_config_snapshot(db=db, redis=redis)
+    assert snap["atrativo_description_batch_enabled"] is False
+
+    out = update_config(
+        body={"atrativo_description_batch_enabled": True}, db=db, redis=redis
+    )
+    assert out["config"]["atrativo_description_batch_enabled"] is True
+    assert db.rows["atrativo_description_batch_enabled"].value == {"v": True}
+
+
+def test_patch_rejects_non_bool_atrativo_description_batch(db, redis):
+    with pytest.raises(HTTPException) as exc:
+        update_config(
+            body={"atrativo_description_batch_enabled": 1}, db=db, redis=redis
+        )
+    assert exc.value.status_code == 422
+
+
 def test_patch_accepts_weight_set_summing_100(db, redis):
     # origem 40 + completude 10 + (defaults) corroboracao 20 + atualidade 15 +
     # validacao_humana 15 == 100.

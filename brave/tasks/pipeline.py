@@ -1051,8 +1051,13 @@ def sweep_tripadvisor(
             # Copywriter LLM: real Anthropic (web_search) only under run_real_externals +
             # description_enrichment_enabled; else Null. description_enabled is gated on
             # run_real_externals so an offline/CI sweep never writes the Null canned string.
+            # ...and OFF entirely under batch mode: the description is then produced later
+            # by submit/collect_description_batch (50% off tokens), and description_enabled
+            # =False makes PlacesEnrichmentAgent skip the whole description block cleanly.
             _desc_on = (
-                app_config.run_real_externals and effective.description_enrichment_enabled
+                app_config.run_real_externals
+                and effective.description_enrichment_enabled
+                and not effective.atrativo_description_batch_enabled
             )
             if _desc_on:
                 import redis as _copy_redis_lib  # noqa: PLC0415
@@ -1228,7 +1233,10 @@ def find_contacts_task(self, rio_id: str) -> None:
     session, engine = _get_session()
     try:
         rio_uuid = uuid.UUID(rio_id)
-        rio = session.get(RioRecord, rio_uuid)
+        # FOR UPDATE: ContactFinderAgent merges its writes onto the row's current
+        # `normalized` under the same lock; taking it here holds it for the whole task so a
+        # concurrent writer (copy_batch collect) cannot commit between our read and our write.
+        rio = session.get(RioRecord, rio_uuid, with_for_update=True)
         if rio is None:
             raise PermanentError(f"RioRecord {rio_id} not found")
 
@@ -1330,7 +1338,8 @@ def gather_signals_task(self, rio_id: str) -> None:
     session, engine = _get_session()
     try:
         rio_uuid = uuid.UUID(rio_id)
-        rio = session.get(RioRecord, rio_uuid)
+        # FOR UPDATE: same reason as find_contacts_task — SignalAgent merges under this lock.
+        rio = session.get(RioRecord, rio_uuid, with_for_update=True)
         if rio is None:
             raise PermanentError(f"RioRecord {rio_id} not found")
 
@@ -1469,7 +1478,12 @@ def enrich_places_task(self, rio_id: str) -> None:
 
         # Copywriter LLM (description sub-step): real Anthropic (web_search) only under
         # run_real_externals + description_enrichment_enabled; else Null (skipped).
-        _desc_on = app_config.run_real_externals and effective.description_enrichment_enabled
+        # Batch mode moves the description off this path — see the sweep-side gate above.
+        _desc_on = (
+            app_config.run_real_externals
+            and effective.description_enrichment_enabled
+            and not effective.atrativo_description_batch_enabled
+        )
         if _desc_on:
             import redis as _copy_redis_lib  # noqa: PLC0415
 
@@ -1536,6 +1550,123 @@ def enrich_places_task(self, rio_id: str) -> None:
                 q_session.close()
                 q_engine.dispose()
 
+    finally:
+        session.close()
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Batched atrativo descriptions (Message Batches API, 50% off tokens).
+#
+# When atrativo_description_batch_enabled is on, both PlacesEnrichmentAgent construction
+# sites above run with description_enabled=False — the copywriter never fires inline. These
+# two beat-driven tasks own the description instead: submit hourly, collect every 15 min.
+# All the logic lives in brave/lanes/atrativos/copy_batch.py; these are transport.
+# ---------------------------------------------------------------------------
+
+
+def _batch_deps(app_config: AppConfig) -> tuple[Any, Any]:
+    """Build the (Anthropic, Redis) pair the batch tasks need. Real clients only — the
+    Message Batches API has no Null twin, so both tasks gate on run_real_externals first."""
+    import redis as _redis_lib  # noqa: PLC0415
+    from anthropic import Anthropic  # noqa: PLC0415
+
+    return (
+        Anthropic(api_key=app_config.llm.anthropic_api_key),
+        _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")),
+    )
+
+
+@shared_task(
+    bind=True,
+    name="brave.submit_description_batch",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=300,
+)
+def submit_description_batch_task(self) -> None:
+    """Submit one Message Batch of atrativo descriptions (beat: hourly).
+
+    Selection, the budget sizing, the descricao_batch_id claim and the spend reservation all
+    live in copy_batch.submit_batch — which claims BEFORE it spends, so the acks_late
+    redelivery this task is guaranteed on a worker kill selects nothing and bills nothing.
+    Failures are logged and swallowed: beat re-fires in an hour, and a retry storm on a task
+    that COMMITS spend is the wrong shape.
+    """
+    from brave.lanes.atrativos.copy_batch import submit_batch  # noqa: PLC0415
+
+    session, engine = _get_session()
+    try:
+        app_config = AppConfig()
+        effective = load_effective_config(session)
+        if not (
+            app_config.run_real_externals
+            and effective.description_enrichment_enabled
+            and effective.atrativo_description_batch_enabled
+        ):
+            return
+        client, redis_client = _batch_deps(app_config)
+        submit_batch(
+            session,
+            client,
+            model=app_config.atrativo_voice_model_slug,
+            redis_client=redis_client,
+            llm_config=app_config.llm,
+        )
+    except Exception as exc:  # noqa: BLE001 — beat retries on the next tick
+        session.rollback()
+        logger.warning("copy_batch_submit_failed", error=str(exc))
+    finally:
+        session.close()
+        engine.dispose()
+
+
+@shared_task(
+    bind=True,
+    name="brave.collect_description_batches",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=600,
+)
+def collect_description_batches_task(self) -> None:
+    """Apply every ENDED description batch, and reap stale claims (beat: every 15 min).
+
+    NOT gated on atrativo_description_batch_enabled: turning batch mode off must still land
+    the batches already in flight, and must still reap — otherwise those records keep a
+    descricao_batch_id forever and never become eligible again.
+
+    run_real_externals=False is the MASTER kill switch, so nothing may call Anthropic here.
+    The reaper still runs, with a None client: freeing a CLAIM_BATCH_ID placeholder needs no
+    probe (time alone frees it), so a crash between claim and create is still recovered. A
+    stamp carrying a REAL batch id is NOT freed while externals are off — the probe that
+    proves the batch is gone is an API call, and freeing on a guess resubmits and re-bills
+    work Anthropic may still be holding. Those records stay stamped until externals return.
+
+    NO PUSH is dispatched from here. collect_batches ends at route_by_score, exactly like the
+    inline copywriter path; the DLQ/steward gate stays the only way into norteia-api. See the
+    copy_batch module docstring for the gap that leaves (a record already ACTIVE in Mar keeps
+    description:null until something re-pushes it).
+    """
+    from brave.lanes.atrativos.copy_batch import collect_batches, reap_stale_claims  # noqa: PLC0415
+
+    session, engine = _get_session()
+    try:
+        app_config = AppConfig()
+        if not app_config.run_real_externals:
+            reap_stale_claims(session, None)
+            return
+        effective = load_effective_config(session)
+        client, redis_client = _batch_deps(app_config)
+        collect_batches(
+            session,
+            client,
+            effective.score,
+            redis_client=redis_client,
+            model=app_config.atrativo_voice_model_slug,
+        )
+    except Exception as exc:  # noqa: BLE001 — beat retries on the next tick
+        session.rollback()
+        logger.warning("copy_batch_collect_failed", error=str(exc))
     finally:
         session.close()
         engine.dispose()

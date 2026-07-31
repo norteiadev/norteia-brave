@@ -68,6 +68,7 @@ _SOURCE_SUFFIX = ".enabled"
 _ENGINE_MODE_KEY = "engine.mode"
 _DESC_ENRICH_KEY = "description_enrichment_enabled"
 _PLACES_ENRICH_KEY = "places_enrichment_enabled"
+_DESC_BATCH_KEY = "atrativo_description_batch_enabled"
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +104,7 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
     engine_update: dict[str, Any] = {}
     desc_enrich: bool | None = None
     places_enrich: bool | None = None
+    desc_batch: bool | None = None
 
     for dotted, value in overlays.items():
         attr = _SCORE_OVERLAY_KEYS.get(dotted)
@@ -118,6 +120,8 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
             desc_enrich = bool(value)
         elif dotted == _PLACES_ENRICH_KEY:
             places_enrich = bool(value)
+        elif dotted == _DESC_BATCH_KEY:
+            desc_batch = bool(value)
         # Unknown keys are ignored (forward-compat with future config surfaces).
 
     updates: dict[str, Any] = {}
@@ -131,6 +135,8 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
         updates["description_enrichment_enabled"] = desc_enrich
     if places_enrich is not None and places_enrich != base.places_enrichment_enabled:
         updates["places_enrichment_enabled"] = places_enrich
+    if desc_batch is not None and desc_batch != base.atrativo_description_batch_enabled:
+        updates["atrativo_description_batch_enabled"] = desc_batch
 
     if not updates:
         return base
@@ -275,6 +281,7 @@ def _seed_values(config: AppConfig) -> dict[str, Any]:
         "engine.mode": config.engine.mode,
         "description_enrichment_enabled": config.description_enrichment_enabled,
         "places_enrichment_enabled": config.places_enrichment_enabled,
+        "atrativo_description_batch_enabled": config.atrativo_description_batch_enabled,
     }
 
 

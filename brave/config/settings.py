@@ -438,6 +438,29 @@ class AppConfig(BaseSettings):
     # (brave.config.runtime); toggled in the /painel config surface. Defaults True.
     places_enrichment_enabled: bool = True
 
+    # atrativo_description_batch_enabled moves description writing off the synchronous
+    # path: when True the INLINE copywriter is switched off and descriptions are instead
+    # written asynchronously by the Message Batches lane (50% off tokens, up to 24h
+    # latency), so a record reaches Mar-eligibility before its prose exists. When False
+    # (default) the inline copywriter runs — that is ALL this flag controls: inline
+    # copywriter on/off.
+    # It does NOT restore the pre-batch inline behavior. In the same change, the shared
+    # WEB_SEARCH_TOOL went max_uses 3 → 2 and gained user_location, and brave.clients.llm
+    # now adds the $10/1,000 web_search fee to usd_cost — which feeds record_spend. So on
+    # the INLINE path too, grounding changed and the RECORDED cost per description rose by
+    # ~30%: the $10/day guard now trips after ~109 descriptions, not ~139. If you are
+    # debugging a mid-sweep CostGuardError, that is why — flipping this flag off will not
+    # take it back.
+    # Overlay key ``atrativo_description_batch_enabled`` (brave.config.runtime).
+    #
+    # Measured (5 live copywriter calls, famous and obscure atrativos alike): EXACTLY 2 web
+    # searches per description on every record, and stop_reason always end_turn — the
+    # pause_turn resume path never fires for this workload in production. Real all-in unit
+    # cost is therefore ~$0.09–0.12 per atrativo, not the ~$0.07 the old tokens-only figure
+    # suggested, and it is HIGHER for obscure attractions (their searches return more
+    # material to read). Size any budget/batch estimate off those numbers.
+    atrativo_description_batch_enabled: bool = False
+
     # places_match_max_distance_km: Text-Search match radius (km) between the atrativo's
     # coordinates and a candidate Google place. The name threshold (rapidfuzz ≥85) is the
     # PRIMARY guard; this only disambiguates + rejects a gross wrong-city match. Kept

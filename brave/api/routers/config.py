@@ -60,6 +60,7 @@ _SOURCE_PREFIX = "source."
 _SOURCE_SUFFIX = ".enabled"
 _DESC_ENRICH_KEY = "description_enrichment_enabled"
 _PLACES_ENRICH_KEY = "places_enrichment_enabled"
+_DESC_BATCH_KEY = "atrativo_description_batch_enabled"
 
 # Secret paths in the AppConfig snapshot to redact on GET (never echo secrets).
 _SECRET_PATHS: tuple[tuple[str, str], ...] = (
@@ -101,6 +102,8 @@ def _current_value(cfg: AppConfig, dotted: str) -> Any:
         return cfg.description_enrichment_enabled
     if dotted == _PLACES_ENRICH_KEY:
         return cfg.places_enrichment_enabled
+    if dotted == _DESC_BATCH_KEY:
+        return cfg.atrativo_description_batch_enabled
     if _is_source_key(dotted):
         name = dotted[len(_SOURCE_PREFIX) : -len(_SOURCE_SUFFIX)]
         return cfg.sources.get(name)
@@ -149,7 +152,7 @@ def _validate_updates(db: Session, updates: dict[str, Any]) -> None:
                     status_code=422,
                     detail="engine.mode must be 'LIGADO', 'PAUSADO', or 'DESLIGADO'",
                 )
-        elif key in (_DESC_ENRICH_KEY, _PLACES_ENRICH_KEY):
+        elif key in (_DESC_ENRICH_KEY, _PLACES_ENRICH_KEY, _DESC_BATCH_KEY):
             if not isinstance(value, bool):
                 raise HTTPException(
                     status_code=422, detail=f"{key} must be a boolean"

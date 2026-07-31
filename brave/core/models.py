@@ -120,6 +120,17 @@ class RioRecord(Base):
     """
 
     __tablename__ = "rio_records"
+    __table_args__ = (
+        # PARTIAL: descricao_batch_id is NULL for essentially every row, so a full B-tree
+        # cannot serve submit's `IS NULL` predicate anyway (seq scan) while costing the size
+        # of rio_records — and it would lock the whole table for its build. This one has a
+        # few hundred entries and serves collect's DISTINCT over the non-null rows.
+        Index(
+            "ix_rio_records_descricao_batch_id",
+            "descricao_batch_id",
+            postgresql_where=text("descricao_batch_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -151,6 +162,19 @@ class RioRecord(Base):
     )
     canonical_key: Mapped[str | None] = mapped_column(
         String(256), nullable=True, unique=True
+    )
+
+    # Batched-description lane state (brave/lanes/atrativos/copy_batch.py). REAL COLUMNS,
+    # deliberately NOT keys in `normalized`: any writer that rewrites the whole JSONB column
+    # from a stale snapshot would erase a stamp living inside it, and the same records would
+    # be submitted — and billed — a second time. (PlacesEnrichmentAgent did exactly that; it
+    # now merges instead, but a column cannot be clobbered by the next one that forgets.)
+    # Also makes in-flight batches queryable (the collector derives its worklist from here).
+    # Indexed by the PARTIAL index in __table_args__, not index=True (which would emit a
+    # full B-tree and drift from migration 0012).
+    descricao_batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    descricao_batch_submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     # Relationship helpers
