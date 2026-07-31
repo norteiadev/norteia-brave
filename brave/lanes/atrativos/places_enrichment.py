@@ -109,6 +109,32 @@ def _parse_iso(raw: Any) -> datetime | None:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
+def _persist_normalized(
+    session: Session, rio: RioRecord, before: dict[str, Any], after: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge ONLY the keys this run changed onto the row's CURRENT ``normalized``. Returns it.
+
+    Lost update, and it predates the batch lane: ``run`` reads ``normalized``, snapshots it,
+    then spends seconds in Places network I/O before writing the whole JSONB column back from
+    that pre-I/O snapshot — silently erasing whatever ANY other writer committed in that
+    window (workers run in parallel; prefetch 1 is not concurrency 1).
+
+    The concrete case is the batched-description lane: collect commits ``descricao_editorial``
+    + the lifted ``completude_value`` mid-flight, this agent's stale dict wipes both, and since
+    apply_result already cleared ``descricao_batch_id`` the record is instantly eligible again
+    and the next tick PAYS for the same description a second time.
+
+    Re-reading under FOR UPDATE and writing a delta (not a snapshot) fixes it for every
+    concurrent writer, not just that one.
+    """
+    delta = {k: v for k, v in after.items() if k not in before or before[k] != v}
+    session.refresh(rio, ["normalized"], with_for_update=True)
+    merged = {**(rio.normalized or {}), **delta}
+    rio.normalized = merged
+    flag_modified(rio, "normalized")
+    return merged
+
+
 def _best_match(
     results: list[dict[str, Any]],
     target_name: str,
@@ -304,8 +330,7 @@ class PlacesEnrichmentAgent:
             # Step 3: CLOSED_* on a confident match → hard descarte (mirror SignalAgent).
             if business_status in CLOSED_STATUSES:
                 new_normalized["google_enriched"] = True
-                rio.normalized = new_normalized
-                flag_modified(rio, "normalized")
+                _persist_normalized(self._session, rio, normalized, new_normalized)
                 rio.routing = "descarte"
                 rio.dlq_reason = "closed_place"
                 write_audit(
@@ -441,8 +466,9 @@ class PlacesEnrichmentAgent:
         # Step 5: mark enriched (idempotency), mutate normalized, re-score. sub_state is
         # left untouched — a dlq record stays in the plain DLQ (sub_state=None) queue.
         new_normalized["google_enriched"] = True
-        rio.normalized = new_normalized
-        flag_modified(rio, "normalized")
+        # Merge, never overwrite — see _persist_normalized. From here on the merged value is
+        # what the audit row, the timeline event and the re-score must read.
+        new_normalized = _persist_normalized(self._session, rio, normalized, new_normalized)
 
         write_audit(
             session=self._session,
