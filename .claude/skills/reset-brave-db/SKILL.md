@@ -19,6 +19,12 @@ engine/cache state in Redis, so the collector starts a fresh cold "carga inicial
 The **schema and `alembic_version` are preserved** — this is a data reset, not a
 migration reset, so it's fast and leaves the DB at the current Alembic head.
 
+The static **reference tables are also always preserved**: `municipios`, `distritos`,
+`uf_geoids` (`REFERENCE_TABLES` in `scripts/reset_db.py`). They are carga-inicial data
+seeded by `scripts/seed_reference_data.py`, not pipeline output — wiping them breaks
+geo resolution and the TA lane. If they ever come back empty, re-seed with:
+`docker compose run --rm --entrypoint sh migrate -c "/app/.venv/bin/python -m scripts.seed_reference_data"`
+
 By default, the broker queue (pending Celery tasks) is also purged to prevent stale
 tasks from re-firing after a reset and hitting reset-away rio_ids or stale records.
 
