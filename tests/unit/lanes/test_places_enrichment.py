@@ -493,3 +493,63 @@ async def test_atualidade_max_keeps_higher_ta_value() -> None:
     await _run(agent, rio)
 
     assert rio.normalized["atualidade_value"] == 70.0  # max(70 TA, 0 Google)
+
+
+# ---------------------------------------------------------------------------
+# Lost update: the whole-column write erases a concurrent writer
+# ---------------------------------------------------------------------------
+
+
+class _RacingPlacesClient:
+    """Places client that commits a batched description WHILE the agent is in network I/O.
+
+    That is the real timeline: enrich_places_task reads `normalized` at T0, spends ~2s in
+    text_search/place_details, and copy_batch.apply_result commits its own transaction at
+    T0+1s. Workers genuinely run in parallel (prefetch 1 is not concurrency 1).
+    """
+
+    def __init__(self, inner: FakePlacesClient, rio) -> None:  # noqa: ANN001
+        self._inner = inner
+        self._rio = rio
+
+    async def text_search(self, query: str, uf: str):  # noqa: ANN201
+        return await self._inner.text_search(query, uf)
+
+    async def place_details(self, place_id: str):  # noqa: ANN201
+        details = await self._inner.place_details(place_id)
+        self._rio.normalized = {
+            **self._rio.normalized,
+            "descricao_editorial": "Prosa paga pelo batch.",
+            "completude_value": 90.0,
+        }
+        return details
+
+
+@pytest.mark.asyncio
+async def test_a_description_committed_during_the_places_call_is_not_erased() -> None:
+    """The agent writes the WHOLE normalized column back from a pre-I/O snapshot. A paid
+    batched description landing in that window is silently wiped — and since apply_result
+    already cleared descricao_batch_id, the record is instantly eligible again and the next
+    tick pays for the same description a second time. Merge onto the CURRENT value instead.
+    """
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    inner = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": _details()},
+    )
+    rio = _make_rio()
+    session = _make_session()
+    agent = PlacesEnrichmentAgent(
+        places_client=_RacingPlacesClient(inner, rio), session=session, now=_NOW
+    )
+    await _run(agent, rio)
+
+    # The concurrent writer's keys survive...
+    assert rio.normalized["descricao_editorial"] == "Prosa paga pelo batch."
+    assert rio.normalized["completude_value"] == 90.0
+    # ...and this run's own keys still landed.
+    assert rio.normalized["weekday_text"]
+    assert rio.normalized["google_enriched"] is True
+    # Re-read under a row lock — merging a value read without one just narrows the window.
+    session.refresh.assert_called_once_with(rio, ["normalized"], with_for_update=True)

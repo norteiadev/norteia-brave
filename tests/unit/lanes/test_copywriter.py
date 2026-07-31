@@ -24,6 +24,13 @@ def test_strip_dashes_removes_em_and_en_dash() -> None:
     assert _strip_dashes("Praia de Camburi") == "Praia de Camburi"
 
 
+def test_web_search_is_cost_bounded() -> None:
+    """Per-description search spend stays capped — each search carries a flat $10/1k fee on
+    top of the tokens its results inject. The cap is a ceiling for the hard cases (measured
+    traffic spends 2), so this asserts a bound, not an exact value."""
+    assert WEB_SEARCH_TOOL["max_uses"] <= 3
+
+
 @pytest.mark.asyncio
 async def test_write_strips_dashes_from_llm_output() -> None:
     """An LLM output containing an em-dash is written stripped (guard, not prompt)."""

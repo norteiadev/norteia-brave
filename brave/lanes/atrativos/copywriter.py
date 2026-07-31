@@ -34,10 +34,21 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 # Basic server-side web_search variant — broadly supported (incl. claude-sonnet-4-5) on the
-# pinned anthropic 0.109.x. max_uses bounds per-description search cost.
+# pinned anthropic 0.109.x.
+#
+# max_uses stays 3 — a CAP, not a target. Measured over 5 live descriptions (famous and
+# obscure alike): the model spends exactly 2 searches every time, so lowering the cap to 2
+# saves nothing on real traffic and removes the only headroom a hard case has. Exceeding the
+# cap returns a `max_uses_exceeded` tool-result block, which generate() drops (it reads only
+# text blocks) — the record silently degrades to the "sensory-only, no facts" fallback below
+# instead of erroring, so a too-tight cap is invisible in production.
+#
+# user_location biases results to Brazilian sources — static country only, since this dict is
+# a module constant shared by every atrativo.
 WEB_SEARCH_TOOL: dict[str, Any] = {
     "type": "web_search_20250305",
     "name": "web_search",
+    "user_location": {"type": "approximate", "country": "BR"},
     "max_uses": 3,
 }
 
