@@ -8,12 +8,16 @@ Tests:
   T3 — slug fallback: primary NotFoundError → retries with deepseek_fallback_slugs[0]
   T4 — cost-guard wiring: pre_dispatch_check invoked + LLMGeneration row written
   T5 — pipeline wiring assertion: outreach_task call site passes redis_client= and session=
+  T6 — generate() prices the web_search server-tool fee on top of tokens
+  T7 — generate() with no server_tool_use prices tokens only (no regression)
+  T8 — generate() accumulates the search fee across pause_turn resumes
 """
 
 from __future__ import annotations
 
 import os
 import uuid
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -269,3 +273,107 @@ def test_pipeline_outreach_task_passes_redis_and_session_to_real_llm_client():
         f"Expected at least 1 occurrence of wired RealLLMClient call site in pipeline.py, "
         f"found {count}. Task 2 (pipeline wiring) must be completed first."
     )
+
+
+# ---------------------------------------------------------------------------
+# T6/T7/T8 — generate() cost accounting (web_search fee is billed on top of tokens)
+# ---------------------------------------------------------------------------
+
+
+def _fake_response(
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    web_search_requests: int | None = None,
+    stop_reason: str = "end_turn",
+) -> SimpleNamespace:
+    """Anthropic Message double. server_tool_use is absent unless a count is given —
+    that is how the API shapes a response where no server tool ran.
+    """
+    usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+    if web_search_requests is not None:
+        usage.server_tool_use = SimpleNamespace(web_search_requests=web_search_requests)
+    return SimpleNamespace(
+        usage=usage,
+        stop_reason=stop_reason,
+        content=[SimpleNamespace(type="text", text="descrição")],
+    )
+
+
+def _generate_client(monkeypatch, **kwargs: Any):
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    monkeypatch.setenv("BRAVE_LLM_OPENROUTER_API_KEY", "test-key")
+
+    from brave.clients.llm import RealLLMClient
+    from brave.config.settings import LLMConfig
+
+    return RealLLMClient(
+        config=LLMConfig(openrouter_api_key="test-key", usd_daily_budget=10.0), **kwargs
+    )
+
+
+async def test_generate_prices_web_search_fee_on_top_of_tokens(
+    monkeypatch, fake_redis, sqlite_session
+):
+    """3 web searches must add 3 x $0.01 to the token cost, in usd_cost and in the row.
+
+    The $10/1,000 search fee is ~30% of an atrativo description; before this it was
+    invisible to record_spend and to the daily budget guard.
+    """
+    client = _generate_client(
+        monkeypatch, redis_client=fake_redis, session=sqlite_session, lane="test"
+    )
+    client._anthropic_client.messages.create = AsyncMock(
+        return_value=_fake_response(input_tokens=20_000, output_tokens=1_000, web_search_requests=3)
+    )
+
+    await client.generate(messages=[{"role": "user", "content": "x"}])
+
+    expected = (20_000 * 3.0 + 1_000 * 15.0) / 1_000_000 + 3 * 0.01
+    rows = sqlite_session.query(LLMGeneration).all()
+    assert len(rows) == 1
+    assert float(rows[0].usd_cost) == pytest.approx(expected)
+
+
+async def test_generate_without_server_tool_use_prices_tokens_only(
+    monkeypatch, fake_redis, sqlite_session
+):
+    """No server tool ran → usage has no server_tool_use attribute → tokens-only price."""
+    client = _generate_client(
+        monkeypatch, redis_client=fake_redis, session=sqlite_session, lane="test"
+    )
+    client._anthropic_client.messages.create = AsyncMock(
+        return_value=_fake_response(input_tokens=1_000, output_tokens=500)
+    )
+
+    await client.generate(messages=[{"role": "user", "content": "x"}])
+
+    expected = (1_000 * 3.0 + 500 * 15.0) / 1_000_000
+    rows = sqlite_session.query(LLMGeneration).all()
+    assert float(rows[0].usd_cost) == pytest.approx(expected)
+
+
+async def test_generate_accumulates_web_search_fee_across_pause_turns(
+    monkeypatch, fake_redis, sqlite_session
+):
+    """Searches run on every resumed turn, so the fee must sum like the tokens do."""
+    client = _generate_client(
+        monkeypatch, redis_client=fake_redis, session=sqlite_session, lane="test"
+    )
+    client._anthropic_client.messages.create = AsyncMock(
+        side_effect=[
+            _fake_response(
+                input_tokens=5_000,
+                output_tokens=100,
+                web_search_requests=2,
+                stop_reason="pause_turn",
+            ),
+            _fake_response(input_tokens=9_000, output_tokens=400, web_search_requests=1),
+        ]
+    )
+
+    await client.generate(messages=[{"role": "user", "content": "x"}])
+
+    expected = (14_000 * 3.0 + 500 * 15.0) / 1_000_000 + 3 * 0.01
+    rows = sqlite_session.query(LLMGeneration).all()
+    assert float(rows[0].usd_cost) == pytest.approx(expected)
