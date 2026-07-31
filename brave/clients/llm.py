@@ -56,6 +56,17 @@ logger = structlog.get_logger(__name__)
 _SONNET_4_5_INPUT_USD_PER_MTOK: float = 3.0
 _SONNET_4_5_OUTPUT_USD_PER_MTOK: float = 15.0
 
+# Prompt-caching multipliers on the input rate. Nothing sends cache_control today, so both
+# counters are always 0 — priced anyway because a cache hit MOVES tokens out of input_tokens,
+# so without these the day someone enables caching we would under-count instead of measure it.
+_CACHE_READ_MULTIPLIER: float = 0.1
+_CACHE_WRITE_MULTIPLIER: float = 1.25
+
+# The server-side web_search tool bills $10 per 1,000 searches ON TOP of tokens. On an atrativo
+# description that fee is ~30% of the real bill, so omitting it made record_spend — and the daily
+# budget guard that reads it — structurally low.
+_WEB_SEARCH_USD_PER_REQUEST: float = 0.01
+
 # Bound on pause_turn resumes when a server-side tool (web_search) is enabled — a backstop
 # so a runaway server-side loop can never spin generate() forever.
 _MAX_TOOL_TURNS: int = 4
@@ -75,6 +86,16 @@ _MODE_MAP: dict[str, instructor.Mode] = {
 # ---------------------------------------------------------------------------
 # Retry policy — transient OpenRouter/openai errors only (WR-01)
 # ---------------------------------------------------------------------------
+
+
+def _usage_int(obj: Any, field: str) -> int:
+    """Read an optional integer usage counter, defaulting to 0.
+
+    Anthropic omits these counters entirely when the feature never fired (no server tool ran,
+    no cache_control sent), and test doubles rarely set them — anything non-int reads as 0.
+    """
+    value = getattr(obj, field, 0)
+    return value if isinstance(value, int) else 0
 
 
 def _is_openai_retryable(exc: BaseException) -> bool:
@@ -336,6 +357,12 @@ class RealLLMClient:
         # by re-sending the assistant content until it ends naturally (bounded — never loop).
         prompt_tokens = response.usage.input_tokens
         completion_tokens = response.usage.output_tokens
+        cache_read_tokens = _usage_int(response.usage, "cache_read_input_tokens")
+        cache_write_tokens = _usage_int(response.usage, "cache_creation_input_tokens")
+        # Each resume re-runs searches, so the search fee accumulates per turn like the tokens.
+        web_searches = _usage_int(
+            getattr(response.usage, "server_tool_use", None), "web_search_requests"
+        )
         _turns = 0
         while response.stop_reason == "pause_turn" and _turns < _MAX_TOOL_TURNS:
             _turns += 1
@@ -344,6 +371,11 @@ class RealLLMClient:
             response = await self._anthropic_client.messages.create(**create_kwargs)  # type: ignore[arg-type]
             prompt_tokens += response.usage.input_tokens
             completion_tokens += response.usage.output_tokens
+            cache_read_tokens += _usage_int(response.usage, "cache_read_input_tokens")
+            cache_write_tokens += _usage_int(response.usage, "cache_creation_input_tokens")
+            web_searches += _usage_int(
+                getattr(response.usage, "server_tool_use", None), "web_search_requests"
+            )
 
         # Extract text from all text-type blocks (skips server_tool_use / *_tool_result).
         text = "".join(
@@ -354,14 +386,19 @@ class RealLLMClient:
         # (RESEARCH.md Pitfall 7). Prices are for Sonnet 4.5 (2026-06).
         usd_cost: float = (
             prompt_tokens * _SONNET_4_5_INPUT_USD_PER_MTOK
+            + cache_write_tokens * _SONNET_4_5_INPUT_USD_PER_MTOK * _CACHE_WRITE_MULTIPLIER
+            + cache_read_tokens * _SONNET_4_5_INPUT_USD_PER_MTOK * _CACHE_READ_MULTIPLIER
             + completion_tokens * _SONNET_4_5_OUTPUT_USD_PER_MTOK
-        ) / 1_000_000
+        ) / 1_000_000 + web_searches * _WEB_SEARCH_USD_PER_REQUEST
 
+        # web_searches is folded into usd_cost only — llm_generations has no column for it,
+        # so the log line is where the search count stays observable.
         logger.info(
             "llm_generate_ok",
             model=model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            web_searches=web_searches,
             usd_cost=usd_cost,
         )
 
