@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 
 from brave.core.models import whatsapp_candidate_from_phone
+from brave.core.rio.persist import persist_normalized
 from brave.lanes.atrativos.schemas import ContactResult
 from brave.observability.audit import write_audit
 
@@ -114,8 +114,11 @@ class ContactFinderAgent:
         if whatsapp_candidate is not None:
             new_normalized["contact"] = {"whatsapp_candidate": whatsapp_candidate}
 
-        rio.normalized = new_normalized
-        flag_modified(rio, "normalized")
+        # Merge the delta onto the CURRENT column under a row lock instead of writing this
+        # pre-place_details snapshot back whole — otherwise anything committed during the
+        # Places call (a paid batched descricao_editorial + its completude, whose batch stamp
+        # is already cleared) is erased and gets paid for again. See persist_normalized.
+        persist_normalized(self._session, rio, normalized, new_normalized)
         rio.sub_state = "contacts_found"
 
         # Write audit row (D-02)
