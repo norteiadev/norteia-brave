@@ -39,10 +39,10 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 
 from brave.clients.places import _normalize_name
 from brave.config.settings import ScoreConfig
+from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import route_by_score
 from brave.lanes.atrativos.copywriter import TourismCopywriter
 from brave.lanes.atrativos.schemas import SignalResult
@@ -107,32 +107,6 @@ def _parse_iso(raw: Any) -> datetime | None:
     except (ValueError, TypeError):
         return None
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
-
-
-def _persist_normalized(
-    session: Session, rio: RioRecord, before: dict[str, Any], after: dict[str, Any]
-) -> dict[str, Any]:
-    """Merge ONLY the keys this run changed onto the row's CURRENT ``normalized``. Returns it.
-
-    Lost update, and it predates the batch lane: ``run`` reads ``normalized``, snapshots it,
-    then spends seconds in Places network I/O before writing the whole JSONB column back from
-    that pre-I/O snapshot — silently erasing whatever ANY other writer committed in that
-    window (workers run in parallel; prefetch 1 is not concurrency 1).
-
-    The concrete case is the batched-description lane: collect commits ``descricao_editorial``
-    + the lifted ``completude_value`` mid-flight, this agent's stale dict wipes both, and since
-    apply_result already cleared ``descricao_batch_id`` the record is instantly eligible again
-    and the next tick PAYS for the same description a second time.
-
-    Re-reading under FOR UPDATE and writing a delta (not a snapshot) fixes it for every
-    concurrent writer, not just that one.
-    """
-    delta = {k: v for k, v in after.items() if k not in before or before[k] != v}
-    session.refresh(rio, ["normalized"], with_for_update=True)
-    merged = {**(rio.normalized or {}), **delta}
-    rio.normalized = merged
-    flag_modified(rio, "normalized")
-    return merged
 
 
 def _best_match(
@@ -275,6 +249,15 @@ class PlacesEnrichmentAgent:
             and bool(normalized.get("name"))
             and rio.routing != "descarte"
             and attempts < _MAX_DESCRIPTION_ATTEMPTS
+            # A live batch already holds a PAID request for this record's description.
+            # Turning atrativo_description_batch_enabled OFF (the operator action that flag
+            # exists to support) re-enables THIS inline copywriter within one sweep, and
+            # nothing else here can see the in-flight request: descricao_editorial is still
+            # absent and descricao_attempts is still 0. Without this guard the flip bills a
+            # second full-price Sonnet+web_search call for prose Anthropic is already
+            # producing, and collect overwrites the inline one an hour later. The stamp is
+            # cleared in the same transaction as the batched writes, so it un-blocks itself.
+            and not rio.descricao_batch_id
         )
         # Exhausted budget is SILENT otherwise (the record just stops getting descriptions,
         # forever, until an operator clears the counter in JSONB). Log it on every pass so
@@ -330,7 +313,7 @@ class PlacesEnrichmentAgent:
             # Step 3: CLOSED_* on a confident match → hard descarte (mirror SignalAgent).
             if business_status in CLOSED_STATUSES:
                 new_normalized["google_enriched"] = True
-                _persist_normalized(self._session, rio, normalized, new_normalized)
+                persist_normalized(self._session, rio, normalized, new_normalized)
                 rio.routing = "descarte"
                 rio.dlq_reason = "closed_place"
                 write_audit(
@@ -466,9 +449,9 @@ class PlacesEnrichmentAgent:
         # Step 5: mark enriched (idempotency), mutate normalized, re-score. sub_state is
         # left untouched — a dlq record stays in the plain DLQ (sub_state=None) queue.
         new_normalized["google_enriched"] = True
-        # Merge, never overwrite — see _persist_normalized. From here on the merged value is
+        # Merge, never overwrite — see persist_normalized. From here on the merged value is
         # what the audit row, the timeline event and the re-score must read.
-        new_normalized = _persist_normalized(self._session, rio, normalized, new_normalized)
+        new_normalized = persist_normalized(self._session, rio, normalized, new_normalized)
 
         write_audit(
             session=self._session,

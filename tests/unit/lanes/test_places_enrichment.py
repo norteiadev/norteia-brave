@@ -56,6 +56,10 @@ def _make_rio(
     rio.id = uuid.uuid4()
     rio.sub_state = sub_state
     rio.routing = routing
+    # Explicit: a MagicMock attribute is truthy, and the inline description gate reads this
+    # column ("is a paid request already in flight?"). None is the state of every record that
+    # is not inside a batch.
+    rio.descricao_batch_id = None
     rio.dlq_reason = "score=55.50 below threshold_mar=80.0"
     rio.entity_type = "attraction"
     rio.uf = "BA"
@@ -473,6 +477,39 @@ async def test_successful_description_never_burns_attempt_budget() -> None:
 
     assert rio.normalized["descricao_editorial"] == "Prosa da Norteia."
     assert "descricao_attempts" not in rio.normalized
+
+
+@pytest.mark.asyncio
+async def test_a_record_inside_a_live_batch_is_never_billed_inline() -> None:
+    """A record holding a batch stamp already has a PAID description request in flight.
+
+    The operator action this guards is the one the flag exists for: batches are slow, so
+    atrativo_description_batch_enabled goes OFF mid-flight. Within one sweep the inline
+    copywriter is rebuilt and sees exactly what a virgin record looks like — no
+    descricao_editorial, descricao_attempts=0 — and fires a second full-price Sonnet +
+    web_search call (~$0.09-0.12) for prose Anthropic is already producing. Collect then
+    overwrites it an hour later: one description, two bills, plus two LLMGeneration rows.
+    """
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": _details()},
+    )
+    fake_llm = FakeLLMClient(generate_result="Prosa cobrada duas vezes.")
+    rio = _make_rio()
+    rio.descricao_batch_id = "msgbatch_01"  # submitted; Anthropic is billing already
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+    )
+    await _run(agent, rio)
+
+    assert fake_llm.generate_calls == []  # no second bill
+    assert "descricao_editorial" not in rio.normalized  # collect writes it, not us
+    assert "descricao_attempts" not in rio.normalized  # not an attempt: nothing was tried
+    # The unpaid rest of the pass still runs (hours are free of the copywriter).
+    assert rio.normalized["weekday_text"]
+    assert rio.normalized["google_enriched"] is True
 
 
 @pytest.mark.asyncio
