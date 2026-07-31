@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from brave.shared.exceptions import CostGuardError
+
 if TYPE_CHECKING:
     from brave.clients.base import LLMClientProtocol
 
@@ -137,7 +139,11 @@ class TourismCopywriter:
     ) -> str | None:
         """Return finished PT-BR prose, or None if generation yields nothing usable.
 
-        Never raises — any LLM/search failure degrades to None (the caller keeps the floor).
+        Degrades to None on any LLM/search failure (the caller keeps the floor), with ONE
+        exception: ``CostGuardError`` propagates. The guard raises it BEFORE dispatch, so no
+        token was spent and no attempt happened — a caller with a retry budget must be able
+        to tell that apart from "the model produced nothing" (see PlacesEnrichmentAgent's
+        descricao_attempts).
         """
         if not nome:
             return None
@@ -150,6 +156,9 @@ class TourismCopywriter:
                 system=COPYWRITER_SYSTEM,
                 tools=tools,
             )
+        except CostGuardError:  # no spend happened — never swallow into a "failed" None
+            logger.warning("copywriter_cost_guard_blocked", nome=nome, uf=uf)
+            raise
         except Exception:  # noqa: BLE001 — copywriter failure keeps the TA floor
             logger.warning("copywriter_failed_kept_floor", nome=nome, uf=uf)
             return None

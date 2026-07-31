@@ -39,3 +39,11 @@ redis-data/
 # POC de imagens — índice do acervo MTur (7,2 MB, regenerável em ~2 min)
 # .venv/bin/python -m scripts.poc_images.harvest_mtur
 scripts/poc_images/out/mtur_index.json
+
+# Scratch dir para probes de operador (jars de cookie TripAdvisor = segredo)
+tmp/
+*.curl
+
+# Saída de ferramenta (cache/AST regenerável) e payload de E2E — scratch, não fonte
+graphify-out/
+atrativos_e2e_5.json

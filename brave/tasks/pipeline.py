@@ -354,6 +354,17 @@ def process_nascente(self, nascente_id: str) -> None:
         engine.dispose()
 
 
+def _http_error_body(exc: BaseException) -> str | None:
+    """Response body of a failed push, when the exception carries one.
+
+    ``str(exc)`` on an httpx.HTTPStatusError is only the status line, so a 422
+    caused by a single bad field (e.g. an enum string in an integer column) burned
+    every retry without ever naming the field. Returns None for non-HTTP errors.
+    """
+    response = getattr(exc, "response", None)
+    return response.text if response is not None else None
+
+
 def _build_push_payload(mar_record: Any, rio_record: RioRecord) -> dict[str, Any]:
     """Build the flat-provenance Mar push payload (D-16 Pact contract shape).
 
@@ -474,6 +485,7 @@ def push_mar(self, rio_id: str) -> None:
                 "push_mar_max_retries_exceeded",
                 rio_id=rio_id,
                 error=str(exc),
+                response=_http_error_body(exc),
             )
 
     finally:
@@ -615,6 +627,7 @@ def push_destination_task(self, rio_id: str) -> None:
                 "push_destination_max_retries_exceeded",
                 rio_id=rio_id,
                 error=str(exc),
+                response=_http_error_body(exc),
             )
 
     finally:
@@ -1643,6 +1656,7 @@ def push_attraction_task(self, rio_id: str) -> None:
                 "push_attraction_max_retries_exceeded",
                 rio_id=rio_id,
                 error=str(exc),
+                response=_http_error_body(exc),
             )
 
     finally:

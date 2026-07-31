@@ -89,6 +89,34 @@ def _split_phone_for_push(phone_raw: str | None) -> tuple[str | None, str | None
     return None, e164  # fixo / other → telefone
 
 
+# Places API (New) returns priceLevel as an ENUM NAME ("PRICE_LEVEL_MODERATE");
+# norteia-api's attraction_place_details.price_level is an INTEGER column and its
+# request validator rejects anything else — a single bad key 422s the whole
+# attraction push. Map to Google's legacy 0–4 price_level scale (the same scale the
+# Pact freezes as 2). NOT the proto ordinals (FREE=1…VERY_EXPENSIVE=5), which are
+# off by one. Unknown/UNSPECIFIED → None; the column is nullable.
+_PRICE_LEVEL_TO_INT = {
+    "PRICE_LEVEL_FREE": 0,
+    "PRICE_LEVEL_INEXPENSIVE": 1,
+    "PRICE_LEVEL_MODERATE": 2,
+    "PRICE_LEVEL_EXPENSIVE": 3,
+    "PRICE_LEVEL_VERY_EXPENSIVE": 4,
+}
+
+
+def _price_level_for_push(value: Any) -> int | None:
+    """Coerce a stored price level to the API's integer contract.
+
+    Only the Google enum name maps (the sole producer, brave/clients/places.py,
+    persists that string). Anything else — including a bare number, which is
+    ambiguous between the legacy 0–4 scale and the off-by-one proto ordinals —
+    is dropped to None rather than 422-ing or pushing a wrong tier.
+    """
+    if value is None:
+        return None
+    return _PRICE_LEVEL_TO_INT.get(str(value).strip().upper())
+
+
 def promote_to_mar(
     session: Session,
     rio_record: RioRecord,
@@ -130,14 +158,16 @@ def promote_to_mar(
         return None
 
     # Build canonical payload from normalized record. most_recent_review_at, contact
-    # (Phase F), and google_enriched (the Places-enrichment idempotency marker) are
-    # internal/board-only — exclude them alongside the five reliability *_value criteria
-    # so the norteia-api Mar push shape stays byte-identical.
+    # (Phase F), google_enriched (the Places-enrichment idempotency marker) and
+    # descricao_attempts (the copywriter retry counter) are internal/board-only —
+    # exclude them alongside the five reliability *_value criteria so the norteia-api
+    # Mar push shape stays byte-identical.
     canonical: dict[str, Any] = {
         k: v for k, v in normalized.items()
         if k not in ("origem_value", "completude_value", "corroboracao_value",
                      "atualidade_value", "validacao_humana_value",
-                     "most_recent_review_at", "contact", "google_enriched")
+                     "most_recent_review_at", "contact", "google_enriched",
+                     "descricao_attempts")
     }
 
     # Build provenance (D-06) — full per-criterion breakdown + score_version
@@ -331,7 +361,7 @@ def build_push_payload(
             or canonical.get("place_id"),
             "business_status": signal.get("business_status"),
             "opening_hours": weekday_text,
-            "price_level": canonical.get("price_level"),
+            "price_level": _price_level_for_push(canonical.get("price_level")),
             "reviews_recent_count": signal.get("reviews_recent_count"),
             "distrito_code": canonical.get("distrito_code"),
             "distrito_name": canonical.get("distrito_name"),

@@ -45,13 +45,16 @@ from brave.clients.places import _normalize_name
 from brave.config.settings import ScoreConfig
 from brave.core.rio.routing import route_by_score
 from brave.lanes.atrativos.copywriter import TourismCopywriter
+from brave.lanes.atrativos.schemas import SignalResult
 from brave.lanes.atrativos.signal_agent import (
     CLOSED_STATUSES,
     _compute_atualidade,
+    _is_recent_review,
     _newest_review_dt,
 )
 from brave.observability.audit import write_audit
 from brave.observability.record_events import record_event
+from brave.shared.exceptions import CostGuardError
 from brave.shared.ibge_distritos import resolve_distrito
 
 if TYPE_CHECKING:
@@ -62,6 +65,16 @@ if TYPE_CHECKING:
 # completude ceiling once a descricao_editorial is written (mirrors the old
 # DescriptionEnrichmentAgent degrau: 75 floor → 90 with description).
 _COMPLETUDE_WITH_DESCRIPTION: float = 90.0
+
+# How many times the copywriter may be re-attempted on a record that never got prose.
+# WHY a bounded count and not a boolean: TourismCopywriter.write swallows every failure and
+# returns None, so "description absent" alone re-arms the backfill pass forever (a provider
+# outage or cost-guard trip would re-spend an LLM call + re-score on EVERY sweep, for every
+# already-enriched atrativo). A permanent "failed once, never again" marker re-creates the
+# opposite bug — a transient outage would block backfill for good. A small bounded count is
+# the only shape that is both. Operators clear ``descricao_attempts`` to re-arm.
+# NOT counted: a CostGuardError (raised before dispatch, zero spend) — see run().
+_MAX_DESCRIPTION_ATTEMPTS: int = 3
 
 logger = structlog.get_logger(__name__)
 
@@ -141,7 +154,9 @@ class PlacesEnrichmentAgent:
     Advances sub_state (None | "signals_gathered") → "places_enriched". Serves both the TA
     inline path (sub_state None, dispatched by sweep_tripadvisor) and the Places-FSM discovery
     path (sub_state "signals_gathered"). Cross-lane guard: a record that already carries
-    place_id_cache AND weekday_text was enriched by the Places-FSM SignalAgent — no-op.
+    place_id_cache AND weekday_text was enriched by the Places-FSM SignalAgent — its PAID
+    Places sub-step is skipped, but the description sub-step still runs (this agent is the
+    ONLY writer of descricao_editorial, so that lane would otherwise never get one).
 
     Description: written by TourismCopywriter (Places editorialSummary + web_search, Norteia
     voice) when ``description_enabled`` and the record has no descricao_editorial yet. Gated
@@ -200,21 +215,58 @@ class PlacesEnrichmentAgent:
         Mar. Idempotency is keyed on the ``google_enriched`` normalized marker, NOT
         sub_state (the description step dlq-bounces sub_state to None, so a sub_state
         gate would never fire). This step does NOT participate in the sub_state FSM.
+        ``google_enriched`` means "the PAID Places sub-step has run for this record" —
+        NOT "everything is done": the description sub-step is re-attempted on later
+        passes while descricao_editorial is missing, for at most
+        _MAX_DESCRIPTION_ATTEMPTS tries (``descricao_attempts``).
 
         Pipeline:
-          1. Idempotency (marker) + Places-FSM cross-lane skip.
+          1. Skip the PAID Places sub-step when already done (marker / cross-lane);
+             return only when there is also no description left to backfill.
           2. Resolve place_id: use place_id_cache if present, else Text Search + match.
           3. place_details → business_status CLOSED_* (confident match) → descarte.
           4. weekday_text (hours) + Google coords + atualidade=max(TA,Google) +
              most_recent_review_at + place_id_cache/google_place_id.
           5. Mark google_enriched, flag_modified, re-score (route_by_score).
         """
-        # Step 1: idempotency (marker) + cross-lane guard. NO sub_state gate.
+        # Step 1: the PAID Places sub-step is one-shot — either this agent already ran
+        # (google_enriched marker) or the Places-FSM SignalAgent already spent the
+        # Details SKU (cross-lane: place_id_cache + weekday_text). The DESCRIPTION
+        # sub-step is NOT one-shot: a record whose copywriter pass failed or was
+        # disabled is backfilled on a later pass at ZERO Places spend (details stays
+        # empty → the copywriter grounds on web_search alone). wants_description
+        # mirrors the description sub-step's own condition below.
         normalized = rio.normalized or {}
-        if normalized.get("google_enriched"):
-            return
-        if normalized.get("place_id_cache") and normalized.get("weekday_text"):
-            # Already enriched by the Places-FSM SignalAgent — not a TA-lane record.
+        places_done = bool(
+            normalized.get("google_enriched")
+            or (normalized.get("place_id_cache") and normalized.get("weekday_text"))
+        )
+        attempts = int(normalized.get("descricao_attempts") or 0)
+        wants_description = (
+            self._description_enabled
+            and self._copywriter is not None
+            and not normalized.get("descricao_editorial")
+            and bool(normalized.get("name"))
+            and rio.routing != "descarte"
+            and attempts < _MAX_DESCRIPTION_ATTEMPTS
+        )
+        # Exhausted budget is SILENT otherwise (the record just stops getting descriptions,
+        # forever, until an operator clears the counter in JSONB). Log it on every pass so
+        # "descriptions stopped" is diagnosable from the logs alone.
+        if (
+            self._description_enabled
+            and self._copywriter is not None
+            and not normalized.get("descricao_editorial")
+            and attempts >= _MAX_DESCRIPTION_ATTEMPTS
+        ):
+            logger.warning(
+                "description_attempts_exhausted",
+                rio_id=str(rio.id),
+                uf=rio.uf,
+                attempts=attempts,
+                max_attempts=_MAX_DESCRIPTION_ATTEMPTS,
+            )
+        if places_done and not wants_description:
             return
 
         nome: str = normalized.get("name") or ""
@@ -228,21 +280,23 @@ class PlacesEnrichmentAgent:
         hours_written = False
         ref_date = self._now or datetime.now(UTC)
 
-        # Step 2+3: resolve place_id, fetch details. ANY external failure degrades to the
-        # TA floor — a Places defect can never strand the record.
+        # Step 2+3: resolve place_id, fetch details. Skipped entirely once places_done —
+        # a description-only backfill pass spends NO Places SKU. ANY external failure
+        # degrades to the TA floor — a Places defect can never strand the record.
         details: dict[str, Any] = {}
         place_id: str = normalized.get("place_id_cache") or ""
-        try:
-            if not place_id and nome:
-                results = await self._places_client.text_search(nome, uf)
-                match = _best_match(results, nome, lat, lng, self._max_distance_km)
-                if match is not None:
-                    place_id = match.get("place_id") or ""
-            if place_id:
-                details = await self._places_client.place_details(place_id)
-        except Exception:  # noqa: BLE001 — Places failure keeps the TA floor
-            logger.warning("places_enrich_failed_kept_floor", rio_id=str(rio.id))
-            details = {}
+        if not places_done:
+            try:
+                if not place_id and nome:
+                    results = await self._places_client.text_search(nome, uf)
+                    match = _best_match(results, nome, lat, lng, self._max_distance_km)
+                    if match is not None:
+                        place_id = match.get("place_id") or ""
+                if place_id:
+                    details = await self._places_client.place_details(place_id)
+            except Exception:  # noqa: BLE001 — Places failure keeps the TA floor
+                logger.warning("places_enrich_failed_kept_floor", rio_id=str(rio.id))
+                details = {}
 
         if details:
             business_status: str = details.get("business_status", "UNKNOWN")
@@ -307,12 +361,27 @@ class PlacesEnrichmentAgent:
             phone = details.get("international_phone_number")
             website = details.get("website")
             price_level = details.get("price_level")
+            address = details.get("formatted_address")
             if phone:
                 new_normalized["phone"] = phone
             if website:
                 new_normalized["website"] = website
             if price_level:
                 new_normalized["price_level"] = price_level
+            if address:
+                new_normalized["address"] = address
+
+            # Places-FSM parity: build_push_payload reads business_status and
+            # reviews_recent_count off normalized["signal"] (the SignalResult block the
+            # SignalAgent writes) — without it the TA lane pushes both as null.
+            new_normalized["signal"] = SignalResult(
+                business_status=business_status,
+                weekday_text=weekday_text,
+                atualidade_value=new_normalized["atualidade_value"],
+                reviews_recent_count=sum(
+                    1 for r in reviews if _is_recent_review(r, ref_date)
+                ),
+            ).model_dump()
 
             # Distrito from Places addressComponents (admin_area_level_3 → resolve_distrito),
             # replacing the old MD-breadcrumb resolver. Same six canonical keys the discovery
@@ -338,15 +407,23 @@ class PlacesEnrichmentAgent:
         # (idempotent refresh). Runs even without a Places match — web_search can still ground
         # it from name+município+UF. Never raises (copywriter returns None on any failure).
         description_written = bool(new_normalized.get("descricao_editorial"))
-        if (
-            self._description_enabled
-            and self._copywriter is not None
-            and not description_written
-            and nome
-        ):
-            prose = await self._copywriter.write(
-                nome, municipio, uf, places_context=details
-            )
+        # Same predicate as the Step-1 gate (routing + attempt budget included) — the two
+        # conditions MUST agree, so this branch reuses it instead of restating it.
+        if wants_description and self._copywriter is not None:
+            prose: str | None = None
+            no_spend = False
+            try:
+                prose = await self._copywriter.write(
+                    nome, municipio, uf, places_context=details
+                )
+            except CostGuardError:
+                # The daily budget tripped BEFORE dispatch: no token spent, so no attempt
+                # happened. Burning the budget here would let one budget trip per sweep
+                # exclude the WHOLE backlog from descriptions after 3 sweeps.
+                no_spend = True
+                logger.warning(
+                    "copywriter_cost_guard_no_attempt", rio_id=str(rio.id), attempts=attempts
+                )
             if prose:
                 new_normalized["descricao_editorial"] = prose
                 new_normalized["completude_value"] = max(
@@ -354,6 +431,12 @@ class PlacesEnrichmentAgent:
                     _COMPLETUDE_WITH_DESCRIPTION,
                 )
                 description_written = True
+            elif not no_spend:
+                # Only a real invocation that produced no prose burns budget; success and a
+                # pre-dispatch cost-guard block never increment. After
+                # _MAX_DESCRIPTION_ATTEMPTS the record stops re-entering the pass (see the
+                # constant for why this is a count, not a flag).
+                new_normalized["descricao_attempts"] = attempts + 1
 
         # Step 5: mark enriched (idempotency), mutate normalized, re-score. sub_state is
         # left untouched — a dlq record stays in the plain DLQ (sub_state=None) queue.

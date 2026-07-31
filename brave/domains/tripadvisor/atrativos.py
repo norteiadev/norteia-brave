@@ -618,9 +618,16 @@ class TripAdvisorAtrativosIngest:
             # Parent destino linkage (TA-02, TA-03)
             "parent_rio_id": payload_model.parent_rio_id,
             "parent_source_ref": payload_model.parent_source_ref,
-            # Review signals (LGPD-aggregate only)
+            # Review signals (LGPD-aggregate only). most_recent_review_at is the SAME
+            # date atualidade_value was computed from above; persisting it is what lets
+            # the promote_to_mar 90-day recency backstop verify the freshness the score
+            # already claims. Aggregate date only — never review text/title/author.
+            # None when enrich_reviews is off.
             "review_count": review_count,
             "rating": rating,
+            "most_recent_review_at": (
+                most_recent_dt.isoformat() if most_recent_dt is not None else None
+            ),
             # Category from AttractionsFusion listing card (primaryInfo.text)
             "category": category,
             # Canonical sub-dict for norteia-api contract

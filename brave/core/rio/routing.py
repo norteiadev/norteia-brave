@@ -218,6 +218,13 @@ def process_nascente_record(
         _tipo = _canonical.get("tipo")
         if _tipo:
             normalized["tipo"] = _tipo
+        # Recency evidence for the promote_to_mar 90-day backstop (mar/service.py reads
+        # normalized["most_recent_review_at"]). Lane-agnostic: ANY lane that puts a real
+        # review date in its payload gets it carried into the Rio. Absent/None → key not
+        # set (the backstop stays closed, floor preserved).
+        _review_at = payload.get("most_recent_review_at")
+        if _review_at:
+            normalized["most_recent_review_at"] = _review_at
 
     if nascente.entity_type == "attraction" and "place_id_cache" in payload:
         normalized["place_id_cache"] = payload["place_id_cache"]

@@ -53,6 +53,29 @@ async def test_write_empty_result_returns_none() -> None:
 
 
 @pytest.mark.asyncio
+async def test_write_propagates_cost_guard_error() -> None:
+    """A pre-dispatch cost-guard block is NOT a generation failure — it must not become None.
+
+    None means "the model produced nothing usable" and burns the caller's retry budget.
+    CostGuardError means no token was spent at all, so the caller must be able to tell.
+    """
+    from brave.shared.exceptions import CostGuardError
+
+    fake = FakeLLMClient(raise_on_call=CostGuardError("daily budget exceeded"))
+    cw = TourismCopywriter(fake)
+    with pytest.raises(CostGuardError):
+        await cw.write("Praia de Camburi", "Vitória", "ES", {})
+
+
+@pytest.mark.asyncio
+async def test_write_other_llm_failure_returns_none() -> None:
+    """A genuine LLM failure still degrades to None (the TA floor is kept)."""
+    fake = FakeLLMClient(raise_on_call=RuntimeError("anthropic 500"))
+    cw = TourismCopywriter(fake)
+    assert await cw.write("Praia de Camburi", "Vitória", "ES", {}) is None
+
+
+@pytest.mark.asyncio
 async def test_write_missing_name_returns_none() -> None:
     fake = FakeLLMClient(generate_result="anything")
     cw = TourismCopywriter(fake)

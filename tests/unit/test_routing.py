@@ -4,11 +4,14 @@ All tests run fully offline — no DB, no I/O.
 """
 
 import uuid
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+import brave.core.rio.routing as routing
 from brave.config.settings import ScoreConfig
-from brave.core.models import RioRecord
+from brave.core.models import NascenteRecord, RioRecord
 
 
 @pytest.fixture
@@ -171,3 +174,61 @@ def test_reprocess_record_idempotent(score_config):
     reprocess_record_inline(rio_record, score_config)
     assert rio_record.score == score_after_first
     assert rio_record.routing == routing_after_first
+
+
+# ---------------------------------------------------------------------------
+# process_nascente_record: most_recent_review_at passthrough (attraction-only)
+#
+# The promote_to_mar 90-day backstop reads normalized["most_recent_review_at"],
+# so a lane that fetches a real review date must have it survive the Rio
+# cherry-pick — otherwise every scored-fresh attraction still lands in DLQ.
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _offline_rio():
+    """Patch the Rio I/O seams so process_nascente_record runs pure-in-memory."""
+    repo = MagicMock()
+    repo.get_by_canonical_key.return_value = None
+    with patch.object(routing, "_rio_repo", repo), patch.object(
+        routing, "find_duplicate", return_value=None
+    ), patch.object(routing, "record_event"):
+        yield
+
+
+def _run_rio(entity_type: str, payload: dict) -> RioRecord:
+    from brave.core.rio.routing import process_nascente_record
+
+    nascente = NascenteRecord(
+        id=uuid.uuid4(),
+        source="tripadvisor",
+        source_ref=f"tripadvisor:{entity_type}:1",
+        entity_type=entity_type,
+        uf="BA",
+        payload=payload,
+        content_hash="deadbeef",
+    )
+    with _offline_rio():
+        return process_nascente_record(MagicMock(), nascente, ScoreConfig())
+
+
+def _payload(**extra) -> dict:
+    return {"name": "Praia X", "uf": "BA", "lat": -16.4, "lng": -39.0, **extra}
+
+
+def test_attraction_carries_most_recent_review_at_into_normalized():
+    rio = _run_rio("attraction", _payload(most_recent_review_at="2026-07-20T12:00:00+00:00"))
+    assert rio.normalized["most_recent_review_at"] == "2026-07-20T12:00:00+00:00"
+
+
+@pytest.mark.parametrize("payload", [_payload(), _payload(most_recent_review_at=None)])
+def test_attraction_without_review_date_leaves_key_unset(payload):
+    """Absent or None → key not set, so the backstop stays fail-closed."""
+    rio = _run_rio("attraction", payload)
+    assert "most_recent_review_at" not in rio.normalized
+
+
+def test_destination_does_not_get_most_recent_review_at():
+    """The backstop is attraction-only — destinos must stay untouched."""
+    rio = _run_rio("destination", _payload(most_recent_review_at="2026-07-20T12:00:00+00:00"))
+    assert "most_recent_review_at" not in rio.normalized

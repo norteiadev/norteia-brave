@@ -331,6 +331,52 @@ async def test_signal_agent_stale_reviews_over_90d_routes_to_terminal_dlq() -> N
 
 
 @pytest.mark.asyncio
+async def test_signal_agent_persists_formatted_address() -> None:
+    """Places formatted_address → normalized['address'] (the flat push field)."""
+    from brave.lanes.atrativos.signal_agent import SignalAgent
+
+    recent_dt = (_NOW - timedelta(days=20)).replace(microsecond=0)
+    fixture = {
+        **_open_fixture([{"publishTime": recent_dt.isoformat(), "rating": 5, "text": "ok"}]),
+        "formatted_address": "Praça Central, Porto Seguro - BA",
+    }
+
+    fake_places = FakePlacesClient(fixture_details={"ChIJtest001": fixture})
+    session = _make_mock_session()
+    rio = _make_rio(sub_state="contacts_found")
+
+    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW)
+
+    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
+         patch("brave.lanes.atrativos.signal_agent.route_by_score"):
+        await agent.run(rio)
+
+    assert rio.normalized["address"] == "Praça Central, Porto Seguro - BA"
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_missing_address_keeps_nascente_value() -> None:
+    """Places without formatted_address must never wipe an address already carried in."""
+    from brave.lanes.atrativos.signal_agent import SignalAgent
+
+    recent_dt = (_NOW - timedelta(days=20)).replace(microsecond=0)
+    fixture = _open_fixture([{"publishTime": recent_dt.isoformat(), "rating": 5, "text": "ok"}])
+
+    fake_places = FakePlacesClient(fixture_details={"ChIJtest001": fixture})
+    session = _make_mock_session()
+    rio = _make_rio(sub_state="contacts_found")
+    rio.normalized["address"] = "Rua do Nascente, 100"
+
+    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW)
+
+    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
+         patch("brave.lanes.atrativos.signal_agent.route_by_score"):
+        await agent.run(rio)
+
+    assert rio.normalized["address"] == "Rua do Nascente, 100"
+
+
+@pytest.mark.asyncio
 async def test_signal_agent_no_recent_reviews_never_reaches_whatsapp_gate() -> None:
     """Phase F guard: a review-less attraction must NEVER enter the WhatsApp gate.
 

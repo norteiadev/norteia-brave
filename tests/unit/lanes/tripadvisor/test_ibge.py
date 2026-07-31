@@ -5,13 +5,11 @@ Tests fuzzy matching, haversine fallback, and None-return for unresolvable names
 
 from __future__ import annotations
 
-import io
 from pathlib import Path
 
 import pytest
 
 from brave.lanes.tripadvisor.ibge import IbgeMunicipio, load_ibge_csv, resolve_municipio
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -188,6 +186,31 @@ class TestResolveMunicipio:
         )
         assert result is not None
         assert result.ibge_code == "2927408"  # Salvador
+
+    def test_ibge_haversine_fallback_picks_nearest_not_first(self) -> None:
+        """Cristo Redentor must bind Rio de Janeiro (4.5 km), not Niterói (13.4 km).
+
+        Regression: the fallback returned the FIRST record inside max_distance_km, and
+        the IBGE list is alphabetical — Niterói comes before Rio de Janeiro, so the
+        attraction got the wrong parent destino in norteia-api.
+        """
+        records = [
+            IbgeMunicipio(
+                ibge_code="3303302", nome="Niterói", uf="RJ", lat=-22.8832, lng=-43.1034
+            ),
+            IbgeMunicipio(
+                ibge_code="3304557", nome="Rio de Janeiro", uf="RJ", lat=-22.9129, lng=-43.2003
+            ),
+        ]
+        result = resolve_municipio(
+            "Cristo Redentor",  # won't fuzzy-match either seat
+            "RJ",
+            records,
+            candidate_lat=-22.951916,
+            candidate_lng=-43.210487,
+        )
+        assert result is not None
+        assert result.ibge_code == "3304557"
 
     def test_ibge_haversine_no_fallback_when_too_far(self) -> None:
         """Coordinates far away from any record should return None."""
