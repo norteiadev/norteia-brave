@@ -47,3 +47,9 @@ tmp/
 # Saída de ferramenta (cache/AST regenerável) e payload de E2E — scratch, não fonte
 graphify-out/
 atrativos_e2e_5.json
+
+# Dados brutos das sondagens de POC (reproduzíveis rodando os scripts em scripts/)
+docs/poc/*.auto.md
+docs/poc/*.raw.json
+docs/poc/*.sample34.json
+docs/poc/osm-probe.json
