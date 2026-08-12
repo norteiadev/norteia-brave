@@ -83,6 +83,29 @@ logger = structlog.get_logger(__name__)
 # canonical record (mirrors DescriptionEnrichmentAgent's município guard posture).
 _NAME_MATCH_THRESHOLD: int = 85
 
+# Google's own marker for an administrative / geographic entity (município, bairro,
+# sublocalidade). Such a place carries NONE of the fields this agent came for — no hours,
+# no reviews, no business_status — yet it clears both the name and the distance guard with
+# room to spare, because it sits at the atrativo's own coordinates and shares its name.
+#
+# Measured (docs/poc/places-extra-fields-spike.auto.raw.json, 15 atrativos): the 3 broken
+# matches — Centro Histórico de Paraty (sublocality_level_1), Convento da Penha
+# (neighborhood), Praia dos Carneiros (locality) — ALL carried "political"; the 12 good ones
+# carried none. Separation 15/15, so a single marker does the whole job.
+#
+# WHY "political" and not a list of the three types seen: "political" is the taxonomy's own
+# class for these, so it also covers geographic types we have not sampled yet.
+#
+# WHY not the inverse rule ("require establishment"), which separates the same 15/15: it
+# fails CLOSED. If Google ever stops emitting the legacy "establishment" type, EVERY atrativo
+# silently stops being enriched. "political" fails OPEN — a taxonomy change degrades to
+# today's behaviour instead of to zero.
+#
+# NOT rejected: "beach" / "natural_feature". Praia de Camburi resolved to
+# ["beach","natural_feature","establishment"] and DID return an editorialSummary — a natural
+# feature is a legitimate atrativo, only the administrative entity is not.
+_GEOGRAPHIC_TYPE_MARKER: str = "political"
+
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in km (pure math).
@@ -118,16 +141,26 @@ def _best_match(
 ) -> dict[str, Any] | None:
     """Pick the Text Search result that confidently IS the target atrativo.
 
-    Requires a name token_set_ratio ≥ _NAME_MATCH_THRESHOLD. When both the target and
-    the candidate carry coordinates, the candidate must also be within max_distance_km
-    (rejects same-name places in other cities). Among passers, the highest name score
-    wins. Returns None when nothing passes → caller keeps the TA floor.
+    Three guards, all of which a candidate must clear:
+      - it must not be a geographic entity (``_GEOGRAPHIC_TYPE_MARKER`` in ``types``);
+      - name token_set_ratio ≥ _NAME_MATCH_THRESHOLD;
+      - when both target and candidate carry coordinates, within max_distance_km
+        (rejects same-name places in other cities).
+
+    Among passers the highest name score wins. Returns None when nothing passes → caller
+    keeps the TA floor.
+
+    The geographic guard runs FIRST and per-candidate (not as a post-hoc rejection of the
+    winner) so a lower-scoring real POI in the same result set can still win — the
+    município usually scores 100 on the name.
     """
     folded_target = _normalize_name(target_name)
     best: dict[str, Any] | None = None
     best_score = -1.0
     have_target_coords = target_lat is not None and target_lng is not None
     for r in results:
+        if _GEOGRAPHIC_TYPE_MARKER in (r.get("types") or []):
+            continue  # município/bairro/sublocalidade — carries none of the fields we want
         name = r.get("name") or ""
         score = fuzz.token_set_ratio(folded_target, _normalize_name(name))
         if score < _NAME_MATCH_THRESHOLD:

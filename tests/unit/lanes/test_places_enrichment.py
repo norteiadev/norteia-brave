@@ -89,11 +89,22 @@ def _make_session() -> MagicMock:
     return session
 
 
-def _search_result(name: str = "Igreja Matriz", lat: float = _LAT, lng: float = _LNG) -> dict:
+def _search_result(
+    name: str = "Igreja Matriz",
+    lat: float = _LAT,
+    lng: float = _LNG,
+    place_id: str = "ChIJmatriz001",
+    types: list[str] | None = None,
+) -> dict:
     return {
-        "place_id": "ChIJmatriz001",
+        "place_id": place_id,
         "name": name,
         "location": {"lat": lat, "lng": lng},
+        # Default is the shape Places returns for a real POI. Tests that care about the
+        # geographic guard pass `types` explicitly.
+        "types": types
+        if types is not None
+        else ["tourist_attraction", "point_of_interest", "establishment"],
     }
 
 
@@ -242,6 +253,119 @@ async def test_far_location_rejected_keeps_floor() -> None:
 
     assert "weekday_text" not in rio.normalized
     assert fake.place_details_calls == []
+
+
+@pytest.mark.asyncio
+async def test_geographic_entity_rejected_keeps_floor() -> None:
+    """A município/bairro result is rejected even at a perfect name + distance match.
+
+    Regression for the PR #24 finding: 3 of 15 sampled atrativos resolved to a `political`
+    entity (Paraty → sublocality_level_1, Convento da Penha → neighborhood, Praia dos
+    Carneiros → locality). Those carry no hours, no reviews and no business_status, yet they
+    sit at the atrativo's own coordinates and share its name — so both existing guards pass
+    and the wrong place_id used to be stamped onto the canonical record.
+    """
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(
+        fixture_results={
+            "Igreja Matriz": [
+                _search_result(types=["neighborhood", "political"]),
+            ]
+        },
+        fixture_details={"ChIJmatriz001": _details()},
+    )
+    rio = _make_rio()
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    await _run(agent, rio)
+
+    assert fake.place_details_calls == [], "a political entity must never be fetched"
+    assert "place_id_cache" not in rio.normalized
+    assert "google_place_id" not in rio.normalized
+    assert "weekday_text" not in rio.normalized
+    assert rio.normalized["lat"] == _LAT  # TA coords untouched
+
+
+@pytest.mark.asyncio
+async def test_real_poi_wins_over_a_higher_scoring_geographic_entity() -> None:
+    """The guard is per-candidate, so a real POI still wins when the município scores higher.
+
+    The município matches the atrativo name exactly (score 100) and the POI only partially
+    (< 100). Rejecting the winner after the fact would drop the whole result set; skipping
+    per-candidate keeps the POI.
+    """
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(
+        fixture_results={
+            "Igreja Matriz": [
+                _search_result(
+                    name="Igreja Matriz",
+                    place_id="ChIJbairro",
+                    types=["sublocality_level_1", "sublocality", "political"],
+                ),
+                _search_result(
+                    name="Igreja Matriz de Nossa Senhora da Pena",
+                    place_id="ChIJpoi",
+                    types=["church", "tourist_attraction", "point_of_interest", "establishment"],
+                ),
+            ]
+        },
+        fixture_details={"ChIJpoi": _details()},
+    )
+    rio = _make_rio()
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    await _run(agent, rio)
+
+    assert fake.place_details_calls == ["ChIJpoi"]
+    assert rio.normalized["google_place_id"] == "ChIJpoi"
+    assert rio.normalized["weekday_text"]
+
+
+@pytest.mark.asyncio
+async def test_natural_feature_is_not_rejected() -> None:
+    """`beach`/`natural_feature` is a legitimate atrativo — the guard must not over-reach.
+
+    Measured: Praia de Camburi resolved to ["beach","natural_feature","establishment"] and
+    returned an editorialSummary. Only the administrative entity is worthless.
+    """
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(
+        fixture_results={
+            "Igreja Matriz": [
+                _search_result(types=["beach", "natural_feature", "establishment"]),
+            ]
+        },
+        fixture_details={"ChIJmatriz001": _details()},
+    )
+    rio = _make_rio()
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    await _run(agent, rio)
+
+    assert fake.place_details_calls == ["ChIJmatriz001"]
+    assert rio.normalized["weekday_text"]
+
+
+@pytest.mark.asyncio
+async def test_result_without_types_is_still_matched() -> None:
+    """A candidate with no `types` key at all is kept — the guard fails OPEN by design."""
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    bare = {
+        "place_id": "ChIJmatriz001",
+        "name": "Igreja Matriz",
+        "location": {"lat": _LAT, "lng": _LNG},
+    }
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [bare]},
+        fixture_details={"ChIJmatriz001": _details()},
+    )
+    rio = _make_rio()
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    await _run(agent, rio)
+
+    assert fake.place_details_calls == ["ChIJmatriz001"]
 
 
 @pytest.mark.asyncio
