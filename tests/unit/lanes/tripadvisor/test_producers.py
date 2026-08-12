@@ -273,6 +273,9 @@ class TestTripAdvisorAtrativosIngest:
         from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         mock_session = MagicMock()
+        # No MTur row for this município — `one_or_none` is used nowhere else in brave/,
+        # so pinning it only affects ensure_destino's categorization lookup.
+        mock_session.query.return_value.filter.return_value.one_or_none.return_value = None
         config = _make_config()
         destino_rio_id = uuid.uuid4()
         ibge_match = _IBGE_RECORDS[0]  # Salvador, BA, 2927408
@@ -323,6 +326,12 @@ class TestTripAdvisorAtrativosIngest:
             "distrito_municipio_ibge": None,
             "subdistrito_name": None,
             "subdistrito_code": None,
+            # Mapa do Turismo Brasileiro, read off the `municipios` reference table.
+            # This test's session has no MTur row → not in the Mapa. `participates_mtur`
+            # is the one that reaches norteia-api (destinations.participates_mtur).
+            "participates_mtur": False,
+            "mtur_categoria": None,
+            "regiao_turistica": None,
         }
 
     @pytest.mark.asyncio
