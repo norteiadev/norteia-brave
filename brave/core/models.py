@@ -38,7 +38,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -833,12 +833,17 @@ class LocalBusiness(Base):
 
     __tablename__ = "local_businesses"
 
-    # "Número do Certificado" — the registration number MTur itself issues. Stable
-    # across quarters and present in every one of the 12 datasets, including Guias
-    # (who have no CNPJ), which is why it is the key and `cnpj` is not.
+    # COMPOSITE key: (cadastur_dataset, cadastur). Measured, not assumed — 3 CNPJs are
+    # registered in BOTH cadastur-05 and cadastur-08, and across all 12 datasets the
+    # overlap is routine (an agency that also operates transport). Keying on the
+    # certificate alone made one category silently overwrite the other.
+    #
+    # "Número do Certificado" is MTur's own registration number — in practice the CNPJ
+    # digits for legal entities. Stable across quarters and present in all 12 datasets
+    # including Guias de Turismo, which is why it is the key and `cnpj` is not.
     cadastur: Mapped[str] = mapped_column(String(64), primary_key=True)
     # Which of the 12 datasets this row came from ("cadastur-04").
-    cadastur_dataset: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    cadastur_dataset: Mapped[str] = mapped_column(String(16), primary_key=True)
     # One of the 8 values of norteia-api's local_businesses.business_type enum.
     business_type: Mapped[str] = mapped_column(String(32), nullable=False)
 
@@ -859,16 +864,22 @@ class LocalBusiness(Base):
     email: Mapped[str | None] = mapped_column(String(256), nullable=True)
     website: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # Pipe-separated in the source ("| Português | Inglês") → list[str].
-    languages: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    languages: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    # "Validade do Certificado", an Excel serial in the sheet → ISO date string. The
+    # register's only per-row freshness signal. Stored, never used as a drop filter:
+    # MTur leaves stale validity dates on rows that are otherwise Regular/Operação,
+    # so filtering on it would silently delete live providers.
+    certificate_valid_until: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     # Type-specific columns kept as-is: UHs/Leitos Acessíveis for hospedagem, área e
     # ambientação for parques temáticos, etc. A JSON blob rather than 40 sparse
     # columns — 12 datasets with different sheets, one table.
-    extra: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    extra: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
-    # The resource label the row came from ("2ºTri/2026") — the register has no
-    # per-row timestamp, so this is the only provenance of freshness.
-    source_quarter: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # The resource TITLE the row came from — "Meios de Hospedagem - 2º Trimestre/2026",
+    # 38 chars on the real files. The register has no per-row timestamp, so this is the
+    # provenance of which quarterly file a row was read from.
+    source_quarter: Mapped[str | None] = mapped_column(String(128), nullable=True)
     imported_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

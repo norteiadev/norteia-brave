@@ -22,6 +22,7 @@ Create Date: 2026-08-12
 """
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -35,11 +36,16 @@ depends_on: str | None = None
 def upgrade() -> None:
     op.create_table(
         "local_businesses",
-        # "Número do Certificado" — MTur's own registration number. Present in all 12
-        # datasets including Guias de Turismo (who have no CNPJ), which is why the key
-        # is this and not cnpj.
+        # COMPOSITE primary key (cadastur_dataset, cadastur). Measured: 3 CNPJs appear
+        # in BOTH cadastur-05 and cadastur-08, and the overlap is routine across the 12
+        # (an agency that also operates transport). Keying on the certificate alone let
+        # one category silently overwrite the other.
+        #
+        # "Número do Certificado" is MTur's own registration number — the CNPJ digits
+        # for legal entities. Present in all 12 datasets including Guias de Turismo,
+        # which is why the key is this and not cnpj.
         sa.Column("cadastur", sa.String(64), primary_key=True, nullable=False),
-        sa.Column("cadastur_dataset", sa.String(16), nullable=False),
+        sa.Column("cadastur_dataset", sa.String(16), primary_key=True, nullable=False),
         sa.Column("business_type", sa.String(32), nullable=False),
         sa.Column("trade_name", sa.String(300), nullable=False),
         sa.Column("company_name", sa.String(300), nullable=True),
@@ -53,10 +59,20 @@ def upgrade() -> None:
         sa.Column("phone", sa.String(64), nullable=True),
         sa.Column("email", sa.String(256), nullable=True),
         sa.Column("website", sa.String(512), nullable=True),
-        sa.Column("languages", sa.JSON(), nullable=True),
+        # JSONB, not JSON, unlike the pipeline tables: those payloads are read whole by
+        # the app, while this is a reference table meant to be QUERIED
+        # ("extra ? 'uhs_acessiveis'", "extra->>'tipo_hospedagem' = 'Hotel'"). The `?`
+        # containment operator does not exist for plain json.
+        sa.Column("languages", postgresql.JSONB(), nullable=True),
+        # "Validade do Certificado" — ISO date string. The register's only per-row
+        # freshness signal; stored, never used as a drop filter (MTur leaves stale
+        # dates on otherwise Regular rows).
+        sa.Column("certificate_valid_until", sa.String(10), nullable=True),
         # Type-specific sheet columns (UHs/Leitos Acessíveis, área do parque, …).
-        sa.Column("extra", sa.JSON(), nullable=True),
-        sa.Column("source_quarter", sa.String(32), nullable=True),
+        sa.Column("extra", postgresql.JSONB(), nullable=True),
+        # The resource TITLE, not a bare quarter: "Meios de Hospedagem - 2º
+        # Trimestre/2026" (38 chars — a 32 here truncates on the real files).
+        sa.Column("source_quarter", sa.String(128), nullable=True),
         sa.Column(
             "imported_at",
             sa.DateTime(timezone=True),
@@ -64,7 +80,8 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
         ),
     )
-    op.create_index("ix_local_businesses_dataset", "local_businesses", ["cadastur_dataset"])
+    # No index on cadastur_dataset alone — it is the leading column of the composite
+    # primary key, so the PK index already serves those lookups.
     op.create_index("ix_local_businesses_cnpj", "local_businesses", ["cnpj"])
     op.create_index("ix_local_businesses_uf", "local_businesses", ["uf"])
     op.create_index(
@@ -76,5 +93,4 @@ def downgrade() -> None:
     op.drop_index("ix_local_businesses_municipio_ibge", table_name="local_businesses")
     op.drop_index("ix_local_businesses_uf", table_name="local_businesses")
     op.drop_index("ix_local_businesses_cnpj", table_name="local_businesses")
-    op.drop_index("ix_local_businesses_dataset", table_name="local_businesses")
     op.drop_table("local_businesses")

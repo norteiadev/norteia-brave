@@ -6,9 +6,9 @@ dados.gov.br (slugs ``cadastur-01`` … ``cadastur-12``), one resource per quart
 norteia-api's `local_businesses` table, which the Brave pipeline does not feed today.
 
 WHY a script and not a lane: this is a static quarterly register with an official
-issuer and a natural key (the certificate number). Nothing about it needs scoring,
-dedup or a DLQ. Running it through Nascente → Rio → Mar is exactly what the retired
-Mtur destino-seed lane used to do — see scripts/seed_reference_data.py.
+issuer and a natural key ((dataset, certificate number)). Nothing about it needs
+scoring, dedup or a DLQ. Running it through Nascente → Rio → Mar is exactly what the
+retired Mtur destino-seed lane used to do — see scripts/seed_reference_data.py.
 
 LGPD — the single most important thing in this file
 ---------------------------------------------------
@@ -106,28 +106,68 @@ _COMMON_FIELDS: dict[str, str] = {
     "email comercial": "email",
     "website": "website",
     "idiomas": "languages",
+    # Excel serial, converted by _excel_serial_to_iso. Present in all 12 datasets and
+    # the ONLY per-row freshness signal the register has — stored, never used as a
+    # filter, because MTur leaves stale validity dates on otherwise Regular rows and
+    # dropping on it would silently delete live providers.
+    "validade do certificado": "certificate_valid_until",
     "situacao cadastral": "_situacao_cadastral",
     "situacao da atividade": "_situacao_atividade",
 }
 
-# Type-specific columns worth keeping, landed in the `extra` JSON blob.
+# Type-specific columns worth keeping, landed in the `extra` JSON blob. Header names
+# verified against the live 2ºTri/2026 sheets, not guessed — several early guesses
+# ("Área Total do Empreendimento", "Categoria(s)") did not exist.
 _EXTRA_FIELDS: dict[str, str] = {
+    # cadastur-04 Meios de Hospedagem
     "tipo de hospedagem": "tipo_hospedagem",
     "unidade habitacionais": "unidades_habitacionais",
     "unidades habitacionais": "unidades_habitacionais",
     "leitos": "leitos",
     "uhs acessiveis": "uhs_acessiveis",
     "leitos acessiveis": "leitos_acessiveis",
+    # cadastur-01 Guias de Turismo
     "municipio de atuacao": "municipios_atuacao",
     "categoria(s)": "categorias",
     "segmento(s)": "segmentos",
     "guia motorista": "guia_motorista",
+    # cadastur-03 Agências de Turismo
+    "categoria de atuacao": "categorias",
+    "segmentos turisticos": "segmentos",
+    "quantidade de veiculos": "quantidade_veiculos",
+    "quantidade de embarcacoes": "quantidade_embarcacoes",
+    # cadastur-05 Parques Temáticos · cadastur-08 Centros de Convenções
     "area total do empreendimento": "area_total",
+    "area total construida(m2)": "area_total",
+    "area locavel(m2)": "area_locavel",
     "ambientacao tematica principal": "ambientacao_tematica",
 }
 
 # `-` is the register's null. Empty and whitespace-only count too.
 _NULLS = {"", "-", "--", "n/a", "não informado", "nao informado"}
+
+# Two shapes, both measured against the live 43 332-row cadastur-01 sheet:
+#
+#   1. LABELLED — the word CPF followed by 11 digits in ANY punctuation. Operators
+#      type it every way imaginable, and a regex pinned to the canonical form misses
+#      almost all of them. Real values that leaked past the first version:
+#        "CPF 030647716-55"      9 digits + dash
+#        "CPF.:127986146-00"     '.:' separator
+#        "-CPF-407.421.806.20"   dots where the dash belongs
+#        "CPF 365 401 026 15"    spaces
+#      `\bCPF\b` keeps it from firing on words that merely start with those letters
+#      ("CPFISCAL@…", "icpf_cabofrio@…" — both real, both NOT CPFs).
+#
+#   2. UNLABELLED but canonical — 999.999.999-99. Unambiguous: a formatted CNPJ is
+#      99.999.999/9999-99, so there is no overlap.
+#
+# Deliberately NOT matched: a bare unlabelled 11-digit run. A BR mobile with DDD is
+# also 11 digits, so scrubbing it would eat phone numbers out of business names.
+_CPF_RE = re.compile(
+    r"\bCPF\b[\s.:/-]*(?:\d[\s.\-/]*){11}"
+    r"|\b\d{3}\.\d{3}\.\d{3}-\d{2}\b",
+    re.IGNORECASE,
+)
 
 _XL_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 # Excel's day 0 is 1899-12-30 (the 1900 leap-year bug is baked into the format).
@@ -142,6 +182,27 @@ def _fold(raw: str) -> str:
     stripped = unicodedata.normalize("NFKD", raw or "")
     ascii_only = "".join(c for c in stripped if not unicodedata.combining(c))
     return re.sub(r"\s+", " ", ascii_only).strip().lower()
+
+
+def _strip_cpf(text: str | None) -> str | None:
+    """Remove a CPF embedded in a free-text field.
+
+    The allow-list keeps the `CPF` COLUMN out, but Receita Federal company names for
+    individual entrepreneurs carry the number inside the name string itself — real row
+    from cadastur-01: "THIAGO DINIZ FREIRE CPF 919.267.006-78". Dropping the column
+    and then storing the same number in `company_name` would defeat the entire design,
+    in precisely the dataset where it matters most.
+
+    Only the UNAMBIGUOUS forms are scrubbed: the punctuated 999.999.999-99 (which no
+    phone or CNPJ can look like — a formatted CNPJ is 99.999.999/9999-99), and a bare
+    11-digit run when it is explicitly labelled "CPF". A bare unlabelled 11-digit run
+    is left alone on purpose: a BR mobile with DDD is also 11 digits, so scrubbing it
+    would eat phone numbers out of business names.
+    """
+    if text is None:
+        return None
+    scrubbed = _CPF_RE.sub(" ", text)
+    return re.sub(r"\s+", " ", scrubbed).strip(" -–,") or None
 
 
 def _clean(raw: Any) -> str | None:
@@ -166,13 +227,12 @@ def _split_pipe(raw: Any) -> list[str] | None:
 
 
 def _excel_serial_to_iso(raw: Any) -> str | None:
-    """Excel serial ("34485", "46798.80956") → ISO date. Dates are NEVER strings here.
+    """Excel serial ("34485", "46798.809560613423") → ISO date. Never a string in the sheet.
 
-    Nothing in the allow-lists is a date today, so this has no caller in the import
-    path — it exists because the first person to allow-list a date column will
-    otherwise store "34485" and only notice months later. The epoch is the trap:
-    Excel's day 0 is 1899-12-30, not 1900-01-01, because the format bakes in the
-    1900 leap-year bug; get it wrong and every date is two days out.
+    Used for `Validade do Certificado`, which is a raw serial in the real files — the
+    second value above is a verbatim cell from cadastur-04 2ºTri/2026 (→ 2028-02-15).
+    The epoch is the trap: Excel's day 0 is 1899-12-30, not 1900-01-01, because the
+    format bakes in the 1900 leap-year bug; get it wrong and every date is two days out.
     """
     text = _clean(raw)
     if text is None:
@@ -211,6 +271,25 @@ def _col_index(ref: str) -> int:
     for ch in letters:
         n = n * 26 + (ord(ch.upper()) - 64)
     return n - 1
+
+
+def worksheet_paths(data: bytes) -> list[str]:
+    """Every worksheet in the workbook, in natural sheet order.
+
+    NOT just sheet1: cadastur-01 ships TWO sheets — "Guia PJ" (2 332 rows) and
+    "Guia PF" (41 005 rows), with DIFFERENT headers. Reading only the first silently
+    imported 5% of the dataset while reporting success, which is the worst possible
+    failure mode for an importer.
+
+    Natural sort so sheet10 lands after sheet9, not after sheet1.
+    """
+    with zipfile.ZipFile(BytesIO(data)) as zf:
+        names = [
+            n
+            for n in zf.namelist()
+            if n.startswith("xl/worksheets/") and n.endswith(".xml")
+        ]
+    return sorted(names, key=lambda n: int(re.sub(r"\D", "", n) or 0))
 
 
 def parse_xlsx(data: bytes, sheet: str = "xl/worksheets/sheet1.xml") -> Iterator[list[str]]:
@@ -304,6 +383,13 @@ def normalize_row(
     if atividade and "operacao" not in atividade:
         return None
 
+    # Scrub CPFs out of the free-text name/address fields BEFORE anything reads them —
+    # the allow-list keeps the CPF column out, but Receita Federal company names carry
+    # the number inside the string ("THIAGO DINIZ FREIRE CPF 919.267.006-78").
+    for field in ("company_name", "trade_name", "address"):
+        if values.get(field):
+            values[field] = _strip_cpf(values[field])
+
     cadastur = values.get("cadastur")
     trade_name = values.get("trade_name") or values.get("company_name")
     if not cadastur or not trade_name:
@@ -338,8 +424,11 @@ def normalize_row(
         "email": (values.get("email") or None) and values["email"][:256],
         "website": (values.get("website") or None) and values["website"][:512],
         "languages": _split_pipe(values.get("languages")),
+        "certificate_valid_until": _excel_serial_to_iso(values.get("certificate_valid_until")),
         "extra": extras or None,
-        "source_quarter": quarter,
+        # Free-text resource title straight from the catalogue — truncated at the
+        # column width so a future MTur title cannot fail the whole import.
+        "source_quarter": quarter[:128] if quarter else None,
     }
 
 
@@ -367,10 +456,15 @@ def resolve_municipios(session: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def upsert(session: Session, rows: list[dict[str, Any]], batch: int = 1000) -> int:
-    """Idempotent bulk upsert keyed on `cadastur`. Returns rows written.
+    """Idempotent bulk upsert keyed on (cadastur_dataset, cadastur). Returns rows written.
 
-    ON CONFLICT DO UPDATE, not DO NOTHING: re-running with a newer quarter must
-    refresh a provider's phone/address, not skip it. Caller commits.
+    The key is COMPOSITE because the same CNPJ can hold certificates in more than one
+    Cadastur category — 3 of them sit in both cadastur-05 and cadastur-08, and the
+    overlap is routine across the 12. On `cadastur` alone, importing the second dataset
+    silently overwrote the first category.
+
+    ON CONFLICT DO UPDATE, not DO NOTHING: re-running with a newer quarter must refresh
+    a provider's phone/address, not skip it. Caller commits.
     """
     written = 0
     for start in range(0, len(rows), batch):
@@ -378,11 +472,11 @@ def upsert(session: Session, rows: list[dict[str, Any]], batch: int = 1000) -> i
         stmt = pg_insert(LocalBusiness).values(chunk)
         session.execute(
             stmt.on_conflict_do_update(
-                index_elements=["cadastur"],
+                index_elements=["cadastur_dataset", "cadastur"],
                 set_={
                     c: stmt.excluded[c]
                     for c in chunk[0]
-                    if c not in ("cadastur", "imported_at")
+                    if c not in ("cadastur", "cadastur_dataset", "imported_at")
                 },
             )
         )
@@ -434,33 +528,66 @@ def import_dataset(session: Session, slug: str, api_key: str) -> dict[str, int]:
     blob = httpx.get(url, timeout=600.0, follow_redirects=True).content
 
     rows: list[dict[str, Any]] = []
-    common: dict[int, str] = {}
-    extra: dict[int, str] = {}
-    seen_header = False
     read = 0
-    for raw in parse_xlsx(blob):
-        if not raw:
-            continue
-        if not seen_header:
-            common, extra = map_headers(raw)
-            seen_header = True
-            if "cadastur" not in common.values():
-                raise RuntimeError(f"{slug}: no certificate column in header {raw[:8]}")
-            continue
-        read += 1
-        row = normalize_row(
-            raw, common, extra, dataset=slug, business_type=business_type, quarter=quarter
-        )
-        if row is not None:
-            rows.append(row)
+    sheets_used = 0
+    # EVERY worksheet, each with its OWN header: cadastur-01 splits legal entities
+    # ("Guia PJ") from individuals ("Guia PF") across two sheets with different columns,
+    # and the second holds 95% of the rows.
+    for path in worksheet_paths(blob):
+        common: dict[int, str] = {}
+        extra: dict[int, str] = {}
+        seen_header = False
+        for raw in parse_xlsx(blob, sheet=path):
+            if not raw:
+                continue
+            if not seen_header:
+                common, extra = map_headers(raw)
+                seen_header = True
+                if "cadastur" not in common.values():
+                    # Not a data sheet (a legend or a pivot tab) — skip it rather than
+                    # failing the import, but never skip in silence.
+                    print(f"  {slug}: skipping {path} — no certificate column")
+                    break
+                sheets_used += 1
+                continue
+            read += 1
+            row = normalize_row(
+                raw, common, extra, dataset=slug, business_type=business_type, quarter=quarter
+            )
+            if row is not None:
+                rows.append(row)
 
-    # Last row wins on a duplicate certificate — the bulk upsert cannot have the same
-    # conflict target twice in one statement ("ON CONFLICT DO UPDATE command cannot
-    # affect row a second time").
-    deduped = list({r["cadastur"]: r for r in rows}.values())
+    if not sheets_used:
+        raise RuntimeError(f"{slug}: no worksheet carried a certificate column")
+
+    # Last row wins on a duplicate key — the bulk upsert cannot carry the same conflict
+    # target twice in one statement ("ON CONFLICT DO UPDATE command cannot affect row a
+    # second time"). Keyed on the full composite key, matching the upsert.
+    deduped = list({(r["cadastur_dataset"], r["cadastur"]): r for r in rows}.values())
+    # Self-audit BEFORE writing. The offline suite can only test the CPF shapes we have
+    # already seen; MTur ships new ones every quarter (the first version of the regex
+    # missed four distinct spellings that only a full-table scan surfaced). Counting
+    # survivors here means the next new shape shows up as a number on the import line
+    # instead of sitting in the DB unnoticed.
+    leaks = sum(
+        1
+        for r in deduped
+        for f in ("trade_name", "company_name", "address")
+        if r.get(f) and _CPF_RE.search(r[f])
+    )
+    if leaks:
+        print(f"  ⚠ {slug}: {leaks} row(s) still match the CPF pattern after scrubbing")
+
     resolved = resolve_municipios(session, deduped)
     written = upsert(session, deduped)
-    return {"read": read, "kept": len(deduped), "ibge_resolved": resolved, "written": written}
+    return {
+        "read": read,
+        "kept": len(deduped),
+        "ibge_resolved": resolved,
+        "written": written,
+        "sheets": sheets_used,
+        "cpf_leaks": leaks,
+    }
 
 
 def main() -> int:
@@ -494,8 +621,9 @@ def main() -> int:
             stats = import_dataset(session, slug, api_key)
             session.commit()
             print(
-                f"{slug}: read={stats['read']} kept={stats['kept']} "
-                f"ibge={stats['ibge_resolved']} written={stats['written']}"
+                f"{slug}: sheets={stats['sheets']} read={stats['read']} "
+                f"kept={stats['kept']} ibge={stats['ibge_resolved']} "
+                f"written={stats['written']}"
             )
     return 0
 

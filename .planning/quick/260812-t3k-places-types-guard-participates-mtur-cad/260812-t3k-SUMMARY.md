@@ -120,6 +120,34 @@ Sem dependência nova: XLSX por `zipfile` + `xml.etree`, não `openpyxl`.
   controller, model e Filament resource do lado Laravel. Segunda rodada.
 - **Geocodificação dos endereços do Cadastur** — o registro não tem coordenada, então
   `latitude`/`longitude`/`destination_id` ficaram fora da tabela.
-- **O import real nunca rodou.** Precisa de `BRAVE_DADOS_GOV_API_KEY` no `.env`, e o
-  token que existia foi exposto no transcript de uma sessão anterior — tem que ser
-  rotacionado antes.
+## Rodada de validação contra os arquivos reais (12/08/2026)
+
+O operador colocou `BRAVE_DADOS_GOV_API_KEY` no `.env` e o import rodou de verdade:
+**152.955 linhas, 99,5% com IBGE resolvido, zero CPF em texto livre.**
+
+A rodada achou **quatro defeitos que a suíte offline não podia ver**, todos corrigidos:
+
+1. **Multi-sheet (o pior).** `cadastur-01` tem `Guia PJ` (2.332) e `Guia PF` (41.005),
+   cabeçalhos diferentes. Lendo só `sheet1.xml` o import trouxe **5%** do conjunto e
+   imprimiu linha de sucesso. `worksheet_paths()` agora percorre todas.
+   43.332 guias em vez de 2.332.
+2. **Chave primária errada.** `cadastur` sozinho fazia uma categoria sobrescrever a
+   outra: **6.808 entidades estão em mais de uma** (um CNPJ em 9 dos 12). Chave passou a
+   ser `(cadastur_dataset, cadastur)`.
+3. **CPF dentro do texto livre.** A allow-list derruba a coluna, mas o nome de PJ da
+   Receita traz o número embutido, em cinco pontuações diferentes
+   (`CPF 030647716-55`, `CPF.:127986146-00`, `-CPF-407.421.806.20`,
+   `CPF 365 401 026 15`, `CPF 919.267.006-78`). A primeira versão do `_strip_cpf` pegava
+   só a canônica. Agora aceita qualquer pontuação após o rótulo, e o importador
+   **se audita** antes de gravar.
+4. **`source_quarter` estourava a coluna** — o título do recurso tem 38 chars, a coluna
+   tinha 32.
+
+Duas escolhas revistas com o arquivo na mão: `extra`/`languages` viraram **JSONB**
+(tabela de referência é consultada, não lida inteira), e `Validade do Certificado`
+entrou como coluna — o que deu chamador real ao `_excel_serial_to_iso`, que estava sem.
+
+Achado lateral: **13.256 meios de hospedagem declaram UH acessível**. Acessibilidade
+estruturada, primeira-parte e corrente — o eixo onde a POC do PR #24 não achou fonte.
+Não serve para `attractions.accessibility` (entidade diferente), serve para
+`local_businesses.accessibility`.

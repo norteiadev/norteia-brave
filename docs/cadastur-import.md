@@ -63,21 +63,43 @@ E rode a migração antes:
 .venv/bin/python -m scripts.cadastur_import --all
 ```
 
-Saída por conjunto:
+### Resultado real da carga (12/08/2026, trimestre 2ºTri/2026)
 
 ```
-cadastur-04: read=41203 kept=38771 ibge=37944 written=38771
+cadastur-01: sheets=2 read=43335 kept=43332 ibge=43106 written=43332
+cadastur-02: sheets=1 read=638   kept=608   ibge=602   written=608
+cadastur-03: sheets=1 read=57723 kept=55726 ibge=55607 written=55726
+cadastur-04: sheets=1 read=21109 kept=20626 ibge=20420 written=20626
+cadastur-05: sheets=1 read=293   kept=293   ibge=290   written=293
+cadastur-06: sheets=1 read=15894 kept=15506 ibge=15464 written=15506
+cadastur-07: sheets=1 read=745   kept=726   ibge=719   written=726
+cadastur-08: sheets=1 read=581   kept=564   ibge=560   written=564
+cadastur-09: sheets=1 read=510   kept=491   ibge=488   written=491
+cadastur-10: sheets=1 read=473   kept=473   ibge=466   written=473
+cadastur-11: sheets=1 read=2363  kept=2317  ibge=2307  written=2317
+cadastur-12: sheets=1 read=12536 kept=12293 ibge=12225 written=12293
 ```
 
-- `read` — linhas na planilha
+**152.955 linhas. Cobertura de IBGE: 99,5%.**
+
+- `sheets` — planilhas de dados lidas (ver a armadilha do multi-sheet abaixo)
+- `read` — linhas nas planilhas
 - `kept` — sobreviveram aos filtros (Situação Cadastral = Regular **e** Situação da
   Atividade = Operação, com certificado e nome)
 - `ibge` — quantas casaram com um município da tabela `municipios`
 - `written` — linhas no upsert
 
-**Idempotente.** A chave é `cadastur` (Número do Certificado) e o upsert é
-`ON CONFLICT DO UPDATE` — não `DO NOTHING`, porque rodar de novo com um trimestre mais
-novo tem que atualizar telefone/endereço, não pular a linha.
+Se aparecer uma linha `⚠ <slug>: N row(s) still match the CPF pattern`, o MTur mandou
+uma grafia de CPF que o scrub não conhece. **Investigue antes de usar a carga** — ver
+a seção de LGPD.
+
+**Idempotente.** A chave é **composta**: `(cadastur_dataset, cadastur)`. Não é o
+certificado sozinho — **6.808 entidades estão registradas em mais de uma categoria**
+(um CNPJ aparece em 9 dos 12 conjuntos), então a chave simples fazia uma categoria
+sobrescrever a outra em silêncio.
+
+O upsert é `ON CONFLICT DO UPDATE`, não `DO NOTHING`: rodar de novo com um trimestre
+mais novo tem que atualizar telefone/endereço, não pular a linha.
 
 ---
 
@@ -111,16 +133,56 @@ número do documento de identificação na mesma planilha das colunas de negóci
 
 O importador lê uma **allow-list** explícita de colunas (`_COMMON_FIELDS` e
 `_EXTRA_FIELDS` em `scripts/cadastur_import.py`). Nenhuma coluna fora dessas listas
-chega a virar linha.
+chega a virar linha. Verificado na planilha real: em `cadastur-01` saem fora `CPF`,
+`Sexo`, `Data de Nascimento`, `Nacionalidade`, `Nome Social/Tratamento`,
+`Documento de Identificação`, `Carteira de Estrangeiro`, `Órgão Expedidor` e
+`Tipo Sanguíneo`.
 
 Isso **não** é preciosismo: uma deny-list vaza no dia em que o MTur adicionar uma
 coluna nova. Uma allow-list não vaza. Se alguém trocar por "lê tudo e derruba
 algumas", o teste `test_a_new_pii_column_added_by_mtur_cannot_leak` quebra — é para
 isso que ele existe.
 
+### A allow-list sozinha não basta: CPF vem dentro do texto livre
+
+Derrubar a **coluna** CPF não resolve. O nome de empresa da Receita Federal para
+empresário individual carrega o número **dentro da string**:
+
+```
+THIAGO DINIZ FREIRE CPF 919.267.006-78
+ADRIANA DOS REIS GONCALVES CPF 030647716-55
+CLARICE MOREIRA DE QUEIROZ CPF.:127986146-00
+JOAO PEREIRA COSTA-CPF-407.421.806.20
+NELCI JULIETA PORTO CPF 365 401 026 15
+```
+
+Todos reais, todos de trimestres correntes. Repare que **cada um usa uma pontuação
+diferente** — a primeira versão do regex só pegava a forma canônica e deixou passar as
+outras quatro; só apareceram numa varredura das 152.955 linhas carregadas.
+
+`_strip_cpf` limpa `trade_name`, `company_name` e `address` em duas formas:
+
+1. **rotulada** — a palavra `CPF` seguida de 11 dígitos em **qualquer** pontuação;
+2. **canônica sem rótulo** — `999.999.999-99` (não ambígua: CNPJ formatado é
+   `99.999.999/9999-99`).
+
+**Não** limpa um bloco de 11 dígitos sem rótulo: celular com DDD também tem 11 dígitos,
+e limpar comeria telefone de dentro do nome do negócio. E `\bCPF\b` impede disparo em
+palavras que só começam com essas letras (`CPFISCAL@…`, `icpf_cabofrio@…`, ambos reais
+e ambos **não** são CPF).
+
+Além dos testes, o importador **se audita**: antes de gravar, conta quantas linhas ainda
+casam com o padrão de CPF e imprime `⚠` se houver. A suíte offline só conhece as
+grafias que já vimos; esse contador é o que faz a próxima aparecer como número na saída
+em vez de ficar guardada sem ninguém ver.
+
 O **nome** do guia é importado. É pessoa física, mas o nome profissional é justamente
 o ponto de um registro público (o turista confere o guia por ele). CPF, nascimento,
 tipo sanguíneo e documento, não.
+
+O `Número do Certificado` **não é o CPF** — verificado nas duas planilhas de
+`cadastur-01`. Para PJ é o CNPJ; para PF é um número de registro próprio do Cadastur,
+diferente do CPF da linha.
 
 ---
 
@@ -128,6 +190,7 @@ tipo sanguíneo e documento, não.
 
 | armadilha | tratamento |
 |---|---|
+| **Várias planilhas por arquivo.** `cadastur-01` tem `Guia PJ` (2.332 linhas) e `Guia PF` (**41.005**), com cabeçalhos diferentes. Ler só a `sheet1` importava **5%** do conjunto imprimindo linha de sucesso | `worksheet_paths()` percorre todas, mapeando cabeçalho por planilha. Planilha sem coluna de certificado é pulada **com aviso**, nunca em silêncio |
 | **Células vazias somem** do XML. Contar `<c>` desloca toda coluna depois do primeiro branco — e numa planilha de 40 colunas isso é garantido | posição vem da referência da célula (`_col_index("BC12") → 54`) |
 | **Shared strings**: o texto real fica em `xl/sharedStrings.xml`, e um `<si>` pode ter vários `<r><t>` | resolvidos e concatenados |
 | **Datas são serial do Excel** (`34485`, `46798.80956`), nunca string. Época é **1899-12-30**, não 1900-01-01 — o bug do ano bissexto de 1900 está embutido no formato | `_excel_serial_to_iso` existe e está testado, mas **hoje não tem chamador**: nenhuma coluna de data está na allow-list. Está lá para quem for adicionar a primeira — sem ele a coluna guarda `"34485"` e ninguém percebe por meses |
@@ -136,6 +199,34 @@ tipo sanguíneo e documento, não.
 | **Cabeçalho muda de trimestre para trimestre** (com/sem acento, caixa, espaço duplo) | casamento por forma acent-folded (`_fold`) |
 | **Prestador morto**: Situação Cadastral cancelada / Atividade baixada | descartado — importar publicaria um negócio que legalmente não existe |
 | **Recursos anteriores a ~2023 são CSV latin-1**, não XLSX | erro claro (`not an XLSX`), nunca meio-parseado. Só queremos o mais recente |
+
+---
+
+## Consultando
+
+`languages` e `extra` são **JSONB** (não `json` como as tabelas de pipeline — essas são
+lidas inteiras pela aplicação, esta é feita para ser consultada). Então dá para filtrar:
+
+```sql
+-- hospedagens com unidade habitacional acessível declarada  → 13.256 no Brasil
+select trade_name, uf, municipio,
+       extra->>'uhs_acessiveis' as uhs, extra->>'leitos_acessiveis' as leitos
+from local_businesses
+where cadastur_dataset = 'cadastur-04'
+  and (extra->>'uhs_acessiveis')::int > 0;
+
+-- guias que falam inglês num município
+select trade_name, extra->'categorias'
+from local_businesses
+where cadastur_dataset = 'cadastur-01'
+  and municipio_ibge = '2927408'
+  and languages ? 'Inglês';
+```
+
+> **13.256 meios de hospedagem declaram UH acessível.** É acessibilidade estruturada,
+> primeira-parte e corrente — justamente o eixo onde a POC das colunas editoriais
+> (PR #24) não achou fonte boa. Não serve para `attractions.accessibility` (é outra
+> entidade), mas serve para `local_businesses.accessibility`.
 
 ---
 
