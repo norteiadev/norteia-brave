@@ -803,3 +803,78 @@ class UfGeoid(Base):
 
     def __repr__(self) -> str:
         return f"<UfGeoid uf={self.uf!r} geo_id={self.geo_id}>"
+
+
+class LocalBusiness(Base):
+    """Cadastur tourism-service provider (MTur) — reference row, not pipeline output.
+
+    Loaded from the 12 MTur "Prestadores de Serviços Turísticos" datasets
+    (``cadastur-01`` … ``cadastur-12`` on dados.gov.br) by
+    ``scripts/cadastur_import.py``. One resource per quarter since ~2006; the import
+    reads only the most recent.
+
+    WHY a reference table and not a Brave lane: Cadastur is a static quarterly
+    register with an official issuer and a natural key. Running it through
+    Nascente → Rio → Mar would score and dedup data that needs neither — the same
+    reasoning that retired the Mtur destino-seed lane (see the module docstring of
+    scripts/seed_reference_data.py).
+
+    Column names deliberately mirror ``local_businesses`` in norteia-api
+    (2026_03_11_105843_create_local_businesses_table.php) so a future push maps 1:1.
+    Not mirrored, because Cadastur carries neither: ``latitude``/``longitude`` and
+    ``destination_id``. The register has only a textual address, so those need a
+    geocoding pass that is deliberately out of scope here.
+
+    LGPD: the importer reads a fixed ALLOW-LIST of columns (see
+    ``scripts/cadastur_import.py``). "Guias de Turismo" ships CPF, birth date, blood
+    type and ID-document number in the same sheet; an allow-list keeps a future MTur
+    column addition from leaking them, which a deny-list would not.
+    """
+
+    __tablename__ = "local_businesses"
+
+    # "Número do Certificado" — the registration number MTur itself issues. Stable
+    # across quarters and present in every one of the 12 datasets, including Guias
+    # (who have no CNPJ), which is why it is the key and `cnpj` is not.
+    cadastur: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Which of the 12 datasets this row came from ("cadastur-04").
+    cadastur_dataset: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    # One of the 8 values of norteia-api's local_businesses.business_type enum.
+    business_type: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    trade_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    company_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    cnpj: Mapped[str | None] = mapped_column(String(18), nullable=True, index=True)
+    legal_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    uf: Mapped[str | None] = mapped_column(String(2), nullable=True, index=True)
+    municipio: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Resolved against the `municipios` reference table by (nome, uf); NULL when the
+    # name is ambiguous or absent. No fuzzy matching — a wrong IBGE code is worse
+    # than none.
+    municipio_ibge: Mapped[str | None] = mapped_column(String(7), nullable=True, index=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    website: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Pipe-separated in the source ("| Português | Inglês") → list[str].
+    languages: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+
+    # Type-specific columns kept as-is: UHs/Leitos Acessíveis for hospedagem, área e
+    # ambientação for parques temáticos, etc. A JSON blob rather than 40 sparse
+    # columns — 12 datasets with different sheets, one table.
+    extra: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    # The resource label the row came from ("2ºTri/2026") — the register has no
+    # per-row timestamp, so this is the only provenance of freshness.
+    source_quarter: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<LocalBusiness cadastur={self.cadastur!r} "
+            f"trade_name={self.trade_name!r} uf={self.uf!r}>"
+        )

@@ -44,11 +44,13 @@ import sys
 # look un-migrated. It is NEVER truncated by this script.
 PROTECTED_TABLES = {"alembic_version"}
 
-# Static carga-inicial reference tables (seeded at migrate time by
-# scripts.seed_reference_data). These are NOT pipeline data — the collection lanes
-# read their parent destinos / geo resolution from them, and nothing FK-references
-# them. A reset preserves them so a re-seed is not needed after every wipe.
-REFERENCE_TABLES = {"municipios", "distritos", "uf_geoids"}
+# Static carga-inicial reference tables. These are NOT pipeline data — the collection
+# lanes read their parent destinos / geo resolution from them, and nothing
+# FK-references them. A reset preserves them so a re-seed is not needed after every
+# wipe. The first three are seeded at migrate time by scripts.seed_reference_data;
+# local_businesses is filled on demand by scripts.cadastur_import (an MTur quarterly
+# register — re-downloading ~500k rows after every wipe would be absurd).
+REFERENCE_TABLES = {"municipios", "distritos", "uf_geoids", "local_businesses"}
 
 
 def _repo_root() -> str:
