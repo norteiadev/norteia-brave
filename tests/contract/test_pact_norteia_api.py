@@ -65,6 +65,10 @@ DESTINATION_PAYLOAD = {
         "atualidade": 12.0,
         "validacao_humana": 9.5,
     },
+    # Mapa do Turismo Brasileiro. Frozen here because the API has to declare a rule for
+    # it: an unvalidated key is dropped by $request->validated() with no error, so the
+    # contract is the only place a missing rule shows up as a failure.
+    "participates_mtur": True,
 }
 
 ATTRACTION_PAYLOAD = {

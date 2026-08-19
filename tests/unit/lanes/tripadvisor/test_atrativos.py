@@ -1150,6 +1150,11 @@ class TestAtrativosEnrichCommitGranularity:
         card_b = {**_ub_card(900_002), "name": "Uberlândia"}  # município B (fails)
         client = _GqlListingClient(geo_id=_GEO_ID_MG, pages=[(0, [card_a, card_b])])
         session = MagicMock()
+        # ensure_destino reads the MTur categorization off the `municipios` reference
+        # table. A bare MagicMock hands back a MagicMock row, which lands in the destino
+        # canonical and makes store_raw's payload unserializable. `one_or_none` is used
+        # nowhere else in brave/, so pinning it here is surgical: no MTur row.
+        session.query.return_value.filter.return_value.one_or_none.return_value = None
         fresh_map: dict[str, tuple[uuid.UUID, str]] = {}
         ta = {"n": 0}
 

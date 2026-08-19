@@ -311,6 +311,11 @@ def build_push_payload(
             "municipio_ibge": canonical.get("ibge_code") or canonical.get("municipio_id"),
             "reliability_score": reliability,
             "provenance": flat_provenance,
+            # Mapa do Turismo Brasileiro — stamped by ensure_destino from the seeded
+            # `municipios` table. Sent as a hard bool (never null): the API column is
+            # `boolean default false`, so a null would be a lie about a município we
+            # have data for, and `False` is exactly what "not in the Mapa" means.
+            "participates_mtur": bool(canonical.get("participates_mtur")),
         }
 
     # attraction

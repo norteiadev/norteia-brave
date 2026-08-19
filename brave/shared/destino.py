@@ -16,7 +16,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from brave.core.models import MarRecord
+from brave.core.models import MarRecord, Municipio
 from brave.core.nascente.service import store_raw
 from brave.core.rio.routing import process_nascente_record
 
@@ -60,6 +60,21 @@ def ensure_destino(
               reached Mar, else None.
     """
     source_ref = f"ibge:{uf}:{ibge_code}"
+
+    # MTur turistic categorization, already folded into the seeded `municipios` table from
+    # data/mtur/municipios_mtur_2025.csv (2922 of 5571 rows carry it). Reading it HERE and
+    # not at push time is deliberate: ensure_destino is the single creator of parent
+    # destinos and it is the only place that holds both the IBGE code and a Session.
+    # A município outside the Mapa do Turismo — or a DB where the reference table has not
+    # been seeded — yields participates_mtur=False, which is also the API column's default.
+    mtur = (
+        session.query(Municipio.categoria, Municipio.regiao_turistica)
+        .filter(Municipio.ibge_code == ibge_code)
+        .one_or_none()
+    )
+    categoria = mtur[0] if mtur else None
+    regiao_turistica = mtur[1] if mtur else None
+
     payload: dict[str, Any] = {
         "name": nome,
         "municipio_id": ibge_code,
@@ -81,6 +96,13 @@ def ensure_destino(
             "distrito_municipio_ibge": None,
             "subdistrito_name": None,
             "subdistrito_code": None,
+            # Mapa do Turismo Brasileiro. `participates_mtur` is the only one of the
+            # three that reaches norteia-api today (destinations.participates_mtur);
+            # categoria/regiao_turistica ride along because they cost nothing here and
+            # the API has no column for them yet.
+            "participates_mtur": categoria is not None,
+            "mtur_categoria": categoria,
+            "regiao_turistica": regiao_turistica,
         },
     }
     nascente = store_raw(
