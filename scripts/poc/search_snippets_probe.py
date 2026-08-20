@@ -24,6 +24,12 @@ Uso:
     # segundo passo: ler a página (mede quanto token volta e quantos fatos entram)
     .venv/bin/python scripts/poc/search_snippets_probe.py --provider exa --read-pages
 
+RESULTADO (§18): snippet basta — 9/10 fatos em 2.311 tokens, com DUAS queries por
+atrativo (uma só dá 5/10). Ler a página é contraprodutivo na Tavily: pedir
+`include_raw_content` troca 3 das 5 URLs, falha em extrair 4 delas, e entrega 44 mil
+tokens com MENOS fato. O modo --read-pages fica para medir a Contents API da Exa, que
+é outro produto e ainda não foi testada.
+
 Keys (nenhuma no .env do projeto — todas de free tier, ver §17.3):
     TAVILY_API_KEY        1.000 créditos/mês, sem cartão
     EXA_API_KEY           $10 em créditos/mês (~2.000 buscas)
@@ -70,7 +76,22 @@ ATRATIVOS: list[dict] = [
         "fatos": [
             ("distrito de Buenos Aires", ["distrito de buenos aires"], False),
             ("Pedra do Elefante", ["pedra do elefante"], False),
-            ("origem do nome", ["origem do nome", "recebeu o nome", "batizad", "deve o nome"], False),
+            # A lista precisou abrir: o texto real diz "recebe ESTE nome por…", e a versão
+            # só no passado ("recebeu o nome") marcava ausência onde o fato estava presente.
+            # Casador estreito demais atribui à fonte uma falha que é da sonda.
+            (
+                "origem do nome",
+                [
+                    "origem do nome",
+                    "recebe este nome",
+                    "recebe o nome",
+                    "recebeu o nome",
+                    "nome por",
+                    "batizad",
+                    "deve o nome",
+                ],
+                False,
+            ),
             ("contraste montanha/litoral", ["litoral", "mar aberto"], True),
         ],
     },
@@ -101,7 +122,10 @@ def _fold(s: str) -> str:
 def casar_fatos(contexto: str, fatos: list[tuple]) -> list[tuple[str, bool, bool]]:
     """Devolve (label, achou, generico) para cada fato alvo."""
     alvo = _fold(contexto)
-    return [(label, any(_fold(a) in alvo for a in aliases), generico) for label, aliases, generico in fatos]
+    return [
+        (label, any(_fold(a) in alvo for a in aliases), generico)
+        for label, aliases, generico in fatos
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +148,12 @@ def buscar_tavily(query: str, key: str, ler_paginas: bool) -> tuple[str, int]:
     res = r.json().get("results", [])
     partes = []
     for it in res:
-        corpo = (it.get("raw_content") or it.get("content") or "")[:3000]
+        # Em modo página, o snippet extrativo entra JUNTO com o corpo, e o corpo não é
+        # truncado. Cortar o head da página descartava exatamente o trecho relevante (o
+        # começo é menu/nav) e produzia uma regressão que era da sonda, não da fonte.
+        corpo = it.get("content") or ""
+        if ler_paginas and it.get("raw_content"):
+            corpo = f"{corpo}\n{it['raw_content']}"
         partes.append(f"{it.get('title', '')}\n{corpo}")
     return "\n\n".join(partes), len(res)
 
@@ -189,11 +218,13 @@ def contar_tokens(texto: str) -> tuple[int, str]:
             )
             return n, "exato"
         except Exception as exc:  # noqa: BLE001 - a sonda não pode morrer por isso
-            print(f"  (contagem exata indisponível: {exc}; caindo para estimativa)", file=sys.stderr)
+            print(
+                f"  (contagem exata indisponível: {exc}; caindo para estimativa)", file=sys.stderr
+            )
     return len(texto) // 4, "estimado"
 
 
-def rodar(provedores: list[str], ler_paginas: bool) -> int:
+def rodar(provedores: list[str], ler_paginas: bool, uma_query: bool = False) -> int:
     linhas: list[str] = []
     for prov in provedores:
         fn, env = PROVEDORES[prov]
@@ -202,14 +233,30 @@ def rodar(provedores: list[str], ler_paginas: bool) -> int:
             print(f"[pular] {prov}: falta {env}", file=sys.stderr)
             continue
 
-        print(f"\n{'=' * 78}\n{prov.upper()}{'  (+ leitura de página)' if ler_paginas else '  (snippets)'}\n{'=' * 78}")
+        print(
+            f"\n{'=' * 78}\n{prov.upper()}{'  (+ leitura de página)' if ler_paginas else '  (snippets)'}\n{'=' * 78}"
+        )
         tot_ok = tot_fatos = tot_tokens = 0
         for atr in ATRATIVOS:
-            query = f"{atr['nome']} {atr['municipio']} {atr['uf']} atrativo turístico"
+            # O Sonnet faz 2 buscas por atrativo (medido). Uma query só seria handicap, e
+            # atribuiria à fonte uma perda que era do método. As duas variantes saem só do
+            # nome/município — nenhuma usa termo da lista de fatos, senão o teste vazaria
+            # a resposta para dentro da pergunta.
+            queries = [
+                f"{atr['nome']} {atr['municipio']} {atr['uf']} atrativo turístico",
+                f"{atr['nome']} {atr['municipio']} o que é como chegar",
+            ][: 1 if uma_query else 2]
             try:
-                contexto, n = fn(query, key, ler_paginas)
+                pedacos, n = [], 0
+                for q in queries:
+                    txt, k = fn(q, key, ler_paginas)
+                    pedacos.append(txt)
+                    n += k
+                contexto = "\n\n".join(pedacos)
             except httpx.HTTPStatusError as exc:
-                print(f"  {atr['nome']}: HTTP {exc.response.status_code} — {exc.response.text[:200]}")
+                print(
+                    f"  {atr['nome']}: HTTP {exc.response.status_code} — {exc.response.text[:200]}"
+                )
                 continue
 
             tokens, modo = contar_tokens(contexto)
@@ -221,7 +268,9 @@ def rodar(provedores: list[str], ler_paginas: bool) -> int:
             tot_tokens += tokens
 
             print(f"\n  {atr['nome']} ({atr['municipio']}/{atr['uf']})")
-            print(f"    {n} resultados · {tokens} tokens ({modo}) · Sonnet gastou ${atr['custo_sonnet']:.4f}")
+            print(
+                f"    {n} resultados · {tokens} tokens ({modo}) · Sonnet gastou ${atr['custo_sonnet']:.4f}"
+            )
             for label, achou, generico in checados:
                 marca = "✓" if achou else "✗"
                 sufixo = "  (termo genérico, não conta)" if generico else ""
@@ -229,17 +278,20 @@ def rodar(provedores: list[str], ler_paginas: bool) -> int:
             print(f"    fatos fortes: {ok}/{len(fortes)}")
 
         if tot_fatos:
-            custo = PRECO_POR_QUERY[prov] * len(ATRATIVOS)
+            n_q = 1 if uma_query else 2
+            custo = PRECO_POR_QUERY[prov] * len(ATRATIVOS) * n_q
             if ler_paginas and prov in PRECO_POR_PAGINA_LIDA:
                 custo += PRECO_POR_PAGINA_LIDA[prov] * 5 * len(ATRATIVOS)
             media_tok = tot_tokens / len(ATRATIVOS)
             linhas.append(
-                f"| {prov}{' + páginas' if ler_paginas else ''} | {tot_ok}/{tot_fatos} | "
+                f"| {prov}{' + páginas' if ler_paginas else ''}{' (1 query)' if uma_query else ''} | {tot_ok}/{tot_fatos} | "
                 f"{media_tok:,.0f} | ${custo / len(ATRATIVOS):.4f} |"
             )
 
     if linhas:
-        print(f"\n\n{'=' * 78}\nPLACAR — contra Sonnet + web_search: 12/12 fatos, ~11.900 tokens, $0,0758\n{'=' * 78}")
+        print(
+            f"\n\n{'=' * 78}\nPLACAR — contra Sonnet + web_search: 12/12 fatos, ~11.900 tokens, $0,0758\n{'=' * 78}"
+        )
         print("\n| provedor | fatos fortes | tokens/atrativo | $/atrativo (busca) |")
         print("|---|---|---|---|")
         print("\n".join(linhas))
@@ -280,9 +332,18 @@ def self_check() -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--provider", default="exa,tavily,brave", help="lista separada por vírgula")
-    ap.add_argument("--read-pages", action="store_true", help="segundo passo: puxa o texto da página")
+    ap.add_argument(
+        "--read-pages", action="store_true", help="segundo passo: puxa o texto da página"
+    )
+    ap.add_argument(
+        "--one-query",
+        action="store_true",
+        help="1 query por atrativo (o padrão são 2, como o Sonnet)",
+    )
     ap.add_argument("--self-check", action="store_true", help="valida o casador de fatos, offline")
     args = ap.parse_args()
 
@@ -293,7 +354,7 @@ def main() -> int:
     desconhecidos = [p for p in provedores if p not in PROVEDORES]
     if desconhecidos:
         raise SystemExit(f"provedor desconhecido: {desconhecidos}; use {list(PROVEDORES)}")
-    return rodar(provedores, args.read_pages)
+    return rodar(provedores, args.read_pages, args.one_query)
 
 
 if __name__ == "__main__":

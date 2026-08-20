@@ -874,6 +874,116 @@ custo de ler a página não inviabiliza a cascata — o que era a principal ince
 
 ---
 
+## 18. O teste da §15.3, executado (medido)
+
+Pendência aberta desde o commit `ee1aca1`: **o snippet de uma API de busca contratada carrega
+os fatos que o `web_search` carrega, ou é preciso um segundo passo de leitura de página?**
+
+Executado em 2026-08-20 com a **Tavily** no free tier (1.000 créditos/mês, sem cartão).
+Sonda: `scripts/poc/search_snippets_probe.py`. Alvo: os 10 fatos fortes que o Sonnet +
+`web_search` produziu nos três atrativos obscuros da §15.1. Sem LLM no caminho — mede-se o
+insumo, não a redação.
+
+### 18.1 Resultado
+
+| modo | fatos fortes | tokens/atrativo | $/atrativo (busca) |
+|---|---|---|---|
+| hoje — Sonnet + `web_search` | 10/10 (por construção) | **~11.900** | $0,0758 |
+| Tavily, **1 query**, snippet | 5/10 | **755** | $0,008 |
+| **Tavily, 2 queries, snippet** | **9/10** | **2.311** | **$0,016** |
+| Tavily, 2 queries + leitura de página | 7/10 | **44.511** | $0,016 |
+
+**O snippet basta.** Com 2 queries recupera **9 dos 10 fatos** que o Sonnet achou, gastando
+**5,1x menos token** e **4,7x menos dinheiro** no passo de busca. O `web_search` cobra 12-28
+mil tokens de página para entregar o mesmo conteúdo que 2,3 mil tokens de snippet entregam.
+
+O único fato realmente perdido é a *"ponte sobre lagoa artificial"* do Vista Linda — e a
+inspeção do contexto bruto mostra que ele **não está no corpus** que a Tavily devolve (3.104
+chars, nenhuma ocorrência de "ponte", "lagoa" ou "represa"). É lacuna de cobertura da fonte,
+não de profundidade do snippet. Ler a página não recuperaria.
+
+### 18.2 São necessárias 2 queries — e isso corrige a §15.2 de novo
+
+Com **uma** query o placar cai para **5/10**. O Sonnet faz duas buscas por atrativo (medido),
+e replicar isso é o que fecha a diferença. As duas variantes usadas saem só do nome e do
+município — nenhuma usa termo da lista de fatos, senão o teste vazaria a resposta para dentro
+da pergunta.
+
+A consequência é de custo: **o passo de busca custa o dobro do que a §15.2 e a §17.4
+projetaram**, porque ambas assumiam uma query por atrativo. Projeção corrigida, por 1.000
+atrativos, com 2 queries e o modelo gratuito escrevendo:
+
+| provedor do passo de busca | $/atrativo | por 1.000 atrativos | contra hoje |
+|---|---|---|---|
+| hoje — Sonnet + `web_search` | $0,0749 | **$74,90** | — |
+| Serper $1/1k | $0,0019 | **$1,90** | 39x |
+| Exa $5/1k | $0,0095 | **$9,50** | 7,9x |
+| Brave $5/1k | $0,0095 | **$9,50** | 7,9x |
+| **Tavily $8/1k (medido)** | **$0,0152** | **$15,20** | **4,9x** |
+
+O ganho real é de **4,9x a 39x**, não os 79x da §15.2 nem os 10-79x da §17.4. A tese da
+cascata continua de pé — o número da ponta é que encolheu duas vezes seguidas conforme a
+medição foi ficando mais honesta. E o free tier rende metade do que a §17.6 disse: 1.000
+créditos ÷ 2 queries = **500 atrativos/mês**, não 1.000.
+
+### 18.3 O segundo passo de leitura de página é contraprodutivo (na Tavily)
+
+Era a hipótese cara da §15.3: se o snippet fosse raso, leríamos a página e parte dos tokens
+voltaria. **Medido, ler a página piora as duas pontas** — 44.511 tokens (19x o snippet, e 3,7x
+o próprio `web_search`) **e menos fatos**: 7/10 contra 9/10.
+
+Fatos não podem cair quando o texto só cresce, então a causa foi investigada em vez de
+reportada. Pedir `include_raw_content: true` **muda o conjunto de resultados**:
+
+| | `advanced` sem raw | `advanced` com raw |
+|---|---|---|
+| URLs devolvidas | 5 | 5, sendo **3 diferentes** |
+| extração de página bem-sucedida | — | **1 de 5** (as outras vêm `raw_content` vazio) |
+| tokens | 4.314 | 44.510 |
+| fatos | 9/10 | 7/10 |
+
+Ou seja: pedir a página **derruba resultados bons** (saiu um snippet de 2.254 chars que
+carregava fato), **falha em extrair 4 de 5** páginas, e concentra os 40 mil tokens numa única
+página que sobreviveu. Não é custo extra por mais fato — é custo extra por menos fato.
+
+**Ressalva honesta:** isto é um resultado da Tavily, não do conceito. A Contents API da Exa é
+um produto separado, a $1/1k páginas, e pode extrair melhor. **Não foi medido** — não há key
+da Exa. O que está medido é que, *com o snippet já entregando 9/10*, o segundo passo perdeu a
+razão de existir: não há lacuna grande o bastante para justificá-lo.
+
+### 18.4 Duas armadilhas metodológicas da própria sonda
+
+Ambas produziram, na primeira rodada, um resultado errado que parecia um achado. Ficam
+registradas porque a próxima sonda vai cair nelas de novo:
+
+1. **Truncar o `raw_content` no head.** Pegar os 3.000 primeiros chars da página descarta menu
+   e nav — e o trecho relevante junto. Dava 4/10 e parecia "ler página piora". O snippet é
+   extrativo e centrado na query; o começo da página não é.
+2. **Casador de fatos estreito no tempo verbal.** A lista tinha `"recebeu o nome"`; o texto
+   real diz *"recebe **este** nome por ter uma vista direta para a formação rochosa… formato e
+   tromba de um elefante"*. Marcava ausente um fato presente. Casador estreito atribui à fonte
+   uma falha que é da sonda.
+
+A sonda é determinística onde importa: 3 rodadas idênticas em modo snippet — mesmos 9/10,
+mesmos 2.311 tokens, as mesmas 26 URLs. O resultado não é sorteio de ranking.
+
+### 18.5 Veredito — a pendência da §15.3 está fechada
+
+- **Snippet basta.** 9/10 fatos a 2.311 tokens. A cascata da §15.2 pode ser construída.
+- **Com 2 queries por atrativo**, não uma. O passo de busca custa o dobro do projetado.
+- **Sem segundo passo de leitura.** Não compra fato; na Tavily, cobra 19x para entregar menos.
+- **Ganho real: 4,9x a 39x** conforme o provedor, contra os $74,90/mil de hoje.
+- O que sobra de risco não é técnico, é de **cobertura**: 1 dos 10 fatos não existia no corpus
+  da Tavily. Numa amostra de três atrativos isso é 10% — número pequeno demais para ser taxa.
+  Vale medir em escala antes de trocar o provedor em produção.
+
+Próximo passo natural, e ele **não** é mais sobre busca: a lane precisa da camada que consome
+esses 2.311 tokens. O veredito da §10 continua valendo — *"o trabalho não é trocar de modelo,
+é construir a camada de fatos determinísticos"*. O que esta seção acrescenta é que o passo de
+busca, que era a peça em aberto dessa camada, agora tem preço e desempenho medidos.
+
+---
+
 ## Fontes
 
 - [Google AI plans — Gemini API](https://ai.google.dev/gemini-api/docs/google-ai-plans)
@@ -888,3 +998,4 @@ custo de ler a página não inviabiliza a cascata — o que era a principal ince
 - [Exa — pricing](https://docs.exa.ai/reference/pricing)
 - [Tavily — Credits & Pricing](https://docs.tavily.com/documentation/api-credits)
 - [Serper](https://serper.dev/)
+- [Tavily — API reference (`/search`)](https://docs.tavily.com/documentation/api-reference/endpoint/search)
