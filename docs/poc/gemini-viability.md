@@ -756,6 +756,124 @@ Nada nesta lista substitui o passo de busca contratada da cascata (§15.2). O sa
 
 ---
 
+## 17. OmniRoute como provider de LLM (medido)
+
+Pergunta levantada: [`diegosouzapw/OmniRoute`](https://github.com/diegosouzapw/OmniRoute)
+serve como provider de LLM do Brave? Ele anuncia "vários tokens gratuitos em vários modelos".
+
+### 17.1 O que é
+
+Gateway OpenAI-compat que roda local em `http://localhost:20128/v1`. MIT, TypeScript.
+
+| | |
+|---|---|
+| stars / forks | **51.760** / 7.054 |
+| arquivos no repo | **14.605** (419 MB) · 347 issues abertas |
+| criado / último push | 2026-02-13 / no mesmo dia desta avaliação |
+| catálogo | **290 providers**, 90+ com free tier, 40+ "free forever" |
+| agregado | **~1,53B tokens grátis/mês** em 43 pools |
+
+A documentação é honesta de um jeito raro. Eles recusam somar `RPM × 24/7 × 30d` (chamam de
+*"the inflation we reject"*), corrigiram o próprio headline **para baixo** — 1,94B → 1,53B —
+quando a auditoria mostrou que o Gemini estava sendo contado por variante em vez de por pool,
+e o número é CI-gated: `check:docs-counts` quebra o build se o texto divergir do catálogo.
+
+### 17.2 Reprovado como provider do Brave — quatro motivos
+
+**1. O ToS avaliado não é o nosso caso.** A tabela de ToS deles é explicitamente calibrada
+para *"a self-hosted, **single-user personal proxy**"*. O Brave é serviço comercial 24/7.
+Trechos textuais do `FREE_TIERS.md` deles:
+
+- `nvidia` — *"prototyping/dev/research/evaluation only — **production use requires license**"*
+- `gemini` — `caution`: o free tier é *"for developers building… professional or business purposes"*
+- `fireworks`, `cloudflare-ai`, `opencode`, `nlpcloud`, `modal`, `friendliai`, `blackbox`,
+  `ai21`, `coze` — proíbem proxy/sublicense **nominalmente**
+
+O CLAUDE.md do projeto exige risco legal documentado por fonte. Rodar um produto comercial em
+cima de dezenas de free tiers alheios é a mesma categoria de risco que reprovou o
+`duckduckgo_search` na §13.
+
+**2. Não ataca o custo real.** A §11.1 mediu: **61%** do custo são os ~12k tokens de busca
+injetados no prompt, e só **17%** é a taxa de busca. OmniRoute roteia **inferência**, não
+busca. Ele é, no máximo, a caixa "modelo grátis" da cascata da §15.2 — caixa que o
+`gemini-3.5-flash-lite` no free tier já preenche a **$0**, medido (§9, §10).
+
+**3. Runtime estranho no hot path.** Um processo Node no meio de um stack Celery+FastAPI 24/7,
+mais superfície de supply chain npm de ~500 contribuidores e 14,6k arquivos — para uma lane
+cuja conta é **$74,90/mil**.
+
+**4. Voz não-determinística.** O roteamento `auto` sorteia o backend por request. O
+`descricao_editorial` vai para o Mar canônico, e a §12.2 já mediu que o Haiku 4.5 quebra o
+PT-BR e o ban de clichê do próprio prompt — rotacionar entre GLM/Qwen/Nemotron garante deriva
+de voz e saída irreprodutível. Free tier também implica prompt indo para o treino do provedor,
+ressalva que já pesava contra o Gemini free (§4.1).
+
+### 17.3 O que a avaliação rendeu de útil
+
+O `docs/reference/FREE_TIERS.md` deles é reauditado a cada duas semanas com leitura de ToS por
+provedor — e cataloga também **provedores de busca**, que é exatamente a pendência da §15.3.
+Os números deles foram **reverificados nas páginas oficiais** antes de entrar aqui (e um
+estava errado, ver 17.4b). Verificado em 2026-08-20:
+
+| provedor | grátis recorrente | preço | cartão | ressalva de ToS |
+|---|---|---|---|---|
+| **Exa** | **$10 em créditos/mês** (+$20 no signup, ~2.800 buscas) ≈ **2.000 buscas/mês** | $5/1k search · **$1/1k pages** (Contents API) | — | sem cláusula de "no proxy"; tem programa de revenda oficial |
+| **Tavily** | **1.000 créditos/mês**, **sem cartão** | $0,008/crédito (~$8/1k) | não | API *"may not be transferred, assigned, shared… to any third party"* |
+| **Brave Search** | **$5 em créditos/mês** ≈ 1.000 buscas | $5/1k Search · $4/1k Grounding + $5/M tokens | sim (só identidade, não cobra) | proíbe redistribuir/revender resultado; ⚠️ ver 17.5 |
+| **Serper** | ❌ **nenhum** — só 2.500 queries de trial | ~$1/1k (o mais barato) | — | proíbe *"mirroring materials on any other server as-is with no-value-added"* |
+
+### 17.4 Duas correções que isso impõe a este relatório
+
+**(a) A projeção de ~$0,95/mil da §15.2 dependia do Serper — que não tem tier grátis
+recorrente.** Só 2.500 queries de trial. O preço de $1/1k continua real, mas não dá para
+começar de graça nele. Faixa honesta por provedor, por 1.000 atrativos:
+
+| provedor do passo de busca | por 1.000 atrativos |
+|---|---|
+| hoje — Sonnet + `web_search` (ponderado, §15.1) | **$74,90** |
+| Serper $1/1k | $0,95 |
+| Exa $5/1k | $4,75 |
+| Brave $5/1k | $4,75 |
+| Tavily $8/1k | $7,60 |
+
+Ou seja: o ganho é de **10x a 79x conforme o provedor**, não 79x fixo. Todos continuam ordens
+de grandeza melhores que hoje — a tese da cascata não muda, só o número da ponta.
+
+**(b) O `FREE_TIERS.md` do OmniRoute erra sobre a Brave.** Ele afirma que o tier grátis acabou
+em 2026-02-12. Checado na página oficial: o **`$5 in free monthly credits` continua
+anunciado**. O que mudou foi a forma — 5.000 queries/mês sem cartão → $5 de crédito com cartão
+para confirmar identidade (*"the card is only used to confirm your identity and will not be
+charged"*). Lição operacional: o catálogo deles é bom ponto de partida, nunca fonte final.
+
+### 17.5 Achado novo de compliance — storage rights da Brave
+
+Direto da página da Brave Search API:
+
+> *"If you would like to store the API results in part or whole (for example, to train or tune
+> an LLM), you will need to subscribe to a plan that explicitly grants storage rights."*
+
+A lane persiste a descrição derivada no Mar e a envia para a norteia-api. Se a paráfrase em voz
+Norteia conta ou não como "store the API results in part" é leitura que precisa ser feita
+**antes** de adotar a Brave, não depois. **Não foi medido nem consultado juridicamente** — fica
+registrado como item aberto. Exa e Tavily não têm cláusula equivalente encontrada.
+
+### 17.6 Veredito
+
+**OmniRoute: não adotar como provider.** Resolve um problema que o Brave não tem (juggling de
+keys para agentes de código) e não resolve o que ele tem (tokens de busca), a um custo de
+compliance e de operação desproporcional a uma lane de $74,90/mil. **Aproveitar como fonte de
+pesquisa** — o catálogo de free tiers e a leitura de ToS por provedor valem a consulta
+periódica.
+
+**E a pendência da §15.3 muda de provedor único para três.** Somados, os tiers gratuitos dão
+**~4.000 buscas/mês a custo zero** (Exa 2.000 + Tavily 1.000 + Brave 1.000) — suficiente para
+rodar o teste nos mesmos 3 atrativos obscuros **e** ainda operar uma fatia inicial. O
+**$1/1k pages** da Contents API da Exa finalmente precifica o segundo passo de leitura de
+página que a §15.3 deixou em aberto: **~$0,001 por página lida**. Se o snippet não bastar, o
+custo de ler a página não inviabiliza a cascata — o que era a principal incerteza.
+
+---
+
 ## Fontes
 
 - [Google AI plans — Gemini API](https://ai.google.dev/gemini-api/docs/google-ai-plans)
@@ -765,3 +883,8 @@ Nada nesta lista substitui o passo de busca contratada da cascata (§15.2). O sa
 - [Grounding with Google Search](https://ai.google.dev/gemini-api/docs/grounding)
 - [OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai)
 - [Google Developer Program — Plans & Pricing](https://developers.google.com/program/plans-and-pricing)
+- [OmniRoute — repositório](https://github.com/diegosouzapw/OmniRoute) · [`docs/reference/FREE_TIERS.md`](https://github.com/diegosouzapw/OmniRoute/blob/main/docs/reference/FREE_TIERS.md)
+- [Brave Search API — planos e preços](https://brave.com/search/api/)
+- [Exa — pricing](https://docs.exa.ai/reference/pricing)
+- [Tavily — Credits & Pricing](https://docs.tavily.com/documentation/api-credits)
+- [Serper](https://serper.dev/)
