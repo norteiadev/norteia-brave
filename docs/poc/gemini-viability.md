@@ -1080,6 +1080,137 @@ escrever — nunca para lembrar.
 
 ---
 
+## 20. Rodar o copywriter pela assinatura Claude Code Max (avaliado)
+
+Proposta levantada: criar um subagente do Claude Code com o prompt do copywriter, desligar o
+enriquecimento de descrição dentro do Brave e gerar a prosa externamente numa sessão do Claude
+Code — absorvendo LLM e busca na assinatura Max que já está paga.
+
+Contexto que dimensiona a pergunta: **plano Max 5x ($100/mês)** e uma **carga inicial de
+~10 mil atrativos de todo o Brasil**, de uma vez.
+
+### 20.1 A licença permite — isto não é o caso do OmniRoute
+
+Esperava-se aqui a mesma trava que reprovou o OmniRoute na §17.2. **Não é.** O artigo oficial
+*Use the Claude Agent SDK with your Claude plan* lista, entre o que a assinatura cobre:
+
+> Claude Agent SDK usage in your own projects (Python or TypeScript) · o comando `claude -p`
+> **(non-interactive mode)** · The Claude Code GitHub Actions integration · Third-party apps
+> that authenticate with your Claude subscription through the Agent SDK
+
+Uso programático da assinatura é sancionado. A proposta não é contorno de ToS.
+
+### 20.2 Mas o mesmo documento traça o limite, nas palavras deles
+
+> **Production automation at scale.** The Agent SDK monthly credit is sized for **individual
+> experimentation and automation**. Teams running **shared production automation should use
+> Claude Platform with an API key** for predictable pay-as-you-go billing.
+
+O Brave é *shared production automation* pela definição do próprio PROJECT.md: serviço 24/7,
+todas as UFs, alimentando um produto. É o caso que o parágrafo manda mover para a API.
+
+E há um detalhe de calendário que muda a conta hoje:
+
+> **Update June 15:** We're pausing the changes described below. For now, nothing has changed:
+> Claude Agent SDK, `claude -p`, and third-party app usage **still draw from your
+> subscription's usage limits**. The previously announced monthly credit **isn't available**.
+
+O crédito separado, que isolaria automação do uso interativo, está **pausado**. Hoje
+`claude -p` consome o mesmo pool do Claude Code interativo e do claude.ai — rodar descrição
+queima a própria capacidade de programar, contra um limite que a Anthropic não publica em
+tokens ("length and complexity of your conversations, the features you use, which model,
+and the effort level").
+
+### 20.3 A carga inicial inteira custa menos que um mês de assinatura
+
+10 mil atrativos, uma vez, com os números medidos na §18 (2 queries por atrativo):
+
+| caminho | busca | LLM | **total, 10 mil** |
+|---|---|---|---|
+| lane atual (Sonnet + `web_search`) | — | — | **$749** |
+| cascata · Tavily $8/1k + flash-lite pago | $160 | $17 | **$177** |
+| cascata · Exa $5/1k + flash-lite pago | $100 | $17 | **$117** |
+| cascata · Serper $1/1k + flash-lite pago | $20 | $17 | **$37** |
+
+O Max 5x custa **$100/mês**. A carga inicial completa do Brasil pela cascata sai entre
+**$37 e $177 — uma vez só**. Entre um terço e menos de dois meses de assinatura, para não
+precisar nunca mais.
+
+### 20.4 E não cabe na cota, por uma ordem de grandeza
+
+O único número que a Anthropic publica sobre quanto de automação um plano comporta é o crédito
+(pausado) que eles mesmos dimensionaram: **Pro $20 · Max 5x $100 · Max 20x $200 por mês**. É a
+régua deles.
+
+Uma descrição pelo subagente custa **mais** que a in-lane, não menos: o Claude Code carrega
+system prompt, definições de ferramenta e múltiplos turnos por tarefa. Otimista é $0,075
+(igual à in-lane da §11.1); realista, ~$0,15.
+
+| hipótese | 10 mil descrições | contra a régua do Max 5x |
+|---|---|---|
+| otimista, $0,075 | $749 | **7,5 meses** |
+| realista, $0,15 | $1.500 | **15 meses** |
+
+O pool interativo não é o mesmo que o crédito, e não é publicado — mas nenhum múltiplo
+plausível fecha um vão de 10x. **Não é "talvez não caiba": está fora por ordem de grandeza.**
+
+### 20.5 O argumento que fecha: a cascata é inevitável
+
+A carga inicial acontece uma vez. **A lane continua rodando depois** — atrativo novo entra
+continuamente, e cada um precisa de descrição.
+
+Fazer os 10 mil pela assinatura não elimina o trabalho de construir a cascata; adia. Gastaria-se
+meses de cota para chegar no dia seguinte precisando construir exatamente a mesma coisa — agora
+sem os 10 mil servindo de banco de prova.
+
+### 20.6 O uso do subagente que se sustenta: oráculo de qualidade
+
+Não como motor. Como referência.
+
+O que a §18 mediu foi que os **fatos** chegam pelo snippet (9/10 em 2.311 tokens). O que ela
+**não** mediu foi se a prosa do `flash-lite` a partir de snippet se sustenta contra a do Sonnet
+com busca. Essa é a única incerteza que ainda separa a cascata da produção — e é exatamente o
+que uma assinatura resolve bem: volume baixo, qualidade alta, valor alto por item.
+
+1. Rodar o subagente em **~100 atrativos**. Cabe folgado na cota e é literalmente
+   *individual automation*, o uso que a doc descreve.
+2. Esse lote vira o **conjunto de referência** — descrições em qualidade Sonnet-com-busca,
+   com as fontes registradas.
+3. Rodar os mesmos 100 pela cascata barata e comparar contra a referência.
+4. Passando, virar os 10 mil por $37–177 com confiança medida. Não passando, a descoberta
+   custou 100 descrições em vez de 10 mil.
+
+### 20.7 Armadilha de implementação, se for por esse caminho
+
+Escrever a descrição direto em `rio_records.canonical` pula o `record_event` de auditoria e não
+recomputa o score. O registro fica com prosa mas sem rastro de origem nem data. O caminho certo
+é o subagente escrever **arquivo**, e a ingestão entrar por um endpoint do Brave que gere o
+evento — nunca `UPDATE` direto na tabela.
+
+### 20.8 O artefato
+
+O subagente foi criado em **`.claude/agents/norteia-copywriter.md`**, com o
+`COPYWRITER_SYSTEM` de produção verbatim, mais três coisas que a produção não tem porque não
+precisava:
+
+- **duas queries por atrativo** como regra explícita (§18: uma só recupera 5/10);
+- **regra de fabricação** derivada da §19 — se a busca não confirmar o lugar, marcar
+  `status: "sem_fonte"` e escrever duas frases sensoriais, nunca inventar; e nunca citar URL
+  que não foi aberta;
+- **contrato de saída em JSON** com `fontes` e `queries`, para que a descrição seja auditável
+  depois — que é a razão de a busca estar no fluxo (§19.6).
+
+### 20.9 Veredito
+
+**Não usar a assinatura como motor da lane, nem para a carga inicial.** Não por ToS — é
+permitido — mas porque a alternativa custa menos que um mês do que já se paga, porque a carga
+não cabe na cota por 10x, e porque não dispensa construir a cascata de qualquer forma.
+
+**Usar o subagente como oráculo**, num lote de ~100, para fechar a última incerteza da cascata:
+a qualidade da prosa barata.
+
+---
+
 ## Fontes
 
 - [Google AI plans — Gemini API](https://ai.google.dev/gemini-api/docs/google-ai-plans)
@@ -1094,4 +1225,8 @@ escrever — nunca para lembrar.
 - [Exa — pricing](https://docs.exa.ai/reference/pricing)
 - [Tavily — Credits & Pricing](https://docs.tavily.com/documentation/api-credits)
 - [Serper](https://serper.dev/)
+- [Use the Claude Agent SDK with your Claude plan](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
+- [Use Claude Code with your Pro or Max plan](https://support.claude.com/en/articles/11145838-using-claude-code-with-your-pro-or-max-plan)
+- [How do usage and length limits work?](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work)
+- [Anthropic Consumer Terms of Service](https://www.anthropic.com/legal/consumer-terms)
 - [Tavily — API reference (`/search`)](https://docs.tavily.com/documentation/api-reference/endpoint/search)
