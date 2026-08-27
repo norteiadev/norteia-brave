@@ -202,6 +202,7 @@ None yet.
 | 260820-iig | Doc §17 do relatório de custo: OmniRoute reprovado como provider de LLM; preços de Exa/Tavily/Brave/Serper verificados na fonte; corrige a projeção da §15.2 (Serper não tem free tier) e registra a cláusula de storage rights da Brave | 2026-08-20 | b725262 | complete | [260820-omniroute-secao-17](./quick/260820-omniroute-secao-17/) |
 | 260820-jhk | Teste da §15.3 executado com Tavily: snippet basta (9/10 fatos, 2.311 tokens, 2 queries por atrativo); leitura de página é contraprodutiva; ganho corrigido para 4,9x-39x | 2026-08-20 | 49999d4 | complete | [260820-teste-15-3-snippets](./quick/260820-teste-15-3-snippets/) |
 | 260827-qxw | Memória paramétrica NÃO dispensa a busca: 0/8 fatos no obscuro, 6/6 atrativos falsos descritos sem abstenção, e o Sonnet fabricou o bloco de resultados de busca com URLs (uma delas 404) | 2026-08-27 | a139f5d | complete | [260827-memoria-parametrica](./quick/260827-memoria-parametrica/) |
+| 260827-rp1 | Copywriter pela assinatura Claude Max avaliado: permitido por ToS mas reprovado — carga inicial custa $37-177 pela cascata contra $100/mês, e não cabe na cota por ~10x; subagente criado e mantido como oráculo de qualidade | 2026-08-27 | c1ca496 | complete | [260827-copywriter-via-assinatura](./quick/260827-copywriter-via-assinatura/) |
 
 ## Deferred Items
 
