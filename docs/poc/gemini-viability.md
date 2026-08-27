@@ -984,6 +984,102 @@ busca, que era a peça em aberto dessa camada, agora tem preço e desempenho med
 
 ---
 
+## 19. A memória paramétrica do modelo dispensa a busca? (medido)
+
+Pergunta levantada: os pesos do modelo já carregam fato sobre atrativo brasileiro. Isso não
+removeria a necessidade da tool `web_search` — e com ela a caixa mais cara do pipeline?
+
+Medido em 2026-08-27. Sonda: `scripts/poc/parametric_memory_probe.py`. Três modelos, sem tool
+nenhuma, usando o **prompt de produção** (`COPYWRITER_SYSTEM` + `_build_context`, importados do
+módulo real) com contexto Places vazio.
+
+### 19.1 O teste tinha que medir invenção, não só acerto
+
+O modo de falha da memória paramétrica não é *"não sei"*. É *"invento com confiança"*. Um
+modelo que produz 8 dos 10 fatos e inventa outros 5 é pior que inútil para uma base canônica,
+porque nada no pipeline distingue os dois — o `descricao_editorial` entra no Mar do mesmo jeito.
+
+Por isso a amostra tem três classes, e a terceira é a que decide:
+
+| classe | alvos | serve para |
+|---|---|---|
+| obscuro | os 3 da §15.1 | é o caso real: 95% dos atrativos |
+| famoso | Convento da Penha, Pico da Bandeira | mede o que a Wikipedia já cobre de graça |
+| **FALSO** | **Mirante da Pedra Retorcida** (Brejetuba), **Cachoeira do Sino Azul** (Afonso Cláudio) | **não existem** |
+
+Os dois falsos foram verificados **antes** de entrar na lista: busca `advanced` na Tavily, 8
+resultados cada, nenhum cita o nome. As cachoeiras reais de Afonso Cláudio são Fio de Ouro,
+Bonita e Santa Luzia; a formação rochosa real de Brejetuba é a Pedra do Submarino.
+
+### 19.2 Resultado
+
+| modelo | fatos, obscuro | fatos, famoso | descreveu o atrativo que não existe |
+|---|---|---|---|
+| `claude-sonnet-4-5` | **1/8** | 5/6 | **2/2** — 14 afirmações concretas inventadas |
+| `gemini-3.5-flash-lite` | **0/8** | 3/6 | **2/2** — 4 afirmações |
+| `deepseek-chat` | **1/8** | 1/6 | **2/2** — 6 afirmações |
+| *baseline* — Sonnet + `web_search` | *10/10* | — | — |
+
+**Seis casos falsos, três modelos, zero abstenções.** Nenhum dos três disse "não conheço este
+lugar". Todos escreveram prosa turística confiante, na voz da Norteia, sobre um lugar inexistente.
+
+E o "1/8" não é 1: o único fato que casa é **restinga** — vegetação genérica do litoral capixaba
+que qualquer texto sobre Guarapari conteria. O recall real no obscuro é **zero**.
+
+### 19.3 O achado grave: o Sonnet não inventou a descrição, inventou as fontes
+
+Na Cachoeira do Sino Azul, o Sonnet emitiu um bloco `<search_results>` **completo e fabricado**
+antes de escrever — quatro resultados, com URL, título e trecho:
+
+| URL fabricada | verificação |
+|---|---|
+| `tripadvisor.com.br/Attraction_Review-g10177019-d12873482-…` | IDs plausíveis, atrativo inexistente |
+| `es.gov.br/Noticia/cachoeira-do-sino-azul-visite-o-cartao-postal…` | **HTTP 404** — domínio real, caminho inventado |
+| `guiaes.com.br/cachoeira-do-sino-azul-afonso-claudio/` | domínio não resolve |
+| `instagram.com/cachoeiradosinoazul/` | perfil inventado |
+
+Os quatro concordavam entre si num fato inventado: *"90 metros de queda livre"*.
+
+Isto é pior que alucinar prosa. **É alucinar a evidência.** O motor de confiabilidade do Brave
+dá peso 30 para `origem` e 20 para `corroboração`; quatro fontes independentes que concordam é
+exatamente o padrão que o score é feito para premiar. Um registro assim entraria no Mar com
+score alto — pelo motivo errado.
+
+### 19.4 Aviso operacional
+
+O `<search>` que o Sonnet emitiu mostra que ele **queria** buscar: o prompt de produção pressupõe
+a tool. Sem ela, o modelo não degrada para "não sei" — ele emite a pseudo-chamada, não recebe
+resposta, e **escreve assim mesmo**.
+
+Consequência prática: *desligar `web_search` para economizar não produz descrição pior. Produz
+descrição inventada, indistinguível da boa.* Quem fizer essa mudança pelo custo não vai ver o
+estrago no monitor.
+
+### 19.5 Por que nem o que o modelo sabe é aproveitável
+
+O Sonnet acerta 5/6 nos famosos. Mesmo isso não serve à lane, por duas razões:
+
+1. **É a fatia que já é grátis.** A §15.1 mediu que ~5% dos atrativos têm artigo na Wikipedia —
+   e são exatamente os famosos. Wikipedia + Wikidata entregam esses fatos com fonte citável, a
+   custo zero (§11.3). A memória paramétrica cobre o que já está coberto.
+2. **O pipeline não tem onde guardar.** Nascente exige `source` e `source_ref`; o score pesa
+   `origem` e `corroboração`. Um fato vindo dos pesos do modelo não tem URL, não tem data, não
+   tem como ser corroborado nem reprocessado. Não existe slot para ele na arquitetura.
+
+### 19.6 Veredito
+
+**Não.** A memória paramétrica não dispensa a busca — e a pergunta se responde melhor invertida:
+ela falha exatamente onde a lane precisa (0/8 no obscuro, que é 95% do caso), acerta exatamente
+onde já é grátis (o famoso, que a Wikipedia cobre), e **fabrica de forma indetectável nos dois
+casos**.
+
+Isso reforça a cascata da §15.2 em vez de enfraquecê-la. A busca contratada não está lá só pelo
+fato — está lá pela **procedência**. Um snippet vem com URL, com data e com um domínio que dá
+para auditar; 2.311 tokens deles bastam para 9 dos 10 fatos (§18). O modelo entra depois, para
+escrever — nunca para lembrar.
+
+---
+
 ## Fontes
 
 - [Google AI plans — Gemini API](https://ai.google.dev/gemini-api/docs/google-ai-plans)
