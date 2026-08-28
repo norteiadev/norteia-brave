@@ -1,0 +1,640 @@
+[
+  {
+    "rio_id": "095a090d-7b13-4d9c-968a-1988bec13f32",
+    "canonical_key": "tripadvisor:attraction:2408104",
+    "nome": "Praia Da Costa",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Da Costa\" — município Vila Velha/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A orla mais movimentada de Vila Velha se abre em frente aos prédios altos da Praia da Costa, onde o Atlântico bate mansamente numa faixa de areia clara emoldurada por um calçadão iluminado. O bairro nasceu ainda no século XVI, quando o capitão donatário Vasco Fernandes Coutinho reservou para si a área conhecida como Fazenda da Costa e ali ergueu o Sítio do Ribeiro, onde viveu até o fim da vida. Por muito tempo a região permaneceu quase intocada, com trilhas de terra batida, até que o aterro da Avenida Champagnat, nos anos 1960, abriu caminho para a ocupação e, décadas depois, para a verticalização que transformou o bairro num dos mais valorizados do Espírito Santo. O melhor momento para caminhar por ali é ao entardecer, quando a luz dourada contrasta com os prédios da orla e o calçadão começa a se encher de ciclistas, corredores e famílias. À noite, vale reservar um tempo para a pequena feira de artesanato e comidas que se forma ao longo do trajeto, entre bares, restaurantes e sorveterias que dão vida ao points depois do pôr do sol. Leve calçado confortável para aproveitar os cinco quilômetros de ciclovia e observe o movimento constante de quem pratica frescobol e vôlei na areia, sinal de que essa praia urbana pulsa em qualquer hora do dia.",
+    "status": "ok",
+    "fontes": [
+      "https://www.folhavitoria.com.br/geral/video-e-fotos-mostram-como-era-a-praia-da-costa-antes-dos-predios-conheca-a-historia-do-bairro/",
+      "https://pt.wikipedia.org/wiki/Praia_da_Costa_(Vila_Velha)",
+      "https://praiascapixabas.com.br/praia-da-costa-a-praia-urbana-mais-famosa-de-vila-velha/"
+    ],
+    "queries": [
+      "Praia da Costa Vila Velha ES história",
+      "Praia da Costa Vila Velha Espírito Santo orla calçadão"
+    ]
+  },
+  {
+    "rio_id": "61d3d013-8f0a-4a0c-aaa5-8173fd2addc1",
+    "canonical_key": "tripadvisor:attraction:2408107",
+    "nome": "Convento Nossa Senhora Da Penha",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Convento Nossa Senhora Da Penha\" — município Vila Velha/ES.\nEndereço: R. Vasco Coutinho - Prainha, Vila Velha - ES, 29100-231, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.5,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "No topo de um afloramento rochoso que domina a paisagem de Vila Velha, o Convento da Penha surge como um marco branco contra o céu e o mar, visível de boa parte da Grande Vitória. A subida até lá já é parte da experiência: entre a vegetação rala da rocha, o vento traz o cheiro de maresia enquanto a vista se abre, aos poucos, sobre a baía e a cidade mais antiga do Espírito Santo. A história do lugar remonta a 1558, quando o frei espanhol Pedro Palácios se instalou numa gruta na base do morro, hoje conhecida como Gruta de Frei Palácios, e ali ergueu as primeiras ermidas dedicadas a Nossa Senhora da Penha. Ao longo do século seguinte, a comunidade franciscana construiu o convento que se vê hoje, com celas, corredores e capela, reconhecido como patrimônio histórico nacional em 1943. Desde os primeiros tempos da colonização capixaba o santuário recebe romeiros, e a Festa da Penha, em abril, segue como a maior romaria do estado, um fluxo de fé que atravessa gerações. Vale caminhar pelos corredores do convento e pela capela antes de seguir até o mirante externo, de onde se avista, num único olhar, o mar aberto e o perfil de Vitória do outro lado da baía. O fim da tarde costuma render a luz mais bonita para fotografar a fachada branca contra o pôr do sol, e vale guardar um tempo em silêncio diante da gruta original, onde a pedra ainda guarda o traço mais antigo da devoção que deu origem a tudo.",
+    "status": "ok",
+    "fontes": [
+      "https://conventodapenha.org.br/conheca-a-historia-do-convento-da-penha/",
+      "https://pt.wikipedia.org/wiki/Convento_da_Penha"
+    ],
+    "queries": [
+      "Convento Nossa Senhora da Penha Vila Velha história",
+      "Convento da Penha Vila Velha romaria fundação 1558"
+    ]
+  },
+  {
+    "rio_id": "76e2bccc-1e86-4f97-9521-ca1db986c343",
+    "canonical_key": "tripadvisor:attraction:2408063",
+    "nome": "Praia De Camburi",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia De Camburi\" — município Vitória/ES.\nEndereço: Praia de Camburi, Espírito Santo, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A única praia de mar aberto na área continental de Vitória se estende por seis quilômetros de areia acompanhada pela Avenida Dante Michelini, mais conhecida como Beira-Mar, onde ondas, vento e a movimentação constante da capital capixaba se encontram. No início da orla está o Píer de Iemanjá, com sua estátua da Rainha do Mar inaugurada em fevereiro de 1988, marco que virou símbolo do bairro. Ao longo das décadas, a urbanização da faixa transformou Camburi em referência de qualidade de vida na cidade, cercada por bairros valorizados e por uma extensa ciclovia, e já sediou campeonatos nacionais e mundiais de vôlei de praia, futebol de areia e vela. A faixa de areia rende boas fotos logo nas primeiras horas da manhã, quando o mar ainda está calmo e as pranchas de kitesurf começam a colorir o horizonte, ou ao entardecer, com o pôr do sol refletido na estátua do Píer de Iemanjá. Vale caminhar ou pedalar pela ciclovia que acompanha toda a extensão da praia, parando nos quiosques e academias ao ar livre espalhados pelo caminho. Leve protetor solar e água, e observe as quadras de vôlei, futevôlei e beach tennis lotadas ao longo do dia, prova de que essa é a praia mais viva da capital.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_de_Camburi_(Vit%C3%B3ria)",
+      "https://praiascapixabas.com.br/praia-de-camburi-oasis-urbano-em-vitoria-espirito-santo/",
+      "https://www.vitoria.es.gov.br/semc/orla-de-camburi"
+    ],
+    "queries": [
+      "Praia de Camburi Vitória ES história",
+      "Praia de Camburi Vitória Espírito Santo orla urbana ciclovia"
+    ]
+  },
+  {
+    "rio_id": "99063015-feb9-4168-89eb-db1c129ad6c4",
+    "canonical_key": "tripadvisor:attraction:2408058",
+    "nome": "Palácio Anchieta",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Palácio Anchieta\" — município Vitória/ES.\nEndereço: Praça João Clímaco, s/n - Centro, Vitória - ES, 29015-110, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No alto da Cidade Alta, de frente para o porto de Vitória, o Palácio Anchieta domina a paisagem com a solidez de quem viu a cidade nascer. Suas paredes grossas guardam quase cinco séculos de histórias, começando ainda no século XVI, quando jesuítas ergueram ali, com trabalho indígena, o Colégio e a Igreja de São Tiago. Foi o padre José de Anchieta quem deu ao edifício parte de sua forma definitiva, e é dele que o palácio herdou o nome, adotado em decreto de 1945 em sua homenagem, o mesmo espaço que hoje guarda seu túmulo simbólico. Com a expulsão dos jesuítas das terras portuguesas no século XVIII, o antigo colégio passou a abrigar serviços públicos e, pouco depois, tornou-se sede do governo capixaba, papel que mantém até hoje, tornando-o um dos mais antigos assentos de poder executivo do país. Vale caminhar pelo entorno no fim da tarde, quando a luz baixa realça a fachada e o contraste entre a arquitetura colonial e o movimento do porto ao fundo cria um dos ângulos mais bonitos para fotografar o conjunto. Observar os detalhes de pedra e cal nas partes mais antigas da construção ajuda a perceber as várias camadas de reconstrução que o prédio atravessou ao longo dos séculos.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Pal%C3%A1cio_Anchieta_(Esp%C3%ADrito_Santo)",
+      "https://dio.es.gov.br/Not%C3%ADcia/patrimonio-palacio-anchieta-completa-466-anos-de-historia",
+      "https://www.folhavitoria.com.br/politica/igreja-colegio-sede-do-es-conheca-a-historia-do-palacio-anchieta/"
+    ],
+    "queries": [
+      "Palácio Anchieta Vitória ES história sede governo",
+      "Palácio Anchieta Vitória jesuítas colégio história"
+    ]
+  },
+  {
+    "rio_id": "af04b74c-f0e3-42a5-bca7-3c10a8e21d00",
+    "canonical_key": "tripadvisor:attraction:3858616",
+    "nome": "Parque Estadual De Pedra Azul",
+    "municipio": "Vargem Alta",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Parque Estadual De Pedra Azul\" — município Vargem Alta/ES.\nEndereço: Rota do Lagarto, s/n - Vila de Pedra Azul, Domingos Martins - ES, 29278-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Wrapped in mata atlântica na altitude da Serra Capixaba do Espírito Santo, a Pedra Azul se ergue com uma silhueta que muda de tom ao longo do dia. Liquens que cobrem a rocha ganham reflexos azulados e esverdeados conforme a luz do sol incide sobre ela, o que deu nome ao monumento e ao parque que o protege. A área começou a ser preservada em 1960, como reserva florestal, e se tornou parque estadual em 1991, reunindo dentro de seus limites, que se estendem por Domingos Martins, Alfredo Chaves e Vargem Alta, a Pedra Azul, a Pedra das Flores e a Pedra do Lagarto, formações que dividem espaço com trilhas entre a mata e piscinas naturais escavadas na rocha pela água ao longo do tempo. Vale caminhar pelas trilhas nas primeiras horas da manhã, quando a luz ainda é baixa e realça o tom azulado da pedra, e reservar um tempo parado nos mirantes do Lagarto e do Forno Grande, de onde se vê o conjunto rochoso emoldurado pela floresta. Leve calçado com boa aderência para os trechos de rocha e água para a caminhada, e observe como a cor da paisagem se transforma enquanto o sol se desloca no céu.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_Estadual_da_Pedra_Azul",
+      "https://iema.es.gov.br/PEPAZ",
+      "https://semeia.org.br/conexao-semeia/parques-do-mes/parque-estadual-da-pedra-azul"
+    ],
+    "queries": [
+      "Parque Estadual de Pedra Azul Domingos Martins história",
+      "Parque Estadual Pedra Azul Espírito Santo trilhas rocha"
+    ]
+  },
+  {
+    "rio_id": "6e470ead-5c0e-40ed-be18-4d0c15bbef40",
+    "canonical_key": "tripadvisor:attraction:2408015",
+    "nome": "Praia Bacutia",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Bacutia\" — município Guarapari/ES.\nEndereço: Bacutia Beach - Guarapari, Espírito Santo, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Escondida numa enseada da badalada região da Enseada Azul, cerca de sete quilômetros do centro de Guarapari, a Praia da Bacutia parece uma piscina natural emoldurada por castanheiras e vegetação nativa, com águas num tom esverdeado que raramente formam ondas. Apesar dos pouco mais de 450 metros de extensão, o cenário preservado e a areia macia fazem dela uma das paisagens mais bonitas do litoral capixaba. O ideal é chegar pela manhã, quando o sol ainda é ameno e a água parada reflete o verde das árvores que margeiam a areia, um cenário e tanto para fotos. Vale reservar um tempo num dos quiosques da orla para experimentar uma moqueca capixaba enquanto observa quem se aventura no stand-up paddle ou numa partida de frescobol à beira-mar. Leve máscara de mergulho: a calmaria das águas convida a espiar o fundo raso e transparente da enseada.",
+    "status": "ok",
+    "fontes": [
+      "https://www.viajali.com.br/praia-da-bacutia/",
+      "https://terracapixaba.com/en/2024/01/praia-da-bacutia-a-praia-mais-badalada-de-guarapari.html"
+    ],
+    "queries": [
+      "Praia Bacutia Guarapari ES",
+      "Bacutia Beach Guarapari Espírito Santo areia"
+    ]
+  },
+  {
+    "rio_id": "6b9d70d1-ccc2-4d85-9156-2d1d0a938de2",
+    "canonical_key": "tripadvisor:attraction:2408061",
+    "nome": "Parque Pedra Da Cebola",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Parque Pedra Da Cebola\" — município Vitória/ES.\nEndereço: R. Ana Viêira Mafra, s/n - Mata da Praia, Vitória - ES, 29066-010, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entre os bairros Jardim da Penha e Mata da Praia, um bloco de pedra esculpido pela natureza dá nome a um parque que hoje é um refúgio verde em meio à Grande Vitória: a Pedra da Cebola se descama em camadas, como as cascas do bulbo que empresta o nome, apoiada sobre outra formação rochosa. O espaço, oficialmente Parque Municipal Ítalo Batan Régis, foi implantado em novembro de 1997 no local onde funcionou, até 1978, a Pedreira de Goiabeiras, da mineradora Vale, sendo considerada a primeira recuperação de uma área degradada por mineração no município. Hoje o parque conserva vegetação típica de restinga num terreno de mais de 100 mil metros quadrados. Vale reservar um tempo para subir até o mirante, de onde se avista o Maciço Central, o Porto de Tubarão e o Morro do Mestre Álvaro ao fundo, um dos melhores pontos para fotos do parque. As primeiras horas da manhã ou o fim de tarde são os momentos mais agradáveis para caminhar entre a vegetação e visitar o jardim japonês. Observe de perto a rocha que dá nome ao parque e repare como suas camadas se desprendem, lembrando as cascas de uma cebola, um detalhe geológico que poucos visitantes percebem à primeira vista.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_Pedra_da_Cebola",
+      "https://www.vitoria.es.gov.br/semmam/parque-pedra-da-cebola"
+    ],
+    "queries": [
+      "Parque Pedra da Cebola Vitória ES",
+      "Parque Pedra da Cebola Mata da Praia Vitória história"
+    ]
+  },
+  {
+    "rio_id": "f6fc9c55-3fc2-4ab6-b6fc-87d2ba792e4b",
+    "canonical_key": "tripadvisor:attraction:2408019",
+    "nome": "Praia Do Morro",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Do Morro\" — município Guarapari/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No bairro que empresta seu nome a uma das praias mais procuradas de Guarapari, cerca de três quilômetros de areia se estendem até o Morro da Pescaria, elevação coberta de vegetação que marca o fim da faixa litorânea. Guarapari ganhou fama nacional a partir dos anos 1940 e 1950 como a chamada Cidade Saúde, quando pesquisas do médico Antônio Silva Mello sobre as propriedades das areias monazíticas da região atraíram visitantes de todo o país. Com a construção da rodovia BR-262, que encurtou o trajeto entre Minas Gerais e o Espírito Santo, outros trechos da orla passaram a ser explorados turisticamente, e a Praia do Morro se tornou um dos grandes points da alta temporada. O Morro da Pescaria, na ponta da praia, vale a subida para quem gosta de trilha: o caminho corta uma vegetação densa e termina num pier com vista aberta para o mar, ideal para fotos ao entardecer. Pela manhã, antes de a praia encher, dá para observar de perto a fauna que habita a área verde do morro. Leve água e protetor solar para o passeio e aproveite para caminhar por uma das faixas de areia mais longas da cidade.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_do_Morro",
+      "https://espiritosantoguarapari.com.br/praia-do-morro-guarapari/",
+      "https://www.agazeta.com.br/es/cotidiano/a-guerra-nuclear-guarapari-praias-bombas-e-exploracao-litoral-brasileiro-0921"
+    ],
+    "queries": [
+      "Praia do Morro Guarapari ES história",
+      "Praia do Morro Guarapari areia monazítica radioativa"
+    ]
+  },
+  {
+    "rio_id": "bb1225c6-037b-404c-8800-aa3fd213cbd8",
+    "canonical_key": "tripadvisor:attraction:2408029",
+    "nome": "Praia De Setiba",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia De Setiba\" — município Guarapari/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Dentro dos limites do Parque Estadual Paulo César Vinha, a Praia de Setiba forma, ao lado de Setiba Pina e Setibão, a chamada Região das Três Praias, um trecho de litoral preservado onde o mar raso e as águas cristalinas lembram uma piscina natural. A faixa de areia dourada se estende do Morro do Cruzeiro até a Praia do Una, acompanhada por vegetação de restinga e castanheiras que sombreiam boa parte da orla. A calmaria da água é o maior convite: pela manhã, quando o mar está mais raso e translúcido, é o melhor momento para levar crianças ou simplesmente flutuar sem pressa. À tarde, na maré alta, vale observar o fenômeno conhecido por moradores como encontro das águas, quando correntes se cruzam perto da faixa de areia. Aproveite a sombra da vegetação que acompanha toda a orla e leve um caiaque ou uma prancha de stand-up paddle para explorar as águas paradas da baía.",
+    "status": "ok",
+    "fontes": [
+      "https://www.folhavitoria.com.br/cultura/turismo/conheca-tudo-sobre-a-praia-de-setiba-em-guarapari-no-es-viral/",
+      "https://esbrasil.com.br/setiba-conheca-um-dos-principais-balnearios-de-guarapari/"
+    ],
+    "queries": [
+      "Praia de Setiba Guarapari ES história",
+      "Praia de Setiba Guarapari águas calmas restinga"
+    ]
+  },
+  {
+    "rio_id": "d57c69de-1ca9-4823-a676-d355dc4a93c3",
+    "canonical_key": "tripadvisor:attraction:2408106",
+    "nome": "Praia De Itaparica",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia De Itaparica\" — município Vila Velha/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Emendada à Praia da Costa e à Praia de Itapoã, a Praia de Itaparica estende por cerca de três quilômetros e meio uma faixa de areia dourada onde prédios altos dividem espaço com recifes de coral logo abaixo da superfície transparente. Pela manhã, a praia recebe nadadores e quem pratica exercícios ao ar livre, enquanto à noite os bares e restaurantes da orla ganham vida, com opções que vão do boliche às festas. Quem gosta de mergulho encontra recifes de coral a poucos metros da areia, e os surfistas aproveitam as ondas mais fortes que se formam ao longo da faixa curva da praia. Vale passar pela Praça do Ciclista, um dos pontos de encontro mais tradicionais da orla, e aproveitar a proximidade com o Convento da Penha e o Farol de Santa Luzia para completar o roteiro de fotos pela região.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_de_Itaparica",
+      "https://esbrasil.com.br/praia-de-itaparica-banho-refrescante-em-meio-a-agitacao-de-vila-velha/"
+    ],
+    "queries": [
+      "Praia de Itaparica Vila Velha ES",
+      "\"Praia de Itaparica\" Vila Velha Espírito Santo bairro"
+    ]
+  },
+  {
+    "rio_id": "b955f61c-dd6b-41f6-b27e-c1cf577c6d7f",
+    "canonical_key": "tripadvisor:attraction:2408064",
+    "nome": "Praia Do Canto",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Do Canto\" — município Vitória/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 61.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Onde hoje se veem prédios altos e uma orla concorrida de bares e lojas, existiram um dia as praias do Barracão, das Castanheiras, do Canto, Comprida e de Santa Helena, além das Ilhas do Boi e do Frade, apagadas por um aterro feito pela COMDUSA em 1972 que consolidou o nome atual do bairro. A ocupação da região começou com o loteamento do Plano Novo Arrabalde, projetado pelo engenheiro Saturnino de Brito sob influência do urbanismo sanitarista, com ruas largas organizadas em torno da Avenida Nossa Senhora da Penha, num desenho que lembra uma espinha de peixe. Ao longo do século XX, a verticalização e a valorização imobiliária transformaram a área num dos endereços mais concorridos da capital. O melhor programa por ali é caminhar pela orla bem cuidada até a Praça dos Namorados, especialmente ao entardecer, quando a feirinha de artesanato e comidas típicas ganha movimento e as luzes da cidade começam a se acender sobre a baía. A tranquila Praia da Guarderia, mais reservada, é uma boa parada para fotos com menos gente ao redor. Observe o traçado das ruas largas do bairro, projetadas ainda no início do século passado, e aproveite a variedade de restaurantes, cafés e lojas que fazem da Praia do Canto um dos points mais charmosos da capital capixaba.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_do_Canto",
+      "https://www.encontravitoria.com.br/sobre/bairro-praia-do-canto-vitoria/"
+    ],
+    "queries": [
+      "Praia do Canto Vitória ES história bairro",
+      "Praia do Canto Vitória Espírito Santo orla comércio"
+    ]
+  },
+  {
+    "rio_id": "73e9cac1-a626-451c-be81-a24643a5407a",
+    "canonical_key": "tripadvisor:attraction:2408025",
+    "nome": "Praia Dos Padres",
+    "municipio": "Aracruz",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Dos Padres\" — município Aracruz/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 65.04,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A Praia dos Padres surge no litoral norte capixaba com uma quietude que contrasta com as praias mais movimentadas do estado. As águas são rasas e calmas, emolduradas pela vegetação de restinga e por grandes castanheiras que dão sombra à areia, dentro dos limites da Área de Proteção Ambiental Costa das Algas. O nome do lugar vem de uma antiga casa que hospedava padres e seminaristas na região, memória que os moradores guardam ao lado de histórias mais folclóricas: dizem que, à noite, é possível ouvir vozes e risadas vindas da praia vazia, como se ainda houvesse visitantes por ali. Na extremidade sul da faixa de areia, que se estende por cerca de um quilômetro, formações de recifes criam piscinas naturais quando a maré baixa, um cenário que convida famílias com crianças a explorar as poças com calma. Vale chegar no fim da tarde, quando a luz suaviza o verde da restinga e o mar ganha um tom dourado que rende boas fotos das castanheiras recortadas contra o horizonte. Observar o movimento da maré antes de entrar na água ajuda a aproveitar melhor as piscinas naturais, e um chapéu ou guarda-sol é bem-vindo, já que a sombra natural se concentra perto da vegetação.",
+    "status": "ok",
+    "fontes": [
+      "https://esbrasil.com.br/praia-dos-padres-em-aracruz-tranquilidade-e-boa-gastronomia/",
+      "https://praiascapixabas.com.br/praia-dos-padres-tradicao-e-tranquilidade-no-litoral-de-aracruz/"
+    ],
+    "queries": [
+      "Praia dos Padres Aracruz ES",
+      "\"Praia dos Padres\" Aracruz Espírito Santo história"
+    ]
+  },
+  {
+    "rio_id": "3f9a2ea2-232f-4875-8de4-3ce0b0d8c3bc",
+    "canonical_key": "tripadvisor:attraction:3536151",
+    "nome": "Morro Do Moreno",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Morro Do Moreno\" — município Vila Velha/ES.\nEndereço: 1056 - R. José Mário Lopes, 262 - Praia da Costa, Vila Velha - ES, 29101-190, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 61.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No fim da Praia da Costa, um fragmento preservado de Mata Atlântica se ergue quase 190 metros acima do nível do mar e guarda, entre trilhas e mirantes, séculos de vigilância sobre a Baía de Vitória. Ainda no período colonial, João Moreno, que chegou ao Brasil em 1535, o mesmo ano de Vasco Fernandes Coutinho, foi designado a ocupar um posto de observação no topo do morro para defender a região de ataques corsários. No início do século XX, o local passou a funcionar como sistema de sinalização para a entrada de navios, e durante a Segunda Guerra Mundial serviu como observatório militar. Em 2021, o morro foi declarado Monumento Natural. A subida, de cerca de meia hora, começa em trecho pavimentado e termina em trilha de terra com pedras soltas, por isso vale ir com tênis e levar água. O melhor horário é pela manhã, quando o calor é menor e a vista do topo, com a Terceira Ponte, o Convento da Penha, o Farol de Santa Luzia e a Praia da Costa lá embaixo, aparece com mais nitidez para fotos. Ao longo do caminho, observe os vestígios de mata atlântica que resistem em pleno perímetro urbano.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Morro_do_Moreno",
+      "https://turismo.vilavelha.es.gov.br/o-que-fazer/mirantes/monumento-natural-morro-do-moreno-43",
+      "https://marianaviaja.com/brasil/subir-morro-do-moreno-em-vila-velha/"
+    ],
+    "queries": [
+      "Morro do Moreno Vila Velha ES mirante história",
+      "Morro do Moreno Vila Velha Praia da Costa trilha vista"
+    ]
+  },
+  {
+    "rio_id": "854c3d1f-1a18-40d2-bb1d-7808e103fcfb",
+    "canonical_key": "tripadvisor:attraction:4971503",
+    "nome": "Parque Botânico Vale",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Parque Botânico Vale\" — município Vitória/ES.\nEndereço: Av. dos Expedicionários, s/n - Jardim Camburi, Vitória - ES, 29090-070, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 63.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entre o ruído industrial do Complexo de Tubarão e o verde denso da Mata Atlântica preservada, o Parque Botânico Vale surge como um contraponto surpreendente em Vitória. Passar pelo portão de entrada em Jardim Camburi é trocar o asfalto por trilhas sombreadas, onde o ar fica mais úmido e os sons da cidade dão lugar ao canto dos pássaros e ao farfalhar das copas.\n\nCriado em 2004 como parte do Cinturão Verde mantido pela mineradora Vale, o parque nasceu do compromisso de restaurar e proteger um remanescente de Mata Atlântica em pleno perímetro urbano. Ao longo de trinta e três hectares, mais de cento e quarenta espécies de árvores nativas, entre elas pau-brasil, jacarandá e ipê, compõem um mosaico vegetal que abriga bugios, micos e uma variedade de aves, sinal de que a floresta conseguiu se reerguer.\n\nCinco trilhas ecológicas conduzem o visitante por diferentes trechos da mata, e um jardim de orquídeas reúne espécies que raramente se veem tão de perto fora de uma reserva. Vale caminhar nas primeiras horas da manhã, quando a luz atravessa as copas em feixes e os animais estão mais ativos, o que favorece boas fotos nas bordas das trilhas e ao redor do jardim de orquídeas. Leve calçado confortável, protetor solar e, se possível, um binóculo, já que boa parte da vida selvagem se revela mais ao ouvido do que à vista.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_Bot%C3%A2nico_Vale",
+      "https://www.encontravitoria.com.br/sobre/parque-botanico-vale-vitoria/"
+    ],
+    "queries": [
+      "Parque Botânico Vale Vitória Espírito Santo história",
+      "\"Parque Botânico Vale\" Jardim Camburi Vitória visitação"
+    ]
+  },
+  {
+    "rio_id": "41426a05-2bbd-4bdb-bf8c-a1eaba42c173",
+    "canonical_key": "tripadvisor:attraction:2408016",
+    "nome": "Praia Castanheiras",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Castanheiras\" — município Guarapari/ES.\nEndereço: Castanheiras Beach, Espírito Santo, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 61.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No centro de Guarapari, a Praia das Castanheiras oferece uma faixa curta de areia clara, de cerca de 140 metros, sombreada pelas árvores que lhe dão nome, com recifes que formam piscinas naturais na maré baixa. A maré baixa é o melhor momento para conhecer essas piscinas naturais, ideais para banhos tranquilos com crianças. Pela manhã, a luz suave entre as castanheiras que margeiam a areia rende boas fotos, e vale aproveitar para experimentar um passeio de caiaque ou stand-up paddle nas águas calmas. Observe o vaivém constante dos quiosques da orla, sinal de que essa é uma das praias mais frequentadas do centro da cidade em qualquer época do ano.",
+    "status": "ok",
+    "fontes": [
+      "https://www.guaraparivirtual.com.br/9/praia-castanheiras-guarapari",
+      "https://www.tripadvisor.com/Attraction_Review-g941641-d2408016-Reviews-Castanheiras_Beach-Guarapari_State_of_Espirito_Santo.html"
+    ],
+    "queries": [
+      "Praia Castanheiras Guarapari ES",
+      "Castanheiras Beach Guarapari Espírito Santo"
+    ]
+  },
+  {
+    "rio_id": "de205379-53f5-4d0b-b4bb-8adde8ec3c51",
+    "canonical_key": "tripadvisor:attraction:2408032",
+    "nome": "Três Praias",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Três Praias\" — município Guarapari/ES.\nEndereço: Três Praias, Guarapari - ES, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 69.76,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entre rochedos que se erguem do mar, três enseadas se revezam ao longo da costa sul de Guarapari: a praia Mateus Lopes, de águas rasas e calmas, ideal para famílias, a da Leontina, central e mais aquecida, perfeita para um banho longo, e a do Saco, também chamada de Ancoradouro, a menor e mais selvagem das três, com ondas um pouco mais fortes. Juntas formam o conjunto conhecido como Três Praias, um recanto que escapa do movimento do centro urbano e guarda águas cristalinas em versões quase desertas em dias de semana. A separação natural entre elas, feita pelas próprias pedras da orla e por vegetação nativa, cria a sensação de descobrir um lugar novo a cada trecho de caminhada. É território de banho tranquilo, mergulho, pesca amadora e trilhas curtas entre as pedras, num ritmo que convida a ficar. Leve água e algo para comer, já que não há quiosques por ali, e aproveite o fim da tarde, quando a luz baixa realça o contraste entre o verde da mata, a areia clara e o azul das três enseadas.",
+    "status": "ok",
+    "fontes": [
+      "https://capixabadagema.com.br/tres-praias-guarapari/",
+      "https://www.buser.com.br/destinos/pontos-turisticos/es/guarapari-es/tres-praias"
+    ],
+    "queries": [
+      "Três Praias Guarapari ES atrativo turístico",
+      "Três Praias Guarapari Mateus Lopes Leontina Ancoradouro"
+    ]
+  },
+  {
+    "rio_id": "c5d53c1a-60fc-4cc1-865c-3eb7f4f9980b",
+    "canonical_key": "tripadvisor:attraction:4057388",
+    "nome": "Praia Dos Castelhanos",
+    "municipio": "Anchieta",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Dos Castelhanos\" — município Anchieta/ES.\nEndereço: Av. Beira Mar - Praia dos Castelhanos, Anchieta - ES, 29230-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.29,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A poucos passos da vila de pescadores que ainda dá ritmo a Anchieta, a Praia dos Castelhanos carrega no nome uma lembrança dos navegadores espanhóis que percorreram o litoral capixaba entre os séculos XVI e XVII, tempo em que a costa também abrigava embarcações em busca de abrigo e recursos naturais. A comunidade pesqueira que se formou ali ao longo dos séculos segue presente, com um modo de vida simples que resiste ao lado do turismo crescente. Ao longo de dois quilômetros de areia rústica, margeada por vegetação de restinga, formações de recife aparecem na maré baixa e criam piscinas naturais que viram o principal chamariz do lugar. Observe os barcos coloridos ancorados perto da faixa de areia e aproveite a maré baixa para nadar nas piscinas formadas entre as pedras, quando a água fica ainda mais clara e parada. As primeiras horas da manhã, com o mar mais calmo, são as melhores para fotografar o conjunto de recifes que emolduram a enseada.",
+    "status": "ok",
+    "fontes": [
+      "https://www.folhavitoria.com.br/cultura/turismo/praia-de-castelhanos-anchieta-es-mapa-o-que-fazer-viral/",
+      "https://terracapixaba.com/en/2024/01/praia-dos-castelhanos-e-os-encantos-de-suas-piscinas-naturais.html"
+    ],
+    "queries": [
+      "Praia dos Castelhanos Anchieta ES história",
+      "Castelhanos Anchieta praia colônia de pescadores balneário"
+    ]
+  },
+  {
+    "rio_id": "a778ed7d-94e1-426d-9bde-9b6f1e2f9926",
+    "canonical_key": "tripadvisor:attraction:2408054",
+    "nome": "Ilha Do Boi",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Ilha Do Boi\" — município Vitória/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 61.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na ponta leste da ilha de Vitória, o bairro Ilha do Boi guarda no nome uma história de naufrágio: reza a tradição que uma embarcação carregando gado encalhou ali, e os animais acabaram nas praias que hoje dão nome ao lugar. Até os anos 1970, era de fato uma ilha à parte, separada por um canal que depois foi aterrado, unindo a em definitivo ao restante da capital capixaba, embora o nome tenha permanecido. Duas pequenas praias urbanas dividem a atenção de quem visita: a Praia Grande, também chamada de Praia da Esquerda, mais extensa e com árvores que garantem sombra natural, e a Praia do Nenel, ou Praia da Direita, menor e mais recolhida. Ambas têm águas calmas e protegidas, cercadas por um bairro residencial arborizado que contrasta com a agitação do centro da cidade. É um trecho de cidade para caminhar devagar entre a orla e as ruas verdes, sobretudo no fim de tarde, quando o sol se põe sobre a baía e as duas praias enchem de gente caminhando ou só sentada observando o mar.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Ilha_do_Boi_(Vit%C3%B3ria)",
+      "https://m.vitoria.es.gov.br/semmam/ilha-do-boi"
+    ],
+    "queries": [
+      "Ilha do Boi Vitória ES praia bairro",
+      "Ilha do Boi Vitória Praia Grande Praia do Nenel"
+    ]
+  },
+  {
+    "rio_id": "d5abdf55-9303-46ff-bbd0-65f69f675cc6",
+    "canonical_key": "tripadvisor:attraction:11947452",
+    "nome": "Rota Do Lagarto",
+    "municipio": "Domingos Martins",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Rota Do Lagarto\" — município Domingos Martins/ES.\nEndereço: Rota do Lagarto - Aracê, Domingos Martins - ES, 29260-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 69.3,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A estrada sobe e desce entre montanhas cobertas de araucárias, no distrito de Aracê, e cada curva revela um chalé, um café colonial ou uma pousada de arquitetura que lembra a Europa. A Rota do Lagarto liga a BR 262 à ES 164, no coração da serra capixaba, e deve boa parte do seu charme à colonização de imigrantes que se instalaram na região de Domingos Martins e trouxeram consigo o gosto por construções em madeira, jardins floridos e uma gastronomia caseira que hoje enche os restaurantes ao longo do caminho. É também a porta de entrada para o Parque Estadual da Pedra Azul, cujo paredão rochoso desponta ao fundo da paisagem em diversos pontos da estrada. Vale percorrer o trajeto com calma nas primeiras horas da manhã, quando a neblina ainda paira sobre os vales e a luz suave favorece fotos da estrada emoldurada pelas araucárias. Um casaco leve ajuda mesmo em dias claros, já que a altitude derruba a temperatura mesmo no verão. Observe as pequenas lojas de produtos artesanais e ateliês espalhados pelo caminho, que contam um pouco do dia a dia de quem vive na serra, e reserve tempo para parar em mais de um mirante, já que a vista muda bastante conforme o relevo se abre ou fecha entre as montanhas.",
+    "status": "ok",
+    "fontes": [
+      "https://esbrasil.com.br/rota-do-lagarto-um-passeio-entre-montanhas-charme-e-natureza/",
+      "https://destinoses.com/o-que-fazer/rota-do-lagarto/"
+    ],
+    "queries": [
+      "Rota do Lagarto Aracê Domingos Martins ES",
+      "\"Rota do Lagarto\" Domingos Martins Espírito Santo trilha"
+    ]
+  },
+  {
+    "rio_id": "7b437d83-0a88-4197-9bce-b9f0595a0edb",
+    "canonical_key": "tripadvisor:attraction:4056565",
+    "nome": "Praia Da Sereia",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Da Sereia\" — município Vila Velha/ES.\nEndereço: Costa Beach, Vila Velha - Espírito Santo, 29101-012, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Uma escultura de sereia sobre as pedras dá nome a este trecho de praia na Praia da Costa, em Vila Velha, separado do restante da orla por um pequeno istmo que forma uma enseada mais recolhida. Em pouco mais de quatrocentos metros de areia, as águas ficam abrigadas por ilhas e formações rochosas próximas, o que garante um mar calmo mesmo quando o restante da costa capixaba está agitado. Em 2021, a praia se tornou a primeira do Espírito Santo a receber o selo internacional Bandeira Azul, reconhecimento concedido a poucas praias brasileiras pela qualidade da água e da gestão ambiental, um marco que colocou o lugar no mapa do turismo sustentável do estado. O calçadão com ciclovia convida a um passeio de bicicleta ou caminhada logo cedo, quando o movimento ainda é pequeno, e a formação rochosa da Pedra da Sereia, ao fundo, rende boas fotos com o mar em primeiro plano. É também um bom lugar para observar praticantes de stand up paddle e canoa havaiana deslizando sobre a água parada.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_da_Sereia_(Vila_Velha)",
+      "https://www.vilavelha.es.gov.br/noticias/2021/12/bandeira-azul-hasteada-es-tem-primeira-praia-com-selo-internacional-37076"
+    ],
+    "queries": [
+      "Praia da Sereia Vila Velha ES Costa",
+      "Praia da Sereia Vila Velha bandeira azul selo"
+    ]
+  },
+  {
+    "rio_id": "ca493b3b-4a06-4231-9f1b-bb394ee44d72",
+    "canonical_key": "tripadvisor:attraction:4057086",
+    "nome": "Praia Peracanga",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Peracanga\" — município Guarapari/ES.\nEndereço: Praia de Peracanga - Guarapari, ES, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 63.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Peracanga, também conhecida como Mucunã, ocupa um recanto da Enseada Azul, em Guarapari, e carrega no nome, de origem indígena e que significa espinha de peixe, uma lembrança de quem viveu dessas águas antes do turismo chegar. As passarelas de madeira que conduzem até a areia se tornaram parte da identidade do lugar, emolduradas pela vegetação que desce até quase tocar o mar calmo e transparente, ideal para famílias com crianças. Um morro coberto de Mata Atlântica separa a praia da vizinha Bacutia, e uma trilha sobe por esse costão até um mirante com vista ampla sobre a enseada e as praias ao redor. Vale caminhar até lá com calçado confortável e câmera em mãos, principalmente no fim da tarde, quando a luz dourada realça o verde da mata e o azul da água. Nas primeiras horas da manhã, antes do movimento aumentar, é o momento ideal para curtir as águas paradas com mais tranquilidade.",
+    "status": "ok",
+    "fontes": [
+      "https://esbrasil.com.br/praia-de-peracanga-refugio-de-aguas-calmas-na-enseada-azul/",
+      "https://www.em.com.br/app/noticia/turismo/2023/04/19/interna_turismo,1483304/conheca-um-paraiso-em-guarapari-muito-alem-da-praia-do-morro.shtml"
+    ],
+    "queries": [
+      "Praia Peracanga Guarapari ES",
+      "Peracanga Enseada Azul Guarapari mirante trilha Bacutia"
+    ]
+  },
+  {
+    "rio_id": "30a48e6f-b1f1-46dc-b2cd-88bf579d897a",
+    "canonical_key": "tripadvisor:attraction:4057440",
+    "nome": "Praia Itaúnas",
+    "municipio": "Conceição da Barra",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Itaúnas\" — município Conceição da Barra/ES.\nEndereço: ES-209 - Itaúnas, Conceição da Barra - ES, 29960-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No extremo norte do litoral capixaba, a Praia de Itaúnas se estende por 25 quilômetros entre a foz do rio Itaúnas e o Riacho Doce, emoldurada por dunas de areia que chegam a trinta metros de altura e mudam de desenho com o vento. Essas dunas nasceram de um episódio real: em meados do século passado, o avanço da areia soterrou a antiga Igreja de São Sebastião e boa parte do povoado que ficava entre o mar e o rio, obrigando os moradores a recomeçar na margem oposta. Hoje, o mastro e parte da torre da igreja ainda despontam entre as dunas, um dos registros mais curiosos da costa do Espírito Santo. A vila reconstruída mantém viva a tradição do forró pé de serra, que segue embalando noites por ali, enquanto o Parque Estadual de Itaúnas protege sítios arqueológicos e ecossistemas que vão da mata atlântica ao mangue. Vale caminhar pelas dunas ao entardecer, quando a areia ganha tons dourados e o rio reflete o céu antes de encontrar o mar, reservando um tempo para observar de perto os vestígios da igreja soterrada.",
+    "status": "ok",
+    "fontes": [
+      "https://www.agazeta.com.br/capixapedia/itaunas-a-curiosa-historia-da-vila-que-foi-soterrada-por-areia-no-es-0722",
+      "https://iema.es.gov.br/pei"
+    ],
+    "queries": [
+      "Praia de Itaúnas Conceição da Barra ES dunas parque história",
+      "Itaúnas torre igreja soterrada dunas Parque Estadual visitantes"
+    ]
+  },
+  {
+    "rio_id": "f8f14b04-a67a-4df3-ad26-1d2da7585ce9",
+    "canonical_key": "tripadvisor:attraction:2408027",
+    "nome": "Praia Meaípe",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Meaípe\" — município Guarapari/ES.\nEndereço: Meaípe Beach - Guarapari, Espírito Santo, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Meaípe cresceu como vila de pescadores no litoral sul de Guarapari, e o nome, que significa Rio do Povo, ainda faz sentido quando se veem barcos encalhados na areia e pescadores lançando redes ao amanhecer. A revista Quatro Rodas já elegeu a praia uma das dez mais bonitas do Brasil, e não é difícil entender o motivo diante das águas calmas e transparentes emolduradas pela vila de casas baixas. A areia escura e monazítica da região integra o conjunto de praias que rendeu a Guarapari o título de Cidade da Saúde, atribuído às propriedades terapêuticas associadas a esse tipo de areia. Na vila, vale reservar tempo para provar a moqueca capixaba em algum dos restaurantes voltados para o mar e procurar peças de renda de bilro, artesanato tradicional feito por moradoras locais. As primeiras horas da manhã são as melhores para ver os pescadores em ação, enquanto o fim de tarde traz um clima mais animado, com a vila se enchendo de vida antes da noite.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_de_Mea%C3%ADpe",
+      "https://esbrasil.com.br/meaipe-antiga-vila-de-pescadores-vive-dias-de-badalacao/"
+    ],
+    "queries": [
+      "Praia Meaípe Guarapari ES vila de pescadores",
+      "Meaípe Guarapari areia monazítica moqueca Quatro Rodas"
+    ]
+  },
+  {
+    "rio_id": "95be0d8a-edb7-47d8-865e-e3efa8c93056",
+    "canonical_key": "tripadvisor:attraction:6436878",
+    "nome": "Fundação Projeto Tamar - Vitória",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Fundação Projeto Tamar - Vitória\" — município Vitória/ES.\nEndereço: Av. Nossa Sra. dos Navegantes, 700A - Enseada do Suá, Vitória - ES, 29050-256, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 57.5,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "Na orla da Enseada do Suá, dentro do Parque Municipal Ilha do Papagaio, um trecho da costa capixaba se transforma em ponto de encontro entre gente e tartaruga marinha. O Centro de Visitantes da Fundação Projeto Tamar em Vitória ocupa esse espaço desde novembro de 2012, fruto de uma gestão compartilhada entre a Prefeitura de Vitória e a fundação, e integra o circuito turístico e cultural que liga o Horto Mercado, a Praça do Papa, o Espaço Baleia Jubarte e o Cais das Artes. O Projeto Tamar nasceu em 1980 e se tornou uma das experiências de conservação marinha mais reconhecidas internacionalmente, com sua atuação no Espírito Santo iniciada em 1982, a partir da base de Comboios, em Linhares. Nos tanques do centro de Vitória vivem filhotes e adultos de espécies como a tartaruga verde, a cabeçuda e a oliva, enquanto um museu reúne carapaças e esqueletos que contam a história desses animais e sua relação com o litoral brasileiro. Vale reservar um tempo para o mirante, de onde se avista um panorama dos principais pontos turísticos da Grande Vitória, ideal para fotos da baía e do skyline da cidade ao fundo. Observar de perto o comportamento das tartarugas nos tanques, prestar atenção aos diferentes tamanhos e padrões de casco entre as espécies e passar pelo auditório quando houver exibição sobre o trabalho de pesquisa são formas de aproveitar melhor a visita. Leve protetor solar e água, já que parte do percurso é ao ar livre, e chame as crianças para o parquinho depois do passeio pelo museu.",
+    "status": "ok",
+    "fontes": [
+      "https://www.vitoria.es.gov.br/semmam/projeto-tamar",
+      "https://visite.museus.gov.br/instituicoes/museu-aberto-das-tartarugas-marinhas-fundacao-projeto-tamar-vitoria-es/",
+      "https://www.tamar.org.br/centros_visitantes.php?cod=24"
+    ],
+    "queries": [
+      "Fundação Projeto Tamar Vitória ES Enseada do Suá história",
+      "Projeto Tamar base Vitória Espírito Santo tartarugas marinhas visitação"
+    ]
+  },
+  {
+    "rio_id": "683207d9-2a8b-4785-9500-ec5d5fc2ee24",
+    "canonical_key": "tripadvisor:attraction:9796897",
+    "nome": "Fazenda Rico Caipira",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Fazenda Rico Caipira\" — município Vila Velha/ES.\nEndereço: Avenida Jaguarussu, s/n - Morada da Barra, Vila Velha - ES, 29126-566, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 67.48,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Vila Velha é conhecida por suas praias, mas no bairro de Morada da Barra, perto de Barra do Jucu, guarda também um pedaço de vida rural que atravessa gerações: a Fazenda Rico Caipira. Ao entrar, o som do mar dá lugar ao mugido do gado, ao canto dos pássaros e ao cheiro de terra molhada, um convite imediato para desacelerar. A fazenda nasceu da tradição agropastoril capixaba e hoje funciona como um espaço de vivência rural, onde a produção de laticínios como iogurtes e queijos convive com trilhas, currais, passeios de charrete e um trenzinho que corta o terreno entre áreas verdes. É um lugar pensado para reconectar visitantes de todas as idades com o ritmo do campo, sem abrir mão do conforto de um passeio estruturado, com atividades para crianças, casais e grupos em família. Para aproveitar melhor, vale reservar boa parte do dia: as primeiras horas da manhã, quando os animais estão mais ativos, são ideais para observar de perto aves, avestruzes e os bichos de curral. As áreas verdes ao redor da casa principal e os trechos percorridos pelo trenzinho rendem boas fotos, sobretudo com a luz mais suave do início do dia. Vale levar roupa confortável e calçado fechado, já que boa parte do terreno é de chão batido, e reservar um tempo para caminhar sem pressa pelos cantos menos movimentados, onde o silêncio do campo se impõe mesmo perto da capital.",
+    "status": "ok",
+    "fontes": [
+      "https://www.ricocaipira.com.br/",
+      "https://turismo.vilavelha.es.gov.br/servicos/parque-aquatico-e-empreendimento-de-lazer/fazenda-rico-caipira-1430",
+      "https://www.portal27.com.br/conhecendo-o-estado-fazenda-rico-caipira/"
+    ],
+    "queries": [
+      "Fazenda Rico Caipira Vila Velha ES",
+      "\"Fazenda Rico Caipira\" Vila Velha Espírito Santo atrativo turístico"
+    ]
+  },
+  {
+    "rio_id": "75d8a8cb-e302-45cf-8088-14140bebd1ab",
+    "canonical_key": "tripadvisor:attraction:2408105",
+    "nome": "Praia De Itapuã",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia De Itapuã\" — município Vila Velha/ES.\nEndereço: Praia de Itapoã, Espírito Santo, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 61.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Itapuã prolonga a Praia da Costa por pouco mais de um quilômetro e nasceu de um antigo espaço conhecido como Apicum do Poço, usado para cavalos e gado, antes de se firmar como bairro a partir da década de 1970. A colônia de pescadores segue ativa às margens da avenida que acompanha o mar, com famílias que ainda vivem a poucos metros da água e tiram da pesca o sustento e o comércio do peixe fresco. Cardumes de bonito, sarda, pescadinha e manjuba chegam à areia diariamente, um ofício que resiste ao lado dos prédios que foram tomando a orla nas últimas décadas. Esse contraste entre o bairro de pescadores e a verticalização recente é parte do que torna Itapuã interessante de observar, um trecho de litoral onde convivem dois tempos diferentes da cidade. Vale caminhar pela faixa de areia nas primeiras horas da manhã, quando os barcos retornam com a pesca do dia, e aproveitar para fotografar o contraste entre as embarcações coloridas na areia e o horizonte de edifícios ao fundo.",
+    "status": "ok",
+    "fontes": [
+      "https://territoriosdopresente.ufes.br/itapua/",
+      "https://pt.wikipedia.org/wiki/Itapo%C3%A3_(Vila_Velha)"
+    ],
+    "queries": [
+      "Praia de Itapuã Vila Velha ES história",
+      "Itapoã Vila Velha colônia de pescadores Z-3 história"
+    ]
+  },
+  {
+    "rio_id": "59fca45e-e79c-4f30-b919-92f19f404e24",
+    "canonical_key": "tripadvisor:attraction:4783109",
+    "nome": "Praia De Manguinhos",
+    "municipio": "Serra",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia De Manguinhos\" — município Serra/ES.\nEndereço: Praia de Manguinhos - Av. Sagarana, 317 - Manguinhos, Serra - ES, 29173-007, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Manguinhos nasceu como pequena vila de pescadores na planície costeira da Serra, ao norte da Grande Vitória, e ainda guarda esse jeito bucólico ao longo de quase três quilômetros de praia. As águas calmas favorecem tanto o banho tranquilo quanto os esportes náuticos, numa faixa de areia que atrai tanto moradores da região quanto visitantes de fora. A vida cultural do balneário pulsa em festas que marcam o calendário local, como a Festa de São Sebastião, celebrada com descida do mastro e batuques tradicionais, e o Banho de Mar à Fantasia, tradição de mais de quatro décadas em que blocos vestidos de papel crepom desfilam pela orla no sábado de carnaval até o mergulho coletivo que dá nome à festa. Nos restaurantes voltados para o mar, a moqueca capixaba segue como prato de destaque, preparada com receitas passadas entre gerações de famílias de pescadores. Vá ao entardecer para ver o sol se pôr sobre o mar calmo, ou participe da folia à fantasia se a visita cair no período de carnaval, um dos momentos mais animados do ano no balneário.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Manguinhos_(Serra)",
+      "https://www.serra.es.gov.br/noticias/manguinhos-celebra-sao-sebastiao-com-muita-musica-e-tradicao"
+    ],
+    "queries": [
+      "Praia de Manguinhos Serra ES",
+      "Manguinhos Serra festa São Sebastião Banho de Mar Mascarado"
+    ]
+  },
+  {
+    "rio_id": "d851acf2-555e-40f3-8da3-c89a39a3f6aa",
+    "canonical_key": "tripadvisor:attraction:10807919",
+    "nome": "Museu Garoto",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Museu Garoto\" — município Vila Velha/ES.\nEndereço: Praca meyerfreund, s/n - Glória, Vila Velha - ES, 29000-001, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 64.58,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na Praça Meyerfreund, no bairro da Glória, o cheiro de cacau torrado anuncia o Museu Garoto antes mesmo de cruzar a porta de entrada. O espaço ocupa parte da fábrica de chocolates que funciona em Vila Velha desde 1929, nascida da história de um garoto que vendia balas nos bondinhos e nas ruas da cidade até virar apelido de uma das maiores fábricas de chocolate do mundo. A visita percorre a trajetória do cacau até o bombom, entre máquinas antigas, rótulos de outras décadas e curiosidades que marcaram gerações capixabas, num percurso interativo e multissensorial que mistura visão, olfato e paladar. Vale reservar um tempo maior diante das máquinas históricas e dos rótulos originais expostos pelo caminho, que contam sozinhos boa parte da mudança visual da marca ao longo do século. Leve a curiosidade de criança para as estações sensoriais e guarde espaço para o fim do passeio, quando o aroma de chocolate fresco costuma ser o convite mais persuasivo do museu.",
+    "status": "ok",
+    "fontes": [
+      "https://www.nestle.com.br/media/pressreleases/allpressreleases/museu-garoto-experiencia-em-vila-velha-e-sucesso-com-tour-multissensorial",
+      "https://turismo.vilavelha.es.gov.br/o-que-fazer/cultura-e-arte/museu-garoto-57"
+    ],
+    "queries": [
+      "Museu Garoto Vila Velha história chocolate",
+      "Museu Garoto Vila Velha ES visitação exposição"
+    ]
+  },
+  {
+    "rio_id": "1d4b4571-8d56-4cd9-8eb4-3ce2453ae6bf",
+    "canonical_key": "tripadvisor:attraction:8533291",
+    "nome": "Farol De Santa Luzia",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Farol De Santa Luzia\" — município Vila Velha/ES.\nEndereço: R. Santa Luzia, 2 - Praia da Costa, Vila Velha - ES, 29101-100, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 69.76,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na ponta final da Praia da Costa, onde a areia dá lugar às pedras e o mar se estreita rumo ao canal que leva ao porto de Vitória, ergue-se uma torre branca e octogonal que orienta navegantes desde o século XIX. O Farol de Santa Luzia foi inaugurado em 1871, ainda no reinado de Dom Pedro II, por iniciativa do Barão de Cotegipe, então ministro da Marinha Imperial. Suas peças de ferro fundido vieram prontas de Glasgow, na Escócia, e sustentam até hoje a estrutura que se tornou um dos símbolos mais reconhecíveis de Vila Velha. Ao redor do farol, um pequeno conjunto de construções e um espaço dedicado à memória do local contam a rotina de quem viveu ali cuidando da luz que segue guiando embarcações até a baía de Vitória. A luz mais suave do fim da tarde, quando o sol começa a baixar sobre o mar, é o momento em que a torre branca ganha mais contraste contra o céu e favorece boas fotos, tanto de frente para o farol quanto voltadas para a orla da Praia da Costa. Vale caminhar ao redor do complexo observando os detalhes de ferro forjado da estrutura e a vista aberta para o horizonte, reparando também nas marcas que mais de um século de sal e vento deixaram na fachada.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Farol_de_Santa_Luzia",
+      "https://www.quintoandar.com.br/guias/cidades/farol-de-santa-luzia/"
+    ],
+    "queries": [
+      "Farol de Santa Luzia Vila Velha ES história",
+      "\"Farol de Santa Luzia\" Praia da Costa Vila Velha"
+    ]
+  },
+  {
+    "rio_id": "320c86ef-9146-45ac-b636-0c3e46e2327a",
+    "canonical_key": "tripadvisor:attraction:2408047",
+    "nome": "Curva Da Jurema",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Curva Da Jurema\" — município Vitória/ES.\nEndereço: Praia da Curva da Jurema - Ilha do Boi, Vitória - ES, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entre a Praia do Canto e a Ilha do Boi, na zona leste da Ilha de Vitória, a Curva da Jurema ocupa uma enseada protegida pelas ilhas do Boi e do Frade, o que garante águas calmas mesmo quando o restante da baía está agitado. A vegetação que acompanha a faixa de areia forma sombra natural ao longo de quase toda a extensão, um detalhe que faz diferença nos dias mais quentes. O abrigo natural contra os ventos fortes de nordeste, combinado com brisa constante ao longo do ano, transformou o lugar em um dos pontos mais procurados do Brasil para a vela, disputado por iniciantes e velejadores experientes lado a lado, inclusive por meio de uma escola municipal que forma novos praticantes. Vale sentar em um dos quiosques da orla para acompanhar os barcos coloridos deslizando pela água, principalmente no fim da tarde, quando o vento ainda sopra e a luz baixa contra o mar cria um cenário e tanto para fotos. O calçadão com ciclovia também convida a um passeio tranquilo antes ou depois do banho de mar.",
+    "status": "ok",
+    "fontes": [
+      "https://esbrasil.com.br/praia-curva-da-jurema-conheca/",
+      "https://m.vitoria.es.gov.br/semmam/curva-da-jurema"
+    ],
+    "queries": [
+      "Curva da Jurema Ilha do Boi Vitória ES",
+      "Curva da Jurema Vitória vela escola municipal vento"
+    ]
+  }
+]

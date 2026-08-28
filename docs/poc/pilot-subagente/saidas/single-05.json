@@ -1,0 +1,19 @@
+[
+  {
+    "rio_id": "95be0d8a-edb7-47d8-865e-e3efa8c93056",
+    "nome": "Fundação Projeto Tamar - Vitória",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "descricao_editorial": "Na orla da Enseada do Suá, dentro do Parque Municipal Ilha do Papagaio, um trecho da costa capixaba se transforma em ponto de encontro entre gente e tartaruga marinha. O Centro de Visitantes da Fundação Projeto Tamar em Vitória ocupa esse espaço desde novembro de 2012, fruto de uma gestão compartilhada entre a Prefeitura de Vitória e a fundação, e integra o circuito turístico e cultural que liga o Horto Mercado, a Praça do Papa, o Espaço Baleia Jubarte e o Cais das Artes. O Projeto Tamar nasceu em 1980 e se tornou uma das experiências de conservação marinha mais reconhecidas internacionalmente, com sua atuação no Espírito Santo iniciada em 1982, a partir da base de Comboios, em Linhares. Nos tanques do centro de Vitória vivem filhotes e adultos de espécies como a tartaruga verde, a cabeçuda e a oliva, enquanto um museu reúne carapaças e esqueletos que contam a história desses animais e sua relação com o litoral brasileiro. Vale reservar um tempo para o mirante, de onde se avista um panorama dos principais pontos turísticos da Grande Vitória, ideal para fotos da baía e do skyline da cidade ao fundo. Observar de perto o comportamento das tartarugas nos tanques, prestar atenção aos diferentes tamanhos e padrões de casco entre as espécies e passar pelo auditório quando houver exibição sobre o trabalho de pesquisa são formas de aproveitar melhor a visita. Leve protetor solar e água, já que parte do percurso é ao ar livre, e chame as crianças para o parquinho depois do passeio pelo museu.",
+    "status": "ok",
+    "fontes": [
+      "https://www.vitoria.es.gov.br/semmam/projeto-tamar",
+      "https://visite.museus.gov.br/instituicoes/museu-aberto-das-tartarugas-marinhas-fundacao-projeto-tamar-vitoria-es/",
+      "https://www.tamar.org.br/centros_visitantes.php?cod=24"
+    ],
+    "queries": [
+      "Fundação Projeto Tamar Vitória ES Enseada do Suá história",
+      "Projeto Tamar base Vitória Espírito Santo tartarugas marinhas visitação"
+    ]
+  }
+]

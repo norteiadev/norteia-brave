@@ -1,0 +1,19 @@
+[
+  {
+    "rio_id": "af04b74c-f0e3-42a5-bca7-3c10a8e21d00",
+    "nome": "Parque Estadual De Pedra Azul",
+    "municipio": "Vargem Alta",
+    "uf": "ES",
+    "descricao_editorial": "Wrapped in mata atlântica na altitude da Serra Capixaba do Espírito Santo, a Pedra Azul se ergue com uma silhueta que muda de tom ao longo do dia. Liquens que cobrem a rocha ganham reflexos azulados e esverdeados conforme a luz do sol incide sobre ela, o que deu nome ao monumento e ao parque que o protege. A área começou a ser preservada em 1960, como reserva florestal, e se tornou parque estadual em 1991, reunindo dentro de seus limites, que se estendem por Domingos Martins, Alfredo Chaves e Vargem Alta, a Pedra Azul, a Pedra das Flores e a Pedra do Lagarto, formações que dividem espaço com trilhas entre a mata e piscinas naturais escavadas na rocha pela água ao longo do tempo. Vale caminhar pelas trilhas nas primeiras horas da manhã, quando a luz ainda é baixa e realça o tom azulado da pedra, e reservar um tempo parado nos mirantes do Lagarto e do Forno Grande, de onde se vê o conjunto rochoso emoldurado pela floresta. Leve calçado com boa aderência para os trechos de rocha e água para a caminhada, e observe como a cor da paisagem se transforma enquanto o sol se desloca no céu.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_Estadual_da_Pedra_Azul",
+      "https://iema.es.gov.br/PEPAZ",
+      "https://semeia.org.br/conexao-semeia/parques-do-mes/parque-estadual-da-pedra-azul"
+    ],
+    "queries": [
+      "Parque Estadual de Pedra Azul Domingos Martins história",
+      "Parque Estadual Pedra Azul Espírito Santo trilhas rocha"
+    ]
+  }
+]

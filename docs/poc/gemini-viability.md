@@ -1211,6 +1211,122 @@ a qualidade da prosa barata.
 
 ---
 
+## 21. Rodar o subagente da assinatura sobre a lane real (medido)
+
+A §20 avaliou a assinatura no papel e reprovou como motor por ordem de grandeza de cota, com uma
+estimativa não medida de $0,15/atrativo (§20.4). Esta seção mede. O piloto roda a lane TripAdvisor
+inteira **menos** o copywriter, exporta os registros, e faz o subagente `norteia-copywriter`
+escrever a descrição de fora da aplicação, sobre a assinatura Max 5x já paga.
+
+A pergunta é uma só, e não é a da §18: não se compara aqui a assinatura com a cascata barata, e
+sim se a cota da assinatura aguenta a carga inicial.
+
+### 21.1 Montagem
+
+Base zerada, stack local. `description_enrichment_enabled` desligado por
+`PATCH /api/v1/config` — a flag auditada, não o `.env` — de modo que o registro atravessa
+Nascente, review, geocode, resolução de município, destino-pai, score, roteamento e enriquecimento
+do Places, e só o copywriter é pulado. Sweep por
+`POST /api/v1/engine/start` com `ufs:["ES"]` e `max_atrativos_per_uf:30`.
+
+Os 30 registros saíram todos para DLQ com score médio 66,3, coerente com o teto conhecido da lane
+TA. Isso é esperado e não é o objeto do piloto: a descrição sobe `completude_value` de 75 para 90,
+o que vale 3 pontos, e não fecha a distância até o `threshold_mar` de 80.
+
+O export reusa `copy_batch.build_request`, o construtor da lane de lote de produção, então o texto
+de grounding entregue ao subagente é byte-idêntico ao que a produção mandaria. Isso carrega junto a
+lacuna que aquele módulo já documenta e que esta medição confirma: `types`, `editorial_summary` e
+`reviews` do Places são transitórios e **não sobrevivem em `normalized`** — só `address`. Qualquer
+arquitetura que escreva a descrição fora da lane herda esse contexto empobrecido, e a busca web
+carrega mais peso do que carregaria no caminho inline.
+
+### 21.2 O split da medição
+
+Os mesmos 30 atrativos, em dois braços: **10 invocações single** (um atrativo cada) e **2
+invocações em lote** (dez cada). O system prompt e as definições de tool são pagos uma vez por
+invocação, não por atrativo, então a diferença entre os braços é o fator de amortização — o número
+que decide o tamanho de lote para os 10 mil.
+
+Régua: o uso real por invocação, extraído dos transcripts dos subagentes. Preço Sonnet 4.5
+(in $3/M, out $15/M, cache write $3,75/M, cache read $0,30/M) aplicado sobre os quatro
+contadores, para que o número seja comparável aos $0,0611 / $0,0532 / $0,1131 da §15.1.
+
+| braço | atrativos | tokens/atrativo | US$/atrativo | US$ total |
+|---|---|---|---|---|
+| single | 10 | 324.952 | **0,2951** | 2,95 |
+| lote de 10 | 20 | 148.002 | **0,1481** | 2,96 |
+
+Amortização do lote: **1,99x**. Praticamente exato — dobrar o lote corta o custo pela metade uma
+vez, porque o que se amortiza é o preâmbulo fixo, não a busca.
+
+### 21.3 Contra a lane que se queria substituir
+
+| | tokens/atrativo | US$/atrativo |
+|---|---|---|
+| lane in-lane, Sonnet + `web_search` (§15.1) | ~11.900 | 0,0749 |
+| subagente, single | 324.952 (27,3x) | 0,2951 (**3,9x**) |
+| subagente, lote de 10 | 148.002 (12,4x) | 0,1481 (**2,0x**) |
+
+O subagente é **mais caro que a lane que ele deveria baratear**, no melhor braço por um fator de
+dois. A causa está nos contadores: o custo não está na escrita nem na busca, está no `cache_read`.
+Cada turno relê o contexto acumulado, e a busca injeta página no contexto a cada query. Um single
+gasta ~270 mil tokens de leitura de cache para produzir ~1.100 tokens de prosa. A lane in-lane faz
+uma chamada só e paga o contexto uma vez.
+
+### 21.4 Contra a cota, que era a pergunta
+
+A única régua publicada é o dimensionamento do próprio crédito da Anthropic, hoje pausado: Max 5x
+= $100/mês.
+
+| caminho | 10.000 atrativos | em meses de Max 5x |
+|---|---|---|
+| subagente, single | $2.951 | 29,5 |
+| subagente, lote de 10 | $1.481 | 14,8 |
+| lane atual in-lane (§15.1) | $749 | 7,5 |
+| cascata Tavily + flash-lite (§20.3) | $177 | 1,8 |
+| cascata Serper + flash-lite (§20.3) | $37 | 0,4 |
+
+O piloto de 30 atrativos consumiu $5,91, ou **5,9% de um mês de plano para 0,3% da carga**.
+Extrapolando: a carga inicial pede entre 15 e 30 meses do plano. A §20.4 chamou de "fora por ordem
+de grandeza" com uma estimativa; a medição confirma e agrava. Vale registrar que o palpite de
+$0,15/atrativo da §20.4 acertou o braço em lote quase na casa decimal ($0,1481) e errou o single
+por 2x.
+
+### 21.5 A qualidade, que não era a pergunta mas apareceu
+
+30 de 30 com `status: "ok"`, nenhum `sem_fonte`, duas queries por atrativo em todos (regra da §18
+cumprida), 2 a 3 fontes registradas por descrição. Zero travessão, zero dado operacional, zero
+descrição sem fonte — o contrato do subagente foi respeitado em toda a amostra.
+
+Um defeito, em 1 dos 10 singles: a prosa abre com "Wrapped", palavra em inglês num texto em PT-BR.
+Ressalva honesta de método: os dois lotes receberam no prompt uma instrução extra pedindo PT-BR
+desde a primeira palavra, que os singles não receberam, e os lotes tiveram zero ocorrências. Os
+braços portanto não são idênticos em prompt, e com n=1 defeito não dá para afirmar que a instrução
+resolve — só que o defeito existe e é barato de prevenir.
+
+A prosa em si se sustenta, com data e proveniência verificáveis (Wikipedia, IEMA, portais oficiais
+de município). Isso reforça o valor do subagente como **oráculo de qualidade** da §20.6: ele produz
+um conjunto de referência bom, e é caro exatamente por ser bom.
+
+### 21.6 Veredito
+
+**A assinatura não substitui a API para a carga inicial.** Não por licença e não por qualidade, mas
+porque medido ela é 2x a 3,9x mais cara que a própria lane que se queria baratear, e pede 15 a 30
+meses de plano para os 10 mil. O piloto fecha a §20 com número em vez de estimativa.
+
+O que sobrevive é o que a §20.6 já apontava, agora com custo conhecido: os 30 registros deste
+piloto são o **conjunto de referência** em qualidade Sonnet-com-busca, com fontes registradas, ao
+custo de $5,91. A próxima medição é pontuar a cascata barata contra ele.
+
+Achado colateral, e o mais urgente: o canary do endpoint de injeção de sessão do TripAdvisor
+validava a sessão com `fetch_attractions`, presa ao qid `a5cb7fa004b5e4b5`, que a TripAdvisor
+aposentou e hoje responde `PersistedQueryNotFound`. Toda sessão boa era lida como vazia, recebia
+422 e era **apagada** pelo próprio endpoint, enquanto a lane de ingestão seguia sã por já usar
+`fetch_attractions_paginated_gql` (qid `79aaeeb847e55e58`). Corrigido em `d984ac3`, com o teste
+que cobria o comportamento errado reescrito para falhar se alguém voltar à query morta.
+
+---
+
 ## Fontes
 
 - [Google AI plans — Gemini API](https://ai.google.dev/gemini-api/docs/google-ai-plans)

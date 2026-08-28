@@ -1,0 +1,18 @@
+[
+  {
+    "rio_id": "61d3d013-8f0a-4a0c-aaa5-8173fd2addc1",
+    "nome": "Convento Nossa Senhora Da Penha",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "descricao_editorial": "No topo de um afloramento rochoso que domina a paisagem de Vila Velha, o Convento da Penha surge como um marco branco contra o céu e o mar, visível de boa parte da Grande Vitória. A subida até lá já é parte da experiência: entre a vegetação rala da rocha, o vento traz o cheiro de maresia enquanto a vista se abre, aos poucos, sobre a baía e a cidade mais antiga do Espírito Santo. A história do lugar remonta a 1558, quando o frei espanhol Pedro Palácios se instalou numa gruta na base do morro, hoje conhecida como Gruta de Frei Palácios, e ali ergueu as primeiras ermidas dedicadas a Nossa Senhora da Penha. Ao longo do século seguinte, a comunidade franciscana construiu o convento que se vê hoje, com celas, corredores e capela, reconhecido como patrimônio histórico nacional em 1943. Desde os primeiros tempos da colonização capixaba o santuário recebe romeiros, e a Festa da Penha, em abril, segue como a maior romaria do estado, um fluxo de fé que atravessa gerações. Vale caminhar pelos corredores do convento e pela capela antes de seguir até o mirante externo, de onde se avista, num único olhar, o mar aberto e o perfil de Vitória do outro lado da baía. O fim da tarde costuma render a luz mais bonita para fotografar a fachada branca contra o pôr do sol, e vale guardar um tempo em silêncio diante da gruta original, onde a pedra ainda guarda o traço mais antigo da devoção que deu origem a tudo.",
+    "status": "ok",
+    "fontes": [
+      "https://conventodapenha.org.br/conheca-a-historia-do-convento-da-penha/",
+      "https://pt.wikipedia.org/wiki/Convento_da_Penha"
+    ],
+    "queries": [
+      "Convento Nossa Senhora da Penha Vila Velha história",
+      "Convento da Penha Vila Velha romaria fundação 1558"
+    ]
+  }
+]

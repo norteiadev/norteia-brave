@@ -1,0 +1,18 @@
+[
+  {
+    "rio_id": "854c3d1f-1a18-40d2-bb1d-7808e103fcfb",
+    "nome": "Parque Botânico Vale",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "descricao_editorial": "Entre o ruído industrial do Complexo de Tubarão e o verde denso da Mata Atlântica preservada, o Parque Botânico Vale surge como um contraponto surpreendente em Vitória. Passar pelo portão de entrada em Jardim Camburi é trocar o asfalto por trilhas sombreadas, onde o ar fica mais úmido e os sons da cidade dão lugar ao canto dos pássaros e ao farfalhar das copas.\n\nCriado em 2004 como parte do Cinturão Verde mantido pela mineradora Vale, o parque nasceu do compromisso de restaurar e proteger um remanescente de Mata Atlântica em pleno perímetro urbano. Ao longo de trinta e três hectares, mais de cento e quarenta espécies de árvores nativas, entre elas pau-brasil, jacarandá e ipê, compõem um mosaico vegetal que abriga bugios, micos e uma variedade de aves, sinal de que a floresta conseguiu se reerguer.\n\nCinco trilhas ecológicas conduzem o visitante por diferentes trechos da mata, e um jardim de orquídeas reúne espécies que raramente se veem tão de perto fora de uma reserva. Vale caminhar nas primeiras horas da manhã, quando a luz atravessa as copas em feixes e os animais estão mais ativos, o que favorece boas fotos nas bordas das trilhas e ao redor do jardim de orquídeas. Leve calçado confortável, protetor solar e, se possível, um binóculo, já que boa parte da vida selvagem se revela mais ao ouvido do que à vista.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_Bot%C3%A2nico_Vale",
+      "https://www.encontravitoria.com.br/sobre/parque-botanico-vale-vitoria/"
+    ],
+    "queries": [
+      "Parque Botânico Vale Vitória Espírito Santo história",
+      "\"Parque Botânico Vale\" Jardim Camburi Vitória visitação"
+    ]
+  }
+]

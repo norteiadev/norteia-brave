@@ -1,0 +1,19 @@
+[
+  {
+    "rio_id": "683207d9-2a8b-4785-9500-ec5d5fc2ee24",
+    "nome": "Fazenda Rico Caipira",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "descricao_editorial": "Vila Velha é conhecida por suas praias, mas no bairro de Morada da Barra, perto de Barra do Jucu, guarda também um pedaço de vida rural que atravessa gerações: a Fazenda Rico Caipira. Ao entrar, o som do mar dá lugar ao mugido do gado, ao canto dos pássaros e ao cheiro de terra molhada, um convite imediato para desacelerar. A fazenda nasceu da tradição agropastoril capixaba e hoje funciona como um espaço de vivência rural, onde a produção de laticínios como iogurtes e queijos convive com trilhas, currais, passeios de charrete e um trenzinho que corta o terreno entre áreas verdes. É um lugar pensado para reconectar visitantes de todas as idades com o ritmo do campo, sem abrir mão do conforto de um passeio estruturado, com atividades para crianças, casais e grupos em família. Para aproveitar melhor, vale reservar boa parte do dia: as primeiras horas da manhã, quando os animais estão mais ativos, são ideais para observar de perto aves, avestruzes e os bichos de curral. As áreas verdes ao redor da casa principal e os trechos percorridos pelo trenzinho rendem boas fotos, sobretudo com a luz mais suave do início do dia. Vale levar roupa confortável e calçado fechado, já que boa parte do terreno é de chão batido, e reservar um tempo para caminhar sem pressa pelos cantos menos movimentados, onde o silêncio do campo se impõe mesmo perto da capital.",
+    "status": "ok",
+    "fontes": [
+      "https://www.ricocaipira.com.br/",
+      "https://turismo.vilavelha.es.gov.br/servicos/parque-aquatico-e-empreendimento-de-lazer/fazenda-rico-caipira-1430",
+      "https://www.portal27.com.br/conhecendo-o-estado-fazenda-rico-caipira/"
+    ],
+    "queries": [
+      "Fazenda Rico Caipira Vila Velha ES",
+      "\"Fazenda Rico Caipira\" Vila Velha Espírito Santo atrativo turístico"
+    ]
+  }
+]
