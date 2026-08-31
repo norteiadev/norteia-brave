@@ -257,6 +257,129 @@ def cmd_import(args: argparse.Namespace) -> int:
     return 1 if falhas else 0
 
 
+
+# -------------------------------------------------------------------------- auditar
+
+
+# Classes de resultado. A distinção que importa é entre "o caminho não existe" (o padrão de
+# fabricação que a §19 mediu) e "não consegui alcançar" (rede do auditor), porque só a primeira
+# é defeito da descrição. Um 403 de anti-bot prova que a página existe, então conta como viva.
+_VIVA = "viva"
+_BLOQUEADA = "bloqueada"        # servidor recusa o auditor, mas a URL existe
+_INEXISTENTE = "inexistente"    # 404/410 com a raiz do domínio respondendo: suspeita de fabricação
+_SEM_DOMINIO = "sem_dominio"    # nem a raiz responde: domínio morto ou inventado
+_INALCANCAVEL = "inalcancavel"  # erro de conexão: inconclusivo, não acusa a descrição
+
+_BLOQUEIO_STATUS = {401, 402, 403, 405, 406, 409, 418, 429, 500, 502, 503, 520, 530}
+_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+)
+
+
+def classificar(status: Any, status_raiz: Any) -> str:
+    """Traduz (status do caminho, status da raiz do domínio) em uma das classes acima."""
+    if isinstance(status, int):
+        if status < 400:
+            return _VIVA
+        if status in _BLOQUEIO_STATUS:
+            return _BLOQUEADA
+        if status in (404, 410):
+            # raiz viva + caminho 404 = caminho não existe. Raiz morta = não dá para culpar
+            # a descrição, o domínio inteiro sumiu.
+            return _INEXISTENTE if isinstance(status_raiz, int) and status_raiz < 400 else _SEM_DOMINIO
+        return _BLOQUEADA
+    return _INALCANCAVEL
+
+
+async def _verificar(urls: list[str], concorrencia: int = 12) -> dict[str, tuple[Any, Any]]:
+    import asyncio
+
+    import httpx
+
+    lim = asyncio.Semaphore(concorrencia)
+    raizes: dict[str, Any] = {}
+
+    async with httpx.AsyncClient(
+        follow_redirects=True, timeout=25.0, headers={"User-Agent": _UA}
+    ) as client:
+
+        async def status(u: str) -> Any:
+            try:
+                r = await client.head(u)
+                # muitos servidores respondem 403/404/405 a HEAD e 200 a GET
+                if r.status_code >= 400:
+                    r = await client.get(u)
+                return r.status_code
+            except Exception as exc:  # noqa: BLE001 — a classe do erro é o dado
+                return type(exc).__name__
+
+        async def uma(u: str) -> tuple[str, Any, Any]:
+            async with lim:
+                s = await status(u)
+            raiz = None
+            if isinstance(s, int) and s in (404, 410):
+                root = "/".join(u.split("/")[:3])
+                if root not in raizes:
+                    async with lim:
+                        raizes[root] = await status(root)
+                raiz = raizes[root]
+            return u, s, raiz
+
+        import asyncio as _a
+
+        res = await _a.gather(*(uma(u) for u in urls))
+    return {u: (s, r) for u, s, r in res}
+
+
+def cmd_auditar(args: argparse.Namespace) -> int:
+    """Verifica se cada URL citada em `fontes` realmente existe.
+
+    A §19 mediu que o modelo fabrica URLs de fonte quando não consegue buscar, uma delas um
+    es.gov.br com caminho inventado que devolve 404. Como `fontes` só tem valor se for
+    auditável, esta checagem é o que transforma a promessa em evidência.
+    """
+    import asyncio
+
+    registros: list[dict[str, Any]] = []
+    for caminho in args.arquivos:
+        registros.extend(json.loads(Path(caminho).read_text(encoding="utf-8")))
+
+    pares = [(e.get("nome") or "?", u) for e in registros for u in (e.get("fontes") or []) if u]
+    urls = sorted({u for _, u in pares})
+    print(f"registros: {len(registros)} | URLs citadas: {len(pares)} | únicas: {len(urls)}")
+
+    resultado = asyncio.run(_verificar(urls, args.concorrencia))
+
+    linhas = []
+    for nome, u in pares:
+        s, raiz = resultado[u]
+        linhas.append(
+            {"atrativo": nome, "url": u, "status": s, "status_raiz": raiz,
+             "classe": classificar(s, raiz)}
+        )
+
+    contagem: dict[str, int] = {}
+    for l in linhas:
+        contagem[l["classe"]] = contagem.get(l["classe"], 0) + 1
+    print()
+    for c in (_VIVA, _BLOQUEADA, _INALCANCAVEL, _SEM_DOMINIO, _INEXISTENTE):
+        n = contagem.get(c, 0)
+        print(f"  {c:14} {n:4}  ({n/len(pares):5.1%})")
+
+    suspeitas = [l for l in linhas if l["classe"] == _INEXISTENTE]
+    if suspeitas:
+        print(f"\ncaminho inexistente com domínio vivo ({len(suspeitas)}) "
+              f"— o padrão de fabricação da §19:")
+        for l in suspeitas:
+            print(f"  {l['atrativo'][:34]:36} {l['url']}")
+
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(linhas, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"\nescrito: {out}")
+    return 0
+
 # ------------------------------------------------------------------------ self-check
 
 
@@ -302,8 +425,17 @@ def _self_check() -> int:
     assert entram2 == [], "descrição sem fonte passou pela triagem"
     assert "fontes vazias" in pulados2[0], pulados2
 
+    # classificação da auditoria de fontes
+    assert classificar(200, None) == _VIVA
+    assert classificar(301, None) == _VIVA
+    assert classificar(403, None) == _BLOQUEADA, "403 de anti-bot prova que a página existe"
+    assert classificar(429, None) == _BLOQUEADA
+    assert classificar(404, 200) == _INEXISTENTE, "raiz viva + caminho 404 = suspeita de fabricação"
+    assert classificar(404, "ConnectError") == _SEM_DOMINIO, "domínio morto não acusa a descrição"
+    assert classificar("ConnectError", None) == _INALCANCAVEL, "erro de rede é inconclusivo"
+
     print("self-check ok: merge casa por rio_id, reporta órfã, é idempotente; "
-          "triagem barra sem_fonte, sem prosa e ok-sem-fonte")
+          "triagem barra sem_fonte, sem prosa e ok-sem-fonte; classificação separa fabricação de falha de rede")
     return 0
 
 
@@ -335,6 +467,12 @@ def main() -> int:
     p_imp.add_argument("--commit", action="store_true",
                        help="grava de verdade; sem isso é dry-run")
     p_imp.set_defaults(func=cmd_import)
+
+    p_aud = sub.add_parser("auditar", help="verifica se as URLs citadas em fontes existem")
+    p_aud.add_argument("arquivos", nargs="+", help="JSONs de trabalho já preenchidos")
+    p_aud.add_argument("--out", default=str(_REPO_ROOT / "docs/poc/auditoria-fontes.json"))
+    p_aud.add_argument("--concorrencia", type=int, default=12)
+    p_aud.set_defaults(func=cmd_auditar)
 
     args = ap.parse_args()
     if args.self_check:

@@ -1334,7 +1334,58 @@ output, ou seja **exclui o cache read**, que é 82% do consumo. Quem dimensionar
 número subestima por cerca de 5,7x, e ainda por cima ignora a busca. Para medir custo de subagente
 só serve o delta do `/usage`.
 
-### 21.7 Veredito
+### 21.7 As fontes existem? Auditoria das 221 URLs
+
+O campo `fontes` do contrato do subagente só vale se for verificável, e a §19.3 mediu exatamente o
+contrário: privado de busca, o Sonnet emitiu um bloco `<search_results>` inteiro com quatro URLs
+inventadas que concordavam entre si, uma delas um `es.gov.br` com caminho inexistente. Como o motor
+de confiabilidade pesa `origem` 30 e `corroboração` 20, quatro fontes coerentes são justamente o
+padrão que o score premia. Uma descrição fabricada bem fabricada entra no Mar com nota alta pelo
+motivo errado.
+
+Então as 130 descrições dos dois pilotos foram auditadas URL por URL:
+`pilot_descricoes.py auditar`, resultado completo em `docs/poc/auditoria-fontes.json`.
+
+262 URLs citadas, 221 únicas, 97 domínios, **exatamente 2,0 fontes e 2,0 queries por registro** — a
+regra de duas queries da §18 cumprida sem exceção em 130 de 130.
+
+| classe | n | % |
+|---|---|---|
+| viva | 241 | 92,0 |
+| bloqueada (403/429/503 anti-bot: a página existe) | 11 | 4,2 |
+| inalcançável (erro de conexão do auditor) | 7 | 2,7 |
+| **inexistente (404 com a raiz do domínio viva)** | **3** | **1,1** |
+
+A classificação separa deliberadamente as três causas, porque só a última acusa a descrição. Um 403
+da `marinha.mil.br` ou da `alltrails.com` prova que a página existe e recusa o auditor. Os sete
+inalcançáveis falham também na raiz do domínio, inclusive em sites vivos como `parquelage.org`, o
+que é rede do auditor e não do modelo.
+
+Sobram **três casos em 221, ou 1,1%**, em que o domínio responde 200 e o caminho devolve 404:
+`es.gov.br/Contents/Item/Display/440`, uma matéria do `bmcnews.com.br` sobre o Inhotim e uma do
+`nsctotal.com.br` sobre a Joaquina. O primeiro repete letra por letra o padrão da §19.3, domínio de
+governo real com caminho plausível e inexistente. Não é possível distinguir fabricação de link que
+morreu entre a busca e a auditoria, então o número é um teto, não uma acusação.
+
+O contraste é o achado: **sem busca a §19 viu quatro URLs fabricadas num único caso; com busca
+ligada a taxa cai para 1,1% do total.** É a evidência que faltava para tratar `fontes` como campo
+auditável de verdade, e não como promessa.
+
+Perfil de proveniência das 262 citações: 30% Wikipedia, 16% `.gov.br` (prefeituras, IEMA, Diário
+Oficial do ES), 34% `.org`/`.edu`, o resto imprensa local e portais de turismo regionais. Nenhuma
+citação ao próprio TripAdvisor como fonte factual, o que é o esperado: a lane já traz o dado do TA,
+a busca existe para corroborá-lo em outro lugar.
+
+Ressalva de amostra: dois dos três casos suspeitos e boa parte dos `sem_fonte` recaem sobre
+registros que a própria lane entregou mal. "Secretaria de Estado do Turismo - Setur/ES" não é
+atrativo turístico, "Rua Das Pedras" veio atribuída a Campos dos Goytacazes quando o nome é de
+Búzios, e "Figueira Da Esquina 🌳❤️" carrega emoji do próprio TripAdvisor. O copywriter está sendo
+cobrado por lixo de coleta, e a auditoria de fontes acaba funcionando como detector barato de
+registro ruim na Nascente.
+
+---
+
+### 21.8 Veredito
 
 **A assinatura comporta a carga inicial, mas ela custa uma semana de cota e não sai mais barata que
 a lane.** Medido: $0,0979 por atrativo contra $0,0749 in-lane, 1.500 a 2.000 atrativos por janela de
