@@ -1,0 +1,156 @@
+[
+  {
+    "rio_id": "30a48e6f-b1f1-46dc-b2cd-88bf579d897a",
+    "nome": "Praia Itaúnas",
+    "municipio": "Conceição da Barra",
+    "uf": "ES",
+    "descricao_editorial": "O mar aqui parece ter dois ritmos: um que quebra nas ondas e outro que pulsa nos pés descalços sobre a areia quente, ao som do forró que embala Itaúnas o ano inteiro. As dunas douradas se movem lentamente com o vento, e foi justamente esse movimento que, entre as décadas de 1950 e 1970, soterrou parte da antiga vila, depois que o desmatamento da mata que protegia a região abriu caminho para uma erosão severa. O que poderia ter sido só uma história de perda virou símbolo de preservação: em 1986 as dunas foram tombadas como patrimônio histórico e paisagístico do Espírito Santo, e alguns anos depois nasceu o Parque Estadual de Itaúnas, que hoje protege essa paisagem entre a foz do rio Itaúnas e o litoral norte capixaba. À noite, a vila troca o silêncio das dunas pelo forró pé de serra, ritmo que tornou o lugar conhecido em todo o país, e pelo reggae que embala os bares até tarde. Vale caminhar pelas dunas ao entardecer, quando a luz dourada contrasta com a areia branca e cria cenários bonitos para fotos, e reservar um tempo para atravessar o rio Itaúnas, sentindo a mudança de temperatura entre a água doce e a salgada. Leve água e protetor solar, porque a caminhada pelas dunas expostas ao sol costuma ser mais longa do que parece, e repare nas pegadas de aves e na vegetação rasteira que resiste entre as ondulações de areia.",
+    "status": "ok",
+    "fontes": [
+      "https://www.agazeta.com.br/capixapedia/itaunas-a-curiosa-historia-da-vila-que-foi-soterrada-por-areia-no-es-0722",
+      "https://tenhominhaloucura.wordpress.com/2015/06/01/itaunas-a-capital-nacional-do-forro/"
+    ],
+    "queries": [
+      "Praia de Itaúnas Conceição da Barra ES dunas história",
+      "Praia de Itaúnas forró reggae vila"
+    ]
+  },
+  {
+    "rio_id": "f8f14b04-a67a-4df3-ad26-1d2da7585ce9",
+    "nome": "Praia Meaípe",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "descricao_editorial": "Entre falésias que emolduram a orla e uma vila que ainda vive do mar, a Praia de Meaípe guarda o ritmo de quem pesca, cozinha moqueca e borda renda de bilro há gerações. A areia escura da região ficou conhecida por suas propriedades terapêuticas e ajudou a dar a Guarapari o apelido de Cidade Saúde, motivo pelo qual muita gente vem até aqui não só para nadar, mas para descansar o corpo na areia quente. As águas costumam ser calmas e claras, protegidas pela formação rochosa ao redor, o que torna o mar convidativo tanto para quem quer nadar tranquilo quanto para quem só busca sentar à beira d'água. A tradição da renda de bilro, passada de geração em geração entre as famílias de pescadores, ainda pode ser vista em algumas mãos habilidosas pela vila, um fio de memória que resiste ao lado dos barcos coloridos. É bom chegar ainda pela manhã, quando o sol ilumina as falésias e a luz realça o contraste entre a pedra, a areia escura e o verde ao redor, ideal para fotos com a formação rochosa ao fundo. Vale sentar em um dos points à beira-mar ao entardecer para ver os barcos voltando da pesca, e reservar espaço no estômago para uma moqueca capixaba, prato que resume o sabor da vila.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_de_Mea%C3%ADpe",
+      "https://terracapixaba.com/en/2024/06/praia-de-meaipe-uma-das-10-praias-mais-bonitas-do-brasil.html"
+    ],
+    "queries": [
+      "Praia de Meaípe Guarapari ES vila de pescadores",
+      "Meaípe Guarapari praia características"
+    ]
+  },
+  {
+    "rio_id": "95be0d8a-edb7-47d8-865e-e3efa8c93056",
+    "nome": "Fundação Projeto Tamar - Vitória",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "descricao_editorial": "Na Enseada do Suá, onde a baía de Vitória se abre para o horizonte, um mirante debruçado sobre a água guarda tanques onde nadam tartarugas marinhas de diferentes idades e espécies, algumas ainda do tamanho de uma mão. O Museu Aberto das Tartarugas Marinhas da Fundação Projeto Tamar foi inaugurado em 2012 dentro do Parque Municipal Ilha do Papagaio, fruto de uma parceria entre a prefeitura de Vitória e o projeto que, desde o início dos anos 1980, monitora praias capixabas para proteger ninhos e filhotes. A escolha do estado não é acaso: a foz do Rio Doce, mais ao norte, é um dos principais pontos de desova de tartaruga-cabeçuda e de tartaruga-de-couro, espécie criticamente ameaçada, enquanto o Arquipélago de Trindade, também capixaba, é o principal berçário de tartarugas-verdes do Atlântico Sul ocidental. Visitar o espaço é acompanhar, em poucos metros, todo o ciclo de vida desses animais, do filhote recém-saído do ovo ao adulto de carapaça robusta. Vale reservar um tempo no mirante para observar a baía de Vitória ao fundo, ótimo cenário para fotos, e acompanhar com atenção a explicação sobre por que cada espécie está ali. Leve protetor solar, já que boa parte do percurso é ao ar livre, e observe com calma o movimento das tartarugas maiores, que costumam se aproximar do vidro quando alguém se aproxima.",
+    "status": "ok",
+    "fontes": [
+      "https://www.tamar.org.br/centros_visitantes.php?cod=24",
+      "https://www.vitoria.es.gov.br/semmam/projeto-tamar"
+    ],
+    "queries": [
+      "Fundação Projeto Tamar Vitória Espírito Santo tartarugas marinhas",
+      "Projeto Tamar Vitória Enseada do Suá visitação"
+    ]
+  },
+  {
+    "rio_id": "a0f5fcbc-32eb-4e5e-9b01-f80ad85c3f4e",
+    "nome": "Praia Do Arpoador",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "descricao_editorial": "Entre Copacabana e Ipanema, uma formação rochosa se projeta sobre o mar e reúne, todo fim de tarde, surfistas, casais, moradores e turistas em torno do mesmo ritual: aplaudir o sol se pondo no oceano, fenômeno raro numa costa que, na maior parte do Brasil, olha para o nascente. O nome Arpoador vem do período colonial, quando pescadores usavam essas pedras como posto de observação para arpoar baleias que se aproximavam da costa, e o lugar carrega ainda outra camada de história: foi ali que nasceram os primeiros acordes da Bossa Nova, nos anos 1960, entre amigos reunidos à beira-mar. Hoje a praia é considerada o berço do surfe carioca, com ondas constantes e iluminação noturna que permite surfar mesmo depois que o sol se esconde. Da Pedra do Arpoador, o mirante mais querido da Zona Sul, dá para ver toda a orla de Ipanema, o Morro Dois Irmãos e, em dias claros, até a Pedra da Gávea recortada no horizonte. Vale chegar um pouco antes do pôr do sol para garantir lugar na pedra e acompanhar o espetáculo de cores se refletindo na água, ótimo momento também para fotos com o mar ao fundo. Observe os surfistas entrando e saindo da água entre as ondas, e repare no movimento heterogêneo da pedra, onde mate, prancha e violão dividem o mesmo espaço.",
+    "status": "ok",
+    "fontes": [
+      "https://riotrip.com.br/arpoador/",
+      "https://riomemorias.com.br/pt/memoria/pedra-do-arpoador"
+    ],
+    "queries": [
+      "Praia do Arpoador Rio de Janeiro pôr do sol história",
+      "Arpoador Ipanema surf pedra mirante"
+    ]
+  },
+  {
+    "rio_id": "683207d9-2a8b-4785-9500-ec5d5fc2ee24",
+    "nome": "Fazenda Rico Caipira",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "descricao_editorial": "A poucos minutos do centro de Vila Velha, o cenário muda: em vez de mar, aparecem trilhas de terra batida, animais de fazenda e um trenzinho que atravessa a mata como se o tempo tivesse voltado a um Brasil mais rural. A Fazenda Rico Caipira reúne mais de cinquenta atividades ao ar livre, entre passeios a cavalo, o passeio de trem pela vegetação, a Vila dos Dinossauros e um espaço temático inspirado no Sítio do Pica-Pau Amarelo, com personagens como Emília e Narizinho circulando entre as crianças. É um lugar pensado para famílias, mas também para quem quer simplesmente desacelerar em contato com bichos, terra e mato, longe da correria da orla. O restaurante, de cozinha mineira, fecha o passeio com pratos fartos, servidos para dividir. Vale reservar o dia inteiro, já que as atividades se espalham por diferentes pontos da propriedade e pedem tempo para aproveitar sem pressa. Leve roupas confortáveis e calçado fechado, porque parte do trajeto é em terra e mata, e aproveite para observar de perto os animais da pequena fazenda, um dos momentos mais procurados pelas crianças. Boas fotos saem no passeio de trem, com a vegetação como fundo, e também na Vila dos Dinossauros, o cenário mais lúdico do passeio.",
+    "status": "ok",
+    "fontes": [
+      "https://www.ricocaipira.com.br/",
+      "https://es360.com.br/diversao/noticia/alem-do-carnaval-6-atracoes-de-agroturismo-em-vila-velha/"
+    ],
+    "queries": [
+      "Fazenda Rico Caipira Vila Velha Espírito Santo",
+      "\"Rico Caipira\" Vila Velha turismo rural"
+    ]
+  },
+  {
+    "rio_id": "75d8a8cb-e302-45cf-8088-14140bebd1ab",
+    "nome": "Praia De Itapuã",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "descricao_editorial": "Com quase três quilômetros de areia larga entre a Praia da Costa e a Praia de Itaparica, a Praia de Itapuã reúne num só trecho a vida esportiva, a tradição pesqueira e o point mais concorrido de Vila Velha, conhecido informalmente como Beverly Hills, onde o footvolley, o frescobol e o beach tennis dividem espaço com quem só quer caminhar à beira-mar. O calçadão com ciclovia, sombreado por amendoeiras, acompanha toda a extensão da praia e conecta bares, restaurantes e quiosques que ficam animados até tarde da noite, com música ao vivo quase todos os dias. O mar alterna trechos calmos e ondas mais fortes, o que atrai tanto famílias quanto praticantes de esportes aquáticos, e a tradição da pesca ainda resiste entre os moradores mais antigos do bairro. Dali também é possível avistar as ilhas de Itatiaia e Pituã, destino de passeios de barco para quem quer sair da areia por algumas horas. Vale caminhar ou pedalar pelo calçadão nas primeiras horas da manhã, quando a luz ainda é suave e o movimento é menor, ótimo momento para fotos com as ilhas ao fundo. À tardinha, os quiosques enchem para ver o dia terminar, e vale prestar atenção nos barcos de pesca retornando perto da faixa de areia mais próxima do costão.",
+    "status": "ok",
+    "fontes": [
+      "https://esbrasil.com.br/itapua-praia-preservada-e-qualidade-de-vida-em-vila-velha/",
+      "https://turismo.vilavelha.es.gov.br/o-que-fazer/praias/praia-de-itapua-56"
+    ],
+    "queries": [
+      "Praia de Itapuã Vila Velha Espírito Santo",
+      "Itapoã Vila Velha praia surf lagoa"
+    ]
+  },
+  {
+    "rio_id": "59fca45e-e79c-4f30-b919-92f19f404e24",
+    "nome": "Praia De Manguinhos",
+    "municipio": "Serra",
+    "uf": "ES",
+    "descricao_editorial": "Manguinhos guarda o clima de balneário bucólico a poucos quilômetros de Vitória, onde uma vila de pescadores tradicional resiste ao lado da orla movimentada. No núcleo histórico, a praça central funciona como ponto de encontro, especialmente nos fins de semana, quando ganha vida com feira de artesanato e barracas de comida típica capixaba, entre moquecas e outros pratos regionais. Ao longo do ano, a vila também vira palco de festas que misturam fé e festa, como a Festa de São Sebastião em janeiro e o tradicional Banho de Mar à Fantasia no carnaval, além de festivais mais recentes voltados à música e à gastronomia. É um lugar que combina o ritmo lento de vila de pescadores com a agitação de quem vem para os restaurantes à beira-mar. Vale chegar no fim da tarde, quando os barcos de pesca começam a voltar e a praça ganha movimento, bom momento também para fotos com os barcos coloridos na areia. Aproveite para caminhar até o núcleo histórico e observar a arquitetura simples da vila, e prove ao menos um prato da culinária local nos restaurantes da orla.",
+    "status": "ok",
+    "fontes": [
+      "https://www.buser.com.br/destinos/pontos-turisticos/es/serra/praia-de-manguinhos"
+    ],
+    "queries": [
+      "Praia de Manguinhos Serra Espírito Santo",
+      "Manguinhos Serra ES orla surf pesca"
+    ]
+  },
+  {
+    "rio_id": "fce281c0-745e-4094-9b38-3bdd310c7a73",
+    "nome": "Parque Estadual Da Pedra Azul",
+    "municipio": "",
+    "uf": "ES",
+    "descricao_editorial": "No distrito de Aracê, em Domingos Martins, uma rocha imensa e azulada rasga a paisagem de mata atlântica preservada e entrega uma das vistas mais altas do Espírito Santo. O Parque Estadual da Pedra Azul protege 1.240 hectares de floresta ao redor do Pico Pedra Azul, que chega a 1.822 metros de altitude, na mesma região da Pedra das Flores, ponto mais alto do município, com 1.909 metros. A cor azulada que dá nome à formação aparece principalmente ao amanhecer e ao entardecer, quando a luz incide de forma rasante sobre a rocha, um efeito conhecido de quem mora na região. O clima de altitude, mais frio que o litoral capixaba, ajuda a explicar por que Domingos Martins é chamada de Cidade do Verde, com quase metade do território coberto por remanescentes de mata atlântica. A Rota do Lagarto, caminho que leva até o parque, reúne pousadas e restaurantes que aproveitam a paisagem de montanha. Vale chegar cedo para caminhar pelas trilhas com o ar ainda fresco da manhã e aproveitar a luz mais suave para fotografar a rocha, que muda de tom ao longo do dia. Leve um casaco, porque a temperatura cai bastante em relação ao litoral, e reserve um tempo parado diante da formação rochosa para observar como as nuvens se movem em torno do pico.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Domingos_Martins"
+    ],
+    "queries": [
+      "Parque Estadual da Pedra Azul Domingos Martins Espírito Santo",
+      "Pedra Azul ES trilhas mata atlântica altitude"
+    ]
+  },
+  {
+    "rio_id": "aada2a84-7131-4dbb-9bae-3c2001e42c66",
+    "nome": "Capixaba Foto Tour",
+    "municipio": "",
+    "uf": "ES",
+    "descricao_editorial": "Mais do que um passeio, o Capixaba Foto Tour propõe atravessar o Espírito Santo com uma câmera a tiracolo e um carro particular à disposição, unindo roteiro turístico e ensaio fotográfico numa só experiência. A proposta passa por pontos como o Convento da Penha, em Vila Velha, e outros cenários naturais e históricos de Vitória e da região, pensados tanto para casais que querem registrar um momento especial quanto para viajantes que preferem voltar com fotos feitas por quem conhece a luz e os ângulos de cada lugar. É uma forma de conhecer o litoral capixaba sem se preocupar com equipamento fotográfico. Vale conversar antes sobre o roteiro desejado, priorizando os horários de luz mais bonita, como o fim de tarde nos mirantes voltados para o mar. Leve roupas que combinem com a paisagem que pretende fotografar, e esteja aberto a sugestões de ângulos e trilhas menos óbvias, já que parte da experiência é justamente descobrir cantos do estado que passariam despercebidos num passeio sozinho.",
+    "status": "ok",
+    "fontes": [
+      "https://www.instagram.com/capixabafototour/"
+    ],
+    "queries": [
+      "Capixaba Foto Tour Vila Velha",
+      "\"Capixaba Foto Tour\""
+    ]
+  },
+  {
+    "rio_id": "d851acf2-555e-40f3-8da3-c89a39a3f6aa",
+    "nome": "Museu Garoto",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "descricao_editorial": "Num canto de Vila Velha ligado à história do chocolate capixaba, um pequeno museu guarda memórias e aromas de doçura que remetem à infância de muita gente. É um convite para caminhar devagar, deixar a curiosidade guiar cada vitrine e sair de lá com vontade de provar um chocolate na sequência.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Museu Garoto Vila Velha Espírito Santo chocolate",
+      "\"Museu Garoto\" Vila Velha chocolate história"
+    ]
+  }
+]

@@ -1262,87 +1262,93 @@ Duas lições de método. A primeira: **agregação de transcript sempre precisa
 opus), o que dá uma leitura autoritativa isolada de graça. Vale desenhar futuras medições assim, com
 o objeto num modelo que mais nada na sessão use.
 
-### 21.3 O custo real
+### 21.3 O custo real, e o segundo ponto cego
 
-Ancorado no `/usage`: `claude-sonnet-5` = **$2,03 para os 30 atrativos**.
+Além da dupla contagem da §21.2, a agregação por transcript tinha um segundo furo: **a tool
+`WebSearch` roda num modelo próprio, fora do transcript do subagente.** Somar só o que aparece no
+arquivo do agente mede a escrita e ignora a busca, que custa quase o mesmo.
 
-| braço | US$/atrativo |
+O teste de 100 atrativos (10 lotes de 10) expõe isso ao comparar o delta do `/usage` com a
+agregação por transcript:
+
+| origem | US$ pelos 100 |
 |---|---|
-| single | 0,1301 |
-| lote de 10 | **0,0364** |
-| misto do piloto | 0,0677 |
-| lane in-lane, Sonnet + `web_search` (§15.1) | 0,0749 |
+| `claude-sonnet-5`, a escrita do subagente | 5,35 |
+| `claude-haiku-4-5`, a tool `WebSearch` | 4,44 |
+| **total** | **9,79** |
+| agregação só por transcript (subestima 2,1x) | 4,65 |
 
-Amortização do lote: **3,6x**. O subagente em lote sai a metade do custo da lane in-lane que ele
-deveria substituir; o single sai ao dobro. O tamanho do lote é a variável que decide, e não é
-sutil: o que se amortiza é o preâmbulo fixo, que num single é quase tudo que se paga.
+**$0,0979 por atrativo**, contra **$0,0749** da lane in-lane, que já embute a taxa de `web_search`.
+O subagente sai **1,31x mais caro** que a lane que ele substituiria. Não é a ordem de grandeza que
+a §20 temia, nem a vantagem que a primeira correção desta seção anunciou: é um pouco pior, medido
+como se deve.
 
 ### 21.4 Quantos atrativos cabem nas janelas
 
-A Anthropic **não publica** os limites de Claude Code em número nenhum, nem em tokens nem em
-mensagens, e não documenta se `cache_read` conta com o desconto de 90% na janela. O único caminho é
-derivar do `/usage` do próprio plano. Leitura no fim do piloto, Max 5x: janela de 5h em **16%**,
-semanal em **34%** (com uma promoção de +50% no limite semanal até 31/ago).
+A Anthropic não publica os limites em número nenhum, então o caminho é o delta do `/usage` do
+próprio plano em torno de um lote de tamanho conhecido. Max 5x, 100 atrativos em 10 lotes de 10:
+janela de 5h de **8% para 21%** (13 pontos, incluindo a sweep e a orquestração), semanal de
+livre para **2%**.
 
-Da janela de 5h, 98,6% do trabalho da sessão caiu dentro dela (verificado por timestamp), então
-$28,30 × 0,986 ≈ 16% da janela. A conta foi feita por dois caminhos independentes, custo-equivalente
-e token cru, justamente porque o peso do cache é desconhecido; convergem em 5% (2.577 contra 2.466),
-o que torna o resultado robusto à dúvida.
+A fatia do copywriter dentro dos 13 pontos tem duas leituras: o próprio `/usage` atribui **39%** a
+subagentes `norteia-copywriter`, e a proporção de custo dá **52%**. As duas viram a faixa:
 
-| braço | por janela de 5h | por semana (promo) | por semana (sem promo) |
-|---|---|---|---|
-| single | 1.337 | 17.574 | 11.716 |
-| **lote de 10** | **4.777** | **62.792** | **41.862** |
-| misto do piloto | 2.571 | 33.802 | 22.534 |
+| | por janela de 5h | por semana |
+|---|---|---|
+| pela atribuição do `/usage` (39%) | 1.972 | 12.821 |
+| pela proporção de custo (52%) | 1.488 | 9.673 |
+| **faixa de trabalho** | **1.500 a 2.000** | **10.000 a 13.000** |
 
-**A carga inicial de 10.000 atrativos, em lote de 10, ocupa 2,1 janelas de 5 horas e 16% de uma
-cota semanal** (24% depois que a promoção acabar). Não é "não cabe por ordem de grandeza": cabe
-várias vezes dentro de uma única semana.
+A razão semanal/5h sai de **6,5x**, dos mesmos deltas. É o número mais frágil da seção: os 2%
+estão arredondados, e a faixa real (1,5% a 2,49%) põe a razão entre 5,2x e 8,7x. Some a isso a
+promoção de +50% no limite semanal, ativa até 31/ago — sem ela a semana cai um terço, para algo
+como **6.500 a 8.500** atrativos.
 
-A semanal é o gargalo, não a de 5h: a semana tem 34 janelas de 5 horas, mas a cota semanal só cobre
-o equivalente a 13 delas. Saturar o dia não adianta.
+**A carga inicial de 10.000 consome aproximadamente uma semana inteira de cota**, não fazendo mais
+nada com a assinatura. Cabe, mas sem folga — e não "16% de uma semana", como esta seção chegou a
+afirmar antes de a busca entrar na conta.
 
-Confiança desigual entre as duas colunas. O número de 5h é sólido — dois métodos convergentes,
-ancorados no `/usage` autoritativo desta sessão. O semanal é mais frouxo: exigiu reconstruir o uso
-da semana inteira em 154 arquivos de transcript e aplicar o fator de calibração desta sessão
-(0,416), então trate como ordem de grandeza, não como casa decimal.
+### 21.5 O gargalo real não é a cota, é o orçamento de busca
 
-### 21.5 A qualidade, que não era a pergunta
+Os 100 atrativos precisariam de 200 buscas, a duas queries por atrativo, que é a regra da §18. O
+`/usage` registrou **139**. Um dos lotes reportou ter esgotado o orçamento de busca da sessão
+depois de oito buscas e ter caído para `WebFetch` no restante.
 
-30 de 30 com `status: "ok"`, nenhum `sem_fonte`, duas queries por atrativo em todos (regra da §18
-cumprida), 2 a 3 fontes registradas por descrição. Zero travessão, zero dado operacional, zero
-descrição sem fonte. A prosa se sustenta, com data e proveniência verificáveis (Wikipedia, IEMA,
-portais oficiais de município).
+Esse é o achado operacional do teste, e a escala de 30 não o mostrava: **com dez agentes em
+paralelo o teto de busca chega antes do teto de tokens.** Quem for rodar a carga inicial precisa
+serializar mais e paralelizar menos, ou aceitar que uma fração das descrições sai sem as duas
+queries que a §18 mediu como necessárias.
 
-Um defeito, em 1 dos 10 singles: a prosa abre com "Wrapped", palavra em inglês num texto em PT-BR.
-Ressalva de método: os dois lotes receberam no prompt uma instrução extra pedindo PT-BR desde a
-primeira palavra, que os singles não receberam, e tiveram zero ocorrências. Os braços não são
-idênticos em prompt, e com n=1 não dá para afirmar que a instrução resolve — só que o defeito existe
-e é barato de prevenir.
+O efeito na qualidade é visível: `sem_fonte` subiu de 0 em 30 para **11 em 100**. Parte é o
+estouro de busca, parte é a lane entregando registro ruim, como uma "Rua Das Pedras" atribuída a
+Campos dos Goytacazes quando o nome é de Búzios, ou um "Figueira Da Esquina 🌳❤️" com emoji vindo
+do próprio TripAdvisor. Nos dois casos a regra anti-fabricação da §19 fez o trabalho: marcou
+`sem_fonte` em vez de inventar. Fora isso, **zero violação de contrato** nas 100 saídas, e 100
+`rio_id` únicos.
 
-### 21.6 Veredito
+### 21.6 Uma advertência sobre `subagent_tokens`
 
-**A assinatura comporta a carga inicial, desde que em lote.** A §20 reprovou com estimativa; a
-medição a corrige. Em lote de 10 o subagente custa metade da lane in-lane e os 10 mil cabem em
-2,1 janelas de 5 horas, ou 16% de uma semana. Em single ele custa o dobro da lane e o mesmo trabalho
-consome 7,5 janelas — o tamanho do lote é a decisão, não a assinatura.
+A notificação de conclusão de cada subagente traz um campo `subagent_tokens`. Nos 10 lotes eles
+somam 703.658, contra 3.989.773 medidos no transcript. O campo bate com input + cache write +
+output, ou seja **exclui o cache read**, que é 82% do consumo. Quem dimensionar carga por esse
+número subestima por cerca de 5,7x, e ainda por cima ignora a busca. Para medir custo de subagente
+só serve o delta do `/usage`.
 
-Isso **não** promove a assinatura a motor da lane em regime. Ela continua sendo operação manual,
-fora da aplicação, sem retry nem observabilidade, e a §20.2 continua valendo: automação de produção
-compartilhada pede API key. O que a medição habilita é a **carga inicial**, que é exatamente o caso
-de uso de mutirão pontual em que a assinatura faz sentido.
+### 21.7 Veredito
 
-E os 30 registros deste piloto seguem sendo o que a §20.6 pediu: o conjunto de referência em
-qualidade Sonnet-com-busca, com fontes registradas, ao custo de $2,03. Pontuar a cascata barata
-contra ele continua sendo a próxima medição — agora não mais para decidir se a assinatura serve, e
-sim para decidir o que roda depois da carga inicial.
+**A assinatura comporta a carga inicial, mas ela custa uma semana de cota e não sai mais barata que
+a lane.** Medido: $0,0979 por atrativo contra $0,0749 in-lane, 1.500 a 2.000 atrativos por janela de
+5 horas, 10.000 a 13.000 por semana com a promoção ativa e talvez 6.500 a 8.500 sem ela.
 
-Achado colateral, e o mais urgente: o canary do endpoint de injeção de sessão do TripAdvisor
-validava a sessão com `fetch_attractions`, presa ao qid `a5cb7fa004b5e4b5`, que a TripAdvisor
-aposentou e hoje responde `PersistedQueryNotFound`. Toda sessão boa era lida como vazia, recebia
-422 e era **apagada** pelo próprio endpoint, enquanto a lane de ingestão seguia sã por já usar
-`fetch_attractions_paginated_gql` (qid `79aaeeb847e55e58`). Corrigido em `d984ac3`, com o teste que
-cobria o comportamento errado reescrito para falhar se alguém voltar à query morta.
+A decisão que isso habilita é estreita e vale registrar como tal: se o objetivo é **não emitir
+fatura de API** para a carga inicial, o caminho existe e cabe numa semana de mutirão. Se o objetivo
+é **custo**, a assinatura perde para a própria lane, e as duas perdem para a cascata da §18.
+
+Não promove a assinatura a motor em regime: segue sendo operação manual, sem retry, sem
+observabilidade, com um teto de busca que a atrapalha em paralelo, e a §20.2 continua valendo.
+
+Fica o oráculo, agora com 130 registros descritos em qualidade Sonnet-com-busca e fontes
+registradas. Pontuar a cascata barata contra eles continua sendo a próxima medição.
 
 ---
 

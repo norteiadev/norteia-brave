@@ -1,0 +1,161 @@
+[
+  {
+    "rio_id": "056d6bce-20e7-442a-9dc7-dccf9829b5df",
+    "nome": "Vila Encantada Parque Dos Dinossauros",
+    "municipio": "Pomerode",
+    "uf": "SC",
+    "descricao_editorial": "No centro de Pomerode, entre um casario que preserva traços da arquitetura enxaimel, a Vila Encantada surpreende quem chega: réplicas de dinossauros em tamanho real, esculpidas pelo artista gaúcho Clóvis Dapper, se espalham por vilarejos temáticos que somam mais de vinte e cinco atrações. O parque nasceu para aproximar crianças e adultos da paleontologia de um jeito lúdico, com caças ao fóssil, escavações que revelam réplicas de ossos pré-históricos e um circuito aéreo entre árvores apontado como o maior do país. Ao caminhar pelas vilas, vale observar o contraste entre o verde da vegetação catarinense e as formas gigantescas dos répteis recriados em cada canto. A visita rende boas fotos perto das réplicas de maior porte, especialmente no início da manhã, quando a luz suave realça as texturas das esculturas. Leve calçado confortável para caminhar entre as vilas e protetor solar, já que boa parte do percurso é ao ar livre.",
+    "status": "ok",
+    "fontes": [
+      "https://www.vilaencantada.com.br/atracoes/",
+      "https://roteirobaby.com.br/2019/03/parque-vila-encantada-em-pomerode.html"
+    ],
+    "queries": [
+      "Vila Encantada Parque dos Dinossauros Pomerode SC",
+      "Parque dos Dinossauros Pomerode Vila Encantada atrações"
+    ]
+  },
+  {
+    "rio_id": "08f53907-ce7a-4666-a359-df4365c0ae2f",
+    "nome": "Ilha Do Campeche",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "descricao_editorial": "A poucos minutos de barco da badalada praia do Campeche, em Florianópolis, a Ilha do Campeche guarda um contraste que impressiona: águas verde esmeralda e transparentes, protegidas por dois costões que formam uma piscina natural, convivem com um dos sítios arqueológicos mais importantes do litoral brasileiro. Tombada pelo Iphan como patrimônio arqueológico e paisagístico, a ilha reúne mais de cento e cinquenta gravuras rupestres catalogadas em vinte e um sítios, feitas por povos indígenas dos troncos Jê e Guarani há milhares de anos: símbolos geométricos, figuras humanas e de animais talhados na pedra. As trilhas até essas inscrições só podem ser percorridas com guias credenciados, o que transforma a visita numa aula viva de história antes mesmo de pisar na areia branca e fina da praia. Vale reservar um tempo para o mergulho de snorkel nas águas claras, onde é comum avistar peixes coloridos e, com sorte, tartarugas. A luz da manhã, quando o mar costuma estar mais calmo e transparente, favorece tanto o mergulho quanto as fotos da enseada emoldurada pelos morros verdes.",
+    "status": "ok",
+    "fontes": [
+      "https://www.ipatrimonio.org/florianopolis-ilha-do-campeche/",
+      "https://passeiosilhadocampeche.com.br/ilha-do-campeche-trilhas-e-inscricoes-rupestres/",
+      "https://ndmais.com.br/turismo/ilha-do-campeche-tudo-o-que-precisa-saber-sobre-o-caribe-catarinense/"
+    ],
+    "queries": [
+      "Ilha do Campeche Florianópolis sítio arqueológico inscrições rupestres",
+      "Ilha do Campeche praia mar cristalino Florianópolis"
+    ]
+  },
+  {
+    "rio_id": "6a9e3ddc-ee24-44dc-969c-264bd7d5bf9d",
+    "nome": "Praia Coroa Vermelha",
+    "municipio": "Santa Cruz Cabrália",
+    "uf": "BA",
+    "descricao_editorial": "Na fronteira entre Santa Cruz Cabrália e Porto Seguro, a praia de Coroa Vermelha carrega um peso histórico raro para uma faixa de areia: foi ali, em abril de 1500, que a frota de Pedro Álvares Cabral aportou pela primeira vez em solo que viria a ser o Brasil, e dias depois o frei Henrique de Coimbra celebrou a primeira missa do país. Uma grande cruz marca o local até hoje, ao lado de uma réplica da imagem de Nossa Senhora da Boa Esperança trazida pelos portugueses. A praia também é território do povo Pataxó, presente na região desde a década de 1970, e caminhar por ali é cruzar barracas de artesanato indígena que mantêm viva uma cultura muito anterior à chegada das caravelas. Observar esse encontro de tempos, o marco colonial e a presença indígena lado a lado, é talvez a experiência mais rica de uma visita a Coroa Vermelha. Nas horas mais quentes do dia, a sombra dos coqueiros perto do marco histórico é um bom lugar para fotos e para sentir o vento que vem do mar.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_da_Coroa_Vermelha",
+      "https://pt.wikipedia.org/wiki/Terra_Ind%C3%ADgena_Coroa_Vermelha",
+      "https://www.folhape.com.br/colunistas/folha-turismo/conheca-coroa-vermelha-ba-a-praia-onde-oficialmente-aconteceu-o-descobrimento-do-brasil/39913/"
+    ],
+    "queries": [
+      "Praia Coroa Vermelha Santa Cruz Cabrália história descobrimento",
+      "Coroa Vermelha marco cruz Cabral índios pataxó"
+    ]
+  },
+  {
+    "rio_id": "042c4a7c-61c8-405c-87cd-af253c50f1e9",
+    "nome": "Praia Do Flamengo",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "descricao_editorial": "Na região norte de Salvador, entre Itapuã e a divisa com Lauro de Freitas, a praia do Flamengo se abre em faixa de areia amarelada emoldurada por coqueiros e recortada por recifes que quebram o mar em ondas firmes. É um trecho concorrido entre surfistas e praticantes de kitesurf, mas também recebe quem prefere caminhar à beira mar, pescar ou simplesmente mergulhar num mar de azul esverdeado intenso e quente o ano todo. Na maré baixa, os recifes formam piscinas naturais que convidam a um banho mais tranquilo, enquanto a maré alta traz ondas maiores, mais disputadas por quem gosta de surfar. Para fotos, o entardecer costuma valorizar o contraste entre a areia clara e o mar esverdeado. Vale observar o movimento das marés antes de escolher entre nadar nas piscinas naturais ou se aproximar dos recifes onde as ondas quebram.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_do_Flamengo_(Salvador)",
+      "https://www.essemundoenosso.com.br/praia-do-flamengo-em-salvador/"
+    ],
+    "queries": [
+      "Praia do Flamengo Salvador Bahia",
+      "Praia do Flamengo Salvador farol bairro"
+    ]
+  },
+  {
+    "rio_id": "cd4fdf00-e305-4ba2-81f1-9e359bdb0f18",
+    "nome": "Parque Lage",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "descricao_editorial": "Aos pés do Corcovado, no bairro Jardim Botânico, o Parque Lage é um daqueles lugares cariocas em que natureza, arte e história se misturam sem pressa. O casarão que hoje sedia a Escola de Artes Visuais foi erguido em 1920 pelo arquiteto Mario Vodret para o empresário Henrique Lage e a cantora lírica italiana Gabriela Besanzoni, mas o jardim ao redor é ainda mais antigo: um traçado paisagístico de inspiração romântica de cerca de 1840, com uma gruta artificial que abriga tanques de aquário e convida à contemplação entre samambaias e o canto dos pássaros. Desde 1975 o casarão abriga a Escola de Artes Visuais, criada pelo artista Rubens Gerchman num momento de forte censura no país e que se tornou um polo de resistência cultural, palco de mostras marcantes e berço do Circo Voador. Caminhar pelo jardim até o início da trilha que segue rumo ao Cristo Redentor é uma boa forma de sentir a mata avançando sobre a cidade. As primeiras horas da manhã costumam render luz suave para fotos do casarão e do jardim, antes de o parque encher de visitantes.",
+    "status": "ok",
+    "fontes": [
+      "https://en.wikipedia.org/wiki/Parque_Lage",
+      "https://en.wikipedia.org/wiki/Escola_de_Artes_Visuais_do_Parque_Lage",
+      "https://www.parquelage.org/grutas-parque-lage/"
+    ],
+    "queries": [
+      "Parque Lage Rio de Janeiro história Escola de Artes Visuais",
+      "Parque Lage Corcovado gruta jardim"
+    ]
+  },
+  {
+    "rio_id": "4fe07a26-3836-4954-8456-cd75c378a90f",
+    "nome": "Mirante Mangabeiras",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "descricao_editorial": "A quase mil cento e setenta metros de altitude, dentro do Parque das Mangabeiras, o Mirante das Mangabeiras abre uma das vistas mais completas de Belo Horizonte: cidade, serra e mata verde se espalham pelo horizonte a partir de dois decks de madeira erguidos sobre a encosta. O lugar já foi rua sem saída e depois sede de uma rádio, antes de se tornar, ao longo das décadas, o mirante que hoje reúne bancos, jardim e um telescópio para observação da paisagem. O parque em si nasceu em 1966 para proteger a Serra do Curral, numa área que antes servia à mineração de ferro, e cresceu como um dos maiores refúgios verdes da capital mineira. No mirante, vale chegar no fim da tarde, quando a luz baixa colore o horizonte e a cidade começa a acender as primeiras luzes, um momento particularmente bom para fotos amplas da paisagem. Leve um casaco leve, já que a altitude costuma deixar o ar mais fresco do que no centro da cidade.",
+    "status": "ok",
+    "fontes": [
+      "https://portalbelohorizonte.com.br/o-que-fazer/ao-ar-livre-e-esportes/paisagem-e-mirantes/mirante-do-mangabeiras",
+      "https://prefeitura.pbh.gov.br/fundacao-de-parques-e-zoobotanica/informacoes/parques/parque-das-mangabeiras",
+      "https://bhaz.com.br/guia-bhaz/mirante-do-mangabeiras/"
+    ],
+    "queries": [
+      "Mirante das Mangabeiras Belo Horizonte Parque das Mangabeiras vista",
+      "Parque das Mangabeiras Belo Horizonte história mirante"
+    ]
+  },
+  {
+    "rio_id": "4f6c1b33-c666-455e-a9ea-4ab0edb84824",
+    "nome": "Basílica De Nossa Senhora Do Pilar",
+    "municipio": "Ouro Preto",
+    "uf": "MG",
+    "descricao_editorial": "No bairro do Pilar, em Ouro Preto, a Basílica de Nossa Senhora do Pilar impressiona antes mesmo de quem entra pela porta: por dentro, cerca de quatrocentos quilos de ouro cobrem talhas e altares, num dos exemplos mais completos do barroco mineiro. O risco da capela-mor é atribuído a Antônio Francisco Pombal, tio de Aleijadinho, e a talha foi executada por Francisco Xavier de Brito entre 1746 e 1751, num trabalho minucioso de entalhe que culmina na imagem de Nossa Senhora do Pilar cercada de anjos e querubins no altar principal. Em 2012 o Vaticano reconheceu essa relevância histórica e artística concedendo à igreja o título de basílica. Vale reservar um tempo parado diante do altar-mor para acompanhar como o brilho do ouro muda conforme a luz que entra pelas janelas, um dos detalhes que mais impressiona quem visita. Ao circular pelo interior, observe também os entalhes das colunas e dos arcos, testemunhos do auge do ciclo do ouro em Minas Gerais.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Bas%C3%ADlica_Menor_de_Nossa_Senhora_do_Pilar_(Ouro_Preto)",
+      "https://www.minasgerais.com.br/pt/atracoes/ouro-preto/basilica-de-nossa-senhora-do-pilar"
+    ],
+    "queries": [
+      "Basílica Nossa Senhora do Pilar Ouro Preto ouro talha barroco",
+      "Igreja Nossa Senhora do Pilar Ouro Preto história construção"
+    ]
+  },
+  {
+    "rio_id": "07614d8a-d88c-4f95-8ef1-99b02ff8cdcb",
+    "nome": "Praia Do Forno",
+    "municipio": "Armação dos Búzios",
+    "uf": "RJ",
+    "descricao_editorial": "A praia do Forno é uma das enseadas que compõem o litoral recortado da península de Armação dos Búzios, região conhecida por suas praias pequenas emolduradas por costões de pedra. O cenário convida a caminhadas tranquilas pela orla e a fotos que aproveitam o contraste entre a pedra escura e a água clara. Nas primeiras horas da manhã, com menos gente na areia, a luz costuma ser mais suave para quem quer registrar a paisagem.",
+    "status": "ok",
+    "fontes": [
+      "https://en.wikipedia.org/wiki/Búzios"
+    ],
+    "queries": [
+      "Praia do Forno Armação dos Búzios trilha",
+      "Praia do Forno Búzios mar calmo"
+    ]
+  },
+  {
+    "rio_id": "97eb7ed2-ffc2-46a6-98b6-b2476e28a855",
+    "nome": "Rua Das Pedras",
+    "municipio": "Campos dos Goytacazes",
+    "uf": "RJ",
+    "descricao_editorial": "Uma rua que convida a passos mais lentos, entre fachadas e vitrines que pedem para ser observadas com calma. O movimento de quem passa e os cheiros que escapam das portas compõem um cenário simples de apreciar ao entardecer.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Rua das Pedras Campos dos Goytacazes RJ",
+      "\"Rua das Pedras\" Campos dos Goytacazes atrativo turístico"
+    ]
+  },
+  {
+    "rio_id": "73b0a2ec-d764-4ab0-9eb8-176b4b995ccc",
+    "nome": "Praia De Bombinhas",
+    "municipio": "Bombinhas",
+    "uf": "SC",
+    "descricao_editorial": "No coração da península que dá nome ao município, a praia de Bombinhas é a praia central de um lugar reconhecido, desde 2013, como capital do mergulho ecológico no Brasil. A costa recortada por morros, pontas e costões pedregosos, típica de toda a região, faz da praia central um ponto de partida natural para conhecer as demais enseadas do município, como Canto Grande, Mariscal e Quatro Ilhas. É um trecho urbanizado e movimentado, ideal para quem busca caminhar à beira-mar antes de seguir para as praias mais reservadas da península. Ao passear pela orla, vale observar os costões que emolduram a baía e aproveitar o início da manhã, quando o mar costuma estar mais calmo, para fotos da linha da costa.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Bombinhas"
+    ],
+    "queries": [
+      "Praia de Bombinhas Centro Santa Catarina",
+      "Praia de Bombinhas SC mergulho águas calmas"
+    ]
+  }
+]

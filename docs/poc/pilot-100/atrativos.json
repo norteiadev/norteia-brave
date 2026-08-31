@@ -1,0 +1,2086 @@
+[
+  {
+    "rio_id": "095a090d-7b13-4d9c-968a-1988bec13f32",
+    "canonical_key": "tripadvisor:attraction:2408104",
+    "nome": "Praia Da Costa",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Da Costa\" — município Vila Velha/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A areia grossa e amarelada da Praia da Costa recebe o dia inteiro correntes de caminhantes, ciclistas e famílias que dividem o calçadão mais movimentado de Vila Velha. Bairro que se tornou símbolo de status desde os anos 1980, a orla concentra também parte da vida gastronômica da cidade, com restaurantes que servem moqueca capixaba à beira-mar. No réveillon, é ali que a cidade se encontra, com show pirotécnico e contagem regressiva reunindo multidões. Ao entardecer, o calçadão ganha luz dourada e é o momento preferido para caminhar ou pedalar pela ciclovia que acompanha toda a extensão da praia. Pela manhã cedo, antes do movimento aumentar, a faixa de areia larga permite fotos limpas com o mar ao fundo. Vale reservar um tempo para a feirinha noturna que se forma em uma das pontas da praia, com artesanato, comidas e doces, e usar calçado leve, já que a areia grossa pede um pouco mais de cuidado ao caminhar descalço.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_da_Costa_(Vila_Velha)",
+      "https://www.folhavitoria.com.br/cultura/turismo/praia-da-costa-em-vila-velha-es-veja-mapa-e-o-que-fazer-viral/",
+      "https://www.vaidepromo.com.br/blog/praia-da-costa-vila-velha-espirito-santo/"
+    ],
+    "queries": [
+      "Praia da Costa Vila Velha ES história atrativo turístico",
+      "Praia da Costa Vila Velha Espírito Santo orla calçadão"
+    ]
+  },
+  {
+    "rio_id": "61d3d013-8f0a-4a0c-aaa5-8173fd2addc1",
+    "canonical_key": "tripadvisor:attraction:2408107",
+    "nome": "Convento Nossa Senhora Da Penha",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Convento Nossa Senhora Da Penha\" — município Vila Velha/ES.\nEndereço: R. Vasco Coutinho - Prainha, Vila Velha - ES, 29100-231, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.5,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "No alto do Morro da Penha, a 154 metros de altura, o Convento de Nossa Senhora da Penha vigia a baía que separa Vila Velha de Vitória há mais de quatro séculos. A tradição conta que a imagem de Nossa Senhora das Alegrias, trazida pelo frei espanhol Pedro Palácios em 1558, desapareceu três vezes de uma pequena ermida no sopé do morro e foi encontrada no topo do rochedo, sinal interpretado como um chamado para erguer o santuário ali mesmo. Tombado pelo patrimônio histórico nacional em 1943, o convento é hoje um dos símbolos de fé mais antigos do Brasil e reúne todos os anos milhares de fiéis na Romaria dos Homens, uma das maiores peregrinações capixabas. O fim da tarde é o horário mais procurado por quem quer ver o sol se pôr sobre a Baía de Vitória a partir do mirante principal, com toda a Grande Vitória estendida abaixo. Pela manhã, antes da chegada dos grupos, a subida rende fotos mais tranquilas dos corredores e capelas do complexo. Vale levar calçado confortável para o caminho até o topo e reservar um momento de silêncio dentro da capela, onde a missa acontece diariamente em meio a paredes que guardam séculos de devoção.",
+    "status": "ok",
+    "fontes": [
+      "https://conventodapenha.org.br/conheca-a-historia-do-convento-da-penha/",
+      "https://pt.wikipedia.org/wiki/Convento_da_Penha",
+      "http://portal.iphan.gov.br/pagina/detalhes/1363/"
+    ],
+    "queries": [
+      "Convento da Penha Vila Velha história romaria",
+      "Convento Nossa Senhora da Penha Vila Velha mirante 1558"
+    ]
+  },
+  {
+    "rio_id": "76e2bccc-1e86-4f97-9521-ca1db986c343",
+    "canonical_key": "tripadvisor:attraction:2408063",
+    "nome": "Praia De Camburi",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia De Camburi\" — município Vitória/ES.\nEndereço: Praia de Camburi, Espírito Santo, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Camburi é a única praia de mar aberto na parte continental de Vitória, uma faixa de areia de seis quilômetros que hoje reúne a melhor estrutura hoteleira da capital capixaba. Nem sempre foi assim: até o início do século XX, boa parte da região era ocupada por manguezais e restingas ligados à antiga Fazenda Mata da Praia, e o canal que corta a orla ainda carregava o nome de Rio Maruhype. As obras de urbanização das décadas de 1970 e 1980 deram à praia a paisagem aberta e arborizada que se vê hoje. O calçadão de quase cinco quilômetros pede uma caminhada ou um pedal cedo pela manhã, quando o ar ainda está fresco e os quiosques começam a abrir. No fim da tarde, os decks de madeira na orla são o ponto certo para acompanhar o sol descendo sobre o mar aberto. Vale observar como o verde denso das árvores que margeiam a ciclovia contrasta com os prédios altos ao fundo, um lembrete de que ali já existiu mangue onde hoje existe cidade.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_de_Camburi_(Vit%C3%B3ria)",
+      "https://www.vitoria.es.gov.br/semc/orla-de-camburi",
+      "https://vitoria.es.gov.br/noticia/calcadao-da-praia-de-camburi-recebe-reparos-e-manutencoes-29136"
+    ],
+    "queries": [
+      "Praia de Camburi Vitória ES história orla",
+      "Praia de Camburi Vitória calçadão ciclovia mangue"
+    ]
+  },
+  {
+    "rio_id": "99063015-feb9-4168-89eb-db1c129ad6c4",
+    "canonical_key": "tripadvisor:attraction:2408058",
+    "nome": "Palácio Anchieta",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Palácio Anchieta\" — município Vitória/ES.\nEndereço: Praça João Clímaco, s/n - Centro, Vitória - ES, 29015-110, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "De frente para o Porto de Vitória, na entrada da Cidade Alta, o Palácio Anchieta ocupa o mesmo terreno onde os jesuítas ergueram, em 1551, a primeira igreja e o colégio que deram origem à cidade. Ali viveu e foi sepultado o padre José de Anchieta, e por quase dois séculos o colégio formou gerações capixabas até a expulsão dos jesuítas das colônias portuguesas, em 1759, quando o prédio passou a abrigar o governo. Reformado no início do século XX sob influência eclética de um engenheiro francês e tombado como patrimônio estadual em 1983, o palácio segue até hoje como sede do Executivo capixaba, uma das mais antigas do país. A luz da manhã favorece fotos da fachada eclética voltada para a baía, com o movimento do porto ao fundo. Vale caminhar pela praça em frente antes de entrar, para observar a arquitetura do conjunto de fora, e prestar atenção aos detalhes que ainda remetem à antiga igreja de São Tiago, escondidos sob camadas de reformas de mais de quatro séculos.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Pal%C3%A1cio_Anchieta_(Esp%C3%ADrito_Santo)",
+      "https://dio.es.gov.br/Not%C3%ADcia/patrimonio-palacio-anchieta-completa-466-anos-de-historia",
+      "https://vitoria.es.gov.br/semc/palacio-anchieta"
+    ],
+    "queries": [
+      "Palácio Anchieta Vitória ES história sede governo",
+      "Palácio Anchieta Vitória colégio jesuíta 1551"
+    ]
+  },
+  {
+    "rio_id": "28271fda-6aef-4807-84ad-4a41782fc596",
+    "canonical_key": "places:ES:ChIJVxxjg6sXuAAR4Y8jOHJ32PI",
+    "nome": "Farol Santa Luzia",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Farol Santa Luzia\" — município /ES.\nEndereço: R. Santa Luzia, 2 - Praia da Costa, Vila Velha - ES, 29101-100, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 48.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "No extremo da Praia da Costa, ao pé do Morro do Moreno, a torre octogonal do Farol de Santa Luzia domina a paisagem desde 1871, quando foi inaugurado por Dom Pedro II para guiar embarcações rumo aos portos de Vitória e Tubarão. As peças metálicas da estrutura foram fabricadas em Glasgow, na Escócia, e montadas ali sob orientação do Barão de Cotegipe, então ministro da Marinha imperial. Hoje administrado pela Marinha do Brasil, o farol abriga uma sala de memória com objetos e fotografias que contam a história da navegação capixaba. O fim de tarde é o momento em que a luz baixa recorta bem a silhueta branca da torre contra o céu, um dos ângulos mais fotografados de Vila Velha. Vale caminhar até lá pela faixa de areia da Praia da Costa, observando como o farol ainda pisca à noite para orientar os navios, e passar pela lojinha de artesanato antes de seguir viagem.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Farol_de_Santa_Luzia",
+      "https://www.vilavelha.es.gov.br/noticias/2019/09/148-anos-de-muita-historia-no-farol-de-santa-luzia-26965",
+      "https://www.marinha.mil.br/com1dn/noticia/farol-santa-luzia-no-esp%C3%ADrito-santo-ganha-centro-atendimento-ao-turista"
+    ],
+    "queries": [
+      "Farol de Santa Luzia Vila Velha Praia da Costa história",
+      "\"Farol Santa Luzia\" Vila Velha atrativo turístico"
+    ]
+  },
+  {
+    "rio_id": "af04b74c-f0e3-42a5-bca7-3c10a8e21d00",
+    "canonical_key": "tripadvisor:attraction:3858616",
+    "nome": "Parque Estadual De Pedra Azul",
+    "municipio": "Vargem Alta",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Parque Estadual De Pedra Azul\" — município Vargem Alta/ES.\nEndereço: Rota do Lagarto, s/n - Vila de Pedra Azul, Domingos Martins - ES, 29278-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A mole de granito e gnaisse que dá nome ao Parque Estadual de Pedra Azul se ergue a 1.822 metros de altitude em meio à Mata Atlântica das montanhas capixabas, ao lado de formações vizinhas como a Pedra das Flores e a Pedra do Lagarto. A área começou a ser protegida ainda em 1960, como reserva florestal, e virou parque estadual em 1991, hoje se estendendo por três municípios da região serrana. O visitante encontra piscinas naturais de água fria, trilhas entre a mata fechada e um museu ecológico no centro de visitantes. O fim da tarde é o horário mais concorrido para ver a rocha mudar de tom conforme a luz do sol incide sobre o granito, um espetáculo que se repete várias vezes ao longo do dia. As trilhas até os mirantes recompensam com vistas amplas da serra, e vale levar agasalho, já que a altitude deixa o ar bem mais frio do que no litoral próximo. Calçado fechado e água são essenciais para o piso irregular entre as pedras.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_Estadual_da_Pedra_Azul",
+      "https://iema.es.gov.br/Not%C3%ADcia/parque-estadual-pedra-azul-completa-35-anos-de-conservacao-e-ecoturismo",
+      "https://en.wikipedia.org/wiki/Pedra_Azul_State_Park"
+    ],
+    "queries": [
+      "Parque Estadual de Pedra Azul Domingos Martins ES história trilhas",
+      "Pedra Azul Espírito Santo altitude trilha pôr do sol"
+    ]
+  },
+  {
+    "rio_id": "6e470ead-5c0e-40ed-be18-4d0c15bbef40",
+    "canonical_key": "tripadvisor:attraction:2408015",
+    "nome": "Praia Bacutia",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Bacutia\" — município Guarapari/ES.\nEndereço: Bacutia Beach - Guarapari, Espírito Santo, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Cercada por costões e vegetação nativa dentro da Enseada Azul, a Praia da Bacutia se parece com uma grande piscina natural, de águas verdes, calmas e sem ondas. É uma das praias mais procuradas de Guarapari, cidade conhecida também pela areia escura e amarelada de origem monazítica que cobre boa parte do seu litoral. Uma escadaria em meio à mata é a porta de entrada para a faixa de areia, criando um contraste entre o verde da vegetação e o azul esverdeado da água logo abaixo. A manhã é o melhor momento para aproveitar a água ainda calma e os quiosques menos cheios. Vale levar máscara de mergulho para observar os pequenos peixes entre as pedras, já que o mar sem ondas favorece esse tipo de exploração. O alto da escadaria de acesso costuma render boas fotos do conjunto da enseada, com os costões emoldurando a água.",
+    "status": "ok",
+    "fontes": [
+      "https://www.viajali.com.br/praia-da-bacutia/",
+      "https://www.guaraparivirtual.com.br/316/praia-bacutia-guarapari-es",
+      "https://pdf.blucher.com.br/materialscienceproceedings/wsam/09.pdf"
+    ],
+    "queries": [
+      "Praia Bacutia Guarapari ES atrativo",
+      "\"Praia Bacutia\" Guarapari areia monazítica"
+    ]
+  },
+  {
+    "rio_id": "6b9d70d1-ccc2-4d85-9156-2d1d0a938de2",
+    "canonical_key": "tripadvisor:attraction:2408061",
+    "nome": "Parque Pedra Da Cebola",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Parque Pedra Da Cebola\" — município Vitória/ES.\nEndereço: R. Ana Viêira Mafra, s/n - Mata da Praia, Vitória - ES, 29066-010, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entre os bairros Jardim da Penha e Mata da Praia, uma rocha que parece se descamar em camadas, como as de uma cebola, deu nome ao Parque Pedra da Cebola. O terreno já foi pedreira da mineradora Vale até 1978, e sua transformação em área verde, em 1997, foi a primeira recuperação de uma área degradada por mineração no município de Vitória. Hoje a vegetação de restinga e mata atlântica que cresceu ali abriga pequenos répteis e aves, e um jardim de inspiração oriental completa o passeio ao lado da formação rochosa. Vale subir até o mirante do parque para ver o Maciço Central, o Porto de Tubarão e o Morro do Mestre Álvaro em um único horizonte, uma vista melhor aproveitada nas primeiras horas da manhã, quando o ar está mais limpo. A luz rasante do fim de tarde também realça as camadas da rocha que dá nome ao lugar. Observar de perto a textura esfoliada da pedra é um dos pequenos prazeres da visita.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_Pedra_da_Cebola",
+      "https://www.quintoandar.com.br/guias/cidades/parque-pedra-da-cebola/",
+      "https://vitoria.es.gov.br/noticia/parque-pedra-da-cebola-e-reconhecido-como-simbolo-em-area-verde-52655"
+    ],
+    "queries": [
+      "Parque Pedra da Cebola Vitória Mata da Praia história",
+      "\"Pedra da Cebola\" Vitória parque mirante lenda"
+    ]
+  },
+  {
+    "rio_id": "ce86e6d1-39ac-409f-9182-6e7623eeb92f",
+    "canonical_key": "places:ES:ChIJ54Ib3krltgARBcplmta0Io8",
+    "nome": "Monumento Natural Dos Pontões Capixabas",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Monumento Natural Dos Pontões Capixabas\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "No noroeste do Espírito Santo, entre os municípios de Pancas e Águia Branca, paredões de rocha que ultrapassam 400 metros de altura valeram ao Monumento Natural dos Pontões Capixabas o apelido de Yosemite brasileiro, em referência ao parque americano que é uma das maiores referências mundiais de escalada. Criada em 2002 como parque nacional e recategorizada em 2008, a unidade é administrada pelo ICMBio e protege um trecho de Mata Atlântica onde vivem onças-pardas, gatos-do-mato, tamanduás e preguiças, além de comunidades de descendentes de pomeranos e poloneses que mantêm ali a agricultura familiar há gerações. Trilhas conduzidas por guias locais levam a mirantes de onde se avista o vale, o contorno das montanhas e a cidade de Pancas ao fundo, um cenário que muda de cor conforme o sol se move ao longo do dia. Vale levar binóculos para tentar flagrar a fauna nos paredões e calçado firme para o terreno rochoso das trilhas. As primeiras horas da manhã costumam trazer o ar mais fresco e a luz mais suave para fotografar os pontões.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Monumento_Natural_dos_Pont%C3%B5es_Capixabas",
+      "https://esbrasil.com.br/monumento-natural-dos-pontoes-capixabas-paraiso-dos-escaladores-em-pancas/",
+      "https://descubraonoroeste.es.gov.br/pontoes-capixabas-sao-o-primeiro-monumento-natural-a-ser-administrado-pelo-icmbio/"
+    ],
+    "queries": [
+      "Monumento Natural dos Pontões Capixabas ES",
+      "\"Pontões Capixabas\" unidade de conservação Espírito Santo"
+    ]
+  },
+  {
+    "rio_id": "de1eeb3f-ef9f-422b-a2e1-370ed6c8ca05",
+    "canonical_key": "places:ES:ChIJh2PUcs8VuAARNxMXEIsdL0Y",
+    "nome": "Praia De Itaparica",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia De Itaparica\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "Continuação natural da Praia da Costa e da Praia de Itapoã, a Praia de Itaparica se estende por cerca de 3,5 quilômetros em Vila Velha, com águas transparentes, profundidade de poucos metros e recifes que atraem tanto mergulhadores quanto surfistas em busca das ondas mais fortes que ali se formam. O calçadão iluminado e a ciclovia que acompanham toda a orla fazem da praia um ponto de encontro constante para caminhadas e passeios de bicicleta, cercado por quiosques, restaurantes e prédios altos. O fim de tarde é o horário preferido para caminhar pelo calçadão e acompanhar o pôr do sol sobre o mar, enquanto pela manhã cedo o mar mais calmo favorece quem quer nadar ou observar os recifes de perto. Vale levar sapatilha de neoprene para pisar com mais segurança sobre as pedras e aproveitar a proximidade com o Convento da Penha e o Farol de Santa Luzia para completar o roteiro histórico da região.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_de_Itaparica",
+      "https://esbrasil.com.br/praia-de-itaparica-banho-refrescante-em-meio-a-agitacao-de-vila-velha/",
+      "https://terracapixaba.com/en/2024/02/praia-de-itaparica-descubra-o-paraiso-a-beira-mar-em-vila-velha.html"
+    ],
+    "queries": [
+      "Praia de Itaparica Vila Velha Espírito Santo",
+      "\"Praia de Itaparica\" Vila Velha ES ponto turístico"
+    ]
+  },
+  {
+    "rio_id": "f6fc9c55-3fc2-4ab6-b6fc-87d2ba792e4b",
+    "canonical_key": "tripadvisor:attraction:2408019",
+    "nome": "Praia Do Morro",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Do Morro\" — município Guarapari/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A Praia do Morro se abre em uma faixa larga de areia que se estende por quilômetros no coração turístico de Guarapari, com o mar quente e as ondas mansas que fizeram da região um símbolo do litoral capixaba. O nome vem do Morro da Pescaria, elevação que marca o início da praia e de onde se descortina uma vista panorâmica de toda a orla. Foi ali, a partir das décadas de 1950 e 1960, que a areia escura e amarelada, rica em minerais monazíticos, ganhou fama por suas propriedades terapêuticas e ajudou a consolidar Guarapari como a chamada Cidade Saúde, atraindo veranistas de Minas Gerais e de todo o país. Vale caminhar pelo calçadão logo ao amanhecer, quando a luz suave realça os tons dourados da areia e o movimento ainda é tranquilo, e reservar um momento no alto do morro para fotografar o litoral inteiro em um único quadro. Sinta a textura diferente da areia sob os pés e observe como famílias, casais e grupos de amigos dividem o mesmo pedaço de praia sem perder o ritmo tranquilo do lugar.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_do_Morro",
+      "https://www.guarapari.es.gov.br/pagina/popup/2213"
+    ],
+    "queries": [
+      "Praia do Morro Guarapari ES história",
+      "Praia do Morro Guarapari areia monazítica"
+    ]
+  },
+  {
+    "rio_id": "bb1225c6-037b-404c-8800-aa3fd213cbd8",
+    "canonical_key": "tripadvisor:attraction:2408029",
+    "nome": "Praia De Setiba",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia De Setiba\" — município Guarapari/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A Praia de Setiba se esconde entre dunas e vegetação nativa na zona sul de Guarapari, protegida pelos limites do Parque Estadual Paulo César Vinha, uma das áreas de preservação mais importantes do litoral capixaba. O nome carrega herança indígena: \"ser\" identificava as conchas encontradas em abundância na areia, e \"tyba\" significa fartura, combinação que descreve bem a paisagem generosa de dunas e restinga que cerca a praia. Historicamente ligada à pesca artesanal, Setiba ainda mantém esse ritmo mais recolhido, com o mar calmo e as águas transparentes convidando à contemplação tanto quanto à prática de caiaque e stand-up paddle. O melhor momento para visitar é o fim da tarde, quando a luz dourada realça as dunas e o vento ameniza o calor, e vale caminhar até os trechos mais afastados do centro da praia para fotografar a moldura de vegetação nativa que poucos trechos do litoral ainda preservam.",
+    "status": "ok",
+    "fontes": [
+      "https://www.folhavitoria.com.br/cultura/turismo/conheca-tudo-sobre-a-praia-de-setiba-em-guarapari-no-es-viral/",
+      "https://esbrasil.com.br/setiba-conheca-um-dos-principais-balnearios-de-guarapari/"
+    ],
+    "queries": [
+      "Praia de Setiba Guarapari ES",
+      "Setiba Guarapari praia características turismo"
+    ]
+  },
+  {
+    "rio_id": "7c64a7b4-e8b1-48c0-861f-fcf078feb9aa",
+    "canonical_key": "tripadvisor:attraction:4601254",
+    "nome": "Centro Histórico De Ouro Preto",
+    "municipio": "Ouro Preto",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Centro Histórico De Ouro Preto\" — município Ouro Preto/MG.\nEndereço: Ouro Preto, Minas Gerais, 35400-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Subir as ladeiras de pedra do Centro Histórico de Ouro Preto é caminhar por um dos conjuntos coloniais mais completos das Américas, erguido no auge do ciclo do ouro entre o fim do século XVII e o início do XVIII, quando arraiais de garimpo se transformaram em uma cidade de igrejas douradas e casarios sinuosos. Em 1980, Ouro Preto tornou-se o primeiro bem cultural brasileiro a entrar na lista de Patrimônio Mundial da UNESCO, reconhecimento que veio depois de já ter sido tombada como Monumento Nacional em 1933 e pelo IPHAN em 1938. As igrejas de São Francisco de Assis, do Carmo e do Pilar reúnem o trabalho de Aleijadinho e do Mestre Ataíde, mestres do barroco e do rococó mineiro cujas talhas e pinturas ainda governam o silêncio das naves. A cidade também guarda a memória da Inconfidência Mineira, movimento que floresceu entre essas mesmas ruas. O ideal é explorar o centro histórico a pé, de manhã cedo, quando a luz incide diretamente sobre as fachadas coloridas e as ladeiras ainda estão vazias para boas fotos. Leve calçado confortável para o piso de pedra irregular e reserve tempo para observar os detalhes esculpidos nos frontões e portais, que raramente se repetem de uma igreja para outra.",
+    "status": "ok",
+    "fontes": [
+      "https://whc.unesco.org/en/list/124",
+      "http://portal.iphan.gov.br/pagina/detalhes/30",
+      "https://pt.wikipedia.org/wiki/Igreja_de_S%C3%A3o_Francisco_de_Assis_(Ouro_Preto)"
+    ],
+    "queries": [
+      "Centro Histórico de Ouro Preto UNESCO patrimônio história",
+      "Ouro Preto centro histórico igrejas barrocas Aleijadinho"
+    ]
+  },
+  {
+    "rio_id": "d57c69de-1ca9-4823-a676-d355dc4a93c3",
+    "canonical_key": "tripadvisor:attraction:2408106",
+    "nome": "Praia De Itaparica",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia De Itaparica\" — município Vila Velha/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A Praia de Itaparica estende sua faixa curva de areia por cerca de 3,5 quilômetros ao longo da orla de Vila Velha, emendando-se às praias de Itapoã e da Costa em um dos trechos mais movimentados do litoral capixaba. As águas transparentes escondem formações de corais que atraem mergulhadores, enquanto o mar mais agitado forma boas ondas para o surfe e o bodyboard, esportes praticados com frequência por quem conhece o trecho. À noite, o calçadão se enche de gente caminhando entre prédios altos, bares e restaurantes que servem moqueca capixaba e torta capixaba, pratos que carregam influência indígena na cozinha do estado. Vale reservar o fim de tarde para caminhar pelo calçadão e acompanhar o pôr do sol sobre o mar, um dos programas mais tradicionais da orla, e aproveitar a proximidade com o Convento da Penha e o Farol de Santa Luzia para estender o roteiro histórico do dia. Observe o contraste entre a água clara perto da areia e o azul mais fechado onde rompem as ondas, sinal da presença dos recifes.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_de_Itaparica",
+      "https://esbrasil.com.br/praia-de-itaparica-banho-refrescante-em-meio-a-agitacao-de-vila-velha/"
+    ],
+    "queries": [
+      "Praia de Itaparica Vila Velha ES",
+      "Itaparica praia Vila Velha Espírito Santo turismo"
+    ]
+  },
+  {
+    "rio_id": "b955f61c-dd6b-41f6-b27e-c1cf577c6d7f",
+    "canonical_key": "tripadvisor:attraction:2408064",
+    "nome": "Praia Do Canto",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Do Canto\" — município Vitória/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 61.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A Praia do Canto é hoje um dos bairros mais vividos de Vitória, mas seu nome guarda a memória de uma paisagem que já não existe: até a década de 1970, ali se sucediam as praias do Barracão, das Castanheiras, do Canto, Comprida e de Santa Helena, apagadas por um aterro que unificou a orla em 1972. O traçado das ruas largas, com a Avenida Nossa Senhora da Penha como espinha dorsal, remonta ao Plano Novo Arrabalde do engenheiro Saturnino de Brito, um dos primeiros projetos urbanísticos sanitaristas do Brasil. Embora a faixa de areia branca e fina não seja indicada para banho, o calçadão à beira do mar transparente e calmo é um convite constante à caminhada, à pedalada e à observação da baía. Ao redor, a região conhecida informalmente como Triângulo das Bermudas concentra bares e restaurantes que vão da moqueca capixaba à cozinha japonesa e italiana. Vale caminhar pela orla ao entardecer, quando o movimento se intensifica e a luz rasante favorece fotos da baía com a Ilha do Boi ao fundo, e reservar um momento na Praça da Ciência para observar de perto as instalações voltadas à educação ambiental à beira-mar.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_do_Canto",
+      "https://morrodomoreno.com.br/materias/praia-do-canto-uma-historia-a-parte-por-sandra-aguiar.html",
+      "https://www.encontravitoria.com.br/sobre/bairro-praia-do-canto-vitoria/"
+    ],
+    "queries": [
+      "Praia do Canto Vitória ES bairro história",
+      "Praia do Canto Vitória Espírito Santo turismo orla"
+    ]
+  },
+  {
+    "rio_id": "73e9cac1-a626-451c-be81-a24643a5407a",
+    "canonical_key": "tripadvisor:attraction:2408025",
+    "nome": "Praia Dos Padres",
+    "municipio": "Aracruz",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Dos Padres\" — município Aracruz/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 65.04,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A Praia dos Padres guarda um visual rústico que raramente se vê em praias urbanizadas, protegida pelos limites da Área de Preservação Ambiental Costa das Algas, no litoral norte do Espírito Santo. O nome nasceu de uma antiga casa da região que hospedava padres e seminaristas, um passado simples que ainda ecoa no ritmo desacelerado do lugar. A vegetação de restinga e as grandes castanheiras que dão sombra à areia contrastam com o mar raso e tranquilo na maior parte da extensão, pouco mais de um quilômetro de praia quase intocada. No extremo sul, os recifes formam piscinas naturais na maré baixa, ideais para observar peixes pequenos e caranguejos entre as pedras, enquanto o Pico do Urubu reúne surfistas em busca de ondas mais fortes. É um lugar para chegar sem pressa, de preferência na maré baixa, quando as piscinas naturais ficam mais visíveis para fotos, e para caminhar até a sombra das castanheiras com os pés na areia fina, sentindo o contraste entre o silêncio do lugar e o som constante do mar.",
+    "status": "ok",
+    "fontes": [
+      "https://esbrasil.com.br/praia-dos-padres-em-aracruz-tranquilidade-e-boa-gastronomia/",
+      "https://turismo.aracruz.es.gov.br/sol-e-praia/praia-dos-padres-10"
+    ],
+    "queries": [
+      "Praia dos Padres Aracruz ES",
+      "Praia dos Padres Aracruz Espírito Santo turismo características"
+    ]
+  },
+  {
+    "rio_id": "3f9a2ea2-232f-4875-8de4-3ce0b0d8c3bc",
+    "canonical_key": "tripadvisor:attraction:3536151",
+    "nome": "Morro Do Moreno",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Morro Do Moreno\" — município Vila Velha/ES.\nEndereço: 1056 - R. José Mário Lopes, 262 - Praia da Costa, Vila Velha - ES, 29101-190, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 61.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "O Morro do Moreno se ergue a 184 metros de altura no coração de Vila Velha, quase colado ao morro vizinho onde está o Convento da Penha, e reúne em uma única trilha vegetação de Mata Atlântica e um dos panoramas mais completos da Grande Vitória. A subida, de cerca de 1,3 quilômetro ida e volta, atravessa pontos de parada como o Mirante da Testa antes de alcançar o topo, de onde se avista de um lado a Terceira Ponte e a baía de Vitória, e do outro o mar de Vila Velha com a Praia da Costa se estendendo ao longe. É uma trilha urbana, mas que exige atenção em trechos de rocha lisa, sobretudo perto dos mirantes mais expostos. O fim de tarde é o horário mais procurado por quem sobe o morro, já que o entardecer sobre a baía rende um dos pores do sol mais fotografados da região. Leve água e calçado com boa aderência, e aproveite os pontos de parada ao longo do caminho para fotografar tanto a vista para o mar quanto para a baía, já que cada mirante enquadra uma paisagem diferente.",
+    "status": "ok",
+    "fontes": [
+      "https://turismo.vilavelha.es.gov.br/o-que-fazer/mirantes/monumento-natural-morro-do-moreno-43",
+      "https://www.alltrails.com/trail/brazil/espirito-santo/morro-do-moreno"
+    ],
+    "queries": [
+      "Morro do Moreno Vila Velha ES mirante",
+      "Morro do Moreno Vila Velha trilha vista"
+    ]
+  },
+  {
+    "rio_id": "854c3d1f-1a18-40d2-bb1d-7808e103fcfb",
+    "canonical_key": "tripadvisor:attraction:4971503",
+    "nome": "Parque Botânico Vale",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Parque Botânico Vale\" — município Vitória/ES.\nEndereço: Av. dos Expedicionários, s/n - Jardim Camburi, Vitória - ES, 29090-070, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 63.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "O Parque Botânico Vale reúne 33 hectares de Mata Atlântica em recuperação bem no meio da paisagem urbana de Jardim Camburi, em Vitória, formando um cinturão verde que contrasta com o entorno industrial e residencial da região. Inaugurado em 2004, o parque abriga mais de 140 espécies de árvores nativas, entre pau-brasil, jacarandá e ipê, além de animais como saguis, gambás e uma variedade de aves que aparecem com frequência ao longo das trilhas ecológicas. O jardim sensorial, o primeiro espaço permanente desse tipo no Espírito Santo, propõe uma experiência que vai além da visão, estimulando também o tato, o olfato e a audição em contato com plantas selecionadas. Vale caminhar pelas trilhas mais cedo, quando os pássaros estão mais ativos e a luz entra em feixes por entre a copa das árvores, tornando o passeio ideal tanto para fotos quanto para observação de fauna. Preste atenção aos sons do parque, geralmente mais reveladores da vida selvagem ali do que a própria visão, e reserve um tempo junto ao lago para observar a vegetação se refletindo na água.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_Bot%C3%A2nico_Vale",
+      "https://www.vale.com/vale-botanical-park-vitoria"
+    ],
+    "queries": [
+      "Parque Botânico Vale Vitória ES",
+      "Parque Botânico Vale Jardim Camburi mata atlântica trilhas"
+    ]
+  },
+  {
+    "rio_id": "7396f755-3033-47d2-9269-dc823ed97131",
+    "canonical_key": "tripadvisor:attraction:572093",
+    "nome": "Praia Do Rosa",
+    "municipio": "Imbituba",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Praia Do Rosa\" — município Imbituba/SC.\nEndereço: Praia do Rosa, Santa Catarina, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A Praia do Rosa recebeu esse nome nos anos 1960, em homenagem ao pescador Dorvino Manoel da Rosa, mas a povoação da região remonta à chegada de famílias açorianas ainda no século XVIII, quando o lugar vivia da pesca artesanal e da agricultura de subsistência sob o nome de Porto Novo. Foi só na década de 1970 que surfistas e viajantes descobriram as ondas da região e revelaram ao mundo essa faixa de dois quilômetros de areia cercada por morros verdes e lagoas, hoje dividida entre o Rosa Sul, mais agitado e procurado por surfistas, e o Rosa Norte, de águas mais calmas. Entre junho e novembro, a praia se transforma em um dos poucos lugares do Brasil onde é possível observar baleias-franca a partir da própria areia, sem embarcação, enquanto os animais migram das águas antárticas para dar à luz e amamentar os filhotes em mar protegido. O melhor momento para tentar avistar as baleias é nas primeiras horas da manhã, quando o mar costuma estar mais calmo, e vale levar binóculos para acompanhar os sopros e saltos à distância. Caminhar pela faixa de areia entre o Rosa Norte e o Rosa Sul também revela dois cenários opostos de mar em um único passeio.",
+    "status": "ok",
+    "fontes": [
+      "https://ndmais.com.br/turismo/conheca-o-paraiso-catarinense-descoberto-por-sufistas-e-hippies-nos-anos-70/",
+      "https://pousadabarramar.com.br/conheca-a-praia-do-rosa-e-a-origem-de-seu-nome/",
+      "https://www.correiobraziliense.com.br/cbradar/a-praia-de-santa-catarina-que-chama-atencao-com-baleias-aguas-azuis-cristalinas-e-fama-internacional-no-surfe/"
+    ],
+    "queries": [
+      "Praia do Rosa Imbituba SC história turismo",
+      "Praia do Rosa Santa Catarina baleias franca surf"
+    ]
+  },
+  {
+    "rio_id": "41426a05-2bbd-4bdb-bf8c-a1eaba42c173",
+    "canonical_key": "tripadvisor:attraction:2408016",
+    "nome": "Praia Castanheiras",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Castanheiras\" — município Guarapari/ES.\nEndereço: Castanheiras Beach, Espírito Santo, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 61.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A Praia Castanheiras ocupa um trecho curto, de pouco mais de 140 metros, bem no centro de Guarapari, mas compensa o tamanho com a sombra generosa das castanheiras que dão nome ao lugar e se espalham por toda a orla. As águas claras e calmas escondem recifes que formam piscinas naturais na maré baixa, um cenário que atrai famílias com crianças pequenas em busca de um mar mais protegido. Cercada de quiosques, bares e restaurantes, a praia mantém um movimento constante ao longo do ano, ainda que o verão concentre o maior fluxo de visitantes. Vale chegar na maré baixa para aproveitar as piscinas naturais e fotografar os reflexos entre as pedras, e escolher um ponto sob as castanheiras para observar o vaivém da orla protegido do sol mais forte do meio-dia.",
+    "status": "ok",
+    "fontes": [
+      "https://esbrasil.com.br/praia-das-castanheiras-tem-sombra-e-agua-fresca-no-coracao-de-guarapari/",
+      "https://www.tripadvisor.com/Attraction_Review-g941641-d2408016-Reviews-Castanheiras_Beach-Guarapari_State_of_Espirito_Santo.html"
+    ],
+    "queries": [
+      "Praia Castanheiras Guarapari ES",
+      "Castanheiras beach Guarapari Espírito Santo"
+    ]
+  },
+  {
+    "rio_id": "de205379-53f5-4d0b-b4bb-8adde8ec3c51",
+    "canonical_key": "tripadvisor:attraction:2408032",
+    "nome": "Três Praias",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Três Praias\" — município Guarapari/ES.\nEndereço: Três Praias, Guarapari - ES, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 69.76,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entre falésias e costões que recortam o litoral sul de Guarapari, um trio de enseadas se revela aos poucos, separadas por rochedos que parecem ter sido esculpidos para guardar cada praia só para quem chega até lá. A Praia Mateus Lopes abre generosa, com águas calmas que convidam famílias e crianças; a Praia da Leontina se fecha em intimidade, pequena e mais recolhida; e a Praia do Saco, cercada por formações rochosas e ilhotas, entrega o cenário mais selvagem dos três. Por ficarem afastadas do centro urbano, as Três Praias guardam uma quietude rara na costa capixaba, às vezes quase desertas mesmo em dias de sol forte. Vale chegar nas primeiras horas da manhã, quando a luz é mais suave sobre as pedras e o mar ainda está deitado. Os costões que separam uma praia da outra são os melhores pontos para fotografar o conjunto inteiro de uma vez, e como não há quiosques por ali, leve água, protetor solar e algo para comer.",
+    "status": "ok",
+    "fontes": [
+      "https://www.guarapari.es.gov.br/pagina/ler/2116",
+      "https://esbrasil.com.br/tres-praias-refugio-perfeito-entre-mar-azul-e-natureza-preservada/"
+    ],
+    "queries": [
+      "Três Praias Guarapari ES atrativo turístico",
+      "Praia Três Praias Guarapari Espírito Santo"
+    ]
+  },
+  {
+    "rio_id": "22a506f1-377a-4a43-81b4-b1f666bee913",
+    "canonical_key": "places:ES:ChIJBT4ne68ZuAAROo3NA1Jny6Y",
+    "nome": "Parque Botânico Vale",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Parque Botânico Vale\" — município /ES.\nEndereço: Av. dos Expedicionários, s/n - Jardim Camburi, Vitória - ES, 29090-070, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 40.5,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "Em Jardim Camburi, na zona onde o verde ainda resiste ao avanço urbano de Vitória, o Parque Botânico Vale abre uma fatia de Mata Atlântica em recuperação bem no meio da capital capixaba. Inaugurado em 2004, o parque integra o cinturão verde da mineradora e reúne mais de 140 espécies de árvores nativas, entre elas pau-brasil, jacarandá e ipê, plantadas para reconstituir um trecho de floresta que um dia cobriu toda a região. Cinco trilhas ecológicas cortam esse cenário, junto de um lago, um jardim de orquídeas e áreas de convivência que tornam o passeio acessível a quem vai sozinho, em casal ou com a família inteira. Entre a vegetação, é comum avistar gambás, saguis e uma variedade de aves que encontraram refúgio ali. A melhor hora para caminhar pelas trilhas é logo pela manhã, quando os pássaros estão mais ativos e a luz atravessa a copa das árvores em feixes. Vale levar binóculos e câmera, e caminhar em silêncio nos primeiros metros de cada trilha aumenta as chances de flagrar a fauna antes que ela perceba a visita.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_Bot%C3%A2nico_Vale",
+      "https://www.vale.com/vale-botanical-park-vitoria"
+    ],
+    "queries": [
+      "Parque Botânico Vale Vitória ES",
+      "Parque Botânico Vale Jardim Camburi Vitória visitação"
+    ]
+  },
+  {
+    "rio_id": "c5d53c1a-60fc-4cc1-865c-3eb7f4f9980b",
+    "canonical_key": "tripadvisor:attraction:4057388",
+    "nome": "Praia Dos Castelhanos",
+    "municipio": "Anchieta",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Dos Castelhanos\" — município Anchieta/ES.\nEndereço: Av. Beira Mar - Praia dos Castelhanos, Anchieta - ES, 29230-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.29,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na costa sul do Espírito Santo, em Anchieta, a Praia dos Castelhanos estende quase dois quilômetros e meio de areia clara entre vegetação nativa e recifes que moldam piscinas naturais nas marés baixas. O nome remete aos navegadores espanhóis que percorreram o litoral brasileiro entre os séculos dezesseis e dezessete, uma herança histórica que se mistura à vida das comunidades pesqueiras que ainda hoje mantêm vivo um jeito simples e sustentável de viver ali. Em votação popular, Castelhanos foi eleita a praia mais bonita do sul capixaba, reconhecimento que reflete o que qualquer visitante percebe ao chegar: águas calmas e azuis, areia fina e uma sensação de recanto preservado. As poçinhas de maré que se formam entre os recifes são o grande espetáculo do lugar, e vale ir na maré baixa para explorá-las com calma, observando a vida marinha que se abriga ali. As sombras das árvores ao longo da praia oferecem bons ângulos para fotos com o mar ao fundo, especialmente no fim da tarde, quando a luz dourada contrasta com o azul da água.",
+    "status": "ok",
+    "fontes": [
+      "https://www.agazeta.com.br/hz/turismo/praia-de-castelhanos-em-anchieta-e-eleita-a-mais-bonita-do-sul-do-es-0125",
+      "https://terracapixaba.com/en/2024/01/praia-dos-castelhanos-e-os-encantos-de-suas-piscinas-naturais.html"
+    ],
+    "queries": [
+      "Praia dos Castelhanos Anchieta ES",
+      "Praia dos Castelhanos Anchieta Espírito Santo história"
+    ]
+  },
+  {
+    "rio_id": "a778ed7d-94e1-426d-9bde-9b6f1e2f9926",
+    "canonical_key": "tripadvisor:attraction:2408054",
+    "nome": "Ilha Do Boi",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Ilha Do Boi\" — município Vitória/ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 61.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Ligada ao restante de Vitória por aterros construídos nos anos 1970, a Ilha do Boi segue ilha só no nome, um bairro nobre cercado de água que guarda duas praias pequenas e tranquilas em pleno coração da capital capixaba. A história por trás do nome remonta a um naufrágio de embarcação que transportava gado no litoral, episódio que deixou os animais nas praias da região e batizou o lugar para sempre. Hoje, a Praia da Direita e a Praia Grande oferecem águas claras e calmas, um contraste sereno com a agitação da cidade que fica a poucos minutos dali. É um passeio que combina bem com uma caminhada tranquila à beira-mar, ideal para quem viaja sozinho em busca de silêncio ou para famílias que querem um mar mais protegido para as crianças. O fim de tarde é o momento mais bonito para estar por ali, quando o sol baixo ilumina as águas entre as ilhas próximas e cria cenários generosos para fotos voltadas para o mar aberto.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Ilha_do_Boi_(Vit%C3%B3ria)",
+      "https://esbrasil.com.br/ilha-do-boi-praias-paradisiacas-em-meio-a-agitacao-da-capital/"
+    ],
+    "queries": [
+      "Ilha do Boi Vitória ES ponto turístico",
+      "Ilha do Boi Vitória Espírito Santo história bairro"
+    ]
+  },
+  {
+    "rio_id": "d5abdf55-9303-46ff-bbd0-65f69f675cc6",
+    "canonical_key": "tripadvisor:attraction:11947452",
+    "nome": "Rota Do Lagarto",
+    "municipio": "Domingos Martins",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Rota Do Lagarto\" — município Domingos Martins/ES.\nEndereço: Rota do Lagarto - Aracê, Domingos Martins - ES, 29260-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 69.3,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na serra capixaba, em Aracê, distrito de Domingos Martins, a Rota do Lagarto costura cerca de oito quilômetros de estrada entre montanhas, com vistas quase contínuas para a formação rochosa que dá nome ao caminho e para a silhueta inconfundível da Pedra Azul. O trajeto é pontuado por pousadas aconchegantes, cafés coloniais, restaurantes de gastronomia artesanal, ateliês de arte e lojinhas de produtos regionais, um roteiro que mistura paisagem serrana e cultura local a cada curva. A rota também dá acesso às trilhas do Parque Estadual da Pedra Azul, entre elas a trilha do lagarto e a do mirante, que se conectam em um circuito para quem quer caminhar entre araucárias e afloramentos de granito. As primeiras horas da manhã costumam trazer a serra coberta de neblina, um espetáculo à parte para quem gosta de fotografar paisagens enevoadas, enquanto o fim da tarde revela cores mais quentes sobre a pedra. É um passeio que pede roupa de frio, mesmo em pleno verão capixaba, porque a altitude muda tudo.",
+    "status": "ok",
+    "fontes": [
+      "https://www.domingosmartins.com.br/v1/rota-do-lagarto/",
+      "https://www.alltrails.com/trail/brazil/espirito-santo/rota-do-lagarto",
+      "https://destinoses.com/o-que-fazer/rota-do-lagarto/"
+    ],
+    "queries": [
+      "Rota do Lagarto Domingos Martins Aracê",
+      "\"Rota do Lagarto\" Domingos Martins trilha"
+    ]
+  },
+  {
+    "rio_id": "d023b3bb-459d-4473-8435-c9ceff3ead50",
+    "canonical_key": "places:ES:ChIJuYZOUmo_uAARNwioqNxJa-U",
+    "nome": "Karcará Adventure",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Karcará Adventure\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "Entre as paisagens do Espírito Santo, a promessa de um passeio de aventura desperta a curiosidade de quem busca adrenalina e contato com a natureza. É esse tipo de expectativa, de trilha, altura e ar livre, que costuma movimentar uma experiência assim, mesmo antes de qualquer detalhe se revelar.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Karcará Adventure Espírito Santo",
+      "Karcará Adventure turismo aventura ES"
+    ]
+  },
+  {
+    "rio_id": "7b437d83-0a88-4197-9bce-b9f0595a0edb",
+    "canonical_key": "tripadvisor:attraction:4056565",
+    "nome": "Praia Da Sereia",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Da Sereia\" — município Vila Velha/ES.\nEndereço: Costa Beach, Vila Velha - Espírito Santo, 29101-012, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na Praia da Costa, em Vila Velha, a Praia da Sereia se abre como uma enseada recolhida de quatrocentos e cinquenta metros, protegida por ilhotas e costões que mantêm o mar sempre calmo e transparente. O nome vem de uma escultura de sereia instalada no local, um detalhe que já virou símbolo do lugar e ponto de referência para quem chega. A praia foi a primeira do Espírito Santo a receber o selo internacional Bandeira Azul, reconhecimento concedido a poucas praias brasileiras pela qualidade da água e da gestão ambiental, e também sedia o projeto Praia Legal, que garante banho de mar inclusivo com rampas, banheiros adaptados e um calçadão com ciclovia. É um recanto que funciona tanto para quem busca um mergulho tranquilo em família quanto para quem quer só observar o vaivém das pranchas de stand-up paddle e caiaque. Vale ir pela manhã, quando o mar está mais espelhado, e aproveitar a escultura da sereia como ponto certeiro para fotos com o mar ao fundo.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_da_Sereia_(Vila_Velha)",
+      "https://turismo.vilavelha.es.gov.br/o-que-fazer/praias/praia-da-sereia-55"
+    ],
+    "queries": [
+      "Praia da Sereia Vila Velha ES Costa Beach",
+      "Praia da Sereia Vila Velha Espírito Santo"
+    ]
+  },
+  {
+    "rio_id": "4f5440dd-5167-4f5c-8fd6-5c27c4e14157",
+    "canonical_key": "places:ES:ChIJbx1IrQQYuAARrDd2pgNSh3E",
+    "nome": "Parque Pedra Da Cebola",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Parque Pedra Da Cebola\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "Entre os bairros Jardim da Penha e Mata da Praia, em Vitória, o Parque Pedra da Cebola ocupa uma antiga pedreira que ficou abandonada por quase duas décadas até ser transformada em área verde em 1997. O nome vem de uma rocha esculpida pela natureza em forma de cebola gigante, que se apoia sobre outra pedra e descama em camadas, como se estivesse sempre se abrindo. Vegetação de restinga e Mata Atlântica cobre boa parte do parque, abrigando pequenos répteis e aves entre trilhas usadas para caminhada, corrida e ciclismo. Do mirante, a vista alcança o Maciço Central, o Porto de Tubarão e o Morro do Mestre Álvaro, um panorama que vale o esforço de subir até lá, especialmente no fim da tarde, quando a luz rasante desenha bem os contornos da paisagem. É um programa que serve tanto para quem quer só sentar à sombra perto do lago quanto para quem vai em busca de exercício ao ar livre, sozinho, em casal ou com crianças no playground.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_Pedra_da_Cebola",
+      "https://m.vitoria.es.gov.br/semmam/parque-pedra-da-cebola",
+      "https://vitoria.es.gov.br/noticia/parque-pedra-da-cebola-e-reconhecido-como-simbolo-em-area-verde-52655"
+    ],
+    "queries": [
+      "Parque Pedra da Cebola Espírito Santo",
+      "\"Pedra da Cebola\" parque ES"
+    ]
+  },
+  {
+    "rio_id": "ca493b3b-4a06-4231-9f1b-bb394ee44d72",
+    "canonical_key": "tripadvisor:attraction:4057086",
+    "nome": "Praia Peracanga",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Peracanga\" — município Guarapari/ES.\nEndereço: Praia de Peracanga - Guarapari, ES, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 63.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na Enseada Azul, ao sul de Guarapari, a Praia de Peracanga estende quase um quilômetro de areia clara junto a um mar raso e verde-azulado, com ondas pequenas que fazem dela uma escolha certeira para quem viaja com crianças. O nome, de origem indígena, significa espinha de peixe, uma referência que ecoa a vocação pesqueira que ainda marca o ritmo tranquilo do lugar. Mais afastada do centro urbano que outras praias de Guarapari, Peracanga guarda um clima de vila de pescadores, com águas calmas que convidam ao stand-up paddle e ao caiaque em dias de mar liso. É um bom programa para quem busca sossego sem abrir mão da praia, seja sozinho, em casal ou em família. O início da manhã, com o mar ainda parado e poucas pessoas na areia, é o melhor momento para caminhar pela orla e fotografar o contraste entre o verde da água e o azul do céu.",
+    "status": "ok",
+    "fontes": [
+      "https://www.guaraparivirtual.com.br/290/praia-de-peracanga-descubra-a-tranquilidade-da-enseada-azul-em-guarapari",
+      "https://destinoses.com/o-que-fazer/praia-de-peracanga/"
+    ],
+    "queries": [
+      "Praia Peracanga Guarapari",
+      "Praia de Peracanga Guarapari Espírito Santo"
+    ]
+  },
+  {
+    "rio_id": "49caee37-8906-4d0f-9c80-a4e30a0a7180",
+    "canonical_key": "places:ES:ChIJ2bIYUgA_uAAR7VEQqdsRf_o",
+    "nome": "Figueira Da Esquina 🌳❤️",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Figueira Da Esquina 🌳❤️\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "No cotidiano de uma esquina qualquer do Espírito Santo, uma figueira que ganhou nome próprio sugere a afeição de quem passa por ali todos os dias. É esse tipo de vínculo simples entre uma árvore e sua vizinhança que costuma transformar um canto comum em ponto de referência local.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "\"Figueira da Esquina\" Espírito Santo árvore",
+      "Figueira da Esquina ponto turístico ES Brasil"
+    ]
+  },
+  {
+    "rio_id": "30a48e6f-b1f1-46dc-b2cd-88bf579d897a",
+    "canonical_key": "tripadvisor:attraction:4057440",
+    "nome": "Praia Itaúnas",
+    "municipio": "Conceição da Barra",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Itaúnas\" — município Conceição da Barra/ES.\nEndereço: ES-209 - Itaúnas, Conceição da Barra - ES, 29960-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "O mar aqui parece ter dois ritmos: um que quebra nas ondas e outro que pulsa nos pés descalços sobre a areia quente, ao som do forró que embala Itaúnas o ano inteiro. As dunas douradas se movem lentamente com o vento, e foi justamente esse movimento que, entre as décadas de 1950 e 1970, soterrou parte da antiga vila, depois que o desmatamento da mata que protegia a região abriu caminho para uma erosão severa. O que poderia ter sido só uma história de perda virou símbolo de preservação: em 1986 as dunas foram tombadas como patrimônio histórico e paisagístico do Espírito Santo, e alguns anos depois nasceu o Parque Estadual de Itaúnas, que hoje protege essa paisagem entre a foz do rio Itaúnas e o litoral norte capixaba. À noite, a vila troca o silêncio das dunas pelo forró pé de serra, ritmo que tornou o lugar conhecido em todo o país, e pelo reggae que embala os bares até tarde. Vale caminhar pelas dunas ao entardecer, quando a luz dourada contrasta com a areia branca e cria cenários bonitos para fotos, e reservar um tempo para atravessar o rio Itaúnas, sentindo a mudança de temperatura entre a água doce e a salgada. Leve água e protetor solar, porque a caminhada pelas dunas expostas ao sol costuma ser mais longa do que parece, e repare nas pegadas de aves e na vegetação rasteira que resiste entre as ondulações de areia.",
+    "status": "ok",
+    "fontes": [
+      "https://www.agazeta.com.br/capixapedia/itaunas-a-curiosa-historia-da-vila-que-foi-soterrada-por-areia-no-es-0722",
+      "https://tenhominhaloucura.wordpress.com/2015/06/01/itaunas-a-capital-nacional-do-forro/"
+    ],
+    "queries": [
+      "Praia de Itaúnas Conceição da Barra ES dunas história",
+      "Praia de Itaúnas forró reggae vila"
+    ]
+  },
+  {
+    "rio_id": "f8f14b04-a67a-4df3-ad26-1d2da7585ce9",
+    "canonical_key": "tripadvisor:attraction:2408027",
+    "nome": "Praia Meaípe",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia Meaípe\" — município Guarapari/ES.\nEndereço: Meaípe Beach - Guarapari, Espírito Santo, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entre falésias que emolduram a orla e uma vila que ainda vive do mar, a Praia de Meaípe guarda o ritmo de quem pesca, cozinha moqueca e borda renda de bilro há gerações. A areia escura da região ficou conhecida por suas propriedades terapêuticas e ajudou a dar a Guarapari o apelido de Cidade Saúde, motivo pelo qual muita gente vem até aqui não só para nadar, mas para descansar o corpo na areia quente. As águas costumam ser calmas e claras, protegidas pela formação rochosa ao redor, o que torna o mar convidativo tanto para quem quer nadar tranquilo quanto para quem só busca sentar à beira d'água. A tradição da renda de bilro, passada de geração em geração entre as famílias de pescadores, ainda pode ser vista em algumas mãos habilidosas pela vila, um fio de memória que resiste ao lado dos barcos coloridos. É bom chegar ainda pela manhã, quando o sol ilumina as falésias e a luz realça o contraste entre a pedra, a areia escura e o verde ao redor, ideal para fotos com a formação rochosa ao fundo. Vale sentar em um dos points à beira-mar ao entardecer para ver os barcos voltando da pesca, e reservar espaço no estômago para uma moqueca capixaba, prato que resume o sabor da vila.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_de_Mea%C3%ADpe",
+      "https://terracapixaba.com/en/2024/06/praia-de-meaipe-uma-das-10-praias-mais-bonitas-do-brasil.html"
+    ],
+    "queries": [
+      "Praia de Meaípe Guarapari ES vila de pescadores",
+      "Meaípe Guarapari praia características"
+    ]
+  },
+  {
+    "rio_id": "95be0d8a-edb7-47d8-865e-e3efa8c93056",
+    "canonical_key": "tripadvisor:attraction:6436878",
+    "nome": "Fundação Projeto Tamar - Vitória",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Fundação Projeto Tamar - Vitória\" — município Vitória/ES.\nEndereço: Av. Nossa Sra. dos Navegantes, 700A - Enseada do Suá, Vitória - ES, 29050-256, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 57.5,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "Na Enseada do Suá, onde a baía de Vitória se abre para o horizonte, um mirante debruçado sobre a água guarda tanques onde nadam tartarugas marinhas de diferentes idades e espécies, algumas ainda do tamanho de uma mão. O Museu Aberto das Tartarugas Marinhas da Fundação Projeto Tamar foi inaugurado em 2012 dentro do Parque Municipal Ilha do Papagaio, fruto de uma parceria entre a prefeitura de Vitória e o projeto que, desde o início dos anos 1980, monitora praias capixabas para proteger ninhos e filhotes. A escolha do estado não é acaso: a foz do Rio Doce, mais ao norte, é um dos principais pontos de desova de tartaruga-cabeçuda e de tartaruga-de-couro, espécie criticamente ameaçada, enquanto o Arquipélago de Trindade, também capixaba, é o principal berçário de tartarugas-verdes do Atlântico Sul ocidental. Visitar o espaço é acompanhar, em poucos metros, todo o ciclo de vida desses animais, do filhote recém-saído do ovo ao adulto de carapaça robusta. Vale reservar um tempo no mirante para observar a baía de Vitória ao fundo, ótimo cenário para fotos, e acompanhar com atenção a explicação sobre por que cada espécie está ali. Leve protetor solar, já que boa parte do percurso é ao ar livre, e observe com calma o movimento das tartarugas maiores, que costumam se aproximar do vidro quando alguém se aproxima.",
+    "status": "ok",
+    "fontes": [
+      "https://www.tamar.org.br/centros_visitantes.php?cod=24",
+      "https://www.vitoria.es.gov.br/semmam/projeto-tamar"
+    ],
+    "queries": [
+      "Fundação Projeto Tamar Vitória Espírito Santo tartarugas marinhas",
+      "Projeto Tamar Vitória Enseada do Suá visitação"
+    ]
+  },
+  {
+    "rio_id": "a0f5fcbc-32eb-4e5e-9b01-f80ad85c3f4e",
+    "canonical_key": "tripadvisor:attraction:552651",
+    "nome": "Praia Do Arpoador",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Praia Do Arpoador\" — município Rio de Janeiro/RJ.\nEndereço: Arpoador - Ipanema, Rio de Janeiro, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entre Copacabana e Ipanema, uma formação rochosa se projeta sobre o mar e reúne, todo fim de tarde, surfistas, casais, moradores e turistas em torno do mesmo ritual: aplaudir o sol se pondo no oceano, fenômeno raro numa costa que, na maior parte do Brasil, olha para o nascente. O nome Arpoador vem do período colonial, quando pescadores usavam essas pedras como posto de observação para arpoar baleias que se aproximavam da costa, e o lugar carrega ainda outra camada de história: foi ali que nasceram os primeiros acordes da Bossa Nova, nos anos 1960, entre amigos reunidos à beira-mar. Hoje a praia é considerada o berço do surfe carioca, com ondas constantes e iluminação noturna que permite surfar mesmo depois que o sol se esconde. Da Pedra do Arpoador, o mirante mais querido da Zona Sul, dá para ver toda a orla de Ipanema, o Morro Dois Irmãos e, em dias claros, até a Pedra da Gávea recortada no horizonte. Vale chegar um pouco antes do pôr do sol para garantir lugar na pedra e acompanhar o espetáculo de cores se refletindo na água, ótimo momento também para fotos com o mar ao fundo. Observe os surfistas entrando e saindo da água entre as ondas, e repare no movimento heterogêneo da pedra, onde mate, prancha e violão dividem o mesmo espaço.",
+    "status": "ok",
+    "fontes": [
+      "https://riotrip.com.br/arpoador/",
+      "https://riomemorias.com.br/pt/memoria/pedra-do-arpoador"
+    ],
+    "queries": [
+      "Praia do Arpoador Rio de Janeiro pôr do sol história",
+      "Arpoador Ipanema surf pedra mirante"
+    ]
+  },
+  {
+    "rio_id": "683207d9-2a8b-4785-9500-ec5d5fc2ee24",
+    "canonical_key": "tripadvisor:attraction:9796897",
+    "nome": "Fazenda Rico Caipira",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Fazenda Rico Caipira\" — município Vila Velha/ES.\nEndereço: Avenida Jaguarussu, s/n - Morada da Barra, Vila Velha - ES, 29126-566, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 67.48,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A poucos minutos do centro de Vila Velha, o cenário muda: em vez de mar, aparecem trilhas de terra batida, animais de fazenda e um trenzinho que atravessa a mata como se o tempo tivesse voltado a um Brasil mais rural. A Fazenda Rico Caipira reúne mais de cinquenta atividades ao ar livre, entre passeios a cavalo, o passeio de trem pela vegetação, a Vila dos Dinossauros e um espaço temático inspirado no Sítio do Pica-Pau Amarelo, com personagens como Emília e Narizinho circulando entre as crianças. É um lugar pensado para famílias, mas também para quem quer simplesmente desacelerar em contato com bichos, terra e mato, longe da correria da orla. O restaurante, de cozinha mineira, fecha o passeio com pratos fartos, servidos para dividir. Vale reservar o dia inteiro, já que as atividades se espalham por diferentes pontos da propriedade e pedem tempo para aproveitar sem pressa. Leve roupas confortáveis e calçado fechado, porque parte do trajeto é em terra e mata, e aproveite para observar de perto os animais da pequena fazenda, um dos momentos mais procurados pelas crianças. Boas fotos saem no passeio de trem, com a vegetação como fundo, e também na Vila dos Dinossauros, o cenário mais lúdico do passeio.",
+    "status": "ok",
+    "fontes": [
+      "https://www.ricocaipira.com.br/",
+      "https://es360.com.br/diversao/noticia/alem-do-carnaval-6-atracoes-de-agroturismo-em-vila-velha/"
+    ],
+    "queries": [
+      "Fazenda Rico Caipira Vila Velha Espírito Santo",
+      "\"Rico Caipira\" Vila Velha turismo rural"
+    ]
+  },
+  {
+    "rio_id": "75d8a8cb-e302-45cf-8088-14140bebd1ab",
+    "canonical_key": "tripadvisor:attraction:2408105",
+    "nome": "Praia De Itapuã",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia De Itapuã\" — município Vila Velha/ES.\nEndereço: Praia de Itapoã, Espírito Santo, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 61.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Com quase três quilômetros de areia larga entre a Praia da Costa e a Praia de Itaparica, a Praia de Itapuã reúne num só trecho a vida esportiva, a tradição pesqueira e o point mais concorrido de Vila Velha, conhecido informalmente como Beverly Hills, onde o footvolley, o frescobol e o beach tennis dividem espaço com quem só quer caminhar à beira-mar. O calçadão com ciclovia, sombreado por amendoeiras, acompanha toda a extensão da praia e conecta bares, restaurantes e quiosques que ficam animados até tarde da noite, com música ao vivo quase todos os dias. O mar alterna trechos calmos e ondas mais fortes, o que atrai tanto famílias quanto praticantes de esportes aquáticos, e a tradição da pesca ainda resiste entre os moradores mais antigos do bairro. Dali também é possível avistar as ilhas de Itatiaia e Pituã, destino de passeios de barco para quem quer sair da areia por algumas horas. Vale caminhar ou pedalar pelo calçadão nas primeiras horas da manhã, quando a luz ainda é suave e o movimento é menor, ótimo momento para fotos com as ilhas ao fundo. À tardinha, os quiosques enchem para ver o dia terminar, e vale prestar atenção nos barcos de pesca retornando perto da faixa de areia mais próxima do costão.",
+    "status": "ok",
+    "fontes": [
+      "https://esbrasil.com.br/itapua-praia-preservada-e-qualidade-de-vida-em-vila-velha/",
+      "https://turismo.vilavelha.es.gov.br/o-que-fazer/praias/praia-de-itapua-56"
+    ],
+    "queries": [
+      "Praia de Itapuã Vila Velha Espírito Santo",
+      "Itapoã Vila Velha praia surf lagoa"
+    ]
+  },
+  {
+    "rio_id": "59fca45e-e79c-4f30-b919-92f19f404e24",
+    "canonical_key": "tripadvisor:attraction:4783109",
+    "nome": "Praia De Manguinhos",
+    "municipio": "Serra",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Praia De Manguinhos\" — município Serra/ES.\nEndereço: Praia de Manguinhos - Av. Sagarana, 317 - Manguinhos, Serra - ES, 29173-007, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Manguinhos guarda o clima de balneário bucólico a poucos quilômetros de Vitória, onde uma vila de pescadores tradicional resiste ao lado da orla movimentada. No núcleo histórico, a praça central funciona como ponto de encontro, especialmente nos fins de semana, quando ganha vida com feira de artesanato e barracas de comida típica capixaba, entre moquecas e outros pratos regionais. Ao longo do ano, a vila também vira palco de festas que misturam fé e festa, como a Festa de São Sebastião em janeiro e o tradicional Banho de Mar à Fantasia no carnaval, além de festivais mais recentes voltados à música e à gastronomia. É um lugar que combina o ritmo lento de vila de pescadores com a agitação de quem vem para os restaurantes à beira-mar. Vale chegar no fim da tarde, quando os barcos de pesca começam a voltar e a praça ganha movimento, bom momento também para fotos com os barcos coloridos na areia. Aproveite para caminhar até o núcleo histórico e observar a arquitetura simples da vila, e prove ao menos um prato da culinária local nos restaurantes da orla.",
+    "status": "ok",
+    "fontes": [
+      "https://www.buser.com.br/destinos/pontos-turisticos/es/serra/praia-de-manguinhos"
+    ],
+    "queries": [
+      "Praia de Manguinhos Serra Espírito Santo",
+      "Manguinhos Serra ES orla surf pesca"
+    ]
+  },
+  {
+    "rio_id": "fce281c0-745e-4094-9b38-3bdd310c7a73",
+    "canonical_key": "places:ES:ChIJ387UnH6zuQARiGqcr93NhTE",
+    "nome": "Parque Estadual Da Pedra Azul",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Parque Estadual Da Pedra Azul\" — município /ES.\nEndereço: Rota do Lagarto, s/n - Vila de Pedra Azul, Domingos Martins - ES, 29278-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 40.5,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "No distrito de Aracê, em Domingos Martins, uma rocha imensa e azulada rasga a paisagem de mata atlântica preservada e entrega uma das vistas mais altas do Espírito Santo. O Parque Estadual da Pedra Azul protege 1.240 hectares de floresta ao redor do Pico Pedra Azul, que chega a 1.822 metros de altitude, na mesma região da Pedra das Flores, ponto mais alto do município, com 1.909 metros. A cor azulada que dá nome à formação aparece principalmente ao amanhecer e ao entardecer, quando a luz incide de forma rasante sobre a rocha, um efeito conhecido de quem mora na região. O clima de altitude, mais frio que o litoral capixaba, ajuda a explicar por que Domingos Martins é chamada de Cidade do Verde, com quase metade do território coberto por remanescentes de mata atlântica. A Rota do Lagarto, caminho que leva até o parque, reúne pousadas e restaurantes que aproveitam a paisagem de montanha. Vale chegar cedo para caminhar pelas trilhas com o ar ainda fresco da manhã e aproveitar a luz mais suave para fotografar a rocha, que muda de tom ao longo do dia. Leve um casaco, porque a temperatura cai bastante em relação ao litoral, e reserve um tempo parado diante da formação rochosa para observar como as nuvens se movem em torno do pico.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Domingos_Martins"
+    ],
+    "queries": [
+      "Parque Estadual da Pedra Azul Domingos Martins Espírito Santo",
+      "Pedra Azul ES trilhas mata atlântica altitude"
+    ]
+  },
+  {
+    "rio_id": "aada2a84-7131-4dbb-9bae-3c2001e42c66",
+    "canonical_key": "places:ES:ChIJUcQXhCQVuAARWM5TNeSe9hk",
+    "nome": "Capixaba Foto Tour",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Capixaba Foto Tour\" — município /ES.\nEndereço: R. Itacibá, 135 - Vila Velha, ES, 29102-280, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 48.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "Mais do que um passeio, o Capixaba Foto Tour propõe atravessar o Espírito Santo com uma câmera a tiracolo e um carro particular à disposição, unindo roteiro turístico e ensaio fotográfico numa só experiência. A proposta passa por pontos como o Convento da Penha, em Vila Velha, e outros cenários naturais e históricos de Vitória e da região, pensados tanto para casais que querem registrar um momento especial quanto para viajantes que preferem voltar com fotos feitas por quem conhece a luz e os ângulos de cada lugar. É uma forma de conhecer o litoral capixaba sem se preocupar com equipamento fotográfico. Vale conversar antes sobre o roteiro desejado, priorizando os horários de luz mais bonita, como o fim de tarde nos mirantes voltados para o mar. Leve roupas que combinem com a paisagem que pretende fotografar, e esteja aberto a sugestões de ângulos e trilhas menos óbvias, já que parte da experiência é justamente descobrir cantos do estado que passariam despercebidos num passeio sozinho.",
+    "status": "ok",
+    "fontes": [
+      "https://www.instagram.com/capixabafototour/"
+    ],
+    "queries": [
+      "Capixaba Foto Tour Vila Velha",
+      "\"Capixaba Foto Tour\""
+    ]
+  },
+  {
+    "rio_id": "d851acf2-555e-40f3-8da3-c89a39a3f6aa",
+    "canonical_key": "tripadvisor:attraction:10807919",
+    "nome": "Museu Garoto",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Museu Garoto\" — município Vila Velha/ES.\nEndereço: Praca meyerfreund, s/n - Glória, Vila Velha - ES, 29000-001, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 64.58,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Num canto de Vila Velha ligado à história do chocolate capixaba, um pequeno museu guarda memórias e aromas de doçura que remetem à infância de muita gente. É um convite para caminhar devagar, deixar a curiosidade guiar cada vitrine e sair de lá com vontade de provar um chocolate na sequência.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Museu Garoto Vila Velha Espírito Santo chocolate",
+      "\"Museu Garoto\" Vila Velha chocolate história"
+    ]
+  },
+  {
+    "rio_id": "5d9f6a9f-c59d-4cbe-9a65-fb5bc2b955bb",
+    "canonical_key": "places:ES:ChIJixdqrlIWuAARlfIafNUX-qk",
+    "nome": "Morro Do Moreno",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Morro Do Moreno\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "O Morro do Moreno se ergue como uma sentinela natural sobre Vila Velha, com seus 184 metros de altura oferecendo uma das vistas mais amplas do litoral capixaba: de um lado a Praia da Costa se estende até o horizonte, do outro a Terceira Ponte recorta a Baía de Vitória. Ainda no século XVI, Vasco Fernandes Coutinho colocou o colono João Moreno para vigiar o topo do morro e proteger a região contra ataques de navios corsários, e é dele que vem o nome que o lugar carrega até hoje. Com o tempo, o posto de observação virou referência para orientar embarcações que entravam na baía, e em 2021 o morro foi declarado monumento natural de Vila Velha, reconhecimento de um dos últimos fragmentos de Mata Atlântica preservados em área urbana na região. A trilha até o alto reúne caminhantes, esportistas e quem simplesmente busca um fim de tarde bonito, e é justamente o fim de tarde o horário mais generoso com a luz, quando o sol se põe sobre a baía e ilumina a Praia da Costa em tons dourados. O mirante conhecido como Testa, um dos pontos mais fotografados do percurso, fica sobre uma laje de pedra que pede atenção redobrada, principalmente depois de chuva, quando a superfície fica escorregadia. Vale levar água, calçado com boa aderência e reservar um tempo para observar o Convento da Penha, vizinho de topo, que compõe o cenário ao lado da vista para Vitória.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Morro_do_Moreno",
+      "https://esbrasil.com.br/morro-do-moreno-uma-vista-privilegiada-de-vila-velha/",
+      "https://es360.com.br/personagens/noticia/morro-do-moreno-conheca-a-historia-por-tras-do-nome/"
+    ],
+    "queries": [
+      "Morro do Moreno Vila Velha Espírito Santo mirante",
+      "Morro do Moreno história Vila Velha ES"
+    ]
+  },
+  {
+    "rio_id": "1d4b4571-8d56-4cd9-8eb4-3ce2453ae6bf",
+    "canonical_key": "tripadvisor:attraction:8533291",
+    "nome": "Farol De Santa Luzia",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Farol De Santa Luzia\" — município Vila Velha/ES.\nEndereço: R. Santa Luzia, 2 - Praia da Costa, Vila Velha - ES, 29101-100, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 69.76,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No fim da Praia da Costa, em Vila Velha, o Farol de Santa Luzia marca o horizonte com sua torre octogonal de doze metros, erguida para guiar embarcações rumo à Baía de Vitória e ao Porto de Tubarão. Inaugurado em 1871, durante o reinado de Dom Pedro II, o farol teve suas peças metálicas fabricadas na Escócia e sua localização estratégica idealizada pelo Barão de Cotegipe, então ministro da Marinha Imperial. Ao longo dos anos, o mecanismo original a mercúrio foi substituído por rolamentos magnéticos, ampliando o alcance do facho de luz para 60 quilômetros mar afora. Hoje sob a guarda da Marinha do Brasil, o farol funciona também como um pequeno museu, com uma Sala da Memória que narra, em desenhos nas paredes, a trajetória da navegação na costa capixaba, do navegador Américo Vespúcio até a instalação do próprio farol na Praia da Costa. É um passeio que rende boas fotos no fim de tarde, quando a luz baixa contrasta com o branco e o metal da torre, e vale observar de perto o artesanato e as peças náuticas expostas no entorno, pequenos detalhes que contam a história marítima do lugar.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Farol_de_Santa_Luzia",
+      "https://esbrasil.com.br/conheca-as-belezas-do-farol-de-santa-luzia-em-vila-velha/",
+      "https://terracapixaba.com/en/2024/01/farol-de-santa-luzia-um-belissimo-cartao-postal-de-vila-velha.html"
+    ],
+    "queries": [
+      "Farol de Santa Luzia Praia da Costa Vila Velha história",
+      "Farol Santa Luzia Vila Velha turismo"
+    ]
+  },
+  {
+    "rio_id": "320c86ef-9146-45ac-b636-0c3e46e2327a",
+    "canonical_key": "tripadvisor:attraction:2408047",
+    "nome": "Curva Da Jurema",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Curva Da Jurema\" — município Vitória/ES.\nEndereço: Praia da Curva da Jurema - Ilha do Boi, Vitória - ES, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entre a Praia do Canto e a Ilha do Boi, a Curva da Jurema é uma das praias mais tradicionais de Vitória, protegida pelas ilhas do Boi e do Frade, que deixam o mar praticamente sem ondas e favorecem esportes como a vela. Ali funciona uma escola municipal de vela, e não é raro ver veleiros cortando a água calma enquanto famílias aproveitam a sombra das árvores plantadas ao longo da faixa de areia. Recentemente revitalizada, a orla ganhou quiosques renovados que servem a culinária capixaba, ciclovia e um calçadão que convida a caminhadas tranquilas com a baía como pano de fundo. O fim de tarde é o momento mais bonito para estar por ali, quando o sol se põe e colore o mar de laranja, um cenário que rende boas fotos do calçadão. Vale caminhar até a ponta da praia para observar os barcos ancorados e sentir a brisa que torna esse trecho da ilha um refúgio dentro da própria capital.",
+    "status": "ok",
+    "fontes": [
+      "https://esbrasil.com.br/praia-curva-da-jurema-conheca/",
+      "https://vitoria.es.gov.br/noticia/curva-da-jurema-esta-de-cara-nova-50994",
+      "https://www.vitoria.es.gov.br/semmam/curva-da-jurema"
+    ],
+    "queries": [
+      "Curva da Jurema Ilha do Boi Vitória praia",
+      "\"Curva da Jurema\" Vitória ES"
+    ]
+  },
+  {
+    "rio_id": "ab8cf263-4999-4fb4-a024-67499ef3a08d",
+    "canonical_key": "places:ES:ChIJccvjqeKnuQARRlT4lOL0N-I",
+    "nome": "Cachoeira De Matilde",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Cachoeira De Matilde\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "Na zona rural de Alfredo Chaves, a cerca de 90 quilômetros de Vitória, a Cachoeira de Matilde despenca em uma queda livre que está entre as maiores do Espírito Santo, formada pelas águas do rio Benevente. Também chamada de Cachoeira Engenheiro Reeve, ela leva o nome do distrito de Matilde, que já foi ponto de passagem da antiga Estrada de Ferro Leopoldina, no início do século XX, quando a região se conectava por trilhos ao restante do estado. A antiga estação ferroviária, ainda de pé no distrito, é um lembrete silencioso desse passado, um contraste bonito com a força bruta da queda d'água. Um caminho pavimentado leva até o mirante de onde se observa a cachoeira despencando entre a mata nativa, ponto ideal para fotos com a vegetação preservada ao fundo. O banho não é permitido por causa da correnteza forte, mas o lugar atrai quem pratica escalada e rapel nas paredes de rocha ao redor. A visita rende mais nas primeiras horas do dia, com a luz suave entrando pela mata e o som da água ainda sem o movimento das horas mais cheias.",
+    "status": "ok",
+    "fontes": [
+      "https://www.penaestrada.blog.br/cachoeira-de-matilde/",
+      "https://esbrasil.com.br/cachoeira-de-matilde-encanta-com-beleza-imponencia/",
+      "https://capixabadagema.com.br/cachoeira-de-matilde/"
+    ],
+    "queries": [
+      "Cachoeira de Matilde Espírito Santo Santa Teresa",
+      "\"Cachoeira de Matilde\" ES turismo"
+    ]
+  },
+  {
+    "rio_id": "72a73a20-3d77-4cd0-81dd-973a35477e89",
+    "canonical_key": "places:ES:ChIJ0zGZYgAVuAARVjkQ8jzvI_4",
+    "nome": "Castanheira Do Pensamento",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Castanheira Do Pensamento\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "Debaixo da copa larga de uma castanheira, à sombra generosa que essas árvores costumam oferecer ao litoral capixaba, o lugar convida a uma pausa contemplativa. É desses cantos que pedem passos mais lentos e um olhar atento aos detalhes do entorno, sem pressa de seguir adiante.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Castanheira do Pensamento Espírito Santo árvore",
+      "\"Castanheira do Pensamento\" turismo"
+    ]
+  },
+  {
+    "rio_id": "2ac08819-a792-4cca-a974-9e80437984ce",
+    "canonical_key": "places:ES:ChIJN7WoA8YXuAARZEvZfTkL3N0",
+    "nome": "Secretaria De Estado Do Turismo - Setur/Es",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Secretaria De Estado Do Turismo - Setur/Es\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "Em Vitória, a Secretaria de Estado do Turismo do Espírito Santo, a Setur, é o órgão que planeja, coordena e promove o turismo capixaba, articulando praias, serras, cachoeiras e patrimônio histórico em uma estratégia única para o estado. É dali que partem boa parte das iniciativas que buscam aproximar o visitante da diversidade do Espírito Santo, do litoral de Vila Velha às montanhas do Caparaó. Para quem está desenhando um roteiro pelo estado, vale observar os materiais e sinalizações com QR Code que a Setur espalha pelos pontos turísticos capixabas, pequenos detalhes que ajudam a conectar a visita física à história e aos dados de cada lugar percorrido.",
+    "status": "ok",
+    "fontes": [
+      "https://setur.es.gov.br/",
+      "https://www.es.gov.br/Contents/Item/Display/440"
+    ],
+    "queries": [
+      "Secretaria de Estado do Turismo Setur Espírito Santo",
+      "fetch: setur.es.gov.br"
+    ]
+  },
+  {
+    "rio_id": "aedc0f17-cca9-4a88-9716-4fa76bd9cedd",
+    "canonical_key": "places:ES:ChIJ7fn4gWC_uwARJ350v8R0VdI",
+    "nome": "Parque Estadual Cachoeira Da Fumaça",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Parque Estadual Cachoeira Da Fumaça\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "Na divisa entre Alegre e Ibitirama, na região da Serra do Caparaó, o Parque Estadual Cachoeira da Fumaça guarda uma queda d'água de 144 metros de altura, considerada a maior do Espírito Santo entre as de fluxo perene. A força da água ao se espatifar nas pedras se desfaz em uma nuvem de gotículas que lembra fumaça, o que deu nome ao lugar. Criado em 1984 e ampliado por decreto em 2009, o parque protege 162,5 hectares de nascentes e remanescentes de Mata Atlântica, com floresta estacional semidecidual, bromélias, helicônias e espécies como gato-do-mato e lontra. As trilhas, autoguiadas ou acompanhadas por monitores, atravessam a mata até pontos de observação da cachoeira, ideais para fotos amplas que captam tanto a queda quanto a névoa que ela produz. A visita rende mais nas primeiras horas da manhã, quando a luz ainda é suave e o som da água domina o ambiente antes do movimento do meio do dia. Vale calçado fechado para a trilha e atenção à fauna e à flora nativas que cercam o caminho.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_Estadual_da_Cachoeira_da_Fuma%C3%A7a",
+      "https://iema.es.gov.br/PECF",
+      "https://semeia.org.br/conexao-semeia/parques-do-mes/conheca-o-parque-estadual-cachoeira-da-fumaca/"
+    ],
+    "queries": [
+      "Parque Estadual Cachoeira da Fumaça Espírito Santo",
+      "fetch: pt.wikipedia.org/wiki/Parque_Estadual_da_Cachoeira_da_Fumaça"
+    ]
+  },
+  {
+    "rio_id": "9754e7f1-cfe5-4616-9817-49bc086d8b0b",
+    "canonical_key": "tripadvisor:attraction:312079",
+    "nome": "Pelourinho",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Pelourinho\" — município Salvador/BA.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No coração do Centro Histórico de Salvador, o Pelourinho reúne ladeiras de pedra, casarões coloniais de fachadas coloridas e igrejas barrocas em um dos conjuntos arquitetônicos mais importantes da América Latina. O nome vem da coluna de pedra que ali existiu, onde pessoas escravizadas eram publicamente castigadas durante o Brasil Colônia, uma marca dolorosa que hoje convive com a força da cultura afro-brasileira que pulsa nas ruas: o samba-reggae do Olodum, as rodas de capoeira, os terreiros e a culinária baiana têm no Pelourinho um dos seus palcos mais vivos. Fundada em 1549, Salvador foi a primeira capital do Brasil até 1763, e o bairro, reconhecido como Patrimônio Mundial pela Unesco desde 1985, carrega essa camada histórica em cada esquina. Caminhar pelo Largo do Pelourinho, oficialmente Praça José de Alencar, no fim da tarde permite ver a luz dourada realçar as cores das fachadas, um dos melhores momentos para fotos das ladeiras e dos detalhes em azulejo das igrejas. Vale observar de perto os relevos das portas e janelas, ouvir a música que costuma tomar as ruas e reservar tempo para simplesmente se perder pelos becos que ligam uma praça a outra.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Pelourinho_(Salvador)",
+      "https://www.archdaily.com/1136294/pelourinho-in-salvador-from-colonial-architecture-to-olodum",
+      "https://www.correiobraziliense.com.br/aqui/2025/09/04/pelourinho-simbolo-cultural-e-historico-de-salvador/"
+    ],
+    "queries": [
+      "Pelourinho Salvador Bahia história centro histórico",
+      "Pelourinho Salvador patrimônio mundial Unesco casarões coloridos"
+    ]
+  },
+  {
+    "rio_id": "3c6dc0dd-a9ba-4550-8e0b-8a31c53aabe5",
+    "canonical_key": "tripadvisor:attraction:2520738",
+    "nome": "Ilha Dos Frades",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Ilha Dos Frades\" — município Salvador/BA.\nEndereço: Ilha dos Frades, Salvador - Bahia, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No meio da Baía de Todos os Santos, a cerca de 25 quilômetros de Salvador, a Ilha dos Frades é a maior ilha do território soteropolitano, com um formato que lembra uma estrela de quinze pontas e mata atlântica preservada onde ainda se encontra pau-brasil nativo. O nome remonta ao período colonial, quando, segundo a tradição local, dois frades foram mortos ali pelos índios tupinambás que já habitavam a região antes da chegada dos portugueses. Vestígios desse passado aparecem em igrejas antigas e em um forte que serviu de prisão ao general Bento Gonçalves durante a Revolução Farroupilha, no século XIX. As praias de Loreto, Paramaná e da Ponta de Nossa Senhora de Guadalupe, esta última com selo Bandeira Azul, têm areia clara e mar calmo, um convite ao mergulho e à observação da vida marinha na baía. O melhor horário para aportar é pela manhã, quando o mar está mais tranquilo e a luz realça o verde da mata contra o azul da água, cenário perfeito para fotos da orla vista do barco. Vale prestar atenção ao ritmo simples da ilha, tão diferente da agitação da capital baiana que fica na mesma baía.",
+    "status": "ok",
+    "fontes": [
+      "https://en.wikipedia.org/wiki/Ilha_dos_Frades",
+      "https://quantocustaviajar.com/blog/ilha-dos-frades-salvador-bahia/",
+      "https://www.bahiaterra.com/posts/ilha-dos-frades"
+    ],
+    "queries": [
+      "Ilha dos Frades Baía de Todos os Santos Salvador",
+      "Ilha dos Frades praias história Salvador Bahia"
+    ]
+  },
+  {
+    "rio_id": "05c85908-dfaa-44a6-9c84-ad3353f6d1f2",
+    "canonical_key": "places:ES:ChIJ7bYmVAAVuAAROspAzox3rJQ",
+    "nome": "Escultura Do Peixe De Arame",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Escultura Do Peixe De Arame\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "Uma escultura de peixe feita em arame desponta como um detalhe curioso na paisagem urbana capixaba, o tipo de obra que chama atenção de quem passa e convida a parar por alguns segundos para observar os fios entrelaçados formando a silhueta do animal. É um convite a olhar com mais atenção os pequenos monumentos que pontuam o dia a dia das cidades.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Escultura do Peixe de Arame Espírito Santo",
+      "fetch: bing.com/search \"Escultura do Peixe de Arame\" Espirito Santo"
+    ]
+  },
+  {
+    "rio_id": "d28e56a4-e452-4b47-bb2a-0efc95acbe27",
+    "canonical_key": "tripadvisor:attraction:311247",
+    "nome": "Bondinho Pão De Açúcar",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Bondinho Pão De Açúcar\" — município Rio de Janeiro/RJ.\nEndereço: Av. Pasteur, 520 - Urca, Rio de Janeiro - RJ, 22290-240, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.5,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "Suspenso entre o céu e a Baía de Guanabara, o bondinho que sobe o Pão de Açúcar leva o visitante por uma das paisagens mais reconhecíveis do Brasil, com o mar recortando a cidade em enseadas e as praias de Copacabana, Ipanema, Leme e Botafogo se estendendo lá embaixo. O passeio existe desde 1912, quando o engenheiro Augusto Ferreira Ramos inaugurou o primeiro teleférico do país, o terceiro do mundo, ligando a Praia Vermelha ao Morro da Urca e, de lá, ao topo do Pão de Açúcar, a 396 metros de altura. Mais de um século depois, o sistema segue no mesmo traçado e já transportou mais de 31 milhões de pessoas, tornando-se parte da memória afetiva de quem visita o Rio de Janeiro. A subida acontece em duas etapas, e vale reservar tempo em cada patamar: do Morro da Urca já se avista boa parte da Baía de Guanabara, mas é do cume que a cidade se revela por inteiro, com Niterói do outro lado da água. O fim de tarde é o momento mais concorrido e também o mais bonito, quando o sol baixa sobre o mar e ilumina os morros em tons quentes, um bom motivo para levar uma câmera e um casaco leve, já que o vento no topo costuma ser mais forte que na cidade. Observe também o Bosque das Artes no caminho, e reserve um instante para simplesmente ficar parado diante do horizonte, sem pressa de descer.",
+    "status": "ok",
+    "fontes": [
+      "https://revistaoeste.com/historia/27-de-outubro-na-historia-bondinho-do-pao-de-acucar-e-inaugurado-no-rio-de-janeiro/",
+      "https://aventurasnahistoria.com.br/noticias/reportagem/historia-bondinho-pao-de-acucar-rio-de-janeiro.phtml",
+      "https://pt.wikipedia.org/wiki/Monumento_Natural_dos_Morros_do_P%C3%A3o_de_A%C3%A7%C3%BAcar_e_da_Urca"
+    ],
+    "queries": [
+      "Bondinho Pão de Açúcar Rio de Janeiro história",
+      "Pão de Açúcar bondinho Urca vista"
+    ]
+  },
+  {
+    "rio_id": "2738d6b7-1837-4ca9-aa19-a8710a260d05",
+    "canonical_key": "tripadvisor:attraction:1534420",
+    "nome": "Mercado Central De Belo Horizonte",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Mercado Central De Belo Horizonte\" — município Belo Horizonte/MG.\nEndereço: Av. Augusto de Lima, 744 - Centro, Belo Horizonte - MG, 30190-922, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entrar no Mercado Central de Belo Horizonte é atravessar um corredor de cheiros: café recém-passado, queijo minas curado, cachaça de alambique e goiabada cortada na hora se misturam entre bancas apinhadas de gente. O mercado nasceu em 1929, criado pelo então prefeito Cristiano Machado numa Belo Horizonte que tinha pouco mais de cinquenta mil habitantes e apenas três décadas de existência, reunindo num só endereço feiras que antes se espalhavam pela cidade. Passou por reformas e mudanças de gestão ao longo do século, entre elas a transformação em cooperativa de comerciantes em 1964, mas manteve a vocação original de concentrar o melhor da produção mineira, hoje distribuída por centenas de lojas. Vale caminhar sem pressa pelos corredores menos óbvios, longe da entrada principal, onde lojas tradicionais de queijo e cachaça funcionam há décadas e os vendedores costumam oferecer uma prova antes da compra. A luz entra em faixas pelas claraboias do teto, o que rende boas fotos no meio da manhã, quando o movimento já começou mas os corredores ainda não estão cheios. Leve uma sacola vazia: dificilmente alguém sai de lá sem um pedaço de queijo ou uma garrafa de cachaça de doce.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Mercado_Central_de_Belo_Horizonte",
+      "https://diariodocomercio.com.br/negocios/mercado-central-completa-95-anos-historia-comercio-mineiro/",
+      "https://kikacastro.com.br/2022/09/06/mercado-central-bh-melhores-lojas/"
+    ],
+    "queries": [
+      "Mercado Central Belo Horizonte história fundação",
+      "Mercado Central BH o que vender lojas queijo cachaça"
+    ]
+  },
+  {
+    "rio_id": "d2780b96-b3ce-4db9-9913-d31934bda827",
+    "canonical_key": "tripadvisor:attraction:318348",
+    "nome": "Praia Do Espelho",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Praia Do Espelho\" — município Porto Seguro/BA.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na maré baixa, a Praia do Espelho justifica seu nome: as piscinas naturais que se formam entre os recifes refletem o céu e as falésias coloridas ao redor, criando um espelho d'água que rendeu fama a esse trecho do litoral sul da Bahia, entre Trancoso e Caraíva. As falésias chegam a 45 metros de altura, em tons de rosa, vermelho, bege e ocre, emolduradas por coqueirais preservados que dão à paisagem um ar de raridade sem artifício. O nome oficial da praia é Curuípe, mas foi o efeito visual das marés baixas, quando o sol e os barrancos se espelham na água parada, que consagrou o apelido pelo qual ela é conhecida hoje. A experiência muda bastante conforme a maré: as piscinas naturais ficam mais rasas e cristalinas perto das luas nova e cheia, quando a variação da maré é maior, por isso vale consultar a tábua de marés antes de escolher o dia da visita. As primeiras horas da manhã trazem luz mais suave para fotografar as falésias, enquanto o fim de tarde acentua os tons quentes da rocha. Leve protetor solar, água e um calçado que possa entrar no mar, e reserve tempo para caminhar até a vizinha Praia dos Amores, que compartilha o mesmo fenômeno de piscinas naturais.",
+    "status": "ok",
+    "fontes": [
+      "https://revistaoeste.com/oestegeral/2026/02/27/a-praia-do-nordeste-conhecida-pelo-efeito-espelho-nas-aguas-calmas-revela-belissimas-piscinas-naturais-surpreendentes/",
+      "https://viajeguanabara.com.br/blog/praia-do-espelho-ba-guia-completo/",
+      "https://www.melhoresdestinos.com.br/praia-do-espelho-dicas.html"
+    ],
+    "queries": [
+      "Praia do Espelho Trancoso Porto Seguro característica",
+      "Praia do Espelho piscinas naturais falésias"
+    ]
+  },
+  {
+    "rio_id": "4c1abc4a-d4c3-4bc5-be06-62a0bfd5a5e9",
+    "canonical_key": "tripadvisor:attraction:1994886",
+    "nome": "Beto Carrero World",
+    "municipio": "Penha",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Beto Carrero World\" — município Penha/SC.\nEndereço: Rod. Beto Carrero World - Armação, Penha - SC, 88385-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Em Penha, no litoral norte de Santa Catarina, o maior parque temático da América Latina nasceu do sonho de um único homem: Beto Carrero, radialista, cantor sertanejo e publicitário que criou um alter ego caubói e transformou a fantasia do velho oeste em um universo de atrações inaugurado em 28 de dezembro de 1991. O parque cresceu ao longo das décadas incorporando zoológico, shows ao vivo, parcerias com marcas internacionais como a DreamWorks e montanhas-russas que se tornaram símbolo do lugar, caso do FireWhip, a primeira montanha-russa invertida do Brasil, e do Tchibum, que mergulha os visitantes em um tanque d'água a bordo de barcos. Em 2023, o Beto Carrero World foi eleito o segundo melhor parque temático do mundo pelo Travellers' Choice da TripAdvisor, reconhecimento que reflete a escala pouco comum do empreendimento em meio à paisagem catarinense. Vale chegar disposto a caminhar bastante, já que as atrações se espalham por uma área extensa, e organizar o dia entre os brinquedos radicais e os shows ao vivo, que reúnem o público em horários marcados na programação interna. As filas mais curtas tendem a surgir logo cedo e perto do fim da tarde, um bom momento também para fotos com luz mais suave nas áreas temáticas. Leve protetor solar, roupa que possa molhar (o Tchibum garante isso) e uma muda extra para o resto do passeio.",
+    "status": "ok",
+    "fontes": [
+      "https://blog.imobillenegocios.com.br/destino-incrivel-conheca-a-historia-de-beto-carrero/",
+      "https://www.betocarrero.com.br/atracoes/firewhip",
+      "https://destino.betocarrero.com.br/conheca-as-montanhas-russas-do-beto-carrero-world/"
+    ],
+    "queries": [
+      "Beto Carrero World Penha história parque temático",
+      "Beto Carrero World atrações montanha-russa Fenris"
+    ]
+  },
+  {
+    "rio_id": "4482a9ac-7b52-49db-9be5-97b3871a3faa",
+    "canonical_key": "tripadvisor:attraction:2362800",
+    "nome": "Santo Antônio De Lisboa",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Santo Antônio De Lisboa\" — município Florianópolis/SC.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "As ruas estreitas e as casas coloridas de janelas pintadas em cores fortes fazem de Santo Antônio de Lisboa um dos núcleos mais antigos de colonização açoriana da Ilha de Santa Catarina, erguido a partir de 1748 com a chegada de imigrantes vindos dos Açores e elevado a freguesia por provisão régia em 1751, sob a invocação de Nossa Senhora das Necessidades. O bairro guarda essa herança em manifestações que atravessam gerações, da renda de bilro às Festas do Divino Espírito Santo, e na arquitetura preservada da igreja que dá nome ao lugar, tombada como patrimônio histórico. Hoje a vida do bairro também gira em torno do mar de outra forma: Santa Catarina responde por quase toda a produção nacional de ostras, e boa parte vem justamente daqui, servida nos restaurantes com deque voltados para a baía ao longo da Rua XV de Novembro. O fim de tarde é o horário mais bonito para caminhar por ali, com os barcos de pesca recolhidos e o sol baixo sobre a água iluminando o casario antigo, ótimo momento também para fotos da igreja e das ruas de pedra. Vale reservar apetite para provar a ostra em suas várias formas, in natura, gratinada ou em risoto, e observar de perto o trabalho das rendeiras quando encontradas nas lojinhas de artesanato do bairro.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Santo_Ant%C3%B4nio_de_Lisboa_(Florian%C3%B3polis)",
+      "https://revistasaboresdosul.com.br/ostras-em-santo-antonio-de-lisboa/",
+      "https://floripa.com/o-que-fazer/um-passeio-gastronomico-por-santo-antonio-de-lisboa-ostras-arquitetura-e-poesia/"
+    ],
+    "queries": [
+      "Santo Antônio de Lisboa Florianópolis história açorianos",
+      "Santo Antônio de Lisboa ostras restaurantes casario"
+    ]
+  },
+  {
+    "rio_id": "afaeb6e7-580c-448e-8fac-7485a40299a8",
+    "canonical_key": "tripadvisor:attraction:1743976",
+    "nome": "Inhotim",
+    "municipio": "Brumadinho",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Inhotim\" — município Brumadinho/MG.\nEndereço: Povoado Inhotim - R. B, 20 - Conceicao do Itaguá, Brumadinho - MG, 32497-142, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entre morros e vales de Brumadinho, o Instituto Inhotim reúne arte contemporânea e natureza numa escala pouco comum: 140 hectares onde galerias monumentais dividem espaço com um jardim botânico que abriga milhares de espécies vegetais, entre elas a maior coleção de palmeiras do planeta. O projeto nasceu do colecionador Bernardo Paz, que reuniu obras particulares ao longo de décadas antes de abrir o espaço ao público em 2006; hoje o acervo passa de mil e oitocentas peças de artistas de dezenas de países, exibidas tanto em pavilhões fechados quanto ao ar livre, incorporadas à paisagem. Em 2010, o lugar recebeu o título oficial de jardim botânico, reconhecimento da diversidade de espécies catalogadas ali. A visita rende mais quando se aceita o ritmo do lugar: caminhar de galeria em galeria pelas trilhas arborizadas, parando para observar como cada obra dialoga com o entorno, seja um lago, uma clareira ou uma fileira de palmeiras. A luz da manhã costuma ser mais suave para fotografar as instalações ao ar livre, e as horas mais quentes do meio-dia pedem uma pausa à sombra dos jardins. Leve protetor solar, chapéu e calçado confortável, porque as distâncias entre os núcleos de galerias são longas e melhor exploradas com calma, a pé ou de bicicleta.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Instituto_Inhotim",
+      "https://bmcnews.com.br/ultimas-noticias/o-colossal-complexo-de-140-hectares-de-visitacao-inaugurado-em-2006-que-abriga-23-galerias-de-arte-contemporanea-e-milhares-de-especies-de-plantas/"
+    ],
+    "queries": [
+      "Inhotim Brumadinho museu arte contemporânea jardim botânico",
+      "Inhotim Bernardo Paz galerias obras"
+    ]
+  },
+  {
+    "rio_id": "9d53d87f-a383-4d33-ba47-da298854d90a",
+    "canonical_key": "tripadvisor:attraction:2389062",
+    "nome": "Trilha Da Pedra Redonda",
+    "municipio": "Camanducaia",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Trilha Da Pedra Redonda\" — município Camanducaia/MG.\nEndereço: Trilha da Pedra Redonda, Minas Gerais, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A trilha segue por entre a vegetação da serra mineira em Camanducaia, com o ar fresco de altitude acompanhando cada passo até a formação rochosa que lhe dá nome. É um convite a caminhar em silêncio, atento aos sons do mato e à mudança de luz entre as árvores.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Trilha da Pedra Redonda Camanducaia Minas Gerais",
+      "\"Pedra Redonda\" Camanducaia trilha mirante",
+      "wikiloc trilha da pedra redonda camanducaia"
+    ]
+  },
+  {
+    "rio_id": "9e1745a7-2897-4a66-abfd-066afdc868c8",
+    "canonical_key": "tripadvisor:attraction:3246048",
+    "nome": "Rua Do Mucugê",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Rua Do Mucugê\" — município Porto Seguro/BA.\nEndereço: R. do Mucugê - Arraial d'Ajuda, Porto Seguro - BA, 45810-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A Rua do Mucugê concentra o coração comercial e boêmio de Arraial d'Ajuda, distrito de Porto Seguro: uma sucessão de lojas, ateliês e restaurantes que lhe renderam o apelido de rua mais charmosa do Brasil, muito por conta do cuidado arquitetônico e da variedade dos estabelecimentos lado a lado. À noite a rua muda de ritmo, quando bares e casas noturnas como a Morocha Club atraem tanto turistas quanto moradores, e o movimento se estende pelas mesas na calçada. É também dali que se chega às praias do Mucugê e da Pitinga, o que faz da rua uma espécie de portal entre o vilarejo e o mar. O fim de tarde é um bom horário para caminhar por ela sem pressa, quando as lojas acendem as luzes e o calor do dia já cedeu, ideal também para fotos das fachadas e vitrines artesanais. Vale ir a pé, com tempo livre para entrar sem compromisso nos ateliês de artesãos locais, e reservar o jantar para uma mesa voltada para a rua, de onde se observa o desfile constante de gente.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Arraial_d%27Ajuda"
+    ],
+    "queries": [
+      "Rua do Mucugê Arraial d'Ajuda Porto Seguro história",
+      "Rua do Mucugê Arraial d'Ajuda restaurantes lojas boemia"
+    ]
+  },
+  {
+    "rio_id": "1ea4f18a-743e-4407-b692-b1bebdb9bd10",
+    "canonical_key": "tripadvisor:attraction:2412922",
+    "nome": "Praia Do Forte",
+    "municipio": "Mata de São João",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Praia Do Forte\" — município Mata de São João/BA.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "O nome da Praia do Forte vem das ruínas do Castelo Garcia D'Ávila, fortificação erguida por volta de 1551 por Garcia d'Ávila, tesoureiro do primeiro governador-geral do Brasil e um dos maiores proprietários de terras da época, com domínios que se estendiam da Bahia ao Maranhão. Hoje as ruínas ficam a poucos quilômetros da vila, que cresceu a partir de uma antiga colônia de pescadores e se tornou destino turístico a partir da década de 1970, quando um grupo de investidores decidiu desenvolver a região em torno desse patrimônio histórico. A vila também abriga a sede nacional do Projeto Tamar, dedicado à proteção das tartarugas marinhas que podem chegar a três metros de comprimento e desovam nas praias da região, um dos programas de conservação mais conhecidos do Brasil. Ao longo dos doze quilômetros de litoral, recifes de coral formam piscinas naturais visitáveis de barco ou mergulho, emolduradas por coqueirais que deram à região o nome de Costa dos Coqueiros. Vale reservar um tempo para conhecer o trabalho do Tamar antes de entrar no mar, e caminhar até as ruínas do castelo nas primeiras horas do dia, quando a luz ainda é suave para fotos entre as pedras antigas. Leve protetor solar biodegradável e máscara de mergulho para explorar as piscinas de recife na maré baixa.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_do_Forte_(Mata_de_S%C3%A3o_Jo%C3%A3o)"
+    ],
+    "queries": [
+      "Praia do Forte Mata de São João Bahia história vila",
+      "Praia do Forte tartarugas marinhas Projeto Tamar castelo Garcia D'Ávila"
+    ]
+  },
+  {
+    "rio_id": "83d1d610-168d-452e-bdc0-6ea3df103048",
+    "canonical_key": "tripadvisor:attraction:554128",
+    "nome": "Santuário Cristo Redentor",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Santuário Cristo Redentor\" — município Rio de Janeiro/RJ.\nEndereço: Parque Nacional da Tijuca - Alto da Boa Vista, Rio de Janeiro - RJ, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.5,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "No topo do Corcovado, dentro do Parque Nacional da Tijuca, a estátua do Cristo Redentor observa a Baía de Guanabara de um lado e a mata atlântica do outro, os braços abertos a 709 metros de altitude que resumem, para muita gente, a própria silhueta do Rio de Janeiro. A construção levou nove anos, entre 1922 e 1931, fruto de uma colaboração internacional rara para a época: os engenheiros brasileiros Heitor da Silva Costa e Carlos Oswald conduziram o projeto ao lado do escultor francês Paul Landowski e do engenheiro Albert Caquot, enquanto o escultor romeno Gheorghe Leonida assinou o rosto da imagem. Erguida em concreto armado revestido de pedra-sabão, com trinta metros de altura, mais oito de pedestal, e braços que se estendem por vinte e oito metros, é considerada a maior escultura Art Déco do mundo. Em 2007, uma votação popular a elegeu uma das Sete Maravilhas do Mundo Moderno, e em 2012 a Unesco incluiu o monumento na paisagem carioca reconhecida como patrimônio da humanidade. O início da manhã costuma trazer céu mais limpo e menos gente para fotos amplas da cidade lá embaixo, enquanto o fim de tarde ilumina a pedra num tom dourado que contrasta com o azul da baía. Leve um casaco leve, porque a altitude e o vento tornam o topo mais frio que a cidade, e reserve um momento para simplesmente observar em silêncio antes de descer, um contraponto raro à multidão que passa pelo mirante.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Cristo_Redentor"
+    ],
+    "queries": [
+      "Cristo Redentor Corcovado história construção estatua",
+      "Cristo Redentor sete maravilhas mundo moderno vista Rio"
+    ]
+  },
+  {
+    "rio_id": "37e9ed1c-b0a7-4d86-aaca-c627548d4d70",
+    "canonical_key": "tripadvisor:attraction:311277",
+    "nome": "Jardim Botânico",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Jardim Botânico\" — município Rio de Janeiro/RJ.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entre a Lagoa e o Cristo Redentor, um portão discreto abre caminho para um dos recantos mais frondosos do Rio de Janeiro. Alamedas de palmeiras imperiais conduzem por mais de meio milhão de metros quadrados de vegetação cultivada, onde convivem espécies trazidas de diferentes partes do mundo desde que Dom João VI fundou o espaço, em 1808, como um horto de aclimatação de plantas. O nome atual só veio décadas depois, já sob a República, mas o caráter de laboratório vivo permaneceu: hoje o Jardim Botânico integra a Reserva da Biosfera da Mata Atlântica e reúne milhares de espécies em estufas dedicadas a orquídeas e bromélias, além de lagos com vitórias-régias e um bosque de bambus que parece abafar o barulho da cidade lá fora. Vale reservar uma manhã inteira para a visita, quando a luz ainda é suave para fotografar as fileiras de palmeiras e a silhueta do Corcovado emoldurada pelas copas das árvores. Leve água e um chapéu, calce algo confortável para caminhar bastante, e pegue um mapa logo na entrada para não perder as estufas e os pontos com vista mais aberta para o morro.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Jardim_Bot%C3%A2nico_do_Rio_de_Janeiro",
+      "https://www.gov.br/jbrj/pt-br/assuntos/299",
+      "https://vidasemparedes.com.br/jardim-botanico-do-rio-de-janeiro/"
+    ],
+    "queries": [
+      "Jardim Botânico Rio de Janeiro história significado",
+      "Jardim Botânico do Rio de Janeiro visitar dicas"
+    ]
+  },
+  {
+    "rio_id": "505c26e3-9597-4ab3-ae28-db389586277e",
+    "canonical_key": "tripadvisor:attraction:554435",
+    "nome": "Jurerê",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Jurerê\" — município Florianópolis/SC.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No norte da Ilha de Santa Catarina, a faixa de areia clara que hoje atende por Jurerê já foi conhecida apenas como Praia do Forte, referência à fortaleza colonial que ainda vigia a entrada do canal. O nome Jurerê vem da língua dos carijós e remete a uma pequena boca d'água, descrição do estreito que separa a ilha do continente. A partir dos anos 1980 a orla se dividiu em dois perfis distintos: de um lado, o núcleo tradicional de pescadores; do outro, o loteamento planejado que deu origem a Jurerê Internacional, hoje um dos endereços mais concorridos de Florianópolis, com beach clubs, gastronomia refinada e um mar calmo que convida ao mergulho tranquilo. A melhor hora para sentir o contraste da praia é o fim da tarde, quando o sol baixo dourado a areia e os primeiros sons de música ao vivo começam a sair dos clubes à beira-mar. É um bom trecho para caminhar em família pela manhã, antes do movimento, guardando a câmera para o horizonte aberto em direção à fortaleza que dá nome ao lugar.",
+    "status": "ok",
+    "fontes": [
+      "https://ndmais.com.br/turismo/jurere-internacional-saiba-tudo-sobre-a-praia-mais-famosa-de-florianopolis/",
+      "https://en.wikipedia.org/wiki/Jurer%C3%AA_Internacional"
+    ],
+    "queries": [
+      "Jurerê Florianópolis praia história",
+      "Jurerê Internacional Florianópolis o que é"
+    ]
+  },
+  {
+    "rio_id": "196d90be-a49a-42b5-9cbe-caffe77775b6",
+    "canonical_key": "tripadvisor:attraction:2480805",
+    "nome": "Parque Unipraias Camboriú",
+    "municipio": "Balneário Camboriú",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Parque Unipraias Camboriú\" — município Balneário Camboriú/SC.\nEndereço: Av. Atlântica, 6006 - Centro, Balneário Camboriú - SC, 88330-908, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Ligando duas praias de Balneário Camboriú por cima da mata que cobre o Morro da Aguada, o Parque Unipraias nasceu de um pouso de emergência: nos anos 1950, um problema no avião do empresário Normando Tedesco o fez aterrissar ali por acaso, e o encanto com a paisagem plantou a ideia de um teleférico entre a orla e o alto do morro. O projeto amadureceu por décadas até ser inaugurado em 1999, tornando-se o primeiro do mundo a conectar duas praias por bondinho aéreo. Hoje o passeio liga três estações, da Barra Sul ao topo a 240 metros de altitude, com trilhas em meio à Mata Atlântica preservada e mirantes que abrem a vista sobre toda a orla e o oceano. Vale reservar tempo para caminhar pelas passarelas do alto antes de descer para a praia de Laranjeiras, e escolher um dia de céu limpo para fotografar o contraste entre o verde da mata e o azul do mar. Para quem viaja com crianças, a Fantástica Floresta rende boas paradas ao longo do circuito.",
+    "status": "ok",
+    "fontes": [
+      "https://www.unipraias.com.br/historia",
+      "https://www.unipraias.com.br/atracoes"
+    ],
+    "queries": [
+      "Parque Unipraias Balneário Camboriú história teleférico",
+      "Parque Unipraias Camboriú atrações o que fazer"
+    ]
+  },
+  {
+    "rio_id": "ce950d30-df87-4bb9-ba76-0940f1be9471",
+    "canonical_key": "tripadvisor:attraction:1534424",
+    "nome": "Praça Da Liberdade",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Praça Da Liberdade\" — município Belo Horizonte/MG.\nEndereço: Praça da Liberdade - Savassi, Belo Horizonte - MG, 30140-010, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A Praça da Liberdade nasceu junto com Belo Horizonte: quando a capital planejada foi erguida para substituir Ouro Preto como sede do governo mineiro, uma colina foi nivelada para receber o Palácio da Liberdade e as primeiras secretarias de Estado, e a praça foi inaugurada em dezembro de 1897, no mesmo momento em que a cidade nascia no papel. Antes chamada Campo da Aclamação, ganhou o nome atual em homenagem aos ideais republicanos, e seus prédios de linhas ecléticas, com influências neoclássicas e francesas, ainda guardam o desenho original, tombado como patrimônio histórico. Com a saída do governo estadual para a Cidade Administrativa, boa parte desses edifícios se transformou em museus e centros culturais, formando um circuito que hoje convive com gramados amplos, árvores centenárias e feiras que costumam tomar as calçadas nos fins de semana. O fim da tarde é o momento em que a luz valoriza as fachadas históricas, e vale caminhar devagar entre os prédios para notar os detalhes arquitetônicos antes de sentar na grama para ver o dia terminar.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Pra%C3%A7a_da_Liberdade_(Belo_Horizonte)",
+      "https://portalbelohorizonte.com.br/o-que-fazer/arte-e-cultura/circuito-liberdade/circuito-liberdade"
+    ],
+    "queries": [
+      "Praça da Liberdade Belo Horizonte história",
+      "Praça da Liberdade Belo Horizonte museus feirinha"
+    ]
+  },
+  {
+    "rio_id": "9cb71dae-ba2e-4919-bafa-857183dfaa08",
+    "canonical_key": "tripadvisor:attraction:8787150",
+    "nome": "Canyons De Furnas",
+    "municipio": "Capitólio",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Canyons De Furnas\" — município Capitólio/MG.\nEndereço: R. dos Canyons, 10, São José da Barra - MG, 37945-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.5,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "No Lago de Furnas, formado pelo represamento das águas para a usina hidrelétrica inaugurada em 1962, paredões de rocha sedimentar que antes eram cânions esculpidos por rios ganharam uma nova moldura de água ao redor. Em Capitólio, esse encontro entre a geologia antiga da região e o lago criado pelo homem resultou numa paisagem de falésias com mais de vinte metros de altura, piscinas naturais e quedas d'água que despencam direto no reservatório. A forma mais comum de conhecer os canyons é de barco, navegando entre os paredões e parando para mergulhar nas águas mais claras. Vale sair cedo, de preferência antes das onze da manhã, para ver o sol ainda iluminando as rochas por inteiro antes que a sombra tome conta dos paredões. Leve protetor solar, roupa de banho por baixo da roupa e uma proteção impermeável para a câmera, porque a vontade de parar para fotografar os paredões e as cachoeiras costuma surgir a cada curva do lago.",
+    "status": "ok",
+    "fontes": [
+      "https://www.sgb.gov.br/geossit/geossitios/ver/2336",
+      "https://turistando.in/passeio-de-lancha-em-capitolio-canyons-de-furnas/"
+    ],
+    "queries": [
+      "Canyons de Furnas Capitólio Minas Gerais formação",
+      "Canyons de Furnas passeio de barco Capitólio dicas"
+    ]
+  },
+  {
+    "rio_id": "6af1ec2f-42ba-48f5-bda5-8ac62073f446",
+    "canonical_key": "tripadvisor:attraction:2401595",
+    "nome": "Praia Da Pitinga",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Praia Da Pitinga\" — município Porto Seguro/BA.\nEndereço: Pitinga - Arraial d'Ajuda, Porto Seguro - BA, 45810-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Em Arraial d'Ajuda, a Praia da Pitinga é um dos cenários que mais aparecem em cartão-postal da região: areia fofa e clara logo na entrada, onde barracas de praia dividem espaço com os primeiros banhistas, e um trecho mais adiante onde a paisagem se torna selvagem, emoldurada por falésias altas que despontam sobre o mar. Seguindo por essa faixa mais preservada, a praia se conecta à vizinha Praia de Taípe, num percurso que vale caminhar com calma. É um bom passeio para o começo da manhã, quando a luz ainda é baixa e realça as cores das falésias e o contraste com a areia clara. Vale levar água e chapéu para a caminhada mais longa até o trecho selvagem, e reservar um tempo para admirar o paredão visto da própria areia, um dos ângulos mais bonitos da praia.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Arraial_d%27Ajuda"
+    ],
+    "queries": [
+      "Praia da Pitinga Arraial d'Ajuda Porto Seguro falésias",
+      "Praia da Pitinga Arraial d'Ajuda dicas visita"
+    ]
+  },
+  {
+    "rio_id": "f758a301-574d-46b3-8186-25acf2185e8f",
+    "canonical_key": "tripadvisor:attraction:2391268",
+    "nome": "Quadrado",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Quadrado\" — município Porto Seguro/BA.\nEndereço: Praça São João Batista, 150 - Quadrado, Porto Seguro - BA, 45818-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No coração de Trancoso, distrito de Porto Seguro, o Quadrado guarda o desenho de um antigo povoado jesuítico erguido a partir da missão de São João Batista dos Índios, no fim do século XVI. Casas simples se organizam ao redor de um gramado extenso que termina de frente para o mar, com a igreja branca de São João fechando a composição ao fundo. Por décadas o lugar permaneceu discreto, até ser redescoberto por viajantes ligados à contracultura no fim dos anos 1970, o que aos poucos transformou o vilarejo de pescadores num dos destinos mais procurados do litoral baiano, sem que o traçado colonial das casinhas coloridas perdesse o charme original. O fim de tarde é o momento mais concorrido e também o mais bonito: moradores e visitantes se acomodam na grama de frente para o horizonte para acompanhar o pôr do sol sobre o mar. Vale caminhar devagar pelas ruas ao redor, reparar nas fachadas pintadas em tons diferentes e guardar um tempo sentado na grama antes que o sol desça de vez.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Trancoso_(Porto_Seguro)"
+    ],
+    "queries": [
+      "Quadrado Trancoso Porto Seguro história igreja",
+      "Quadrado de Trancoso o que fazer pôr do sol"
+    ]
+  },
+  {
+    "rio_id": "e54ce17e-93b5-46bf-9758-da97949f5ec8",
+    "canonical_key": "tripadvisor:attraction:312071",
+    "nome": "Praia De Ipanema",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Praia De Ipanema\" — município Rio de Janeiro/RJ.\nEndereço: Ipanema Beach, Rio de Janeiro, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Fundada como bairro em 1894, Ipanema começou a se popularizar no início do século XX, quando os bondes chegaram e o litoral sul do Rio de Janeiro passou a atrair a expansão da cidade. Foi ali, num bar à beira da praia, que Tom Jobim e Vinicius de Moraes encontraram a inspiração para compor Garota de Ipanema, canção que carregou o nome da praia para o mundo e ainda hoje é lembrada por uma estátua do compositor voltada para o mar. Os mais de dois quilômetros de areia abrigam quadras de vôlei e futevôlei, e a ponta do Arpoador reúne surfistas em busca de boas ondas. Uma tradição espontânea, nascida entre os frequentadores no fim dos anos 1960, se repete até hoje: aplaudir o sol quando ele desaparece no horizonte, geralmente visto do próprio Arpoador. Vale ir ao fim da tarde para participar desse ritual, prestar atenção aos postos que dividem a orla e redobrar o cuidado ao entrar no mar, já que as correntezas costumam ser fortes.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Ipanema"
+    ],
+    "queries": [
+      "Praia de Ipanema história Garota de Ipanema",
+      "Praia de Ipanema Rio de Janeiro postos dicas"
+    ]
+  },
+  {
+    "rio_id": "f424563a-debe-41a9-a18e-6a4cda5064af",
+    "canonical_key": "tripadvisor:attraction:312068",
+    "nome": "Praia De Copacabana",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Praia De Copacabana\" — município Rio de Janeiro/RJ.\nEndereço: Copacabana Beach, Rio de Janeiro, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Batizada em homenagem a uma capela erguida em honra a Nossa Senhora de Copacabana no século XVIII, a praia que os tupis chamavam de Sacopenapã só se tornou point elegante do Rio de Janeiro quando obras de saneamento e a chegada dos bondes e túneis facilitaram o acesso a partir do fim do século XIX. O calçadão de pedras em desenho de ondas, reformado nos anos 1970 sob orientação do paisagista Roberto Burle Marx, tornou-se tão símbolo da praia quanto a própria orla, ampliada na mesma época por um aterro que alargou a faixa de areia. Apelidada de princesa do mar, Copacabana já recebeu multidões para eventos como a Jornada Mundial da Juventude e as competições olímpicas de vôlei de praia, além do tradicional réveillon que reúne shows e fogos de artifício na virada do ano. Vale caminhar pelo calçadão logo ao amanhecer, quando a orla ainda está tranquila e a luz realça o desenho das pedras portuguesas, e observar os quiosques e os jogos de futevôlei que tomam a areia ao longo do dia.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_de_Copacabana"
+    ],
+    "queries": [
+      "Praia de Copacabana história Rio de Janeiro",
+      "Praia de Copacabana réveillon calçadão dicas"
+    ]
+  },
+  {
+    "rio_id": "2558dd85-4659-480d-b828-252532cb3f45",
+    "canonical_key": "tripadvisor:attraction:23839232",
+    "nome": "Aventura Pirata",
+    "municipio": "Balneário Camboriú",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Aventura Pirata\" — município Balneário Camboriú/SC.\nEndereço: Av. Atlântica, 4530 - Centro, Balneário Camboriú - SC, 88330-027, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na orla movimentada de Balneário Camboriú, um nome de ares lúdicos desperta a curiosidade de quem passeia à beira-mar. Entre o vento salgado da praia e o burburinho da avenida, fica o convite a espiar de perto o que o tema sugere.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Aventura Pirata Balneário Camboriú parque o que é",
+      "\"Aventura Pirata\" Balneário Camboriú brinquedos"
+    ]
+  },
+  {
+    "rio_id": "a1ff8c84-3074-4d0d-9f4a-1047126042e8",
+    "canonical_key": "tripadvisor:attraction:2362761",
+    "nome": "Praia Da Joaquina",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Praia Da Joaquina\" — município Florianópolis/SC.\nEndereço: Joaquina Beach, Santa Catarina, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A paisagem se abre em uma faixa de areia clara de quase três quilômetros, emoldurada por dunas que avançam lentamente sobre a costa leste da Ilha de Santa Catarina. O mar chega em ondas fortes e longas, o tipo que atraiu surfistas brasileiros e depois estrangeiros a partir da década de 1970: até então o lugar era conhecido como Praia do Campeche, e o nome Joaquina se popularizou junto com histórias de moradores sobre uma mulher que teria desaparecido no mar. Em 1986 a praia recebeu o Hang Loose Pro Contest, um dos marcos que a consagraram como um dos points mais respeitados do surfe brasileiro, palco de campeonatos internacionais desde então. Nas dunas vizinhas, que chegam a alturas expressivas, a tradição do surfe ganhou uma versão sobre a areia, o sandboard, e pesquisas já registraram marcas arqueológicas deixadas por povos indígenas na região. Vale chegar ainda pela manhã, quando o vento costuma estar mais fraco e a luz baixa realça o contraste entre o branco das dunas e o azul do mar, bom momento também para fotografar as pranchas coloridas na arrebentação. Observar os surfistas remando para fora da linha de ondas e sentir a areia mudando de textura conforme se sobe a duna são partes da experiência que vale viver com calma.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_da_Joaquina",
+      "https://www.nsctotal.com.br/noticias/joaquina-lendas-e-historias-sobre-a-famosa-praia-de-florianopolis",
+      "https://ndmais.com.br/turismo/sandboard-surf-nas-areias-de-florianopolis-na-praia-da-joaquina/"
+    ],
+    "queries": [
+      "Praia da Joaquina Florianópolis dunas surf história",
+      "Praia da Joaquina Florianópolis sandboard campeonato surf"
+    ]
+  },
+  {
+    "rio_id": "447a608f-dea9-4ffc-b112-5fe971f75f69",
+    "canonical_key": "tripadvisor:attraction:2352425",
+    "nome": "Praia Da Barra Da Tijuca",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Praia Da Barra Da Tijuca\" — município Rio de Janeiro/RJ.\nEndereço: Praia da Barra da Tijuca, Rio de Janeiro, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Dezoito quilômetros de areia se desenham ao longo da Zona Oeste do Rio de Janeiro, fazendo da Barra a praia mais extensa da cidade. Até meados do século passado a região era um imenso areal alagadiço, batizado pela imprensa da época de sertão carioca, isolado pelas serras ao redor e por terras concentradas em poucas mãos. O cenário só mudou com o plano de urbanização assinado pelo arquiteto Lúcio Costa no fim dos anos 1960, que abriu caminho para a ocupação acelerada das décadas seguintes. Hoje a orla reúne praticantes de kitesurf e windsurf aproveitando o vento constante, corredores e ciclistas na ciclovia que acompanha a faixa de areia, e trechos com identidade própria, como o badalado Pepê. Ir ao entardecer permite ver o sol baixar sobre o mar aberto sem os prédios da orla fazendo sombra cedo demais, um bom ângulo para fotos é de dentro de um dos quiosques voltados para o oeste. Vale observar como a paisagem muda de um trecho a outro, da água mais calma perto do Jardim Oceânico à agitação esportiva de outras áreas da praia.",
+    "status": "ok",
+    "fontes": [
+      "https://diariodorio.com/o-imenso-areal-que-virou-um-dos-centros-economicos-e-residenciais-do-rio-a-historia-da-barra-da-tijuca/",
+      "https://rio.temporadacopacabana.com.br/praia-da-barra-da-tijuca/",
+      "https://www.hoteis.com/go/brasil/blog-melhores-praias-na-barra-da-tijuca"
+    ],
+    "queries": [
+      "Praia da Barra da Tijuca Rio de Janeiro extensão história",
+      "Praia da Barra da Tijuca maior praia urbana Rio"
+    ]
+  },
+  {
+    "rio_id": "67f4ed96-0ef3-4e1c-89ed-9829fc8d9684",
+    "canonical_key": "places:ES:ChIJn45fUlEWuAARS0EhekiqotM",
+    "nome": "Pedra Da Sereia",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Pedra Da Sereia\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "Na Praia da Costa, em Vila Velha, uma formação rochosa se projeta sobre o mar e, vista de cima, desenha a silhueta de uma cauda de sereia. É esse contorno que dá nome à Pedra da Sereia, separando a Praia da Costa da pequena Praia da Sereia e alimentando a lenda local de uma sereia que encantava os navegantes. A rocha é coberta por vegetação nativa de restinga e, na maré baixa, forma piscinas naturais onde cardumes pequenos e crustáceos ficam visíveis entre as pedras, um cenário que agrada especialmente quem viaja com crianças. Uma faixa de areia liga a pedra à praia, mas muda de largura conforme a maré, ficando estreita ou submersa nos horários de maré alta, algo a se observar antes de atravessar. Do alto, a vista abre para boa parte do litoral de Vila Velha, um dos melhores panoramas da região, e a luz do fim da tarde costuma valorizar tanto o mar quanto a pedra nas fotos.",
+    "status": "ok",
+    "fontes": [
+      "https://terracapixaba.com/en/2024/06/pedra-da-sereia-a-melhor-vista-panoramica-da-praia-da-costa.html",
+      "https://www.tripadvisor.com/Attraction_Review-g303319-d13274000-Reviews-Pedra_da_Sereia-Vila_Velha_State_of_Espirito_Santo.html"
+    ],
+    "queries": [
+      "\"Pedra da Sereia\" Espírito Santo atrativo turístico",
+      "\"Pedra da Sereia\" ES formação rochosa lenda"
+    ]
+  },
+  {
+    "rio_id": "34edb104-3b6c-46c3-93d8-975b93abedc1",
+    "canonical_key": "places:ES:ChIJeZx6po0VuAARSGEG4vntUVg",
+    "nome": "Ilha Das Garças",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Ilha Das Garças\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "A maior ilha do município de Vila Velha fica a menos de um quilômetro da Praia de Itaparica, e seu valor está na vida selvagem que ali se refugia. Entre novembro e março, três espécies de garças, a garça-branca-grande, a garça-branca-pequena e a garça-vaqueira, usam a ilha como ninhal, ao lado do socó-dorminhoco, um período de reprodução que torna o lugar ainda mais reservado. Pouco explorada pelo turismo se comparada a outras ilhas da região, ela preserva um caráter selvagem raro tão perto da orla urbana. Observá-la a partir da Praia de Itaparica, no início da manhã, quando as aves saem em busca de alimento, é uma boa forma de acompanhar o vaivém de asas brancas entre a vegetação e o mar, um cenário que rende boas fotos com o litoral de Vila Velha ao fundo.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Ilha_das_Gar%C3%A7as_(Esp%C3%ADrito_Santo)",
+      "https://capixabadagema.com.br/ilha-das-garcas-desvendando-esse-paraiso-em-vila-velha/"
+    ],
+    "queries": [
+      "\"Ilha das Garças\" Espírito Santo atrativo turístico",
+      "\"Ilha das Garças\" ES aves reserva"
+    ]
+  },
+  {
+    "rio_id": "d0a87651-1368-4071-8912-84bde2ac5231",
+    "canonical_key": "tripadvisor:attraction:4377179",
+    "nome": "Museu Do Amanhã",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Museu Do Amanhã\" — município Rio de Janeiro/RJ.\nEndereço: Praça Mauá, 1 - Centro, Rio de Janeiro - RJ, 20081-240, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "À beira da Baía de Guanabara, no Píer Mauá, uma estrutura branca e alongada parece flutuar sobre a água, com peças móveis no telhado que se abrem e fecham como se respirassem junto com o sol. É o Museu do Amanhã, projetado pelo arquiteto espanhol Santiago Calatrava, que se inspirou nas bromélias do Jardim Botânico do Rio para desenhar suas linhas orgânicas. Inaugurado em dezembro de 2015 como peça central da revitalização da zona portuária, o museu não se resume a uma coleção de objetos: propõe uma reflexão sobre os grandes desafios do futuro, das mudanças climáticas ao convívio social, por meio de experiências sensoriais e tecnologias interativas. O prédio usa a própria água da baía no sistema de climatização interna, e ao redor se espalha uma área verde com espelhos d'água e ciclovia que convida a um passeio antes ou depois da visita. O melhor momento para fotografar a fachada costuma ser o fim da tarde, quando o sol baixo reflete nos espelhos d'água e recorta a silhueta das estruturas móveis contra o céu, com a baía e os morros cariocas ao fundo.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Museu_do_Amanh%C3%A3"
+    ],
+    "queries": [
+      "Museu do Amanhã Rio de Janeiro Santiago Calatrava inauguração",
+      "Museu do Amanhã Praça Mauá revitalização porto exposição"
+    ]
+  },
+  {
+    "rio_id": "fdeef914-f704-4a35-8241-41669864557c",
+    "canonical_key": "tripadvisor:attraction:532321",
+    "nome": "Maracanã",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Maracanã\" — município Rio de Janeiro/RJ.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Poucos estádios do mundo carregam o peso simbólico do Maracanã. Erguido para a Copa do Mundo de 1950, foi inaugurado em junho daquele ano com um amistoso entre seleções do Rio e de São Paulo, e sua capacidade inicial de cerca de 155 mil lugares o tornou, por um tempo, o maior estádio do planeta, superando o escocês Hampden Park. Semanas depois, recebeu o jogo decisivo daquela Copa entre Brasil e Uruguai, que reuniu perto de 200 mil pessoas nas arquibancadas, recorde de público que entrou para a memória do futebol mundial. O nome oficial, Estádio Jornalista Mário Filho, homenageia o jornalista que defendeu sua construção, mas foi o rio Maracanã, que corre nas proximidades, que batizou o estádio no imaginário popular. Décadas depois, o palco voltou a receber momentos históricos, como a final da Copa de 2014 e as cerimônias dos Jogos Olímpicos de 2016. Assistir a uma partida ali, sentindo o coro da torcida subir das arquibancadas, é a forma mais completa de entender por que o lugar é tratado quase como um templo; caminhar pelo entorno observando o desenho arredondado da estrutura, buscando ângulos que a emoldurem contra o céu aberto, também vale o tempo de quem visita fora de dias de jogo.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Est%C3%A1dio_do_Maracan%C3%A3"
+    ],
+    "queries": [
+      "Estádio Maracanã Rio de Janeiro história Copa do Mundo 1950",
+      "Maracanã maior estádio do mundo recorde público"
+    ]
+  },
+  {
+    "rio_id": "d4568c2f-974b-4f86-8a1a-008b88565ba6",
+    "canonical_key": "tripadvisor:attraction:2423870",
+    "nome": "Parque Das Águas De São Lourenço - Mg",
+    "municipio": "São Lourenço",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Parque Das Águas De São Lourenço - Mg\" — município São Lourenço/MG.\nEndereço: Al. João Lage, S/N - Centro, São Lourenço - MG, 37470-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No centro de São Lourenço, pavilhões de linhas geométricas e cores suaves emolduram fontes de água mineral naturalmente gaseificada, um fenômeno raro que ajudou a transformar a cidade em um dos principais destinos de termalismo do Brasil. A história começa em 1826, quando as propriedades terapêuticas das águas foram descobertas nas terras da família Viana; décadas depois, em 1890, Bernardo Saturnino da Veiga e seus irmãos deram início ali ao que se tornaria a primeira engarrafadora de água mineral em escala industrial da América Latina. Entre 1932 e 1935, os arquitetos Henri Sajous e Charles Hébrard desenharam os pavilhões atuais em estilo art déco, um conjunto que até hoje confere ao parque um ar de elegância antiga. Caminhar pelas alamedas nas primeiras horas do dia, quando o movimento é mais tranquilo, é uma boa forma de apreciar os detalhes das fachadas art déco sem pressa, e vale se aproximar das bicas de água mineral para notar como cada uma tem sabor e temperatura ligeiramente diferentes, parte da experiência sensorial que fez a fama do lugar.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/S%C3%A3o_Louren%C3%A7o_(Minas_Gerais)"
+    ],
+    "queries": [
+      "Parque das Águas São Lourenço MG história arquitetura art déco",
+      "Parque das Águas São Lourenço fontes minerais águas medicinais"
+    ]
+  },
+  {
+    "rio_id": "477d2d23-5434-46dc-a99b-8ed86e6286f7",
+    "canonical_key": "tripadvisor:attraction:2177922",
+    "nome": "Projeto Tamar",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Projeto Tamar\" — município Salvador/BA.\nEndereço: Pr. Gago Coutinho, s/n - Aeroporto, Salvador - BA, 41510-045, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Em Salvador, uma das bases do Projeto Tamar aproxima o visitante de um dos símbolos mais antigos do mar brasileiro: as tartarugas marinhas. A iniciativa nasceu no fim da década de 1970, quando estudantes de oceanografia documentaram a matança de tartarugas no Atol das Rocas, e virou um programa oficial de conservação em 1980. Hoje o projeto protege cinco espécies de tartaruga marinha encontradas no litoral brasileiro, atuando em dezenas de bases espalhadas por mais de mil quilômetros de praia, sempre combinando pesquisa aplicada, educação ambiental e trabalho junto às comunidades pesqueiras. Nos espaços de visitação, tanques permitem observar de perto os diferentes estágios de vida das tartarugas, uma oportunidade rara de aproximação com uma espécie que a maioria dos visitantes só veria de longe, em alto mar. Vale observar os tanques no momento em que os cuidadores se aproximam dos animais, quando eles costumam ficar mais ativos e fotografáveis, e prestar atenção aos painéis educativos que explicam as ameaças que cada espécie enfrenta hoje.",
+    "status": "ok",
+    "fontes": [
+      "https://www.tamar.org.br/interna.php?cd=59",
+      "https://pt.wikipedia.org/wiki/Projeto_Tamar"
+    ],
+    "queries": [
+      "Projeto Tamar Salvador Barra história tartarugas marinhas",
+      "Projeto Tamar Salvador base visitação aquário"
+    ]
+  },
+  {
+    "rio_id": "44fc127a-db71-4441-81c0-de09471251d8",
+    "canonical_key": "tripadvisor:attraction:2349311",
+    "nome": "Praia Farol Da Barra",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Praia Farol Da Barra\" — município Salvador/BA.\nEndereço: Farol da Barra - Barra, Salvador - Bahia, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 62.0,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "Entre o Forte de Santo Antônio da Barra e o Morro do Cristo, a Praia do Farol da Barra estende sua faixa de areia a poucos minutos do centro histórico de Salvador. Recifes naturais protegem boa parte do trecho, criando piscinas naturais e águas calmas na maré baixa perto do forte, enquanto mais adiante, próximo ao Cristo, o mar ganha ondas que atraem surfistas. Vigiando tudo isso está o Farol da Barra, erguido originalmente em 1698 como o primeiro sistema de sinalização marítima das Américas e reconstruído na forma atual, com 22 metros de altura, em 1839, considerado hoje o farol mais antigo em operação do continente. Ao entardecer, moradores e visitantes se reúnem na areia e nas pedras próximas ao forte para acompanhar o sol se pondo sobre o Atlântico, um dos programas mais tradicionais da cidade, e é justamente esse horário do dia que costuma render as fotos mais bonitas do farol recortado contra o céu alaranjado. Vale caminhar até as piscinas naturais na maré baixa para observar os pequenos peixes que se abrigam entre as pedras.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Farol_da_Barra_(Salvador)",
+      "https://pt.wikipedia.org/wiki/Praia_do_Farol_da_Barra"
+    ],
+    "queries": [
+      "Farol da Barra Salvador história farol mais antigo das Américas",
+      "Praia do Farol da Barra Salvador pôr do sol"
+    ]
+  },
+  {
+    "rio_id": "de2f4d1a-5b41-41cd-9eeb-b21e242d339d",
+    "canonical_key": "tripadvisor:attraction:1443424",
+    "nome": "Parque Municipal Das Mangabeiras",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Parque Municipal Das Mangabeiras\" — município Belo Horizonte/MG.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 62.0,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "Nas encostas da Serra do Curral, acima dos mil metros de altitude, uma extensa área de mata preservada se abre como um respiro verde sobre Belo Horizonte. O Parque Municipal das Mangabeiras foi declarado área de preservação em 1966 e aberto ao público em 1982, com paisagismo assinado por Burle Marx, e hoje figura entre os maiores parques urbanos da América Latina. Dezenas de nascentes de água correm por seus caminhos, alimentando uma vegetação típica de Minas Gerais que abriga mais de 150 espécies de aves e cerca de 30 de mamíferos, um refúgio de biodiversidade a poucos minutos do centro da cidade. Os mirantes espalhados pela parte alta do parque oferecem alguns dos melhores panoramas sobre a Serra do Curral e o horizonte urbano de Belo Horizonte, especialmente bonitos no fim da tarde, quando a luz dourada contorna as formações rochosas ao fundo. Vale caminhar com calma pelas trilhas sombreadas, prestando atenção aos sons dos pássaros entre a copa das árvores, e parar em algum mirante só para observar o tamanho da cidade lá embaixo.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_das_Mangabeiras"
+    ],
+    "queries": [
+      "Parque Municipal das Mangabeiras Belo Horizonte história tamanho",
+      "Parque das Mangabeiras BH mirante Serra do Curral"
+    ]
+  },
+  {
+    "rio_id": "056d6bce-20e7-442a-9dc7-dccf9829b5df",
+    "canonical_key": "tripadvisor:attraction:6219113",
+    "nome": "Vila Encantada Parque Dos Dinossauros",
+    "municipio": "Pomerode",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Vila Encantada Parque Dos Dinossauros\" — município Pomerode/SC.\nEndereço: R. Hermann Weege, 204 - Centro, Pomerode - SC, 89107-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.5,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "No centro de Pomerode, entre um casario que preserva traços da arquitetura enxaimel, a Vila Encantada surpreende quem chega: réplicas de dinossauros em tamanho real, esculpidas pelo artista gaúcho Clóvis Dapper, se espalham por vilarejos temáticos que somam mais de vinte e cinco atrações. O parque nasceu para aproximar crianças e adultos da paleontologia de um jeito lúdico, com caças ao fóssil, escavações que revelam réplicas de ossos pré-históricos e um circuito aéreo entre árvores apontado como o maior do país. Ao caminhar pelas vilas, vale observar o contraste entre o verde da vegetação catarinense e as formas gigantescas dos répteis recriados em cada canto. A visita rende boas fotos perto das réplicas de maior porte, especialmente no início da manhã, quando a luz suave realça as texturas das esculturas. Leve calçado confortável para caminhar entre as vilas e protetor solar, já que boa parte do percurso é ao ar livre.",
+    "status": "ok",
+    "fontes": [
+      "https://www.vilaencantada.com.br/atracoes/",
+      "https://roteirobaby.com.br/2019/03/parque-vila-encantada-em-pomerode.html"
+    ],
+    "queries": [
+      "Vila Encantada Parque dos Dinossauros Pomerode SC",
+      "Parque dos Dinossauros Pomerode Vila Encantada atrações"
+    ]
+  },
+  {
+    "rio_id": "08f53907-ce7a-4666-a359-df4365c0ae2f",
+    "canonical_key": "tripadvisor:attraction:2362717",
+    "nome": "Ilha Do Campeche",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Ilha Do Campeche\" — município Florianópolis/SC.\nEndereço: Campeche Island, Santa Catarina, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A poucos minutos de barco da badalada praia do Campeche, em Florianópolis, a Ilha do Campeche guarda um contraste que impressiona: águas verde esmeralda e transparentes, protegidas por dois costões que formam uma piscina natural, convivem com um dos sítios arqueológicos mais importantes do litoral brasileiro. Tombada pelo Iphan como patrimônio arqueológico e paisagístico, a ilha reúne mais de cento e cinquenta gravuras rupestres catalogadas em vinte e um sítios, feitas por povos indígenas dos troncos Jê e Guarani há milhares de anos: símbolos geométricos, figuras humanas e de animais talhados na pedra. As trilhas até essas inscrições só podem ser percorridas com guias credenciados, o que transforma a visita numa aula viva de história antes mesmo de pisar na areia branca e fina da praia. Vale reservar um tempo para o mergulho de snorkel nas águas claras, onde é comum avistar peixes coloridos e, com sorte, tartarugas. A luz da manhã, quando o mar costuma estar mais calmo e transparente, favorece tanto o mergulho quanto as fotos da enseada emoldurada pelos morros verdes.",
+    "status": "ok",
+    "fontes": [
+      "https://www.ipatrimonio.org/florianopolis-ilha-do-campeche/",
+      "https://passeiosilhadocampeche.com.br/ilha-do-campeche-trilhas-e-inscricoes-rupestres/",
+      "https://ndmais.com.br/turismo/ilha-do-campeche-tudo-o-que-precisa-saber-sobre-o-caribe-catarinense/"
+    ],
+    "queries": [
+      "Ilha do Campeche Florianópolis sítio arqueológico inscrições rupestres",
+      "Ilha do Campeche praia mar cristalino Florianópolis"
+    ]
+  },
+  {
+    "rio_id": "6a9e3ddc-ee24-44dc-969c-264bd7d5bf9d",
+    "canonical_key": "tripadvisor:attraction:2414369",
+    "nome": "Praia Coroa Vermelha",
+    "municipio": "Santa Cruz Cabrália",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Praia Coroa Vermelha\" — município Santa Cruz Cabrália/BA.\nEndereço: Praia de Coroa Vermelha, Bahia, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na fronteira entre Santa Cruz Cabrália e Porto Seguro, a praia de Coroa Vermelha carrega um peso histórico raro para uma faixa de areia: foi ali, em abril de 1500, que a frota de Pedro Álvares Cabral aportou pela primeira vez em solo que viria a ser o Brasil, e dias depois o frei Henrique de Coimbra celebrou a primeira missa do país. Uma grande cruz marca o local até hoje, ao lado de uma réplica da imagem de Nossa Senhora da Boa Esperança trazida pelos portugueses. A praia também é território do povo Pataxó, presente na região desde a década de 1970, e caminhar por ali é cruzar barracas de artesanato indígena que mantêm viva uma cultura muito anterior à chegada das caravelas. Observar esse encontro de tempos, o marco colonial e a presença indígena lado a lado, é talvez a experiência mais rica de uma visita a Coroa Vermelha. Nas horas mais quentes do dia, a sombra dos coqueiros perto do marco histórico é um bom lugar para fotos e para sentir o vento que vem do mar.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_da_Coroa_Vermelha",
+      "https://pt.wikipedia.org/wiki/Terra_Ind%C3%ADgena_Coroa_Vermelha",
+      "https://www.folhape.com.br/colunistas/folha-turismo/conheca-coroa-vermelha-ba-a-praia-onde-oficialmente-aconteceu-o-descobrimento-do-brasil/39913/"
+    ],
+    "queries": [
+      "Praia Coroa Vermelha Santa Cruz Cabrália história descobrimento",
+      "Coroa Vermelha marco cruz Cabral índios pataxó"
+    ]
+  },
+  {
+    "rio_id": "042c4a7c-61c8-405c-87cd-af253c50f1e9",
+    "canonical_key": "tripadvisor:attraction:2349313",
+    "nome": "Praia Do Flamengo",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Praia Do Flamengo\" — município Salvador/BA.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na região norte de Salvador, entre Itapuã e a divisa com Lauro de Freitas, a praia do Flamengo se abre em faixa de areia amarelada emoldurada por coqueiros e recortada por recifes que quebram o mar em ondas firmes. É um trecho concorrido entre surfistas e praticantes de kitesurf, mas também recebe quem prefere caminhar à beira mar, pescar ou simplesmente mergulhar num mar de azul esverdeado intenso e quente o ano todo. Na maré baixa, os recifes formam piscinas naturais que convidam a um banho mais tranquilo, enquanto a maré alta traz ondas maiores, mais disputadas por quem gosta de surfar. Para fotos, o entardecer costuma valorizar o contraste entre a areia clara e o mar esverdeado. Vale observar o movimento das marés antes de escolher entre nadar nas piscinas naturais ou se aproximar dos recifes onde as ondas quebram.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_do_Flamengo_(Salvador)",
+      "https://www.essemundoenosso.com.br/praia-do-flamengo-em-salvador/"
+    ],
+    "queries": [
+      "Praia do Flamengo Salvador Bahia",
+      "Praia do Flamengo Salvador farol bairro"
+    ]
+  },
+  {
+    "rio_id": "cd4fdf00-e305-4ba2-81f1-9e359bdb0f18",
+    "canonical_key": "tripadvisor:attraction:311472",
+    "nome": "Parque Lage",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Parque Lage\" — município Rio de Janeiro/RJ.\nEndereço: R. Jardim Botânico, 414 - Jardim Botânico, Rio de Janeiro - RJ, 22461-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Aos pés do Corcovado, no bairro Jardim Botânico, o Parque Lage é um daqueles lugares cariocas em que natureza, arte e história se misturam sem pressa. O casarão que hoje sedia a Escola de Artes Visuais foi erguido em 1920 pelo arquiteto Mario Vodret para o empresário Henrique Lage e a cantora lírica italiana Gabriela Besanzoni, mas o jardim ao redor é ainda mais antigo: um traçado paisagístico de inspiração romântica de cerca de 1840, com uma gruta artificial que abriga tanques de aquário e convida à contemplação entre samambaias e o canto dos pássaros. Desde 1975 o casarão abriga a Escola de Artes Visuais, criada pelo artista Rubens Gerchman num momento de forte censura no país e que se tornou um polo de resistência cultural, palco de mostras marcantes e berço do Circo Voador. Caminhar pelo jardim até o início da trilha que segue rumo ao Cristo Redentor é uma boa forma de sentir a mata avançando sobre a cidade. As primeiras horas da manhã costumam render luz suave para fotos do casarão e do jardim, antes de o parque encher de visitantes.",
+    "status": "ok",
+    "fontes": [
+      "https://en.wikipedia.org/wiki/Parque_Lage",
+      "https://en.wikipedia.org/wiki/Escola_de_Artes_Visuais_do_Parque_Lage",
+      "https://www.parquelage.org/grutas-parque-lage/"
+    ],
+    "queries": [
+      "Parque Lage Rio de Janeiro história Escola de Artes Visuais",
+      "Parque Lage Corcovado gruta jardim"
+    ]
+  },
+  {
+    "rio_id": "4fe07a26-3836-4954-8456-cd75c378a90f",
+    "canonical_key": "tripadvisor:attraction:5003215",
+    "nome": "Mirante Mangabeiras",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Mirante Mangabeiras\" — município Belo Horizonte/MG.\nEndereço: R. Pedro José Pardo, 1000 - Mangabeiras, Belo Horizonte - MG, 47512-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A quase mil cento e setenta metros de altitude, dentro do Parque das Mangabeiras, o Mirante das Mangabeiras abre uma das vistas mais completas de Belo Horizonte: cidade, serra e mata verde se espalham pelo horizonte a partir de dois decks de madeira erguidos sobre a encosta. O lugar já foi rua sem saída e depois sede de uma rádio, antes de se tornar, ao longo das décadas, o mirante que hoje reúne bancos, jardim e um telescópio para observação da paisagem. O parque em si nasceu em 1966 para proteger a Serra do Curral, numa área que antes servia à mineração de ferro, e cresceu como um dos maiores refúgios verdes da capital mineira. No mirante, vale chegar no fim da tarde, quando a luz baixa colore o horizonte e a cidade começa a acender as primeiras luzes, um momento particularmente bom para fotos amplas da paisagem. Leve um casaco leve, já que a altitude costuma deixar o ar mais fresco do que no centro da cidade.",
+    "status": "ok",
+    "fontes": [
+      "https://portalbelohorizonte.com.br/o-que-fazer/ao-ar-livre-e-esportes/paisagem-e-mirantes/mirante-do-mangabeiras",
+      "https://prefeitura.pbh.gov.br/fundacao-de-parques-e-zoobotanica/informacoes/parques/parque-das-mangabeiras",
+      "https://bhaz.com.br/guia-bhaz/mirante-do-mangabeiras/"
+    ],
+    "queries": [
+      "Mirante das Mangabeiras Belo Horizonte Parque das Mangabeiras vista",
+      "Parque das Mangabeiras Belo Horizonte história mirante"
+    ]
+  },
+  {
+    "rio_id": "4f6c1b33-c666-455e-a9ea-4ab0edb84824",
+    "canonical_key": "tripadvisor:attraction:313967",
+    "nome": "Basílica De Nossa Senhora Do Pilar",
+    "municipio": "Ouro Preto",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Basílica De Nossa Senhora Do Pilar\" — município Ouro Preto/MG.\nEndereço: Praça Monsenhor Castilho Barbosa, 17 - Pilar, Ouro Preto - MG, 35400-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No bairro do Pilar, em Ouro Preto, a Basílica de Nossa Senhora do Pilar impressiona antes mesmo de quem entra pela porta: por dentro, cerca de quatrocentos quilos de ouro cobrem talhas e altares, num dos exemplos mais completos do barroco mineiro. O risco da capela-mor é atribuído a Antônio Francisco Pombal, tio de Aleijadinho, e a talha foi executada por Francisco Xavier de Brito entre 1746 e 1751, num trabalho minucioso de entalhe que culmina na imagem de Nossa Senhora do Pilar cercada de anjos e querubins no altar principal. Em 2012 o Vaticano reconheceu essa relevância histórica e artística concedendo à igreja o título de basílica. Vale reservar um tempo parado diante do altar-mor para acompanhar como o brilho do ouro muda conforme a luz que entra pelas janelas, um dos detalhes que mais impressiona quem visita. Ao circular pelo interior, observe também os entalhes das colunas e dos arcos, testemunhos do auge do ciclo do ouro em Minas Gerais.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Bas%C3%ADlica_Menor_de_Nossa_Senhora_do_Pilar_(Ouro_Preto)",
+      "https://www.minasgerais.com.br/pt/atracoes/ouro-preto/basilica-de-nossa-senhora-do-pilar"
+    ],
+    "queries": [
+      "Basílica Nossa Senhora do Pilar Ouro Preto ouro talha barroco",
+      "Igreja Nossa Senhora do Pilar Ouro Preto história construção"
+    ]
+  },
+  {
+    "rio_id": "07614d8a-d88c-4f95-8ef1-99b02ff8cdcb",
+    "canonical_key": "tripadvisor:attraction:2424023",
+    "nome": "Praia Do Forno",
+    "municipio": "Armação dos Búzios",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Praia Do Forno\" — município Armação dos Búzios/RJ.\nEndereço: Praia do Forno, Rio de Janeiro, 28950-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "A praia do Forno é uma das enseadas que compõem o litoral recortado da península de Armação dos Búzios, região conhecida por suas praias pequenas emolduradas por costões de pedra. O cenário convida a caminhadas tranquilas pela orla e a fotos que aproveitam o contraste entre a pedra escura e a água clara. Nas primeiras horas da manhã, com menos gente na areia, a luz costuma ser mais suave para quem quer registrar a paisagem.",
+    "status": "ok",
+    "fontes": [
+      "https://en.wikipedia.org/wiki/Búzios"
+    ],
+    "queries": [
+      "Praia do Forno Armação dos Búzios trilha",
+      "Praia do Forno Búzios mar calmo"
+    ]
+  },
+  {
+    "rio_id": "97eb7ed2-ffc2-46a6-98b6-b2476e28a855",
+    "canonical_key": "tripadvisor:attraction:312113",
+    "nome": "Rua Das Pedras",
+    "municipio": "Campos dos Goytacazes",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Rua Das Pedras\" — município Campos dos Goytacazes/RJ.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Uma rua que convida a passos mais lentos, entre fachadas e vitrines que pedem para ser observadas com calma. O movimento de quem passa e os cheiros que escapam das portas compõem um cenário simples de apreciar ao entardecer.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Rua das Pedras Campos dos Goytacazes RJ",
+      "\"Rua das Pedras\" Campos dos Goytacazes atrativo turístico"
+    ]
+  },
+  {
+    "rio_id": "73b0a2ec-d764-4ab0-9eb8-176b4b995ccc",
+    "canonical_key": "tripadvisor:attraction:2401834",
+    "nome": "Praia De Bombinhas",
+    "municipio": "Bombinhas",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Praia De Bombinhas\" — município Bombinhas/SC.\nEndereço: Praia de Bombinhas - Centro, SC, 88215-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "No coração da península que dá nome ao município, a praia de Bombinhas é a praia central de um lugar reconhecido, desde 2013, como capital do mergulho ecológico no Brasil. A costa recortada por morros, pontas e costões pedregosos, típica de toda a região, faz da praia central um ponto de partida natural para conhecer as demais enseadas do município, como Canto Grande, Mariscal e Quatro Ilhas. É um trecho urbanizado e movimentado, ideal para quem busca caminhar à beira-mar antes de seguir para as praias mais reservadas da península. Ao passear pela orla, vale observar os costões que emolduram a baía e aproveitar o início da manhã, quando o mar costuma estar mais calmo, para fotos da linha da costa.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Bombinhas"
+    ],
+    "queries": [
+      "Praia de Bombinhas Centro Santa Catarina",
+      "Praia de Bombinhas SC mergulho águas calmas"
+    ]
+  },
+  {
+    "rio_id": "b4d822e2-a222-4831-8190-f59696570eaa",
+    "canonical_key": "tripadvisor:attraction:554432",
+    "nome": "Praia Da Guarda Do Embaú",
+    "municipio": "Paulo Lopes",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Praia Da Guarda Do Embaú\" — município Paulo Lopes/SC.\nEndereço: Guarda Do Embaú Beach, Santa Catarina, 88490-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.0,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Ali onde o Rio da Madre se entrega ao Oceano Atlântico, a Guarda do Embaú guarda, no próprio nome, uma lenda antiga: moradores contam que baús de ouro escondidos por jesuítas e piratas durante a Guerra dos Farrapos deram origem à palavra guarda. Por décadas foi apenas uma vila de pescadores isolada, sem estrada asfaltada nem energia elétrica, até que surfistas, muitos deles cariocas, descobriram entre o fim dos anos 1970 e o começo dos 1980 as ondas tubulares formadas pelas correntes do rio no encontro com o mar. Reconhecida como a nona Reserva Mundial de Surf, e a primeira do Brasil, a praia segue vivendo dessa dupla identidade, point de surf respeitado internacionalmente e reduto de pescadores que ainda mantêm viva a travessia de canoa entre as margens, cercada por dunas, restinga e o verde da Mata Atlântica do Parque Estadual da Serra do Tabuleiro. No fim da tarde, quando a luz baixa ilumina o encontro das águas, o visual do rio abraçando o mar rende as fotos mais bonitas, melhor ainda vistas do alto das dunas na margem oposta. Leve protetor solar e um calçado que possa molhar, e reserve um tempo para simplesmente observar pescadores e surfistas dividindo o mesmo pedaço de areia.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_da_Guarda_do_Emba%C3%BA",
+      "https://www.waves.com.br/noticias/entre-o-rio-e-o-mar-historia-da-guarda-do-embau/",
+      "https://www.savethewaves.org/guarda-do-embau/"
+    ],
+    "queries": [
+      "Praia da Guarda do Embaú Paulo Lopes SC",
+      "Guarda do Embaú surf rio história"
+    ]
+  },
+  {
+    "rio_id": "04012a01-048a-46db-b9e7-814c9bb2bab1",
+    "canonical_key": "tripadvisor:attraction:2360121",
+    "nome": "Centro Cultural Banco Do Brasil Belo Horizonte",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Centro Cultural Banco Do Brasil Belo Horizonte\" — município Belo Horizonte/MG.\nEndereço: Praça da Liberdade, 450 - Funcionários, Belo Horizonte - MG, 30140-010, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na Praça da Liberdade, coração do circuito cultural que reúne os prédios históricos de Belo Horizonte, um edifício neoclássico de seis andares guarda uma história que atravessa quase um século. Erguido a partir de 1926 sob projeto do arquiteto Luiz Signorelli, fundador da Escola de Arquitetura da então Universidade de Minas Gerais, o prédio foi concluído em 1930 para abrigar a Secretaria do Interior do estado, e chegou a servir de sede das forças revolucionárias mineiras naquele mesmo ano. Décadas depois, já ocupado pela Secretaria de Segurança Pública e pela Procuradoria do Estado, o edifício ganhou nova vida como Centro Cultural Banco do Brasil, reaproveitando a escadaria monumental, o pátio central e os detalhes ornamentados que marcam a arquitetura neoclássica brasileira do início do século vinte. Hoje a programação de exposições, música e teatro convive lado a lado com essa arquitetura de salões amplos e vãos generosos. Vale caminhar devagar pelos corredores internos observando os detalhes de estuque e ferro do período, e aproveitar a claridade da tarde que entra pelo pátio central para fotografar a fachada e a escadaria voltadas para a praça.",
+    "status": "ok",
+    "fontes": [
+      "https://ccbb.com.br/belo-horizonte/sobre-o-ccbb/",
+      "https://visite.museus.gov.br/instituicoes/centro-cultural-banco-do-brasil-de-belo-horizonte/",
+      "http://www.circuitoliberdade.mg.gov.br/pt-br/espacos/ccbb-centro-cultural-banco-do-brasil"
+    ],
+    "queries": [
+      "Centro Cultural Banco do Brasil Belo Horizonte Praça da Liberdade",
+      "CCBB Belo Horizonte prédio história arquitetura"
+    ]
+  },
+  {
+    "rio_id": "eb8be5e7-c109-4112-ae4c-cf8a356558fd",
+    "canonical_key": "tripadvisor:attraction:1368438",
+    "nome": "Prainhas Do Pontal Do Atalaia",
+    "municipio": "Arraial do Cabo",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Prainhas Do Pontal Do Atalaia\" — município Arraial do Cabo/RJ.\nEndereço: The Small Beaches, Rio de Janeiro, 28930-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 62.0,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "Duas enseadas minúsculas, separadas por costões de pedra, escondem uma água tão transparente e azul-turquesa que ajudou a dar a Arraial do Cabo o apelido de Caribe brasileiro. As Prainhas do Pontal do Atalaia levam esse nome porque, de fato, são pequenas, faixas curtas de areia branca e fina emolduradas por rochedos, sem quiosques ou estrutura de praia convencional, o que preserva algo raro: a sensação de descoberta a cada curva do caminho. A área integra o promontório do Pontal do Atalaia, que também abriga um mirante conhecido pelo pôr do sol, de onde se avista boa parte da orla recortada da região dos Lagos. A transparência da água, entre as mais notáveis do litoral fluminense, faz das prainhas um convite natural à observação da vida marinha logo abaixo da superfície. A luz da manhã, mais suave, favorece fotos da água em tons de verde e azul antes que o sol alto achate as cores, e vale levar uma máscara de mergulho para espiar os cardumes junto às pedras.",
+    "status": "ok",
+    "fontes": [
+      "https://www.arraialdocabo.com.br/praias-de-arraial-do-cabo/prainhas-do-pontal-do-atalaia.htm",
+      "https://www.cariocasemfronteiras.com.br/mirante-do-pontal-do-atalaia-arraial/"
+    ],
+    "queries": [
+      "Prainhas do Pontal do Atalaia Arraial do Cabo",
+      "Pontal do Atalaia Arraial do Cabo trilha mirante"
+    ]
+  },
+  {
+    "rio_id": "df0fc37e-97ce-43c6-99f2-6240c5743835",
+    "canonical_key": "tripadvisor:attraction:11725544",
+    "nome": "Aquario",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Aquario\" — município Rio de Janeiro/RJ.\nEndereço: Praça Muhammad Ali - Via Binário do Porto, s/n - Gamboa, Rio de Janeiro - RJ, 20220-360, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Na Praça Muhammad Ali, na zona portuária do Rio de Janeiro, um edifício de linhas curvas abriga o maior aquário marinho da América do Sul. Inaugurado em outubro de 2016 como parte da revitalização da região do Porto Maravilha, o AquaRio reúne cerca de oito mil animais de mais de 350 espécies distribuídos por 28 tanques que somam 4,5 milhões de litros de água salgada, entre eles tubarões, arraias e recifes de corais recriados com fidelidade. Mais do que uma exibição, o espaço funciona como centro de pesquisa e educação ambiental, com atividades de bastidores que revelam o trabalho diário de biólogos no cuidado dos animais. Vale caminhar devagar entre os tanques observando de perto os recifes recriados e os cardumes coloridos, um passeio que rende boas fotos macro da vida marinha. Leve um casaco leve, pois o ambiente é climatizado e mais fresco que a rua do lado de fora, e fique atento aos momentos de alimentação dos animais, quando costumam ficar mais ativos e visíveis.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/AquaRio"
+    ],
+    "queries": [
+      "AquaRio Rio de Janeiro Gamboa aquário marinho",
+      "AquaRio maior aquário América do Sul espécies"
+    ]
+  },
+  {
+    "rio_id": "ccaa9cc7-5566-4b2d-bec5-ec7658256c3a",
+    "canonical_key": "tripadvisor:attraction:1161484",
+    "nome": "Eco Parque Arraial D'Ajuda",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Eco Parque Arraial D'Ajuda\" — município Porto Seguro/BA.\nEndereço: Estrada da Balsa, Km 4,5 - Arraial d'Ajuda, Porto Seguro - BA, 45816-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 70.5,
+    "routing": "dlq",
+    "completude_value": 80.0,
+    "descricao_editorial": "Entre a vegetação densa e o calor do litoral sul da Bahia, o Eco Parque Arraial d'Ajuda convida a um passeio que troca a agitação das praias por um ritmo mais lento, em contato direto com o verde. É desses lugares em que vale desacelerar e prestar atenção aos detalhes, o cheiro da mata, o som dos pássaros, a luz que se filtra entre as árvores.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Eco Parque Arraial d'Ajuda tirolesa Porto Seguro",
+      "Eco Parque Arraial d'Ajuda Porto Seguro avaliações"
+    ]
+  },
+  {
+    "rio_id": "44ab9566-2fba-4cc7-b17d-f49e141911a1",
+    "canonical_key": "tripadvisor:attraction:313944",
+    "nome": "Igreja E Convento De São Francisco",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Igreja E Convento De São Francisco\" — município Salvador/BA.\nEndereço: Largo do Cruzeiro de São Francisco, S/N - Centro Histórico, Salvador - BA, 40020-280, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 62.0,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "No Centro Histórico de Salvador, um portal de arenito discreto esconde um dos interiores mais deslumbrantes do barroco brasileiro. Fundada em 1585 pelo frei franciscano Melchior de Santa Catarina, a Igreja e Convento de São Francisco foi reconstruída a partir de 1686, com a fachada concluída em 1720 e a decoração interna se estendendo até o fim do século dezoito. Por dentro, paredes, colunas, teto e capelas são cobertos por entalhes e douramento profuso, com motivos florais, frisos, arcos e figuras de anjos e pássaros espalhados por toda parte, um contraste proposital com a sobriedade da pedra na fachada externa. No claustro, painéis de azulejos portugueses pintados entre 1749 e 1752 narram cenas filosóficas e alegóricas ao redor do pátio quadrangular, enquanto o forro da nave guarda pinturas do ciclo mariano feitas entre 1733 e 1737, atribuídas ao frei Jerônimo da Graça. O conjunto integra o Centro Histórico de Salvador reconhecido pela Unesco como Patrimônio da Humanidade. Vale entrar pela manhã, quando a luz lateral realça o relevo dourado dos entalhes, e caminhar devagar pelo claustro observando painel por painel dos azulejos, um dos conjuntos mais completos desse tipo de arte no Brasil.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Igreja_e_Convento_de_S%C3%A3o_Francisco_(Salvador)"
+    ],
+    "queries": [
+      "Igreja e Convento de São Francisco Salvador Bahia ouro talha barroco",
+      "Igreja São Francisco Salvador azulejos história franciscanos"
+    ]
+  },
+  {
+    "rio_id": "a9b4723b-3825-4ec6-9226-0886f545c5bd",
+    "canonical_key": "places:ES:ChIJaeg59cQ_uAARnpCQPc5PlcU",
+    "nome": "Parque Morro Do Cruzeiro (Acesso Monte)",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Parque Morro Do Cruzeiro (Acesso Monte)\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "No alto de um morro que dá nome ao lugar, um cruzeiro marca o ponto mais alto do caminho e convida a uma pausa para respirar o ar mais fresco da subida. É um desses lugares que recompensam quem chega com calma, com uma vista aberta e o silêncio de estar um pouco acima do dia a dia.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Parque Morro do Cruzeiro Vitória Espírito Santo mirante",
+      "Parque Morro do Cruzeiro Colatina Espírito Santo"
+    ]
+  },
+  {
+    "rio_id": "7988a449-d6a5-472f-b698-78ee9f343b3a",
+    "canonical_key": "places:ES:ChIJYdoBQEoWuAARfJUKBiiGDFk",
+    "nome": "Mirante Do Convento",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Mirante Do Convento\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 33.0,
+    "routing": "dlq",
+    "completude_value": 75.0,
+    "descricao_editorial": "Perto de um convento, um mirante se abre para o horizonte, desses pontos que parecem feitos para a contemplação em silêncio. A luz do fim de tarde costuma ser generosa nesses altos, pintando o céu antes do entardecer.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Mirante do Convento Espírito Santo",
+      "Mirante do Convento Vila Velha Convento da Penha"
+    ]
+  },
+  {
+    "rio_id": "c88b6e30-e6d3-4f76-9d92-93769409ff25",
+    "canonical_key": "tripadvisor:attraction:10063828",
+    "nome": "Pauá Parque - Mirante Dos Canyons",
+    "municipio": "Capitólio",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Pauá Parque - Mirante Dos Canyons\" — município Capitólio/MG.\nEndereço: Rodovia MG050 KM312, Capitólio - MG, 37930-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.5,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "Capitólio ganhou fama nacional pelos paredões de pedra que mergulham direto nas águas esverdeadas do Lago de Furnas, um cenário de cânions que hoje atrai visitantes de todo o país em busca de mirantes sobre esse recorte de paisagem. É nesse contexto que um mirante como o do Pauá Parque ganha sentido: um ponto elevado voltado para os cânions, de onde se observa o contraste entre a rocha exposta e a água parada, quase espelhada, do reservatório. A melhor luz para fotografar essa paisagem costuma ser no início da manhã ou no fim da tarde, quando o sol baixo acentua as camadas de cor da rocha e evita o reflexo forte do meio-dia sobre a água. Vale levar binóculos para observar aves de rapina que sobrevoam os paredões, e um chapéu, já que a exposição ao sol no alto do mirante é direta.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Capit%C3%B3lio_(Minas_Gerais)"
+    ],
+    "queries": [
+      "Pauá Parque Mirante dos Canyons Capitólio MG",
+      "Capitólio MG cânions Lago de Furnas mirante"
+    ]
+  },
+  {
+    "rio_id": "3aedc05f-f059-45af-8e17-962a3c68dc86",
+    "canonical_key": "tripadvisor:attraction:2401618",
+    "nome": "Praia Das Laranjeiras",
+    "municipio": "Balneário Camboriú",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Praia Das Laranjeiras\" — município Balneário Camboriú/SC.\nEndereço: Praia das Laranjeiras - Praia de Laranjeiras, SC, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever.",
+    "score": 66.5,
+    "routing": "dlq",
+    "completude_value": 60.0,
+    "descricao_editorial": "Ao sul do centro urbano mais vertical de Balneário Camboriú, a Praia das Laranjeiras marca a transição para um trecho mais tranquilo do litoral, ligado à Praia Central por um teleférico que sobrevoa a Mata Atlântica remanescente entre os dois pontos. A praia integra a sequência de enseadas do sul do município, interligadas pela via costeira conhecida como Interpraias, o que a torna parte de um roteiro maior de descoberta ao longo da orla. O contraste entre os prédios altos do centro e o verde que emoldura Laranjeiras é um dos aspectos mais marcantes de visitar esse trecho da cidade. Da cabine do teleférico, no trajeto entre as praias, a vista aérea da mata e do mar rende fotos difíceis de repetir em outro ponto da cidade; já na areia, o fim da tarde costuma trazer uma luz mais suave para fotografar o mar sem o reflexo forte do sol a pino. Vale observar, ao longo da tarde, o contraste entre a vegetação preservada dos costões e o perfil urbano do centro, que reaparece ao fundo em quase todas as fotos tiradas da areia.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Balne%C3%A1rio_Cambori%C3%BA"
+    ],
+    "queries": [
+      "Praia das Laranjeiras Balneário Camboriú trilha bonde",
+      "Teleférico Balneário Camboriú Praia das Laranjeiras"
+    ]
+  }
+]

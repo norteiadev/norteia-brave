@@ -104,7 +104,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     out.write_text(
         json.dumps(entradas, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    print(f"\nescrito: {out.relative_to(_REPO_ROOT)}")
+    print(f"\nescrito: {out}")
     return 0
 
 
@@ -180,7 +180,7 @@ def cmd_merge(args: argparse.Namespace) -> int:
     print(f"preenchidas: {preenchidas}/{len(base)}  (ok={ok}, sem_fonte={sem_fonte})")
     if orfas:
         print(f"ATENÇÃO: {len(orfas)} saída(s) com rio_id que não casa: {', '.join(orfas)}")
-    print(f"escrito: {alvo.relative_to(_REPO_ROOT)}")
+    print(f"escrito: {alvo}")
     return 0
 
 
