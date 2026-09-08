@@ -673,6 +673,10 @@ Projeção da cascata, usando Serper + Gemini flash-lite no free tier:
 | hoje (Sonnet + `web_search`, ponderado) | $0,0749 | **$74,90** |
 | cascata (Wikipedia nos 5% + Serper nos 95% + flash-lite free) | **~$0,00095** | **~$0,95** |
 
+> **Corrigido pela §22.** Esta linha combinava o **preço** do Serper com a **taxa de fato**
+> da Tavily. Medido: o Serper devolve 2-3 dos 10 fatos. A linha viável é a da Tavily, a
+> **$15,20/mil (4,9x)**.
+
 **~79x mais barato** — e a economia vem de duas coisas somadas, não de uma: a taxa de busca
 cai 10x ($10 → $1 por mil) **e** os tokens vão a zero, porque snippets curtos entram num
 modelo gratuito em vez de 12-28 mil tokens de página entrarem no Sonnet.
@@ -688,6 +692,10 @@ ou *"apelido Lagoa da Coca-Cola"* — ou se seria preciso um segundo passo de le
 Esse é o único teste que falta, e ele exige uma key de Serper ou Brave Search API. É barato:
 com $5 de crédito grátis do Brave dá para medir os mesmos três atrativos obscuros e comparar
 fato a fato com a saída do Sonnet acima.
+
+> **Superado pela §22.** A pendência foi fechada pelo lado do Serper, e a Brave é da mesma
+> classe (revendedora de excerto de SERP, campo `description`). O provedor a usar é
+> **extrativo** — Tavily medida, Exa não.
 
 **Recomendação de provedor**, se for testar: **Brave Search API** primeiro — índice próprio
 (não depende de raspar o Google), $5/mês grátis cobrem o teste inteiro, e a natureza
@@ -836,6 +844,10 @@ começar de graça nele. Faixa honesta por provedor, por 1.000 atrativos:
 | Brave $5/1k | $4,75 |
 | Tavily $8/1k | $7,60 |
 
+> **Corrigido pela §22.** Esta tabela trata os provedores como intercambiáveis a preços
+> diferentes. Não são: revendedor de SERP (Serper, Brave, CSE) entrega 2-3/10 fatos, extrativo
+> (Tavily, Exa) entrega 9/10. As linhas baratas não são compráveis.
+
 Ou seja: o ganho é de **10x a 79x conforme o provedor**, não 79x fixo. Todos continuam ordens
 de grandeza melhores que hoje — a tese da cascata não muda, só o número da ponta.
 
@@ -972,7 +984,8 @@ mesmos 2.311 tokens, as mesmas 26 URLs. O resultado não é sorteio de ranking.
 - **Snippet basta.** 9/10 fatos a 2.311 tokens. A cascata da §15.2 pode ser construída.
 - **Com 2 queries por atrativo**, não uma. O passo de busca custa o dobro do projetado.
 - **Sem segundo passo de leitura.** Não compra fato; na Tavily, cobra 19x para entregar menos.
-- **Ganho real: 4,9x a 39x** conforme o provedor, contra os $74,90/mil de hoje.
+- **Ganho real: 4,9x** contra os $74,90/mil de hoje. *(A ponta dos 39x supunha o Serper; a
+  §22 mediu e reprovou — só a ponta da Tavily sobrevive.)*
 - O que sobra de risco não é técnico, é de **cobertura**: 1 dos 10 fatos não existia no corpus
   da Tavily. Numa amostra de três atrativos isso é 10% — número pequeno demais para ser taxa.
   Vale medir em escala antes de trocar o provedor em produção.
@@ -1403,6 +1416,103 @@ registradas. Pontuar a cascata barata contra eles continua sendo a próxima medi
 
 ---
 
+## 22. O Serper substitui o `web_search`? (medido) — e a correção da §15.2
+
+Pergunta levantada: se o snippet basta (§18), por que pagar $10/1.000 na Anthropic quando o
+Serper cobra $1/1.000? A §15.2 projetou a cascata inteira em **$0,95/mil atrativos** com base
+nesse preço. Medido em 2026-09-01, e a projeção não sobrevive.
+
+### 22.1 O teste
+
+Mesma sonda da §18 (`scripts/poc/search_snippets_probe.py`), mesmos três atrativos obscuros
+da §15.1, mesmas duas queries derivadas só de nome+município, mesma lista de fatos-alvo. O
+único parâmetro trocado é o provedor — condição necessária para que a diferença acuse a fonte,
+e não o método.
+
+### 22.2 Resultado
+
+| provedor | fatos fortes | tokens/atrativo | $/atrativo | determinístico |
+|---|---|---|---|---|
+| Sonnet + `web_search` (baseline) | 10/10 | ~11.900 | $0,0758 | — |
+| **Tavily**, 2 queries, snippet (§18) | **9/10** | 2.311 | $0,0152 | **sim** (3 rodadas, mesmas 26 URLs) |
+| **Serper**, 2 queries, snippet do SERP | **2-3/10** | ~1.050 | **$0,0020** | **não** — 3 rodadas idênticas deram 3/2/2 |
+
+**7,6x mais barato e um terço dos fatos.** E a variação entre chamadas idênticas é do tamanho
+do próprio resultado: a diferença entre 3/10 e 2/10 é uma URL entrar ou não no top-5.
+
+### 22.3 O achado: a recuperação funciona, o que falta é extração
+
+As URLs vêm **certas**. Para "Mirante da Lagoa Guarapari" o Serper devolveu
+`buser.com.br/.../mirante-da-lagoa-de-carais`, o TripAdvisor da Lagoa de Caraís, e
+`atlantes.com.br/lagoacocacola/` — literalmente a página do apelido que o fato-alvo pede.
+
+O que muda é o texto que acompanha cada URL:
+
+| | o que devolve por resultado |
+|---|---|
+| Tavily (`content`) | trecho **extrativo**, escolhido por relevância semântica, ~150 palavras |
+| Serper (`snippet`) | o excerto do SERP do Google, ~160 caracteres, cortado em volta do termo da query |
+
+**São produtos diferentes, não preços diferentes do mesmo produto.** Serper, SerpApi e
+SearchApi revendem o SERP; Tavily e Exa vendem extração. Fechar a lacuna do Serper exigiria
+ler a página — o passo que a §18 já reprovou (44.511 tokens, 7/10 fatos).
+
+### 22.4 Duas armadilhas da sonda, achadas aqui
+
+Ambas do mesmo feitio das da §18.4: produzem número errado com cara de achado.
+
+1. **A URL ficava fora do contexto.** O slug carrega fato (`lagoacocacola`), custa ~10 tokens,
+   e a lane manda a URL para o prompt de qualquer jeito, porque precisa dela para o `fontes`
+   (§21.7). Sem URL o Serper marca 2/10 com 718 tokens; com URL, 2-3/10 com ~1.050. Fica atrás
+   da flag `--com-url`, **desligada por padrão**, para não quebrar a comparação com a Tavily da
+   §18 — que foi medida sem ela.
+2. **Pedir mais resultados piora.** `--num 10` deu **2/10 contra 3/10** e 50% mais token. O
+   Google **recompõe** o SERP conforme o `num`; o conjunto de 10 não é superset do de 5, e a
+   página do apelido caiu fora. Manter em 5.
+
+### 22.5 O que isso corrige
+
+A projeção de $0,95/mil da §15.2 somava **o preço do Serper com a taxa de fato da Tavily** —
+dois provedores que não se combinam. Corrigido:
+
+| configuração | por 1.000 atrativos |
+|---|---|
+| hoje (Sonnet + `web_search`, ponderado §15.1) | $74,90 |
+| ~~cascata com Serper~~ | ~~$0,95~~ — **morta**: 2-3/10 fatos |
+| **cascata com Tavily** | **$15,20** (4,9x) |
+
+A ponta dos 39x da §18 não existe. O intervalo real é **4,9x**, e a escolha de provedor deixa
+de ser otimização de preço: é a diferença entre a lane ter fato e não ter.
+
+### 22.6 Previsão sobre Brave e CSE — a pendência da §15.3 fica desarmada
+
+Não medidos (sem key), mas ambos são da classe SERP pela forma do campo que devolvem: Brave
+entrega `web.results[].description` e o Google Programmable Search entrega `items[].snippet`,
+os dois excertos curtos do próprio índice. **Esperar 2-3/10, não 9/10.**
+
+Isso desarma a recomendação da §15.3 de comprar a Brave Search API para fechar o teste: o teste
+foi fechado pelo lado do Serper, e a Brave está do mesmo lado. Os providers `serper` e `cse`
+ficam na sonda para quem quiser confirmar — o CSE é grátis nas primeiras 100 consultas/dia.
+
+**Armadilha de configuração do CSE, registrada antes de custar uma conclusão:** o mecanismo
+precisa estar marcado como *"pesquisar em toda a web"*. O padrão do painel restringe aos sites
+listados e devolve zero resultado para atrativo obscuro — falha que parece cobertura da fonte e
+é configuração da conta.
+
+### 22.7 Veredito
+
+**Não.** O Serper é o provedor certo para a pergunta *"quais URLs falam deste atrativo"* e o
+errado para *"quais fatos existem sobre ele"*, que é a pergunta da lane (§13.4). Dentro da
+cascata da §15.2, o passo de busca dos 95% obscuros pede um provedor **extrativo** — Tavily
+medida, Exa ainda não. O ganho contra o `web_search` continua real, mas é **4,9x**, e custa
+$15,20 por mil atrativos, não $0,95.
+
+Ferramenta: `.venv/bin/python scripts/poc/search_snippets_probe.py --provider serper --com-url`
+(`--self-check` cobre os parsers de Serper e CSE offline, incluindo resposta vazia). Custo desta
+medição: ~$0,03.
+
+---
+
 ## Fontes
 
 - [Google AI plans — Gemini API](https://ai.google.dev/gemini-api/docs/google-ai-plans)
@@ -1416,7 +1526,8 @@ registradas. Pontuar a cascata barata contra eles continua sendo a próxima medi
 - [Brave Search API — planos e preços](https://brave.com/search/api/)
 - [Exa — pricing](https://docs.exa.ai/reference/pricing)
 - [Tavily — Credits & Pricing](https://docs.tavily.com/documentation/api-credits)
-- [Serper](https://serper.dev/)
+- [Serper](https://serper.dev/) · [API reference](https://serper.dev/playground)
+- [Google Programmable Search — Custom Search JSON API](https://developers.google.com/custom-search/v1/overview)
 - [Use the Claude Agent SDK with your Claude plan](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
 - [Use Claude Code with your Pro or Max plan](https://support.claude.com/en/articles/11145838-using-claude-code-with-your-pro-or-max-plan)
 - [How do usage and length limits work?](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work)

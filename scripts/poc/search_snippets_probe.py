@@ -47,6 +47,11 @@ import httpx
 
 TIMEOUT = 30.0
 
+# Dois botões medidos na §18.2. Ficam desligados por padrão para que o número saia
+# comparável ao da Tavily na §18, que foi medida sem URL e com 5 resultados.
+INCLUIR_URL = False  # a lane manda a URL para o prompt de qualquer jeito (`fontes`)
+N_RESULTADOS = 5
+
 # ---------------------------------------------------------------------------
 # O alvo: os fatos que o Sonnet + web_search trouxe na §15.1.
 #
@@ -109,8 +114,28 @@ ATRATIVOS: list[dict] = [
 ]
 
 # Preço por query, das páginas oficiais em 2026-08-20 (§17.3).
-PRECO_POR_QUERY = {"exa": 0.005, "tavily": 0.008, "brave": 0.005}
+PRECO_POR_QUERY = {
+    "exa": 0.005,
+    "tavily": 0.008,
+    "brave": 0.005,
+    "serper": 0.001,
+    "cse": 0.005,  # 100 consultas/dia grátis antes disso
+}
 PRECO_POR_PAGINA_LIDA = {"exa": 0.001}
+
+
+def _bloco(titulo: str, url: str, corpo: str) -> str:
+    """Um resultado como ele entraria no prompt.
+
+    A URL é evidência de verdade — `atlantes.com.br/lagoacocacola/` carrega o apelido que
+    o snippet corta — e custa ~10 tokens. Fica atrás de flag só para não quebrar a
+    comparação com a Tavily da §18, medida sem ela.
+    """
+    linhas = [titulo]
+    if INCLUIR_URL and url:
+        linhas.append(url)
+    linhas.append(corpo)
+    return "\n".join(x for x in linhas if x)
 
 
 def _fold(s: str) -> str:
@@ -139,7 +164,7 @@ def buscar_tavily(query: str, key: str, ler_paginas: bool) -> tuple[str, int]:
         json={
             "query": query,
             "search_depth": "advanced" if ler_paginas else "basic",
-            "max_results": 5,
+            "max_results": N_RESULTADOS,
             "include_raw_content": ler_paginas,
         },
         timeout=TIMEOUT,
@@ -154,7 +179,7 @@ def buscar_tavily(query: str, key: str, ler_paginas: bool) -> tuple[str, int]:
         corpo = it.get("content") or ""
         if ler_paginas and it.get("raw_content"):
             corpo = f"{corpo}\n{it['raw_content']}"
-        partes.append(f"{it.get('title', '')}\n{corpo}")
+        partes.append(_bloco(it.get("title", ""), it.get("url", ""), corpo))
     return "\n\n".join(partes), len(res)
 
 
@@ -163,7 +188,7 @@ def buscar_exa(query: str, key: str, ler_paginas: bool) -> tuple[str, int]:
     r = httpx.post(
         "https://api.exa.ai/search",
         headers={"x-api-key": key, "content-type": "application/json"},
-        json={"query": query, "numResults": 5, "type": "auto", "contents": contents},
+        json={"query": query, "numResults": N_RESULTADOS, "type": "auto", "contents": contents},
         timeout=TIMEOUT,
     )
     r.raise_for_status()
@@ -171,7 +196,7 @@ def buscar_exa(query: str, key: str, ler_paginas: bool) -> tuple[str, int]:
     partes = []
     for it in res:
         corpo = it.get("text") or " … ".join(it.get("highlights") or [])
-        partes.append(f"{it.get('title', '')}\n{corpo[:3000]}")
+        partes.append(_bloco(it.get("title", ""), it.get("url", ""), corpo[:3000]))
     return "\n\n".join(partes), len(res)
 
 
@@ -181,19 +206,85 @@ def buscar_brave(query: str, key: str, ler_paginas: bool) -> tuple[str, int]:
     r = httpx.get(
         "https://api.search.brave.com/res/v1/web/search",
         headers={"X-Subscription-Token": key, "Accept": "application/json"},
-        params={"q": query, "count": 5, "country": "br", "search_lang": "pt"},
+        params={"q": query, "count": N_RESULTADOS, "country": "br", "search_lang": "pt"},
         timeout=TIMEOUT,
     )
     r.raise_for_status()
     res = r.json().get("web", {}).get("results", [])
-    partes = [f"{it.get('title', '')}\n{it.get('description', '')}" for it in res]
+    partes = [
+        _bloco(it.get("title", ""), it.get("url", ""), it.get("description", "")) for it in res
+    ]
     return "\n\n".join(partes), len(res)
+
+
+def _extrair_serper(data: dict) -> tuple[str, int]:
+    """Serper revende o SERP do Google já parseado.
+
+    `answerBox` e `knowledgeGraph` vêm FORA de `organic` e carregam justamente o fato
+    resumido. Ler só `organic` subestimaria a fonte, e a perda seria da sonda, não dela.
+    """
+    partes = []
+    kg = data.get("knowledgeGraph") or {}
+    if kg:
+        partes.append(f"{kg.get('title', '')}\n{kg.get('description', '')}")
+    ab = data.get("answerBox") or {}
+    if ab:
+        partes.append(f"{ab.get('title', '')}\n{ab.get('snippet') or ab.get('answer') or ''}")
+    organicos = data.get("organic") or []
+    partes += [
+        _bloco(it.get("title", ""), it.get("link", ""), it.get("snippet", "")) for it in organicos
+    ]
+    return "\n\n".join(partes), len(organicos)
+
+
+def buscar_serper(query: str, key: str, ler_paginas: bool) -> tuple[str, int]:
+    if ler_paginas:
+        raise SystemExit("serper: revende SERP, não lê página; use --provider exa,tavily")
+    r = httpx.post(
+        "https://google.serper.dev/search",
+        headers={"X-API-KEY": key, "Content-Type": "application/json"},
+        json={"q": query, "gl": "br", "hl": "pt-br", "num": N_RESULTADOS},
+        timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    return _extrair_serper(r.json())
+
+
+def _extrair_cse(data: dict) -> tuple[str, int]:
+    itens = data.get("items") or []
+    partes = [
+        _bloco(it.get("title", ""), it.get("link", ""), it.get("snippet", "")) for it in itens
+    ]
+    return "\n\n".join(partes), len(itens)
+
+
+def buscar_cse(query: str, key: str, ler_paginas: bool) -> tuple[str, int]:
+    """Google Programmable Search — 100 consultas/dia grátis, contratado (§13.4).
+
+    Exige o `cx` do mecanismo além da key. E o mecanismo precisa estar configurado para
+    "pesquisar em toda a web": o padrão do painel restringe aos sites listados e devolve
+    zero resultado para atrativo obscuro — falha que parece cobertura e é configuração.
+    """
+    if ler_paginas:
+        raise SystemExit("cse: só devolve snippet; use --provider exa,tavily com --read-pages")
+    cx = os.environ.get("GOOGLE_CSE_CX")
+    if not cx:
+        raise SystemExit("cse: falta GOOGLE_CSE_CX (id do mecanismo, ao lado da key)")
+    r = httpx.get(
+        "https://www.googleapis.com/customsearch/v1",
+        params={"key": key, "cx": cx, "q": query, "num": N_RESULTADOS, "gl": "br", "lr": "lang_pt"},
+        timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    return _extrair_cse(r.json())
 
 
 PROVEDORES = {
     "exa": (buscar_exa, "EXA_API_KEY"),
     "tavily": (buscar_tavily, "TAVILY_API_KEY"),
     "brave": (buscar_brave, "BRAVE_SEARCH_API_KEY"),
+    "serper": (buscar_serper, "SERPER_API_KEY"),
+    "cse": (buscar_cse, "GOOGLE_CSE_API_KEY"),  # + GOOGLE_CSE_CX
 }
 
 
@@ -326,8 +417,33 @@ def self_check() -> int:
     _, achou, generico = casar_fatos("passeio no litoral", ATRATIVOS[1]["fatos"])[3]
     assert achou and generico
 
+    # Os parsers de SERP: o fato mora em campos que não são `organic`/`items`, e um
+    # parser que os ignora devolve menos fato com cara de fonte pior.
+    txt, n = _extrair_serper(
+        {
+            "knowledgeGraph": {"title": "Mirante da Lagoa", "description": "Lagoa de Carais"},
+            "answerBox": {"title": "Apelido", "snippet": "Lagoa da Coca-Cola"},
+            "organic": [
+                {"title": "Parque Estadual Paulo Cesar Vinha", "snippet": "trilha em restinga"}
+            ],
+        }
+    )
+    assert n == 1, n  # a contagem é de orgânicos, não de blocos
+    assert [label for label, achou, _ in casar_fatos(txt, atr["fatos"]) if achou].__len__() == 4
+
+    # Serper sem knowledgeGraph/answerBox não pode explodir.
+    assert _extrair_serper({"organic": []}) == ("", 0)
+    assert _extrair_serper({}) == ("", 0)
+
+    txt, n = _extrair_cse(
+        {"items": [{"title": "Lagoa de Carais", "snippet": "agua avermelhada, restinga"}]}
+    )
+    assert n == 1 and "restinga" in txt
+    assert _extrair_cse({}) == ("", 0)  # CSE omite `items` quando não há resultado
+
     print("self-check ok: casador de fatos acerta os 5 fatos, ignora snippet genérico,")
     print("é imune a acento/caixa, e o fato genérico está corretamente marcado.")
+    print("parsers serper/cse extraem knowledgeGraph+answerBox+orgânicos e aguentam vazio.")
     return 0
 
 
@@ -344,11 +460,18 @@ def main() -> int:
         action="store_true",
         help="1 query por atrativo (o padrão são 2, como o Sonnet)",
     )
+    ap.add_argument(
+        "--com-url", action="store_true", help="inclui a URL no contexto (o slug carrega fato)"
+    )
+    ap.add_argument("--num", type=int, default=5, help="resultados por query (padrão 5)")
     ap.add_argument("--self-check", action="store_true", help="valida o casador de fatos, offline")
     args = ap.parse_args()
 
     if args.self_check:
         return self_check()
+
+    global INCLUIR_URL, N_RESULTADOS
+    INCLUIR_URL, N_RESULTADOS = args.com_url, args.num
 
     provedores = [p.strip() for p in args.provider.split(",") if p.strip()]
     desconhecidos = [p for p in provedores if p not in PROVEDORES]
