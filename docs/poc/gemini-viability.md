@@ -985,10 +985,16 @@ mesmos 2.311 tokens, as mesmas 26 URLs. O resultado não é sorteio de ranking.
 - **Com 2 queries por atrativo**, não uma. O passo de busca custa o dobro do projetado.
 - **Sem segundo passo de leitura.** Não compra fato; na Tavily, cobra 19x para entregar menos.
 - **Ganho real: 4,9x** contra os $74,90/mil de hoje. *(A ponta dos 39x supunha o Serper; a
-  §22 mediu e reprovou — só a ponta da Tavily sobrevive.)*
+  §22 mediu e reprovou — só a ponta da Tavily sobrevive.)* *(A §23 mediu a redação: barata,
+  mas a taxa de fatos da busca caiu para 4/10 — barato e pior, não barato e igual.)*
 - O que sobra de risco não é técnico, é de **cobertura**: 1 dos 10 fatos não existia no corpus
   da Tavily. Numa amostra de três atrativos isso é 10% — número pequeno demais para ser taxa.
   Vale medir em escala antes de trocar o provedor em produção.
+
+> **Corrigido pela §23.** O risco de cobertura se materializou em 19 dias, sem precisar de
+> escala: a mesma sonda, sem alteração, deu **4/10 em 2026-09-08** contra os 9/10 daqui. Não
+> é a query (a variante com UF não recupera). As 3 rodadas idênticas provam repetibilidade
+> na sessão, não estabilidade no tempo — e o ganho de 4,9x pressupõe a taxa de fatos que caiu.
 
 Próximo passo natural, e ele **não** é mais sobre busca: a lane precisa da camada que consome
 esses 2.311 tokens. O veredito da §10 continua valendo — *"o trabalho não é trocar de modelo,
@@ -1510,6 +1516,166 @@ $15,20 por mil atrativos, não $0,95.
 Ferramenta: `.venv/bin/python scripts/poc/search_snippets_probe.py --provider serper --com-url`
 (`--self-check` cobre os parsers de Serper e CSE offline, incluindo resposta vazia). Custo desta
 medição: ~$0,03.
+
+---
+
+## 23. A cascata Tavily completa, com a redação (medido)
+
+A §18 mediu o **insumo**: o snippet da Tavily carrega 9 dos 10 fatos que o `web_search`
+carrega, por 2.311 tokens em vez de 11.900. A §22 mediu o **provedor**: revendedor de SERP
+não serve. Nenhuma das duas mediu a **redação** — a linha "flash-lite free + contexto = $0"
+da §11.3 sempre foi projeção, e o veredito da §18.5 dizia isso em voz alta: *"a lane precisa
+da camada que consome esses 2.311 tokens"*.
+
+Medido em 2026-09-08. Sonda: `scripts/poc/cascade_probe.py`. Custo total: ~$0,80.
+
+### 23.1 O método
+
+Os mesmos três atrativos obscuros da §15.1 e os mesmos dois atrativos **falsos** da §19,
+com o prompt de produção (`COPYWRITER_SYSTEM` + `_build_context`) e sem ferramenta —
+o contexto já vem pronto. A busca roda **uma vez** e é gravada em disco; todo modelo recebe
+byte a byte o mesmo texto, senão a comparação mediria a variância do ranking da Tavily.
+
+Três medidas, e a segunda é a que decide:
+
+1. **Transferência** — o fato está no contexto; entra na prosa? Fato que fica no snippet e
+   não entra no texto é fato que a base não recebe.
+2. **Fabricação** — os dois atrativos inexistentes entram com o contexto real que a Tavily
+   devolve para eles, que é ruído do município. Escrever confiante sobre um lugar que não
+   existe **com o contexto na frente** é pior que escrever sem contexto: houve a chance de
+   perceber.
+3. **Obediência** — travessão, markdown e dado operacional são proibidos pelo prompt, e a
+   lane grava a saída direto na coluna.
+
+O controle é a lane de hoje: Sonnet + `web_search`, prompt inteiro, ferramenta ligada.
+
+### 23.2 Primeiro achado: a §18 não reproduz
+
+A sonda da §18, **sem uma linha alterada**, rodada no mesmo dia deste teste:
+
+| | 2026-08-20 (§18) | 2026-09-08 (hoje) |
+|---|---|---|
+| fatos fortes, Tavily 2 queries | **9/10** | **4/10** |
+| Mirante da Lagoa | 5/5 | **1/5** |
+| tokens/atrativo | 2.311 | 2.859 |
+
+Perdidos em 19 dias: *Parque Estadual Paulo César Vinha*, *coloração avermelhada*, *apelido
+Lagoa da Coca-Cola*, *trilha em restinga*. A segunda query passou a devolver Florianópolis e
+Rio de Janeiro no lugar de Guarapari.
+
+**Não é a query.** Testada a variante com a UF nas duas buscas: o ruído sai (2.130 → 1.363
+tokens/atrativo) e **os fatos não voltam** — Mirante da Lagoa continua 1/5. É cobertura do
+índice da Tavily que caiu.
+
+A §18.5 declarou o resultado determinístico com base em 3 rodadas idênticas *na mesma
+sessão*. Era verdade e era insuficiente: mede repetibilidade, não estabilidade. **A §18.5
+já apontava o risco certo** — *"o que sobra de risco não é técnico, é de cobertura"* — só
+subestimou a velocidade: não é preciso escalar a amostra para vê-lo, bastam três semanas.
+
+### 23.3 A redação: transferência
+
+Teto disponível no contexto de hoje: **5/10**. O que cada modelo pôs na prosa:
+
+| modelo | fatos na prosa | inventou falso | viola prompt | $/atr (LLM) | $/atr (+busca) |
+|---|---|---|---|---|---|
+| **producao** — Sonnet + `web_search` | **9/10** | **1/2** (10 afirmações) | 1 | $0,1095 | $0,1095 |
+| sonnet-4-5 + contexto Tavily | 3-4/10 | **2/2** (10 afirmações) | 0 | $0,0134 | $0,0294 |
+| haiku-4-5 + contexto Tavily | 3-4/10 | **2/2** (6) | 0 | $0,0046 | $0,0206 |
+| deepseek-chat + contexto Tavily | 1/7 | **2/2** (5) | 2 | $0,0009 | $0,0169 |
+| flash-lite free + contexto Tavily | 3/10 | **2/2** (1) | 0 | **$0** | **$0,0160** |
+
+**O modelo caro não escreve melhor com o mesmo contexto.** Sonnet e Haiku trocaram de lugar
+entre duas rodadas (3/10 ↔ 4/10) — a diferença entre eles está dentro do ruído. Os 9/10 da
+lane de produção **não vêm do Sonnet, vêm do `web_search`**: dado o mesmo contexto magro, o
+Sonnet entrega o mesmo que o flash-lite gratuito.
+
+Isso responde a §12 por outro caminho. A pergunta era "por que Sonnet e não Haiku"; a
+resposta medida aqui é que, **na etapa de redação**, o modelo não é a variável. A variável é
+a recuperação.
+
+Os dois fatos que ficaram no contexto e não entraram na prosa (*lagoa de Caraís*, *região de
+Santa Isabel*) são casos em que o snippet cita o fato **sem ligá-lo ao atrativo** — o
+Caraís aparece numa lista de lagoas de Guarapari, não como a lagoa deste mirante. Os modelos
+não afirmaram a ligação. Está certo: é o prompt funcionando, não falha de redação.
+
+O deepseek foi o único a quebrar formato (markdown, travessão) e o único a dar 429 no
+OpenRouter no meio da rodada. Denominador 7, não 10, por isso.
+
+### 23.4 O achado que decide: a cascata não protege contra fabricação
+
+**Os cinco modelos com contexto inventaram nos dois atrativos falsos. Cinco de cinco, 2/2.**
+
+O contexto não impediu nada. Amostras:
+
+> *"A Cachoeira do Sino Azul ergue-se a **50 metros** de altura nas montanhas capixabas, a
+> cerca de **12 quilômetros** da sede de Afonso Cláudio."* — sonnet-4-5
+
+> *"Nas profundezas da Mata Atlântica capixaba, a água desce em queda livre de **50 metros**"*
+> — haiku-4-5
+
+Dois modelos diferentes cravaram a mesma altura inventada para uma cachoeira que não existe.
+
+A §19 mediu 6/6 fabricações **sem busca** e concluiu que memória paramétrica não serve. Esta
+seção acrescenta o que faltava: **dar contexto não resolve**. O modelo lê ruído genérico
+sobre o município e escreve por cima dele.
+
+**O controle de produção também falha, mas menos.** Sonnet + `web_search` abstive num dos
+dois e inventou no outro — e o caso inventado é o pior tipo, porque o modelo **disse em voz
+alta** que não achou:
+
+> *"Não foi possível encontrar informações verificáveis sobre a Cachoeira do Sino Azul (…)
+> Como não há contexto suficiente para escrever uma descrição precisa e factual conforme as
+> diretrizes, vou criar uma descrição sensorial mais curta"* — e em seguida escreveu 1.898
+> caracteres afirmando tom azulado da água, 340 espécies de aves e textura das trilhas.
+
+O prompt tem a válvula certa (*"escreva uma descrição sensorial mais curta, sem afirmações
+factuais específicas"*), o modelo a invocou pelo nome, e mesmo assim produziu 10 afirmações
+concretas. **A instrução de abstenção não é executável por prompt.** Precisa de gate fora do
+modelo.
+
+Isso não é regressão da cascata: **é defeito preexistente da lane**, que a §19 não podia ver
+porque mediu sem busca. A cascata piora de 1/2 para 2/2 — mas o alvo certo não é escolher
+entre 1/2 e 2/2, é levar os dois a 0/2.
+
+### 23.5 O custo real, e o que ninguém tinha medido
+
+A lane de produção sobre os **três obscuros reais** custou $0,0589 / $0,0535 / $0,1139 —
+média **$0,0755**, confirmando o $0,0758 da §15.1 com três semanas de distância. O número
+antigo está certo.
+
+O que era novo: **atrativo inexistente custa o dobro.**
+
+| | $/atrativo | tokens de input |
+|---|---|---|
+| obscuro real (média de 3) | $0,0755 | 13-27 mil |
+| **falso (média de 2)** | **$0,1606** | **30-55 mil** |
+
+O modelo não desiste: busca, não acha, busca de novo, esgota o `max_uses: 3`. **2,1x o custo
+de um registro bom, gasto para produzir um registro que não deveria existir.** Numa carga
+inicial nacional alimentada por varredura automática, o lixo da Nascente é a parte cara.
+
+Isso conecta com a §21.9 (auditoria de fontes): 1,1% dos registros tinham caminho
+inexistente. Aquilo era o sintoma; isto é o preço.
+
+### 23.6 Veredito
+
+- **A metade da redação está medida, e ela é barata.** Dado o mesmo contexto, flash-lite
+  gratuito entrega o que o Sonnet entrega. A camada de escrita não precisa de modelo caro.
+- **A metade da busca não está estável.** 9/10 virou 4/10 em 19 dias, sem mudar nada. O
+  ganho de 4,9x da §18 pressupõe uma taxa de fatos que não se sustentou — com 4/10, a
+  cascata é barata e **erra mais**, não é barata e igual.
+- **A fabricação é o bloqueio real, e é dos dois lados.** 2/2 na cascata, 1/2 na produção.
+  Nenhuma decisão de modelo ou provedor resolve; é preciso um gate determinístico fora do
+  LLM — o atrativo precisa existir numa fonte estruturada (Wikidata, OSM, Places `place_id`)
+  antes de qualquer descrição ser escrita. Trocar de motor de busca é otimizar o custo de
+  uma etapa que hoje aceita alimentar registro inexistente.
+- **Antes de trocar o provedor em produção, medir a estabilidade.** Uma medição por sessão
+  não basta. A sonda é barata (~$0,05) e determinística; rodar semanalmente por um mês diz
+  se 4/10 é o novo normal ou uma oscilação.
+
+Ferramentas:
+`.venv/bin/python scripts/poc/cascade_probe.py --self-check` (offline, sem key) ·
+`--fetch` (busca e cacheia o contexto) · `--models producao` (o controle da lane de hoje).
 
 ---
 
