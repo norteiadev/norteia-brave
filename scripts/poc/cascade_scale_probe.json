@@ -1,0 +1,864 @@
+[
+  {
+    "nome": "Curva Da Jurema",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 3072,
+    "menciona": true,
+    "dominios_producao": [
+      "esbrasil.com.br",
+      "vitoria.es.gov.br"
+    ],
+    "dominios_tavily": [
+      "alltrails.com",
+      "buser.com.br",
+      "folhavitoria.com.br",
+      "guia.melhoresdestinos.com.br",
+      "instagram.com",
+      "tripadvisor.com.br",
+      "vitoria.es.gov.br"
+    ],
+    "overlap": [
+      "vitoria.es.gov.br"
+    ],
+    "texto": "A Curva da Jurema se revela como um dos recantos mais tradicionais de Vitória, abrigada entre os bairros da Praia do Canto, a Praça dos Desejos e a Ilha do Boi. O lugar pulsa com a energia vibrante da cidade, servindo como um ponto de encontro essencial para quem busca lazer à beira d'água. Enquanto o mar tranquilo convida adeptos de esportes à vela, jet ski, barcos, lanchas e canoa havaiana a desfrutarem da paisagem, a atmosfera local transita suavemente entre o descanso diurno e a animação noturna, quando o espaço ganha novas cores e se transforma em um ponto de encontro com programação variada ao longo da semana.\n\nPara aproveitar a visita com todos os sentidos, vale a pena observar a movimentação náutica na água e o vaivém dos praticantes de esporte. A melhor hora para ir depende do ritmo desejado, sendo o amanhecer ideal para contemplar a calmaria ou os treinos na água, enquanto o cair da tarde reserva um clima festivo e descontraído. Para bons pontos de fotos, mire nas composições que emolduram o mar com as ilhas ao fundo ou registre o horizonte aberto. Leve óculos de sol, roupas leves, disposição para caminhar e um espírito aberto para vivenciar a autêntica hospitalidade capixaba, sentando-se nos quiosques tradicionais para observar o movimento e saborear a culinária local.",
+    "grounded": 4,
+    "claims": 4,
+    "soltas": []
+  },
+  {
+    "nome": "Praia Meaípe",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 1394,
+    "menciona": true,
+    "dominios_producao": [
+      "pt.wikipedia.org",
+      "terracapixaba.com"
+    ],
+    "dominios_tavily": [
+      "destinoses.com",
+      "esbrasil.com.br",
+      "instagram.com",
+      "maps.apple.com",
+      "pt.wikipedia.org",
+      "tripadvisor.com.br",
+      "viajaretudodebom.com.br"
+    ],
+    "overlap": [
+      "pt.wikipedia.org"
+    ],
+    "texto": "Caminhar pela Praia de Meaípe é redescobrir o encanto de uma antiga vila de pescadores que preserva suas raízes em meio a dias de intensa badalação no litoral sul do Espírito Santo. O cenário parece uma pintura bucólica quando avistado de longe, adornado por barquinhos coloridos que repousam nas águas calmas e cristalinas, convidando a banhos de mar demorados e tranquilos. \n\nHistoricamente conhecida nos anos quarenta como um recanto de muito verde e causos contados por antigos moradores sobre vozes misteriosas na costa, a região também ganhou o nome popular de Praia dos Padres devido às preces encomendadas no passado para benzer o mar. Hoje, o destino é famoso por sua atmosfera acolhedora e familiar, onde a tranquilidade da baixa temporada contrasta com o movimento aconchegante dos dias quentes. \n\nPara aproveitar a visita, vale a pena caminhar pela areia clara e grossa ou observar a famosa areia monazítica, conhecida pelos efeitos terapêuticos e por conferir à cidade o título de Cidade Saúde. Reserve um momento para apreciar a paisagem sombreada pelas castanheiras e, ao cair da tarde, permita-se saborear a tradicional moqueca capixaba nos restaurantes locais, unindo o melhor da culinária de frutos do mar a um pôr do sol inesquecível.",
+    "grounded": 4,
+    "claims": 4,
+    "soltas": []
+  },
+  {
+    "nome": "Quadrado",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "queries": 2,
+    "tokens": 1436,
+    "menciona": true,
+    "dominios_producao": [
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "coconutexperience.com.br",
+      "facebook.com",
+      "igrejasaojoaobatista.com.br",
+      "instagram.com",
+      "livemoretravelmore.com",
+      "travelinn.com.br",
+      "viagemeturismo.abril.com.br",
+      "whereinrioandbeyond.com"
+    ],
+    "overlap": [],
+    "texto": "Caminhar pelo Quadrado, no distrito baiano de Porto Seguro, é pisar em um espaço onde o tempo parece desacelerar entre cajueiros, casinhas coloridas e o azul do mar. Este centro histórico guarda as raízes da antiga aldeia jesuíta fundada no século dezenassseis, com suas construções simples que remetem aos tempos lúdicos da colonização e refletem a influência indígena em sua organização. No coração desse cenário de paz e calor humano, ergue-se a famosa Igrejinha de São João Batista, erguida nos séculos dezessete e dezoito, que preserva imagens sacras e divide dois universos peculiares. À frente da igreja, o casario acolhedor abriga pousadas, restaurantes e lojas de artesanato, enquanto, logo atrás, revela-se um mirante de tirar o fôlego com uma vista ampla para a mata atlântica, a praia dos Nativos e a praia dos Coqueiros. Para aproveitar a visita com todos os sentidos, reserve um momento do dia para caminhar sem pressa pelo gramado central, observe os detalhes das fachadas que misturam tradições históricas e repare nos tons dourados que iluminam a paisagem nas primeiras horas da manhã ou no fim da tarde. Leve roupas leves, calçados confortáveis para caminhar pela área de terra e grama, e esteja aberto para contemplar a harmonia entre a simplicidade da vila e a imensidão do oceano.",
+    "grounded": 1,
+    "claims": 2,
+    "soltas": [
+      "Igrejinha de São João Batista"
+    ]
+  },
+  {
+    "nome": "Monumento Natural Dos Pontões Capixabas",
+    "municipio": "",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 1082,
+    "menciona": true,
+    "dominios_producao": [
+      "descubraonoroeste.es.gov.br",
+      "esbrasil.com.br",
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "descubraonoroeste.es.gov.br",
+      "gov.br",
+      "mochileiros.com",
+      "parquesereservas.com.br",
+      "planalto.gov.br",
+      "pt.wikipedia.org",
+      "tripadvisor.com.br",
+      "uc.socioambiental.org"
+    ],
+    "overlap": [
+      "descubraonoroeste.es.gov.br",
+      "pt.wikipedia.org"
+    ],
+    "texto": "Quando o horizonte se desenha através de imponentes formações rochosas que desafiam o céu, o Monumento Natural dos Pontões Capixabas revela toda a sua grandiosidade no noroeste do Espírito Santo, abrangendo os municípios de Pancas e Águia Branca. Essa unidade de conservação protege uma paisagem marcada por enormes pedras de granito, os chamados pontões, que emergem em meio a uma vasta área de Mata Atlântica. O local abriga e integra a vivência de milhares de famílias que habitam a região, criando uma convivência singular entre a preservação ambiental e a vida comunitária no campo. Para quem busca uma vivência profunda com a natureza, a área convida à contemplação do relevo singular e à prática de atividades ao ar livre como trekking, escalada e voo livre. O período da manhã reserva uma luz especial para observar o contraste entre o verde da vegetação e a imponência cinzenta das rochas, criando cenários memoráveis para registros fotográficos. É recomendável vestir roupas confortáveis e calçados firmes para caminhadas, além de observar atentamente a rica biodiversidade local e a harmonia da vida que pulsa ao redor desses gigantes de pedra.",
+    "grounded": 4,
+    "claims": 4,
+    "soltas": []
+  },
+  {
+    "nome": "Ilha Do Campeche",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "queries": 2,
+    "tokens": 1328,
+    "menciona": true,
+    "dominios_producao": [
+      "ipatrimonio.org",
+      "ndmais.com.br",
+      "passeiosilhadocampeche.com.br"
+    ],
+    "dominios_tavily": [
+      "floripa.com",
+      "instagram.com",
+      "ipatrimonio.org",
+      "museu.ufsc.br",
+      "patrimonioilhadocampeche.com.br",
+      "temporadalivre.com",
+      "tripadvisor.com.br"
+    ],
+    "overlap": [
+      "ipatrimonio.org"
+    ],
+    "texto": "Imagine caminhar por um território onde o mar cristalino de águas frias banha uma costa de areias finas, revelando segredos ancestrais guardados há séculos. A Ilha do Campeche, localizada em Florianópolis, é um patrimônio arqueológico e natural que abriga a maior concentração de inscrições rupestres em um único sítio do litoral brasileiro. Ao caminhar por suas formações rochosas, vestígios deixados por povos antigos se misturam a símbolos geométricos que lembram flechas e máscaras, além de um monólito impressionante com nove metros de altura. Esses registros pré-históricos, juntamente com oficinas líticas espalhadas pelo terreno, contam narrativas silenciosas de antigas ocupações humanas que moldaram a identidade cultural da região, criando um elo profundo entre a história e a rica biodiversidade do ecossistema marinho local. Para aproveitar plenamente a experiência, reserve as primeiras horas do dia para iniciar a exploração, quando a luz natural ilumina os paredões de rocha e favorece a contemplação dos detalhes nas gravuras do Sítio Arqueológico do Letreiro ou na Trilha da Pedra Preta do Sul. Vale a pena observar a vegetação nativa dos costões e os mirantes ao longo dos percursos guiados, que revelam paisagens deslumbrantes da face leste. Para o conforto durante o passeio, é permitido levar cadeiras, guarda-sóis e caixas térmicas com comidinhas e bebidas, garantindo momentos agradáveis de descanso à sombra após as caminhadas pelas trilhas que exigem atenção moderada.",
+    "grounded": 3,
+    "claims": 3,
+    "soltas": []
+  },
+  {
+    "nome": "Fundação Projeto Tamar - Vitória",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 1780,
+    "menciona": true,
+    "dominios_producao": [
+      "tamar.org.br",
+      "vitoria.es.gov.br"
+    ],
+    "dominios_tavily": [
+      "instagram.com",
+      "tamar.org.br",
+      "visite.museus.gov.br",
+      "vitoria.es.gov.br"
+    ],
+    "overlap": [
+      "tamar.org.br",
+      "vitoria.es.gov.br"
+    ],
+    "texto": "As águas e a brisa da capital capixaba encontram um dos trabalhos mais dedicados à preservação da vida marinha no Brasil, localizado no Parque Municipal Ilha do Papagaio. O Museu da Fundação Projeto Tamar em Vitória convida visitantes de todas as idades a mergulhar no universo das tartarugas marinhas, unindo ciência, conservação e valorização cultural das comunidades costeiras. Instalado em uma região de forte relevância turística e cultural na Enseada do Suá, o espaço funciona como um ponto de encontro entre a cidade e o oceano, destacando a importância ecológica desses animais e as pesquisas desenvolvidas no litoral brasileiro desde o início da década de oitenta.\n\nO roteiro pela instituição revela espaços temáticos e painéis explicativos que detalham o ciclo de vida das espécies, além de expor as principais ameaças à sua sobrevivência, como a captura incidental na pesca. Os visitantes encontram três tanques que abrigam indivíduos em diferentes estágios de desenvolvimento, desde filhotes até adultos, abrangendo quatro espécies de tartarugas marinhas. A experiência é enriquecida por ações de educação ambiental e pelo contato com o Centro Veterinário, onde o público pode acompanhar o manejo, o preparo da alimentação e os cuidados diários com os animais, compreendendo de perto os bastidores da conservação.\n\nPara aproveitar a visita com profundidade, vale a pena observar atentamente os detalhes das exposições guiadas por monitores e participar das atividades de enriquecimento ambiental que ocorrem ao longo do dia. O local também abriga um mirante com vista panorâmica para os principais pontos turísticos da Grande Vitória, ideal para contemplar a paisagem ao redor. Recomenda-se caminhar sem pressa pelos espaços interativos, absorver as informações sobre a biologia marinha e incluir uma parada na loja da instituição, garantindo uma vivência educativa e inspiradora para famílias, casais e viajantes solo.",
+    "grounded": 5,
+    "claims": 5,
+    "soltas": []
+  },
+  {
+    "nome": "Prainhas Do Pontal Do Atalaia",
+    "municipio": "Arraial do Cabo",
+    "uf": "RJ",
+    "queries": 2,
+    "tokens": 1122,
+    "menciona": true,
+    "dominios_producao": [
+      "arraialdocabo.com.br",
+      "cariocasemfronteiras.com.br"
+    ],
+    "dominios_tavily": [
+      "arraial.travely.mobi",
+      "buser.com.br",
+      "cariocasemfronteiras.com.br",
+      "getyourguide.com",
+      "guia.melhoresdestinos.com.br",
+      "instagram.com",
+      "smartriotour.com.br",
+      "tripadvisor.com",
+      "tripadvisor.com.br"
+    ],
+    "overlap": [
+      "cariocasemfronteiras.com.br"
+    ],
+    "texto": "Imagine o instante em que a imensidão do mar encontra a solidez da encosta, revelando dois recantos de águas tão límpidas que parecem suspender o tempo. As Prainhas do Pontal do Atalaia, em Arraial do Cabo, esperam por você com suas duas enseadas gêmeas desenhadas por areia branca e fina, emolduradas pelo verde da vegetação nativa. Ao descer a famosa escadaria esculpida na rocha, o horizonte se abre em tons intensos de azul turquesa, convidando a pausas demoradas para contemplar a paisagem. Esta área de preservação ambiental protege uma rica vida marinha onde é possível avistar tartarugas e golfinhos, mostrando a força e a beleza de um santuário ecológico preservado com cuidado. Para aproveitar ao máximo a sua jornada, comece a descida das escadarias nas primeiras horas da manhã, quando a luz do sol ilumina a transparência do mar de maneira especial e a atmosfera convida à tranquilidade. Leve óculos de sol, protetor solar, água e disposição para caminhar pelas pequenas trilhas ao redor. Observe com atenção a duna no centro da praia, que funciona como um mirante natural para novas perspectivas da região, e reserve o final da tarde para apreciar a vista a partir do mirante, onde o entardecer colore o céu e o mar em tons inesquecíveis.",
+    "grounded": 2,
+    "claims": 2,
+    "soltas": []
+  },
+  {
+    "nome": "Rua Do Mucugê",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "queries": 2,
+    "tokens": 1715,
+    "menciona": true,
+    "dominios_producao": [
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "arraialdajuda.tur.br",
+      "instagram.com",
+      "porto-seguro-bahia.com",
+      "portoseguropasseios.com.br",
+      "viagemeturismo.abril.com.br",
+      "visitearraialdajuda.com"
+    ],
+    "overlap": []
+  },
+  {
+    "nome": "Capixaba Foto Tour",
+    "municipio": "",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 1231,
+    "menciona": true,
+    "dominios_producao": [
+      "instagram.com"
+    ],
+    "dominios_tavily": [
+      "capixabadagema.com.br",
+      "capixabafototour.com",
+      "capixabaturismo.com.br",
+      "facebook.com",
+      "instagram.com",
+      "tripadvisor.com.br"
+    ],
+    "overlap": [
+      "instagram.com"
+    ]
+  },
+  {
+    "nome": "Parque Estadual Da Pedra Azul",
+    "municipio": "",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 873,
+    "menciona": true,
+    "dominios_producao": [
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "alltrails.com",
+      "desbravadoresnaestrada.com",
+      "iema.es.gov.br",
+      "instagram.com",
+      "pedraazuldoarace.com.br",
+      "pt.wikipedia.org",
+      "trilhascapixabas.com.br",
+      "tripadvisor.com.br"
+    ],
+    "overlap": [
+      "pt.wikipedia.org"
+    ],
+    "texto": "Quando o relevo capixaba se eleva para abraçar o céu nas serras de Domingos Martins, a imponente silhueta da Pedra Azul revela sua presença marcante, exibindo tonalidades que mudam conforme a luz do sol reflete em seus paredões rochosos. Criada para proteger este patrimônio natural de relevo singular, a unidade de conservação abriga algumas das maiores elevações do estado e guarda ecossistemas de Mata Atlântica de altitude onde o clima ameno convida a passos mais atentos e contemplativos. Caminhar por suas trilhas significa mergulhar em paisagens moldadas por formações de granito e gnaisse, com destaque para a famosa rocha que empresta seu nome ao parque e para a curiosa formação da Pedra do Lagarto, além de recantos que revelam piscinas naturais de águas límpidas. Para aproveitar melhor a caminhada, comece a jornada nas primeiras horas da manhã, quando a neblina serrana costuma dissipar e revelar os mirantes com maior nitidez. Vale a pena observar os detalhes da vegetação nativa ao longo dos percursos e preparar a câmera nos pontos mais altos das trilhas, onde o vale se abre em panoramas amplos. Leve calçados confortáveis e aderentes para encarar os trechos de maior declive, roupas adequadas para o vento da altitude e água para manter a hidratação enquanto você descobre, passo a passo, o ritmo próprio desta serra capixaba.",
+    "grounded": 4,
+    "claims": 4,
+    "soltas": []
+  },
+  {
+    "nome": "Praia Farol Da Barra",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "queries": 2,
+    "tokens": 3000,
+    "menciona": true,
+    "dominios_producao": [
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "bahia-turismo.com",
+      "buser.com.br",
+      "donaviagem.com",
+      "g1.globo.com",
+      "guia.melhoresdestinos.com.br",
+      "instagram.com",
+      "lugaresdememoria.com.br",
+      "pt.wikipedia.org",
+      "salvadordabahia.com",
+      "temporadalivre.com"
+    ],
+    "overlap": [
+      "pt.wikipedia.org"
+    ],
+    "texto": "O som suave das ondas que encontram os recifes convida a desacelerar no encontro entre a história e o mar que define a Praia do Farol da Barra, em Salvador. Erguido no século dezessete para proteger a Baía de Todos os Santos e orientar a navegação, o Forte de Santo Antônio da Barra abriga o farol considerado o mais antigo das Américas ainda em operação, testemunha viva do nascimento da capital baiana. Nas margens desse cenário banhado pelo Oceano Atlântico, a pais urbana se revela em tons de azul e dourado, acolhendo quem busca a brisa leve da orla e o encanto de uma das esquinas mais tradicionais do litoral brasileiro. Para aproveitar a visita com serenidade, prefira as primeiras horas da manhã ou os dias de semana, quando a faixa de areia convida a caminhadas contemplativas até o Morro do Cristo. Na maré baixa, observe a formação de piscinas naturais de águas cristalinas protegidas pelas barreiras rochosas, ideais para um banho tranquilo. Leve roupas leves, protetor solar, disposição para caminhar pela orla e uma câmera ou celular para registrar os detalhes da arquitetura histórica e a vastidão do mar. Conforme a tarde avança, posicione-se no alto do farol ou sentado aos pés da fortificação para assistir ao famoso pôr do sol, um dos espetáculos mais marcantes da cidade.",
+    "grounded": 5,
+    "claims": 5,
+    "soltas": []
+  },
+  {
+    "nome": "Farol De Santa Luzia",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 684,
+    "menciona": true,
+    "dominios_producao": [
+      "esbrasil.com.br",
+      "pt.wikipedia.org",
+      "terracapixaba.com"
+    ],
+    "dominios_tavily": [
+      "agazeta.com.br",
+      "capixabadagema.com.br",
+      "instagram.com",
+      "pt.wikipedia.org",
+      "tripadvisor.com.br",
+      "turismo.vilavelha.es.gov.br"
+    ],
+    "overlap": [
+      "pt.wikipedia.org"
+    ],
+    "texto": "O som suave das ondas que batem na costa de Vila Velha acompanha os passos de quem se aproxima do Farol de Santa Luzia, erguido na ponta da Praia da Costa para vigiar o horizonte capixaba. Construído em 1871 a pedido do Barão de Cotegipe, este farol militar carrega uma estrutura de ferro com base octogonal cujas peças vieram da Escócia em 1870, preservando até os dias de hoje a missão histórica de orientar a entrada de embarcações na Baía de Vitória com sua luz de longo alcance. Para aproveitar a visita, vale a pena escolher o período da tarde para observar como a luz do sol transforma o tom do mar e ilumina a torre de doze metros de altura, criando belos ângulos para fotografias junto à paisagem costeira. Leve óculos de sol, água para se hidratar durante o passeio a pé e reserve alguns minutos para observar o vai e vem dos navios e o movimento das águas que cercam este marco da engenharia naval no Espírito Santo.",
+    "grounded": 8,
+    "claims": 8,
+    "soltas": []
+  },
+  {
+    "nome": "Praia Da Costa",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 1871,
+    "menciona": true,
+    "dominios_producao": [
+      "folhavitoria.com.br",
+      "pt.wikipedia.org",
+      "vaidepromo.com.br"
+    ],
+    "dominios_tavily": [
+      "blogpesnaareia.blogspot.com",
+      "capixabadagema.com.br",
+      "folhavitoria.com.br",
+      "guia.melhoresdestinos.com.br",
+      "hastalatour.com",
+      "hotelsantorini.com.br",
+      "instagram.com",
+      "pt.wikipedia.org",
+      "tripadvisor.pt"
+    ],
+    "overlap": [
+      "folhavitoria.com.br",
+      "pt.wikipedia.org"
+    ],
+    "texto": "Entre o movimento vibrante da cidade e a serenidade do litoral capixaba, a Praia da Costa se revela como um dos cartões-postais mais amados de Vila Velha. Com suas águas que passeiam pelos tons de verde e azul e emolduram a faixa de areia dourada, este canto do Espírito Santo convida a pausas contemplativas e a dias ensolarados à beira do mar, reunindo famílias, viajantes solo e casais que buscam a essência da hospitalidade local.\n\nO cenário é repleto de vida e história, tendo como vizinho ilustre o imponente Santuário de Nossa Senhora da Penha, erguido em um penhasco cercado por fragmentos de Mata Atlântica que guardam séculos de memórias capixabas. A atmosfera urbana se integra com leveza à natureza, onde o calçadão e a ciclovia serpenteiam a orla, unindo a energia de uma comunidade que abraça o mar com orgulho e acolhimento.\n\nPara aproveitar ao máximo a jornada, comece o dia bem cedo caminhando pelo calçadão enquanto a brisa fresca acompanha o movimento dos primeiros raios de sol. No canto esquerdo, perto do Morro do Moreno e conhecido como Praia da Sereia, o mar se acalma em uma verdadeira piscina natural, perfeita para relaxar e observar a paisagem. Leve roupas leves, disposição para pedalar ou caminhar pela extensão da orla e uma máquina fotográfica para capturar os contrastes entre a arquitetura urbana e o verde exuberante dos morros ao fundo. Conforme o dia avança para a noite, observe o calçadão ganhar novas cores com as feirinhas de artesanato e o aroma da culinária regional, momento ideal para desacelerar e sentir o ritmo verdadeiro da cidade.",
+    "grounded": 6,
+    "claims": 7,
+    "soltas": [
+      "Mata Atlântica"
+    ]
+  },
+  {
+    "nome": "Pelourinho",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "queries": 2,
+    "tokens": 2287,
+    "menciona": true,
+    "dominios_producao": [
+      "archdaily.com",
+      "correiobraziliense.com.br",
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "casacor.com.br",
+      "citypic.com.br",
+      "deville.com.br",
+      "en.wikipedia.org",
+      "instagram.com",
+      "pelourinhodiaenoite.salvador.ba.gov.br",
+      "pt.wikipedia.org",
+      "terra.com.br",
+      "whc.unesco.org"
+    ],
+    "overlap": [
+      "pt.wikipedia.org"
+    ],
+    "texto": "Caminhar pelas ladeiras de pedra do Pelourinho, em Salvador, é mergulhar na essência do primeiro centro da capital baiana e do maior conjunto arquitetônico colonial da América Latina. O nome do bairro remonta ao período colonial e à sua praça central, marcando profundamente a história do país. Reconhecido como Patrimônio da Humanidade pela UNESCO, o espaço preserva a fidelidade ao traçado urbano do século dezesseis e abriga um rico acervo de monumentos, incluindo a Catedral de Salvador, a imponente arquitetura barroca da Igreja e Convento de São Francisco e a Igreja do Rosário dos Pretos. Mais do que um tesouro arquitetônico de casarões coloridos e sacadas de ferro, o Pelô pulsa como o principal polo cultural da comunidade afro-brasileira, onde a culinária, a religião e a música mantêm viva a herança de séculos. Para vivenciar essa atmosfera com profundidade, observe os detalhes das fachadas estucadas e a imponência das igrejas renascentistas e barrocas durante a caminhada pelas ruas pavimentadas. Preste atenção nas expressões cotidianas e artísticas que brotam em cada esquina, revelando uma cultura singular moldada pela convergência de influências. Leve calçados confortáveis para caminhar pelas ladeiras históricas e esteja aberto a absorver a energia vibrante deste território vivo de resistência e memória.",
+    "grounded": 2,
+    "claims": 5,
+    "soltas": [
+      "Catedral de Salvador",
+      "Convento de São Francisco",
+      "Igreja do Rosário dos Pretos"
+    ]
+  },
+  {
+    "nome": "Praia De Camburi",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 1863,
+    "menciona": true,
+    "dominios_producao": [
+      "pt.wikipedia.org",
+      "vitoria.es.gov.br"
+    ],
+    "dominios_tavily": [
+      "agazeta.com.br",
+      "folhavitoria.com.br",
+      "instagram.com",
+      "m.vitoria.es.gov.br",
+      "vitoria.es.gov.br"
+    ],
+    "overlap": [
+      "vitoria.es.gov.br"
+    ],
+    "texto": "Caminhar pela Orla de Camburi é sentir o pulso vibrante de Vitória ao ar livre, onde a extensa faixa de areia e o calçadão emoldurado pela brisa marinha convidam tanto ao movimento quanto ao descanso. Principal praia da cidade, o local reúne moradores e visitantes ao longo de sua avenida principal, que abriga hotéis e restaurantes com uma culinária diversificada. Pela extensão da orla, quiosques aconchegantes e decks de madeira com mesinhas proporcionam pausas perfeitas para saborear petiscos e bebidas enquanto se observa o horizonte. Para aproveitar plenamente a experiência, vale a pena iniciar a visita nas primeiras horas da manhã para capturar a energia do amanhecer ou reservar o final da tarde para contemplar o pôr do sol que transforma a paisagem urbana e litorânea. Leve roupas leves e confortáveis, óculos de sol e disposição para caminhar ou pedalar, observando o ir e vir das ondas, o movimento alegre dos encontros cotidianos e a harmonia entre a cidade e o mar capixaba.",
+    "grounded": 1,
+    "claims": 1,
+    "soltas": []
+  },
+  {
+    "nome": "Praia Bacutia",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 1481,
+    "menciona": true,
+    "dominios_producao": [
+      "guaraparivirtual.com.br",
+      "pdf.blucher.com.br",
+      "viajali.com.br"
+    ],
+    "dominios_tavily": [
+      "buser.com.br",
+      "espiritosantoguarapari.com.br",
+      "instagram.com",
+      "proceedings.blucher.com.br",
+      "researchgate.net",
+      "tripadvisor.com.br",
+      "tripadvisor.ie"
+    ],
+    "overlap": [],
+    "texto": "As águas verde-esmeralda e cristalinas da Praia da Bacutia recebem quem chega à Enseada Azul, em Guarapari, revelando um verdadeiro refúgio de tons vibrantes e atmosfera acolhedora. Rodeada por grandes rochas, castanheiras e vegetação nativa, essa faixa de areia dourada e fofa se estende como uma grande piscina natural de mar calmo, convidando a pausas contemplativas e mergulhos revigorantes. A presença da famosa areia monazítica adiciona um toque singular à paisagem, enquanto a vida marinha que habita a região atrai olhares curiosos de quem deseja explorar o fundo do mar. Para aproveitar ao máximo a visita, caminhe pela orla nas primeiras horas da manhã, quando a luz do sol ilumina a transparência do mar e a calmaria predomina, ideal para capturar a beleza do cenário em fotografias marcantes. Leve óculos de sol, roupa de banho confortável e disposição para observar os detalhes da vegetação rasteira que emoldura a enseada, sentindo a brisa suave que sopra do oceano e conecta você à essência do litoral capixaba.",
+    "grounded": 2,
+    "claims": 2,
+    "soltas": []
+  },
+  {
+    "nome": "Praia De Itaparica",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 1384,
+    "menciona": true,
+    "dominios_producao": [
+      "esbrasil.com.br",
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "esbrasil.com.br",
+      "hotelsantorini.com.br",
+      "instagram.com",
+      "pt.wikipedia.org",
+      "tripadvisor.com.br",
+      "turismo.vilavelha.es.gov.br"
+    ],
+    "overlap": [
+      "esbrasil.com.br",
+      "pt.wikipedia.org"
+    ],
+    "texto": "O som das ondas batendo forte convida a desacelerar e sentir a energia vibrante da costa capixaba, onde a imensidão do mar aberto se encontra com a vida urbana de Vila Velha. Estendendo por três quilômetros e meio de pais a afora, esta praia marca presença com sua larga faixa de areia fofa e dourada, emoldurada por uma orla moderna e muito bem estruturada que convida moradores e visitantes a contemplarem o horizonte. O calçadão movimentado e a ciclovia recebem quem busca caminhar ao ar livre enquanto aprecia a brisa marinha e a vista dos prédios residenciais que compõem o cenário da cidade. Para aproveitar melhor a visita, o amanhecer e o final da tarde revelam uma luz dourada espetacular para fotografias da paisagem urbana integrada ao oceano, enquanto o calçadão é o ponto ideal para observar o movimento cotidiano. Vale a pena levar protetor solar, óculos de sol e uma garrafa de água para a caminhada, prestando atenção à força das ondas de mar aberto ao caminhar pela areia e aproveitando a excelente infraestrutura de quiosques, bares e restaurantes espalhados ao longo de toda a extensão para saborear a culinária local.",
+    "grounded": 1,
+    "claims": 1,
+    "soltas": []
+  },
+  {
+    "nome": "Parque Pedra Da Cebola",
+    "municipio": "",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 1487,
+    "menciona": true,
+    "dominios_producao": [
+      "m.vitoria.es.gov.br",
+      "pt.wikipedia.org",
+      "vitoria.es.gov.br"
+    ],
+    "dominios_tavily": [
+      "alltrails.com",
+      "instagram.com",
+      "maps.apple.com",
+      "pt.wikipedia.org",
+      "tripadvisor.com",
+      "tripadvisor.com.br",
+      "vitoria.es.gov.br"
+    ],
+    "overlap": [
+      "pt.wikipedia.org",
+      "vitoria.es.gov.br"
+    ],
+    "texto": "Entre os bairros Jardim da Penha e Mata da Praia, na zona continental de Vitória, o Parque Pedra da Cebola convida a desacelerar e redescobrir a relação entre a cidade e a natureza. O nome do espaço revela sua grande atração, uma rocha esculpida pela geologia que se descama de maneira similar às palhas de uma cebola, repousando sobre outra formação rochosa. Mais do que um cartão-postal, a área carrega uma importante história de recuperação ambiental. O terreno onde hoje vicejam exemplares de Mata de Restinga, Mata Atlântica e vegetação rupestre abrigou, até a década de setenta, uma antiga pedreira, transformando-se no primeiro processo de revitalização de uma área degradada por atividade econômica no município. Caminhar pelas trilhas do parque é observar a harmonia entre lagos, jardins orientais e a presença sutil de pequenos répteis e aves que encontram abrigo na vegetação nativa. Do alto do mirante, a vista alcança o Maciço Central, o Porto de Tubarão e o Morro do Mestre Álvaro, na cidade vizinha da Serra, compondo um panorama autêntico da paisagem capixaba. Para aproveitar a visita, vale caminhar sem pressa pelas trilhas sombreadas durante as horas mais amenas do dia, observando os detalhes da vegetação e o comportamento geológico da rocha principal. Leve roupas leves, disposição para a caminhada e uma câmera ou celular para registrar os contrastes entre o verde da mata e as formas esculpidas nas pedras, prestando atenção à biodiversidade local e ao ritmo tranquilo que marca o cotidiano do parque.",
+    "grounded": 7,
+    "claims": 8,
+    "soltas": [
+      "Mata Atlântica"
+    ]
+  },
+  {
+    "nome": "Jardim Botânico",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "queries": 2,
+    "tokens": 1930,
+    "menciona": true,
+    "dominios_producao": [
+      "gov.br",
+      "pt.wikipedia.org",
+      "vidasemparedes.com.br"
+    ],
+    "dominios_tavily": [
+      "7wonders.org",
+      "alice.cnptia.embrapa.br",
+      "gov.br",
+      "instagram.com",
+      "maladeaventuras.com",
+      "pt.wikipedia.org",
+      "viajenaviagem.com",
+      "vidasemparedes.com.br",
+      "visitrio.com.br",
+      "youtube.com"
+    ],
+    "overlap": [
+      "gov.br",
+      "pt.wikipedia.org",
+      "vidasemparedes.com.br"
+    ],
+    "texto": "Caminhar por entre as alamedas sombreadas do Jardim Botânico do Rio de Janeiro é mergulhar em uma exuberante sinfonia verde que atravessa séculos no coração da zona sul carioca. Fundado em 1808 pelo príncipe regente Dom João VI, este monumento nacional nasceu com o propósito inicial de aclimatar especiarias orientais como noz-moscada, canela e pimenta, evoluindo ao longo do tempo para se tornar uma das instituições científicas e botânicas mais importantes do mundo. Tombado pelo Instituto do Patrimônio Histórico e Artístico Nacional e reconhecido pela Unesco como reserva da biosfera, o espaço abriga milhares de espécies de plantas tropicais e subtropicais, além de edifícios históricos, esculturas, fontes e monumentos que dialogam com a rica trajetória cultural brasileira.\n\nPara aproveitar plenamente a visita, prefira as primeiras horas da manhã para caminhar com tranquilidade e observar a luz suave filtrada pelas copas das árvores na famosa alameda de palmeiras imperiais. Leve calçados confortáveis para explorar a extensão dos jardins, água para se hidratar durante o percurso e uma máquina fotográfica ou celular para registrar os detalhes das plantas exóticas, o cactário e as construções históricas espalhadas pelo terreno. Observe atentamente a variedade de texturas, cores e formas da flora diversificada, prestando atenção especial aos recantos dedicados à conservação e aos monumentos que guardam a memória de um passado colonial integrado à exuberância da natureza.",
+    "grounded": 5,
+    "claims": 5,
+    "soltas": []
+  },
+  {
+    "nome": "Mercado Central De Belo Horizonte",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "queries": 2,
+    "tokens": 1558,
+    "menciona": true,
+    "dominios_producao": [
+      "diariodocomercio.com.br",
+      "kikacastro.com.br",
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "abraceomundo.com",
+      "blogfca.pucminas.br",
+      "eusouatoa.com",
+      "mercadocentral.com.br",
+      "monografias.ufop.br",
+      "portalbelohorizonte.com.br",
+      "pt.wikipedia.org",
+      "reddit.com"
+    ],
+    "overlap": [
+      "pt.wikipedia.org"
+    ],
+    "texto": "Caminhar pelas ruas internas do Mercado Central de Belo Horizonte é mergulhar no coração pulsante da cultura mineira, onde o passado da capital se encontra com a vivacidade do cotidiano. Fundado em 1929 em um terreno que abrigava um campo de futebol, o espaço nasceu para centralizar o abastecimento de alimentos e cresceu junto com a cidade, transformando-se em um ponto de encontro essencial para moradores e visitantes. O galpão que ocupa um quarteirão inteiro abriga centenas de lojas e pequenas barracas onde diferentes gerações de comerciantes mantêm vivas as tradições do estado. Ao caminhar pelos corredores, os sentidos são despertados pelos aromas e cores de queijos artesanais, doces caseiros, cachaças da roça, frutas frescas, ervas, temperos e artesanatos que contam a história de Minas Gerais. Para aproveitar a visita com calma, vale a pena observar o movimento fluido entre os corredores, reparar na diversidade de produtos que vão desde utilidades domésticas até laticínios tradicionais e conversar com os vendedores locais para descobrir as histórias por trás de cada banca. O espaço convida a uma observação atenta dos detalhes cotidianos, ideal para quem deseja registrar em fotografias a atmosfera genuína do comércio popular e levar na memória a autêntica hospitalidade mineira.",
+    "grounded": 3,
+    "claims": 3,
+    "soltas": []
+  },
+  {
+    "nome": "Parque Unipraias Camboriú",
+    "municipio": "Balneário Camboriú",
+    "uf": "SC",
+    "queries": 2,
+    "tokens": 1522,
+    "menciona": true,
+    "dominios_producao": [
+      "unipraias.com.br"
+    ],
+    "dominios_tavily": [
+      "guia.melhoresdestinos.com.br",
+      "instagram.com",
+      "pt.wikipedia.org",
+      "unipraias.com.br"
+    ],
+    "overlap": [
+      "unipraias.com.br"
+    ],
+    "texto": "O Parque Unipraias convida você a sobrevoar a paisagem de Balneário Camboriú, em uma jornada que conecta a cidade e a Praia das Laranjeiras desde agosto de 1999. A história deste complexo turístico começou décadas antes, quando um pouso de emergência encantou Normando Tedesco pela região, plantando a semente para o projeto de teleférico que mais tarde transformaria o turismo local. Hoje, a experiência ganha vida através de modernos bondinhos aéreos que interligam três estações, revelando panoramas amplos da costa catarinense e da vegetação preservada. No alto do morro, na Estação Mata Atlântica, o visitante encontra mirantes voltados para o mar e para a Praia Central, além de opções de lazer que incluem trilhas, trens suspensos e atrações em meio à natureza, permitindo descer até a faixa de areia para um mergulho antes de retornar ao complexo. Para aproveitar melhor a visita, comece o passeio pelas primeiras horas da manhã, quando a luz ilumina com suavidade o mar esverdeado de Laranjeiras e a cidade ao fundo. Vale a pena observar os detalhes da Mata Atlântica durante o trajeto de bondinho, prestando atenção nos sons e na vegetação que cercam as estações. Para registrar boas lembranças, os mirantes oferecem ângulos abertos tanto para o oceano quanto para a linha de edifícios de Balneário Camboriú. Leve roupas leves, calçados confortáveis para caminhada, óculos de sol e protetor solar, garantindo um passeio agradável e imersivo entre o mar e o alto do morro.",
+    "grounded": 9,
+    "claims": 9,
+    "soltas": []
+  },
+  {
+    "nome": "Três Praias",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 3199,
+    "menciona": true,
+    "dominios_producao": [
+      "esbrasil.com.br",
+      "guarapari.es.gov.br"
+    ],
+    "dominios_tavily": [
+      "acquamarinehotel.com.br",
+      "blog.buser.com.br",
+      "capixabadagema.com.br",
+      "esbrasil.com.br",
+      "guarapari.es.gov.br",
+      "prefiroguarapari.com.br",
+      "tripadvisor.com",
+      "wanderlog.com"
+    ],
+    "overlap": [
+      "esbrasil.com.br",
+      "guarapari.es.gov.br"
+    ],
+    "texto": "Entre costões rochosos e a serenidade do litoral capixaba, o conjunto das Três Praias surge como um convite para desacelerar o ritmo e contemplar a natureza em seu estado mais autêntico. Formado pelas praias Mateus Lopes, Leontina e Praia do Saco, também conhecida como Ancoradouro, o local preserva pequenas faixas de areia emolduradas por um cenário sem grandes construções urbanas, onde o som das ondas embala quem busca refúgio e calmaria à beira do mar.\n\nA experiência de caminhar pela região revela enseadas de águas limpas e cristalinas, que variam entre tons de azul e verde, convidando a um mergulho revigorante. A separação natural feita pelas rochas cria pequenas porções de litoral com perfis variados, abrigando desde trechos de mar mais calmo até áreas onde a dinâmica das marés desenha piscinas naturais de rara beleza entre as pedras.\n\nPara aproveitar plenamente a visita, prefira as primeiras horas do dia, quando a luz da manhã realça as cores do mar e a atmosfera de sossego é ainda mais intensa. Na bagagem, leve água, lanches leves e protetor solar, pois o encanto do lugar está justamente na preservação de suas características naturais, sem grandes comércios fixos na faixa de areia. Observe o movimento das marés junto aos costões e reserve momentos para caminhar com calma entre os caminhos consolidados, prestando atenção nas pedras e registrando a harmonia entre o verde da vegetação e o azul do oceano.",
+    "grounded": 3,
+    "claims": 3,
+    "soltas": []
+  },
+  {
+    "nome": "Praia De Bombinhas",
+    "municipio": "Bombinhas",
+    "uf": "SC",
+    "queries": 2,
+    "tokens": 967,
+    "menciona": true,
+    "dominios_producao": [
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "bombinhaspasseios.com.br",
+      "casadoturista.com.br",
+      "guia.melhoresdestinos.com.br",
+      "instagram.com",
+      "patadacobrawp.com.br",
+      "pousadaventosolar.com.br",
+      "tripadvisor.com.br",
+      "viagensecaminhos.com"
+    ],
+    "overlap": [],
+    "texto": "O som suave das ondas mansa convida a desacelerar na Praia de Bombinhas, a mais famosa da península catarinense, onde a beleza natural se revela em cada detalhe da paisagem cercada por morros. Ali, o mar exibe águas transparentes que abrigam uma rica vida marinha, tornando a região um ponto de referência para a observação de peixes e para a prática de mergulho com snorkel. A orla combina a conveniência de hotéis e restaurantes à beira da água com a proximidade de caminhos que revelam panoramas deslumbrantes da costa. Para aproveitar melhor a visita, vale a pena caminhar pela faixa de areia nas primeiras horas do dia, quando a luz natural realça a calma do mar e favorece a contemplação. Leve óculos de mergulho para observar a vida subaquática nas águas abrigadas e prepare-se para caminhar até o final da praia, onde uma trilha conduz ao alto do morro para revelar uma vista ampla de toda a região. Observe atentamente a clareza da água e a transição entre o verde da vegetação nativa e o azul do oceano, permitindo-se viver o ritmo próprio deste recanto catarinense com curiosidade e presença.",
+    "grounded": 1,
+    "claims": 1,
+    "soltas": []
+  },
+  {
+    "nome": "Praia De Copacabana",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "queries": 2,
+    "tokens": 1763,
+    "menciona": true,
+    "dominios_producao": [
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "all.accor.com",
+      "caminhoslanguages.com",
+      "copacabana.com",
+      "en.wikipedia.org",
+      "instagram.com",
+      "letsflyaway.com.br",
+      "reddit.com",
+      "rio.com",
+      "rioandlearn.com",
+      "sinageo.org.br"
+    ],
+    "overlap": [],
+    "texto": "A extensão de quatro quilômetros da Praia de Copacabana convida a contemplar o mar da Zona Sul do Rio de Janeiro, tendo de um lado a imponência do Pão de Açúcar e, do outro, o Forte de Copacabana. A região que hoje abriga essa famosa faixa balneária nem sempre teve essa configuração, pois era originalmente chamada de Sacopenapã, em referência ao caminho das garças na língua Tupi, até que a construção de uma capela com uma réplica da Virgem de Copacabana, padroeira da Bolívia, mudou o nome do bairro. O cenário passou por grandes transformações a partir do final do século dezenove e início do século vinte, com a abertura de caminhos ligando a área a outros pontos da cidade, a chegada do histórico Hotel Copacabana Palace e o posterior aterro que ampliou a faixa de areia, dando origem ao tradicional calçadão. Ao longo das décadas, a praia integrou a vida dos cariocas e visitantes, tornando-se palco de grandes eventos, competições internacionais e celebrações históricas, como as festas de Ano Novo iniciadas com pequenos grupos e expandidas ao longo dos anos até alcançar projeção global.\n\nPara aproveitar a visita, observe o movimento na orla e a dinâmica diária que une moradores e viajantes em busca de momentos de descanso sob o sol ou saboreando uma tradicional caipirinha. Vale a pena observar as extremidades da praia, onde é possível notar a transição da paisagem urbana em direção aos marcos históricos como o Forte de Copacabana e o Forte Duque de Caxias. Leve protetor solar e roupas confortáveis para caminhar pela extensão da areia ou pelo calçadão, aproveitando para registrar a vista panorâmica da costa e dos relevos que emolduram a cidade.",
+    "grounded": 3,
+    "claims": 9,
+    "soltas": [
+      "Zona Sul do Rio de Janeiro",
+      "Forte de Copacabana",
+      "Virgem de Copacabana",
+      "Hotel Copacabana Palace",
+      "Forte de Copacabana",
+      "Forte Duque de Caxias"
+    ]
+  },
+  {
+    "nome": "Praia De Itaparica",
+    "municipio": "",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 2509,
+    "menciona": true,
+    "dominios_producao": [
+      "esbrasil.com.br",
+      "pt.wikipedia.org",
+      "terracapixaba.com"
+    ],
+    "dominios_tavily": [
+      "commons.wikimedia.org",
+      "esbrasil.com.br",
+      "hotelolympiavv.com.br",
+      "hotelsantorini.com.br",
+      "instagram.com",
+      "pt.wikipedia.org",
+      "tripadvisor.com.br"
+    ],
+    "overlap": [
+      "esbrasil.com.br",
+      "pt.wikipedia.org"
+    ],
+    "texto": "O som constante das ondas encontra a energia vibrante da cidade na extensão generosa da Praia de Itaparica, em Vila Velha. A larga faixa de areia dourada conv，e o olhar para o horizonte onde o mar aberto exibe águas transparentes e verdes, emolduradas pela convivência harmoniosa entre a natureza e a paisagem urbana. \n\nEste trecho litoral faz parte da vibrante história praiana capixaba, dando continuidade a uma orla tradicional que conecta moradores e viajantes em busca de convivência e lazer. A proximidade com marcos históricos e culturais da região reforça o papel deste litoral como ponto de partida para vivenciar a identidade de Vila Velha, integrando o ritmo praiano à rotina pulsante da cidade.\n\nPara aproveitar a jornada, o entardecer convida a uma caminhada pelo calçadão, momento em que o céu se colore e oferece belas vistas do pôr do sol. Vale a pena observar o movimento dos surfistas aproveitando as ondas fortes e a energia dos praticantes de esportes na areia. Leve roupas leves e disposição para caminhar pela orla bem iluminada, aproveitando os quiosques para saborear petiscos e bebidas enquanto observa a vida local acontecer.",
+    "grounded": 3,
+    "claims": 3,
+    "soltas": []
+  },
+  {
+    "nome": "Projeto Tamar",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "queries": 2,
+    "tokens": 3437,
+    "menciona": true,
+    "dominios_producao": [
+      "pt.wikipedia.org",
+      "tamar.org.br"
+    ],
+    "dominios_tavily": [
+      "bnews.com.br",
+      "en.wikipedia.org",
+      "guiafloripa.com.br",
+      "instagram.com",
+      "m.vitoria.es.gov.br",
+      "salvador-airport.com.br",
+      "tamar.org.br"
+    ],
+    "overlap": [
+      "tamar.org.br"
+    ],
+    "texto": "Entre as brisas do litoral baiano e o ritmo singular de Salvador, o Projeto Tamar convida a uma pausa contemplativa para olhar de perto a imensidão da vida marinha. A iniciativa nasceu da urgência de proteger o ciclo de vida das tartarugas marinhas na costa brasileira, unindo a pesquisa científica, a educação ambiental e o envolvimento profundo com as comunidades locais. Cada passo dado em direção à conservação dessas espécies ressoa como um pacto de cuidado com o oceano, revelando a delicadeza e a resiliência de animais que cruzam os mares há milhões de anos. Para aproveitar a visita com serenidade, prefira as primeiras horas da manhã, quando a luz natural ilumina o cenário com suavidade e convida à observação atenta dos tanques e espaços interativos. Leve roupas leves, protetor solar e uma curiosidade desperta para enxergar nos detalhes a importância da preservação. Observe o movimento compassado das tartarugas e escute as histórias que os educadores compartilham, prestando atenção em como a ciência e a cultura popular caminham juntas na missão de proteger a biodiversidade brasileira.",
+    "grounded": 1,
+    "claims": 1,
+    "soltas": []
+  },
+  {
+    "nome": "Parque Das Águas De São Lourenço - Mg",
+    "municipio": "São Lourenço",
+    "uf": "MG",
+    "queries": 2,
+    "tokens": 1442,
+    "menciona": true,
+    "dominios_producao": [
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "abraceomundo.com",
+      "circuitodasaguasmg.com.br",
+      "eubiose.org.br",
+      "facebook.com",
+      "instagram.com",
+      "mg.gov.br",
+      "minalbabrasil.com.br"
+    ],
+    "overlap": [],
+    "texto": "Caminhar pelos caminhos arborizados do Parque das Águas de São Lourenço é mergulhar em uma atmosfera onde a natureza generosa e a história se encontram no coração do sul de Minas Gerais. Fundado em 1936 e integrado a uma área de preservação de Mata Atlântica, o espaço convida a pausas contemplativas à sombra de árvores frondosas e ao som discreto da fauna local, revelando a essência do Circuito das Águas em um cenário que une bem-estar e tranquilidade.\n\nO significado cultural e arquitetônico do parque remete à Belle Époque do turismo nacional e ao movimento Art Déco, expressando-se nas edificações clássicas do balneário e das fontes projetadas pelo arquiteto francês Henri Sajous. Ao longo de seus milhares de metros quadrados, o local abriga nove fontes de águas minerais naturais, divididas em diferentes tipos como gasosa, magnesiana, sulfurosa, alcalina, carbogasosa e ferruginosa, cujas propriedades terapêuticas e medicinais atraem visitantes há gerações para momentos de revitalização e banhos e massagens no balneário.\n\nPara aproveitar a visita com calma, reserve as primeiras horas da manhã para caminhar pelos gramados e observar a revoada das garças, quando a neblina ainda toca a superfície do lago e a luz suave favorece registros fotográficos das construções históricas e dos reflexos na água. Leve roupas confortáveis, uma garrafinha para experimentar os diferentes sabores e temperaturas das águas que brotam das fontes e disposição para observar os detalhes arquitetônicos e botânicos que tornam este refúgio um marco vivo da história mineira.",
+    "grounded": 7,
+    "claims": 8,
+    "soltas": [
+      "Mata Atlântica"
+    ]
+  },
+  {
+    "nome": "Museu Do Amanhã",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "queries": 2,
+    "tokens": 1614,
+    "menciona": true,
+    "dominios_producao": [
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "archdaily.com",
+      "artsandculture.google.com",
+      "calatrava.com",
+      "ccpar.rio",
+      "instagram.com",
+      "museudoamanha.org.br",
+      "pt.wikipedia.org"
+    ],
+    "overlap": [
+      "pt.wikipedia.org"
+    ],
+    "texto": "Às margens da Baía de Guanabara, na Praça Mauá, o Museu do Amanhã convida a contemplar o futuro a partir do coração da Zona Portuária do Rio de Janeiro. Erguido no Píer Mauá e inaugurado em dezembro de 2015, o edifício de arquitetura arrojada parece flutuar sobre a água, em um projeto assinado pelo arquiteto espanhol Santiago Calatrava que se integra à paisagem urbana e valoriza marcos históricos vizinhos, como o barroco Mosteiro de São Bento, o icônico edifício A Noite e o Museu de Arte do Rio. Concebido para promover o encontro entre ciência e arte, razão e emoção, linguagem e tecnologia, o espaço propõe reflexões profundas sobre sustentabilidade, convivência e os rumos da humanidade. Para aproveitar a visita, vale a pena caminhar sem pressa pelo entorno da Praça Mauá para observar a harmonia entre a estrutura futurista do museu e a rica herança cultural da região portuária, que inclui a proximidade com a Pedra do Sal e o Cais do Valongo. Observe os detalhes da arquitetura sustentável que aproveita os recursos naturais e os espelhos d'água alimentados pela própria baía, registre a imponência das linhas longitudinais do projeto contra o horizonte carioca e permita-se vivenciar uma jornada imersiva onde o passado, o presente e o amanhã se encontram.",
+    "grounded": 11,
+    "claims": 12,
+    "soltas": [
+      "Zona Portuária do Rio de Janeiro"
+    ]
+  },
+  {
+    "nome": "Secretaria De Estado Do Turismo - Setur/Es",
+    "municipio": "",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 584,
+    "menciona": false,
+    "dominios_producao": [
+      "es.gov.br",
+      "setur.es.gov.br"
+    ],
+    "dominios_tavily": [
+      "dados.es.gov.br",
+      "es.gov.br",
+      "instagram.com",
+      "observatoriodoturismo.es.gov.br",
+      "setur.correio.es.gov.br",
+      "setur.es.gov.br"
+    ],
+    "overlap": [
+      "es.gov.br",
+      "setur.es.gov.br"
+    ],
+    "texto": "Quando pensamos em desbravar as riquezas e as paisagens que moldam a identidade capixaba, nos conectamos com o trabalho essencial da Secretaria de Estado do Turismo, o órgão governamental dedicado a planejar, coordenar e fomentar a atividade turística em todo o Espírito Santo. Mais do que gerenciar políticas públicas, a instituição atua para revelar as praias, as montanhas e as manifestações culturais que fazem deste território um destino tão plural. É o ponto de partida institucional para quem deseja compreender a diversidade de um estado onde o litoral e o interior se encontram em harmonia, promovendo o desenvolvimento sustentável e a integração das comunidades locais através das viagens. Para aproveitar ao máximo a sua jornada pelo Espírito Santo, comece consultando os canais oficiais da secretaria para traçar rotas que unem a calmaria do litoral à imponência das serras. Ao planejar seus passeios, observe os detalhes da arquitetura local, a culinária típica que mistura influências indígenas, portuguesas e italianas, e a hospitalidade característica das gentes capixabas. Leve com você o espírito curioso de quem valoriza tanto as grandes paisagens quanto os pequenos encontros ao longo do caminho, registrando em memórias e fotografias a autêntica essência de um estado que se desenvolve acolhendo quem chega.",
+    "grounded": 3,
+    "claims": 3,
+    "soltas": []
+  },
+  {
+    "nome": "Morro Do Moreno",
+    "municipio": "",
+    "uf": "ES",
+    "queries": 2,
+    "tokens": 1872,
+    "menciona": true,
+    "dominios_producao": [
+      "es360.com.br",
+      "esbrasil.com.br",
+      "pt.wikipedia.org"
+    ],
+    "dominios_tavily": [
+      "alltrails.com",
+      "destinoses.com",
+      "instagram.com",
+      "pt.wikiloc.com",
+      "pt.wikipedia.org",
+      "tripadvisor.com.br",
+      "turismo.vilavelha.es.gov.br"
+    ],
+    "overlap": [
+      "pt.wikipedia.org"
+    ],
+    "texto": "Do alto de seus cento e oitenta e quatro metros, o Morro do Moreno convida a contemplar a grandiosidade da paisagem capixaba, tendo a Baía de Vitória e a imponente Terceira Ponte como molduras para o horizonte de Vila Velha. Declarado monumento natural, este relevo guarda séculos de memórias coloniais em seu solo, tendo servido inclusive como ponto estratégico de defesa da Capitania do Espírito Santo no passado, quando sua vegetação foi colocada em chamas para afugentar invasores estrangeiros. Batizado em homenagem ao antigo colono João Moreno, o local hoje convida a vivenciar a natureza de perto, integrando a história regional ao cotidiano de quem busca ar puro e contemplação. Para aproveitar a visita, vale a pena iniciar a caminhada pelas trilhas que cruzam a Mata Atlântica em busca do Mirante da Testa, excelente ponto para observação e registros fotográficos da região. Leve calçados confortáveis e próprios para caminhada ou escaladas leves, água para se hidratar ao longo do trajeto e observe a transição entre a vegetação nativa e as vistas panorâmicas que se abrem a cada trecho superado da estrada.",
+    "grounded": 7,
+    "claims": 8,
+    "soltas": [
+      "Mata Atlântica"
+    ]
+  }
+]

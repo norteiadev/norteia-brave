@@ -1664,6 +1664,11 @@ inexistente. Aquilo era o sintoma; isto é o preço.
 - **A metade da busca não está estável.** 9/10 virou 4/10 em 19 dias, sem mudar nada. O
   ganho de 4,9x da §18 pressupõe uma taxa de fatos que não se sustentou — com 4/10, a
   cascata é barata e **erra mais**, não é barata e igual.
+
+  > **Corrigido pela §24.** Isto foi medido em 3 atrativos do OSM sem Wikipedia — o pior caso,
+  > não o caso médio. Sobre 50 atrativos **reais do TripAdvisor**, que são o trabalho, a
+  > cobertura é de **98%** e a groundedness de **88%**. A §23 mediu o pior caso e o tratou
+  > como caso médio.
 - **A fabricação é o bloqueio real, e é dos dois lados.** 2/2 na cascata, 1/2 na produção.
   Nenhuma decisão de modelo ou provedor resolve; é preciso um gate determinístico fora do
   LLM — o atrativo precisa existir numa fonte estruturada (Wikidata, OSM, Places `place_id`)
@@ -1676,6 +1681,119 @@ inexistente. Aquilo era o sintoma; isto é o preço.
 Ferramentas:
 `.venv/bin/python scripts/poc/cascade_probe.py --self-check` (offline, sem key) ·
 `--fetch` (busca e cacheia o contexto) · `--models producao` (o controle da lane de hoje).
+
+---
+
+## 24. A cascata serve para os 10 mil do TripAdvisor? (medido) — e a correção da §23
+
+A §23 mediu 3 atrativos escolhidos por serem os mais difíceis possíveis: vindos do OSM, sem
+artigo na Wikipedia, os "95% obscuros" da §15.1. **Não é a distribuição do trabalho.** O
+trabalho é sincronizar ~10 mil atrativos do TripAdvisor, e atrativo do TripAdvisor tem página
+no TripAdvisor por definição.
+
+Medido em 2026-09-08, logo depois da §23, sobre 50 atrativos **reais** da amostra de
+`docs/poc/pilot-100/atrativos.json` — os mesmos que a rota de produção já processou, com as
+**mesmas queries que ela emitiu** e as `fontes` que ela citou. Trocar só o provedor, mantendo
+a query, elimina o confundidor "a query era ruim". Sonda: `scripts/poc/cascade_scale_probe.py`.
+
+### 24.1 A §23 mediu o pior caso e o tratou como caso médio
+
+| | amostra da §23 (3, OSM sem Wikipedia) | **50 atrativos reais do TA** |
+|---|---|---|
+| contexto menciona o atrativo | (o caso 1/5 do Mirante da Lagoa) | **49/50 = 98%** |
+| recupera ≥1 domínio que a produção citou | — | **40/50 = 80%** |
+| tokens/atrativo | 2.859 | **1.247** |
+| $/atrativo (busca) | $0,0160 | $0,0160 |
+
+A única falha de cobertura é `Secretaria De Estado Do Turismo - Setu` — **que não é atrativo**.
+É registro-lixo da Nascente que o sweep do TA arrastou junto. A Tavily não falhou; ela
+corretamente não achou conteúdo turístico sobre uma repartição pública.
+
+**A medida de menção é estrita de propósito:** exige os termos *identificadores* do nome,
+descartando os genéricos ("praia", "parque", "centro"). Contexto que fala do município e
+contém a palavra "praia" **não** conta como cobertura de "Praia da Costa" — porque é
+exatamente esse insumo que produziu as 2/2 fabricações da §23.4.
+
+### 24.2 A redação, sobre a distribuição real
+
+30 dos 50 passaram pelo flash-lite gratuito com o prompt de produção, sem ferramenta.
+Medida: **groundedness** — cada afirmação concreta do texto gerado (ano, medida, nome próprio
+composto) existe no contexto que o alimentou? Afirmação que não está no contexto veio da
+memória paramétrica ou da invenção, e nada no pipeline distingue as duas.
+
+**115 de 130 afirmações concretas fundamentadas = 88%.**
+
+As 15 soltas concentram-se nos **famosos**, não nos obscuros:
+
+| atrativo | soltas | o que escapou |
+|---|---|---|
+| Praia de Copacabana | 6 de 9 | *Forte de Copacabana*, *Copacabana Palace*, *Zona Sul* |
+| Pelourinho | 3 de 5 | *Catedral de Salvador*, *Igreja do Rosário dos Pretos* |
+| Praia da Costa / Pedra da Cebola | 1 cada | *Mata Atlântica* |
+
+São fatos **verdadeiros** vindos da memória do modelo — e é justamente por isso que contam
+como risco: a §19 mediu que a mesma memória que acerta em Copacabana inventa em Brejetuba.
+O pipeline não tem como distinguir as duas, então a regra tem que ser mecânica.
+
+### 24.3 O gate que converte o risco em ausência de risco
+
+Os 2-3% sem cobertura projetam **200 a 300 dos 10 mil** recebendo descrição escrita sobre
+contexto que não fala do atrativo. Não precisa de LLM nem de julgamento para resolver:
+
+```
+se o contexto da busca não menciona os termos identificadores do nome do atrativo:
+    não escrever descrição  (o registro segue sem descrição, não com descrição inventada)
+```
+
+Custo do gate: **zero**. Já está implementado e testado em `cascade_scale_probe.py`
+(`menciona()`, com self-check offline). É o mesmo formato de gate que a §23.6 pedia — a
+diferença é que aqui ele não depende de fonte estruturada externa (Wikidata/OSM), depende só
+do que a busca devolveu.
+
+O mesmo vale para a groundedness: medir por texto gerado e mandar para a DLQ o que ficar
+abaixo do limiar, em vez de gravar no Mar.
+
+### 24.4 A conta dos 10 mil
+
+| rota | $/atrativo | **10.000 atrativos** | qualidade medida |
+|---|---|---|---|
+| produção hoje (Sonnet + `web_search`) | $0,0749 | **$749** | 9/10 fatos; inventa 1/2 nos inexistentes |
+| **cascata + Haiku 4.5** | **$0,0206** | **$206** | 98% cobertura, 88% groundedness |
+| **cascata + flash-lite free** | **$0,0160** | **$160** | idem, mas 3 de 30 deram HTTP 503 |
+| assinatura Max (§21) | $0,0979 equiv. | 1 semana de cota | oráculo de qualidade, não motor |
+
+**A economia é de $543 a $589, e a busca passa a ser 78-100% da conta** — o modelo praticamente
+some do custo, como a §23.3 previu.
+
+Duas ressalvas operacionais, medidas aqui:
+
+1. **O free tier do flash-lite não aguenta 10 mil.** 3 de 30 chamadas voltaram `503 Service
+   Unavailable` (10%), e o free tier tem teto diário. Para a carga inicial, **Haiku 4.5 a
+   $46 no total** compra estabilidade por 29% a mais que o flash-lite. É o corte certo.
+2. **O free tier da Tavily rende 500 atrativos/mês** (1.000 créditos ÷ 2 queries). Os 10 mil
+   exigem plano pago: 20 mil queries × $0,008 = **$160**. É a linha inteira do custo.
+
+### 24.5 Veredito
+
+**Serve.** Sobre a distribuição real do trabalho — atrativos do TripAdvisor, não obscuros do
+OSM — a cascata cobre 98%, fundamenta 88% das afirmações concretas e custa **$206 contra
+$749**, com um gate determinístico e gratuito fechando os 2-3% que sobram.
+
+A §23 não estava errada: estava medindo outra coisa. Os três atrativos dela continuam sendo
+o pior caso real, e continuam mostrando que **contexto ruim produz fabricação confiante em
+todo modelo, do flash-lite ao Sonnet**. O que a §24 acrescenta é que, no TripAdvisor, contexto
+ruim é 2-3% da carga e é **detectável antes de escrever** — o que muda a decisão de "não use"
+para "use, com o gate".
+
+O que a §23 mediu e continua valendo sem correção:
+- o modelo caro não escreve melhor com o mesmo contexto (§23.3);
+- a instrução de abstenção do `COPYWRITER_SYSTEM` não é executável por prompt (§23.4);
+- atrativo inexistente custa 2,1x na rota de produção (§23.5) — o gate da §24.3 também
+  elimina esse gasto, porque nem chega a chamar o modelo.
+
+Ferramenta: `.venv/bin/python scripts/poc/cascade_scale_probe.py --self-check` (offline) ·
+`--n 50` (cobertura e evidência) · `--n 30 --write` (a cascata inteira, com groundedness).
+Custo desta medição: ~$1,30.
 
 ---
 
