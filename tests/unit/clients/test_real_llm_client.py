@@ -353,6 +353,22 @@ async def test_generate_without_server_tool_use_prices_tokens_only(
     assert float(rows[0].usd_cost) == pytest.approx(expected)
 
 
+async def test_generate_prices_haiku_at_haiku_rates(monkeypatch, fake_redis, sqlite_session):
+    """Haiku is $1/$5 per MTok, not Sonnet's $3/$15 — a 3x over-count in record_spend would
+    trip the daily budget guard 3x early on the cascade copywriter."""
+    client = _generate_client(
+        monkeypatch, redis_client=fake_redis, session=sqlite_session, lane="test"
+    )
+    client._anthropic_client.messages.create = AsyncMock(
+        return_value=_fake_response(input_tokens=1_000, output_tokens=500)
+    )
+
+    await client.generate(messages=[{"role": "user", "content": "x"}], model="claude-haiku-4-5")
+
+    rows = sqlite_session.query(LLMGeneration).all()
+    assert float(rows[0].usd_cost) == pytest.approx((1_000 * 1.0 + 500 * 5.0) / 1_000_000)
+
+
 async def test_generate_accumulates_web_search_fee_across_pause_turns(
     monkeypatch, fake_redis, sqlite_session
 ):

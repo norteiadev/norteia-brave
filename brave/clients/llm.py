@@ -56,6 +56,15 @@ logger = structlog.get_logger(__name__)
 _SONNET_4_5_INPUT_USD_PER_MTOK: float = 3.0
 _SONNET_4_5_OUTPUT_USD_PER_MTOK: float = 15.0
 
+# (input, output) USD per MTok for generate(). It used to price EVERY model at Sonnet rates —
+# harmless while only Sonnet called it, a 3x over-count in record_spend (and a budget guard
+# tripping 3x early) once the cascade copywriter runs Haiku. An unknown slug falls back to
+# Sonnet: over-counting trips the guard early, under-counting would let it overspend.
+_PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
+    "claude-sonnet-4-5": (_SONNET_4_5_INPUT_USD_PER_MTOK, _SONNET_4_5_OUTPUT_USD_PER_MTOK),
+    "claude-haiku-4-5": (1.0, 5.0),
+}
+
 # Prompt-caching multipliers on the input rate. Nothing sends cache_control today, so both
 # counters are always 0 — priced anyway because a cache hit MOVES tokens out of input_tokens,
 # so without these the day someone enables caching we would under-count instead of measure it.
@@ -383,12 +392,15 @@ class RealLLMClient:
         )
 
         # Anthropic does NOT return a cost field — compute from price table
-        # (RESEARCH.md Pitfall 7). Prices are for Sonnet 4.5 (2026-06).
+        # (RESEARCH.md Pitfall 7).
+        price_in, price_out = _PRICES_USD_PER_MTOK.get(
+            model, _PRICES_USD_PER_MTOK["claude-sonnet-4-5"]
+        )
         usd_cost: float = (
-            prompt_tokens * _SONNET_4_5_INPUT_USD_PER_MTOK
-            + cache_write_tokens * _SONNET_4_5_INPUT_USD_PER_MTOK * _CACHE_WRITE_MULTIPLIER
-            + cache_read_tokens * _SONNET_4_5_INPUT_USD_PER_MTOK * _CACHE_READ_MULTIPLIER
-            + completion_tokens * _SONNET_4_5_OUTPUT_USD_PER_MTOK
+            prompt_tokens * price_in
+            + cache_write_tokens * price_in * _CACHE_WRITE_MULTIPLIER
+            + cache_read_tokens * price_in * _CACHE_READ_MULTIPLIER
+            + completion_tokens * price_out
         ) / 1_000_000 + web_searches * _WEB_SEARCH_USD_PER_REQUEST
 
         # web_searches is folded into usd_cost only — llm_generations has no column for it,
