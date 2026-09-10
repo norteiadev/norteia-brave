@@ -39,6 +39,27 @@ USD_PER_SEARCH: float = 0.008
 _MAX_RESULTS = 5
 
 
+# Measured (§25): a development key allows 100 RPM and answers the excess with 429 +
+# ``retry-after: 60``. The old 2-10 s backoff ran out of attempts inside that minute, so every
+# atrativo in flight failed in ~4.5 s (84 of 150 at concurrency 8) and each failure burned a
+# descricao_attempts on the record. Honouring the header turns the wall into backpressure. 4
+# attempts = at most 3 waits of 60 s, which fits the 300 s enrich_places time limit.
+_MAX_ATTEMPTS = 4
+_MAX_RETRY_AFTER_S = 60.0
+_backoff = wait_exponential(multiplier=1, min=2, max=10)
+
+
+def _wait(retry_state: Any) -> float:
+    """Wait what the server asked for (capped), else exponential backoff."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            return min(float(exc.response.headers["retry-after"]), _MAX_RETRY_AFTER_S)
+        except (KeyError, ValueError):
+            pass
+    return _backoff(retry_state)
+
+
 def _is_retryable(exc: BaseException) -> bool:
     """429 / 5xx / connection errors are retryable. 432/433 (plan or credit limit) are not —
     retrying a quota wall only burns the backoff."""
@@ -92,8 +113,8 @@ class RealTavilyClient:
 
     @retry(
         retry=retry_if_exception(_is_retryable),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(_MAX_ATTEMPTS),
+        wait=_wait,
         reraise=True,
     )
     async def _post(self, query: str) -> list[dict[str, Any]]:

@@ -294,3 +294,34 @@ async def test_agent_grounded_prose_is_written() -> None:
     assert rio.normalized["descricao_editorial"] == _PROSA_FUNDAMENTADA
     assert rio.normalized["descricao_gate"] is None
     assert rio.normalized["descricao_groundedness"] == 1.0
+
+
+@respx.mock
+async def test_tavily_rate_limit_waits_instead_of_failing(real_env: None) -> None:
+    """429 + retry-after is backpressure, not failure (§25: 84 of 150 failed without this)."""
+    route = respx.post(TAVILY_SEARCH_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"retry-after": "0"}),
+            httpx.Response(429, headers={"retry-after": "0"}),
+            httpx.Response(200, json={"results": _COM_MENCAO}),
+        ]
+    )
+    _, search = _clients(fakeredis.FakeRedis())
+    assert "Praia da Costa" in await search.search("q")
+    assert route.call_count == 3
+
+
+def test_tavily_wait_honours_retry_after_capped() -> None:
+    from types import SimpleNamespace
+
+    from brave.clients.tavily import _MAX_RETRY_AFTER_S, _wait
+
+    def state(headers: dict) -> SimpleNamespace:
+        resp = httpx.Response(429, headers=headers, request=httpx.Request("POST", "http://x"))
+        exc = httpx.HTTPStatusError("429", request=resp.request, response=resp)
+        outcome = SimpleNamespace(exception=lambda: exc)
+        return SimpleNamespace(outcome=outcome, attempt_number=1)
+
+    assert _wait(state({"retry-after": "60"})) == 60.0
+    assert _wait(state({"retry-after": "900"})) == _MAX_RETRY_AFTER_S
+    assert _wait(state({})) == 2  # no header → exponential floor
