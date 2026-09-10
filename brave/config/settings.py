@@ -445,12 +445,13 @@ class AppConfig(BaseSettings):
     # (default) the inline copywriter runs — that is ALL this flag controls: inline
     # copywriter on/off.
     # It does NOT restore the pre-batch inline behavior. In the same change, the shared
-    # WEB_SEARCH_TOOL went max_uses 3 → 2 and gained user_location, and brave.clients.llm
-    # now adds the $10/1,000 web_search fee to usd_cost — which feeds record_spend. So on
-    # the INLINE path too, grounding changed and the RECORDED cost per description rose by
-    # ~30%: the $10/day guard now trips after ~109 descriptions, not ~139. If you are
-    # debugging a mid-sweep CostGuardError, that is why — flipping this flag off will not
-    # take it back.
+    # WEB_SEARCH_TOOL gained user_location, and brave.clients.llm now adds the $10/1,000
+    # web_search fee to usd_cost — which feeds record_spend. So on the INLINE path too,
+    # grounding changed and the RECORDED cost per description rose by ~30%: the $10/day guard
+    # now trips after ~109 descriptions, not ~139. If you are debugging a mid-sweep
+    # CostGuardError, that is why — flipping this flag off will not take it back.
+    # (max_uses was NOT lowered: it stays 3 in copywriter.py, set an hour earlier on measured
+    # traffic — 2 searches every time, so the cap never binds and the cost math is unchanged.)
     # Overlay key ``atrativo_description_batch_enabled`` (brave.config.runtime).
     #
     # Measured (5 live copywriter calls, famous and obscure atrativos alike): EXACTLY 2 web
