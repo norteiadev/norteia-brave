@@ -254,6 +254,21 @@ def _get_session() -> tuple[Session, Any]:
     return SessionFactory(), engine
 
 
+def _cascade_search_client(app_config: AppConfig, effective: AppConfig, redis_client: Any) -> Any:
+    """Tavily client when atrativo_description_cascade_enabled, else None (web_search mode).
+
+    Only called on the real-copywriter branch (run_real_externals already true). The key is
+    read from the env-built app_config: the overlay snapshot never carries it.
+    """
+    if not effective.atrativo_description_cascade_enabled:
+        return None
+    from brave.clients.tavily import RealTavilyClient  # noqa: PLC0415
+
+    return RealTavilyClient(
+        app_config.tavily_api_key, redis_client=redis_client, llm_config=app_config.llm
+    )
+
+
 # ---------------------------------------------------------------------------
 # Poison quarantine helper (re-exported from brave.core.quarantine — D-18)
 # ---------------------------------------------------------------------------
@@ -1063,17 +1078,20 @@ def sweep_tripadvisor(
                 import redis as _copy_redis_lib  # noqa: PLC0415
 
                 from brave.clients.llm import RealLLMClient
+                _copy_redis = _copy_redis_lib.from_url(
+                    os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+                )
                 _copy_llm = RealLLMClient(
                     config=app_config.llm,
-                    redis_client=_copy_redis_lib.from_url(
-                        os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-                    ),
+                    redis_client=_copy_redis,
                     session=session,
                     lane="atrativo_copywriter",
                 )
+                _copy_search = _cascade_search_client(app_config, effective, _copy_redis)
             else:
                 from brave.clients.null_llm import NullLLMClient
                 _copy_llm = NullLLMClient()
+                _copy_search = None
 
             places_agent = PlacesEnrichmentAgent(
                 places_client=_places_client,
@@ -1085,6 +1103,7 @@ def sweep_tripadvisor(
                 description_enabled=_desc_on,
                 enable_web_search=app_config.run_real_externals,
                 max_distance_km=app_config.places_match_max_distance_km,
+                search_client=_copy_search,
             )
         except Exception:  # noqa: BLE001 — enrichment build must not crash the sweep
             logger.warning("inline_enrichment_build_failed", uf=uf)
@@ -1488,17 +1507,20 @@ def enrich_places_task(self, rio_id: str) -> None:
             import redis as _copy_redis_lib  # noqa: PLC0415
 
             from brave.clients.llm import RealLLMClient
+            copy_redis = _copy_redis_lib.from_url(
+                os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+            )
             copy_llm = RealLLMClient(
                 config=app_config.llm,
-                redis_client=_copy_redis_lib.from_url(
-                    os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-                ),
+                redis_client=copy_redis,
                 session=session,
                 lane="atrativo_copywriter",
             )
+            copy_search = _cascade_search_client(app_config, effective, copy_redis)
         else:
             from brave.clients.null_llm import NullLLMClient
             copy_llm = NullLLMClient()
+            copy_search = None
 
         agent = PlacesEnrichmentAgent(
             places_client=places_client,
@@ -1510,6 +1532,7 @@ def enrich_places_task(self, rio_id: str) -> None:
             description_enabled=_desc_on,
             enable_web_search=app_config.run_real_externals,
             max_distance_km=app_config.places_match_max_distance_km,
+            search_client=copy_search,
         )
 
         asyncio.run(agent.run(rio))

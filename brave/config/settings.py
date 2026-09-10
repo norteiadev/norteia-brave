@@ -462,6 +462,24 @@ class AppConfig(BaseSettings):
     # material to read). Size any budget/batch estimate off those numbers.
     atrativo_description_batch_enabled: bool = False
 
+    # atrativo_description_cascade_enabled switches the INLINE copywriter from Sonnet +
+    # server-side web_search to the cascade (docs/poc/gemini-viability.md §23-§25): the lane
+    # searches Tavily itself (2 queries), refuses to write when the results do not mention the
+    # atrativo (mention gate — no model call), writes with Haiku 4.5 and NO tool, and parks
+    # prose below grounding.MIN_GROUNDEDNESS as a steward-review draft + DLQ instead of writing
+    # descricao_editorial. Measured: ~$0.021/atrativo against $0.075-0.12 on the web_search route.
+    # It does NOT control whether descriptions are written at all (description_enrichment_enabled
+    # does), and does NOT touch the Message Batches lane — with atrativo_description_batch_enabled
+    # on, the inline copywriter is off and this flag has no effect. Needs TAVILY_API_KEY; a
+    # missing key fails the client build, which disables inline enrichment for that sweep
+    # (logged as inline_enrichment_build_failed) rather than falling back to the costly route.
+    # Overlay key ``atrativo_description_cascade_enabled`` (brave.config.runtime). Default off.
+    atrativo_description_cascade_enabled: bool = False
+
+    # TAVILY_API_KEY — the cascade's search provider. exclude=True keeps it out of the Redis
+    # config snapshot (model_dump_json); readers take it from the env-built AppConfig().
+    tavily_api_key: str = Field(default="", exclude=True)
+
     # places_match_max_distance_km: Text-Search match radius (km) between the atrativo's
     # coordinates and a candidate Google place. The name threshold (rapidfuzz ≥85) is the
     # PRIMARY guard; this only disambiguates + rejects a gross wrong-city match. Kept

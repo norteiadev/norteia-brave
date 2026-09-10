@@ -31,7 +31,6 @@ import json
 import os
 import random
 import sys
-import unicodedata
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -40,101 +39,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from search_snippets_probe import buscar_tavily  # noqa: E402
 
+# O gate e a groundedness moram na lane agora; a sonda mede com o MESMO código que roda.
+from brave.lanes.atrativos.grounding import (  # noqa: E402
+    groundedness,
+    menciona,
+    termos_identificadores,
+)
+
 AMOSTRA = Path(__file__).resolve().parents[2] / "docs/poc/pilot-100/atrativos.json"
 SAIDA = Path(__file__).with_name("cascade_scale_probe.json")
 PRECO_QUERY_TAVILY = 0.008
-
-# Palavras que sozinhas não identificam o atrativo — "Praia" bate em qualquer texto de
-# litoral. Sem isto a cobertura sai inflada: o contexto genérico do município marcaria
-# presença por conter "praia", que é o oposto do que a medida quer detectar.
-GENERICAS = {
-    "praia",
-    "parque",
-    "museu",
-    "igreja",
-    "centro",
-    "mirante",
-    "cachoeira",
-    "lagoa",
-    "ilha",
-    "morro",
-    "pico",
-    "serra",
-    "rio",
-    "ponte",
-    "mercado",
-    "feira",
-    "teatro",
-    "catedral",
-    "santuario",
-    "convento",
-    "forte",
-    "farol",
-    "trilha",
-    "cristo",
-    "jardim",
-    "monumento",
-    "palacio",
-    "casa",
-    "memorial",
-    "estatua",
-    "orla",
-    "baia",
-    "canal",
-    "historico",
-    "municipal",
-    "estadual",
-    "nacional",
-    "natural",
-    "turistico",
-    "velha",
-    "nova",
-    "grande",
-    "pequeno",
-    "alto",
-    "novo",
-    "velho",
-    "sao",
-    "santa",
-    "santo",
-    "de",
-    "da",
-    "do",
-    "das",
-    "dos",
-    "e",
-    "a",
-    "o",
-    "as",
-    "os",
-    "em",
-    "no",
-    "na",
-}
-
-
-def _fold(s: str) -> str:
-    s = unicodedata.normalize("NFKD", s.lower())
-    return "".join(c for c in s if not unicodedata.combining(c))
-
-
-def termos_identificadores(nome: str) -> list[str]:
-    """As palavras do nome que de fato identificam o atrativo.
-
-    "Praia Da Costa" → ["costa"]. "Convento da Penha" → ["penha"]. Se sobrar nada
-    (nome inteiro genérico, ex. "Centro Histórico"), devolve o nome inteiro dobrado —
-    aí só casa quem escrever a expressão completa.
-    """
-    palavras = [p for p in _fold(nome).replace("-", " ").split() if len(p) > 2]
-    fortes = [p for p in palavras if p not in GENERICAS]
-    return fortes or [_fold(nome)]
-
-
-def menciona(contexto: str, nome: str) -> bool:
-    """O contexto fala DESTE atrativo, não só do município dele."""
-    alvo = _fold(contexto)
-    return all(t in alvo for t in termos_identificadores(nome))
-
 
 def dominios(urls: list[str]) -> set[str]:
     out = set()
@@ -150,37 +64,6 @@ def dominios(urls: list[str]) -> set[str]:
 
 def urls_do_contexto(contexto: str) -> list[str]:
     return [ln.strip() for ln in contexto.splitlines() if ln.strip().startswith("http")]
-
-
-def afirmacoes_concretas(texto: str) -> list[str]:
-    """As afirmações verificáveis do texto: números, medidas e nomes próprios compostos.
-
-    É o que dá para checar contra o contexto sem ter gabarito escrito à mão — e é
-    exatamente a classe que a §23.4 viu ser inventada ("50 metros de queda").
-    """
-    import re
-
-    fora = []
-    fora += re.findall(r"\b\d{3,4}\b", texto)  # anos, altitudes
-    # findall com UM grupo devolve strings, não tuplas — indexar aqui pegaria o primeiro
-    # caractere ("5" em vez de "50 metros") e deixaria toda medida passar por infundada.
-    fora += re.findall(r"\b\d+[,.]?\d*\s?(?:m|km|metros|quilômetros|hectares)\b", texto, re.I)
-    cap = r"[A-ZÁÂÃÉÊÍÓÔÕÚÇ][a-zà-ú]+"
-    con = r"(?:d[aeo]s?)"
-    fora += re.findall(rf"\b{cap}(?:\s(?:{con}\s)?{cap})+\b", texto)
-    return fora
-
-
-def groundedness(texto: str, contexto: str) -> tuple[int, int, list[str]]:
-    """Quantas afirmações concretas do texto existem no contexto que o alimentou.
-
-    Afirmação que não está no contexto veio da memória paramétrica ou da invenção — e
-    nada no pipeline distingue as duas. Devolve (fundamentadas, total, as soltas).
-    """
-    alvo = _fold(contexto)
-    claims = afirmacoes_concretas(texto)
-    soltas = [c for c in claims if _fold(c) not in alvo]
-    return len(claims) - len(soltas), len(claims), soltas
 
 
 async def escrever(contexto: str, nome: str, municipio: str, uf: str) -> str:
