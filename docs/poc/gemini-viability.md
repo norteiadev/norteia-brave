@@ -1797,6 +1797,202 @@ Custo desta medição: ~$1,30.
 
 ---
 
+## 25. Os 200 cronometrados: a cascata cabe em semanas? (medido)
+
+A §24 respondeu qualidade e custo. Faltava a pergunta de prazo: quantos atrativos por hora a
+cascata inteira processa, qual provedor trava primeiro, e o que isso diz sobre os ~10 mil.
+
+Medido em 2026-09-10, depois de implementar a cascata na lane (`write_cascade`, atrás de
+`atrativo_description_cascade_enabled`). Sonda: `scripts/poc/cascade_timed_probe.py`. Custo
+total: **$1,28 em Haiku + 532 créditos Tavily** do free tier (≈$4,26 se fosse PAYGO).
+
+### 25.1 O método
+
+A sonda roda **o código da lane, não uma réplica**: `RealTavilyClient` →
+`TourismCopywriter.write_cascade` (gate de menção → Haiku 4.5 sem ferramenta → gate de
+groundedness) → `RealLLMClient`. O único enxerto é instrumentação: hooks httpx que contam cada
+resposta HTTP por provedor — inclusive as que o retry do SDK e o tenacity escondem — e um
+wrapper que lê o `usage` da Anthropic. Retry fica no padrão de produção.
+
+Duas fases sobre 200 atrativos distintos, embaralhados antes de dividir para que as duas
+recebam a mesma mistura:
+
+1. **sequencial** (concorrência 1, 50 atrativos) — latência limpa, sem disputa. É o formato
+   do sweep de hoje, que enriquece inline, um registro por vez;
+2. **concorrente** (concorrência 8, 150 atrativos) — throughput e comportamento sob rate limit.
+
+**A amostra não é 200 do TripAdvisor.** O banco local tem 121 atrativos (os do piloto e mais
+20), não 200 —
+varrer mais exige a sessão do TA, que está em `brave:ta:needs_bootstrap` (bootstrap manual).
+Ficou assim, com a origem gravada em cada registro e relatada em separado:
+
+| origem | n | o que é |
+|---|---|---|
+| `ta-piloto` | 96 | os 100 de `pilot-100` (4 nomes repetidos) |
+| `ta-banco` | 20 | o que `rio_records` tem além do piloto |
+| `ta-snapshot` | 11 | `atrativos_images.json`, de um estado anterior do banco |
+| `ta-fixture` | 19 | a página oa30 real do TA em `tests/fixtures` (nome sem município) |
+| `cadastur` | 54 | parques de lazer/temáticos do Cadastur (datasets 05 e 10) |
+| **da lane TA** | **146** | |
+
+O Cadastur não é a distribuição do TA: é a cauda "nome de empresa" (*Mrx Entretenimentos Ltda*,
+*Cia De Rodeio Sa*) — o mesmo tipo de registro que o sweep arrasta para a Nascente. Serve para
+throughput; para os gates, o número que vale é o dos 146.
+
+### 25.2 Throughput e latência
+
+| fase | n | conc. | wall | **atrativos/hora** | p50 | p95 | busca p50 / p95 | Haiku p50 / p95 |
+|---|---|---|---|---|---|---|---|---|
+| sequencial | 50 | 1 | 433 s | **416** | 8,9 s | 10,9 s | 2,1 / 3,8 s | 6,5 / 8,4 s |
+| concorrente, cliente antigo | 150 | 8 | 114 s | *inválido* — 84 falharam | | | | |
+| **concorrente, `retry-after`** | 150 | 8 | 264 s | **2.043** | 7,8 s | **68,6 s** | 1,3 / 62,1 s | 6,5 / 8,7 s |
+
+**O modelo é 74% do tempo de cada atrativo** (6,5 de 8,9 s na fase limpa). As duas buscas
+correm em paralelo e somam ~2 s. O Haiku escreve 476 tokens de saída por atrativo sobre 2.788
+de entrada.
+
+O p95 de 68,6 s da fase concorrente é **espera, não trabalho**: 16 dos 150 atrativos passaram
+60 s parados atrás de um 429 da Tavily (25.3). A mediana não piora: 7,8 s, contra 8,9 s na fase limpa.
+
+### 25.3 Os provedores: a Tavily é o gargalo, a Anthropic nem aparece
+
+| provedor | 200 | 429 | 5xx/529 | taxa de 429 |
+|---|---|---|---|---|
+| Tavily, rodada 1 (cliente antigo) | 232 | **504** | 0 | **68%** |
+| Tavily, rodada 2 (`retry-after`) | 300 | 31 | 0 | 9% |
+| Anthropic, Haiku 4.5 (as duas) | 250 | **0** | 0 | 0% |
+
+**A chave da Tavily é Development: 100 RPM.** Com 8 atrativos em voo, 2 buscas cada e ~9 s por
+atrativo, a demanda chega a ~110 buscas por minuto e a Tavily responde `429` com
+`retry-after: 60`. Conferido na documentação: Development = 100 RPM, Production = 1.000 RPM, e a
+chave Production exige plano pago ou PAYGO.
+
+**Na rodada 1 isso derrubou 84 de 150.** O cliente fazia backoff de 2-10 s com 3 tentativas: as
+três caíam dentro do mesmo minuto bloqueado, cada atrativo falhava em 4,5 s — e, na lane, cada
+falha queimaria um `descricao_attempts` do registro. Três sweeps sob a parede e o registro sai
+da fila de descrição para sempre. **Corrigido no cliente**: o `retry-after` é respeitado (teto
+60 s, 4 tentativas — cabe nos 300 s de `enrich_places`). Na rodada 2, os mesmos 150: **zero
+falhas**, 31 × 429 absorvidos como contrapressão.
+
+A Anthropic devolveu nos headers os limites desta organização para o Haiku: **10.000 RPM, 10 M
+tokens de entrada/min, 2 M de saída/min**. A 2.788 + 476 tokens por atrativo, isso é **~3.600
+atrativos por minuto** — 70x o teto da chave Development da Tavily e 7x o da Production.
+
+### 25.4 Os gates, sobre os 200
+
+| | n | escrito | **barrado: sem menção** | **DLQ: não fundamentada** |
+|---|---|---|---|---|
+| **lane TA** | 146 | 129 (88%) | **3 (2,1%)** | 14 (9,6%) |
+| Cadastur | 54 | 43 | 8 (15%) | 3 |
+| total | 200 | 172 | 11 | 17 |
+
+**O gate de menção reproduz a §24 com as queries da própria lane.** A §24 usou as queries que o
+Sonnet de produção emitiu — que às vezes carregavam um fato que o modelo já "sabia" (*"areia
+monazítica"*, *"1558"*). A lane não pode fazer isso: as queries dela são determinísticas
+(`cascade_queries`: nome + município + UF + "história", e o nome entre aspas). Cobertura no TA:
+143/146 = **97,9%**, contra os 98% da §24. As três barradas:
+
+- *Secretaria De Estado Do Turismo - Setur/Es* — não é atrativo; a mesma da §24;
+- *Karcará Adventure* — as duas buscas não devolvem o nome;
+- *Figueira Da Esquina 🌳❤️* — **falso negativo do gate**: o emoji virou termo identificador
+  obrigatório, que texto nenhum contém. Corrigido (token sem letra nem dígito não conta).
+
+No Cadastur o gate barra 15% — é ele funcionando: *Mf-Par Adiministradora*, *Amitse*.
+
+**O gate de groundedness manda 9% do TA para a DLQ, e a §24 errou a forma da distribuição.** Em
+28 textos ela parecia bimodal (0,33-0,50 e 0,86-1,00, nada no meio), e o limiar 0,75 foi posto
+"no meio da faixa vazia". Em 189 textos a faixa não existe: **dez caem entre 0,62 e 0,73**, oito
+em exatos 0,67 — uma afirmação solta em cada três.
+
+| limiar | vão para revisão | nos 10 mil |
+|---|---|---|
+| **0,75 (mantido)** | 17 de 189 = 9% | ~900 rascunhos |
+| 0,60 | 7 de 189 = 4% | ~370 rascunhos |
+
+Mantido em 0,75: a falha que ele impede — fato verdadeiro sem fonte na base canônica, a §24.2 —
+é justamente a que nada adiante detecta, e fila de revisão é o lado barato do erro. Os
+rejeitados são do tipo esperado: *Cristo Redentor* (0,44), *Parque Vila Germânica* (0,25),
+*Jardim Botânico* (0,73) — lugares conhecidos, escritos de memória. Baixar deve vir de evidência do steward
+sobre esses rascunhos, não de volume. O `descricao_groundedness` fica gravado por registro para
+recalibrar com tráfego real.
+
+### 25.5 Custo real
+
+| | quantidade | $ |
+|---|---|---|
+| buscas Tavily | 400 (2 por atrativo, inclusive os barrados) | $3,20 a PAYGO |
+| Haiku 4.5 | 189 chamadas · 527 mil tokens in · 90 mil out | $0,98 |
+| **total, 200 atrativos** | | **$4,18 = $0,0209/atrativo** |
+
+**A projeção da §24 ($0,0206) se confirma a 1,5%.** Os 11 barrados pagam a busca e não pagam
+modelo — é o gate economizando o 2,1x da §23.5. Nos 10 mil: **~$209**, dos quais $160 são busca.
+
+### 25.6 A conta dos 10 mil
+
+| cenário | ritmo | **10 mil em** |
+|---|---|---|
+| 1 worker sequencial (o sweep inline de hoje) | 416/h | **24 h** |
+| concorrência 8, chave Development (medido) | 2.043/h | 4,9 h |
+| teto da chave Development (100 RPM ÷ 2 buscas) | 3.000/h | 3,3 h |
+| teto da chave Production (1.000 RPM ÷ 2) | 30.000/h | 20 min, com ~70 em paralelo |
+| **cost guard padrão ($10/dia, compartilhado)** | **~480/dia** | **21 dias** |
+| **free tier da Tavily (1.000 créditos/mês)** | 500/mês | **20 meses** |
+
+**Throughput não é a restrição.** Um único worker sequencial faz os 10 mil em um dia. As duas
+travas reais são administrativas, e as duas estão na Tavily ou por causa dela:
+
+1. **Créditos.** O free tier rende 500 atrativos por mês. Os 10 mil pedem 20 mil créditos:
+   PAYGO a $0,008 = **$160** — e o PAYGO também dá a chave Production.
+2. **O cost guard.** `usd_daily_budget` é $10/dia por padrão, não há override no `.env`, e ele
+   é **compartilhado** com desmembramento e WhatsApp. A $0,021/atrativo, o guard para a lane
+   em ~480 atrativos/dia. Sem mexer nele, os 10 mil levam **~3 semanas**. Como a busca é
+   registrada no guard (a $0,008 mesmo no free tier, de propósito), ele mede a conta real.
+
+### 25.7 Armadilhas desta medição
+
+- **O banco não tinha 200.** 121 atrativos, e a sessão TA pede bootstrap manual.
+  Wikidata (SPARQL) deu 502/504 duas vezes; os nomes do índice MTur no Commons vêm colados ao
+  fotógrafo (*"DanielVianna RibeiraodaIlha Florianopolis SC"*) e inflariam o gate. Ficou TA +
+  fixture + Cadastur, marcado por origem.
+- **O throughput da rodada 1 (4.736/h) é falso.** Falha é rápida: 84 atrativos "processados"
+  em 4,5 s cada. Só vale throughput de rodada com zero falha.
+- **`/usage` da Tavily não atualizou durante a sessão** (186 antes e depois de 532 créditos).
+  Se o 429 é cobrado ficou sem verificar; a conta acima conta só respostas 200.
+- **O suite de integração zera tabelas de referência no banco local.** Depois dele, antes do
+  reset, `local_businesses` (152.955), `municipios`, `distritos` e `config_settings` estavam em
+  zero. O banco foi restaurado de um `pg_dump` tirado antes do suite — sem o dump, o reset
+  mandado pelo handoff teria apagado também os 122 atrativos que o import das 130 descrições
+  espera.
+- **`generate()` precificava todo modelo como Sonnet.** Com Haiku, o guard veria 3x o gasto
+  de modelo e travaria a lane em ~330 atrativos/dia em vez de ~480. Corrigido antes da medição.
+
+### 25.8 Veredito
+
+**Cabe — em dias de máquina, em ~3 semanas de calendário se nada mudar.**
+
+- A cascata processa **416 atrativos/hora num único worker** e **2.043/hora com 8 em paralelo**,
+  a p50 de 8-9 s por atrativo. Os 10 mil são um dia de worker sequencial.
+- **O gargalo é a Tavily**, nas duas dimensões: rate (100 RPM na chave Development, 68% de 429
+  a concorrência 8 antes da correção) e créditos (500 atrativos/mês grátis). A Anthropic não
+  deu um 429 em 250 chamadas e tem folga de ~70x.
+- **O prazo é decidido por dois botões, não por engenharia:** comprar ~$160 de PAYGO na Tavily
+  (sem isso: 20 meses) e decidir o `usd_daily_budget` (com os $10 de hoje: ~21 dias; a $50/dia,
+  ~4 dias — lembrando que o orçamento é de todas as lanes).
+- **Qualidade se sustenta em escala:** 97,9% de cobertura no TA com as queries da própria lane,
+  $0,0209 por atrativo, 9% dos textos para revisão humana em vez de irem para o Mar.
+
+O que sobra antes de ligar a flag: comprar o PAYGO (chave Production), decidir o orçamento
+diário, e — como sempre nesta lane — conferir `description_enrichment_enabled`, que continua
+`false` no overlay e desliga a descrição inteira sem erro.
+
+Ferramenta: `.venv/bin/python scripts/poc/cascade_timed_probe.py --self-check` (offline) ·
+`--amostra` (monta os 200; precisa do banco) · `--rodar` (as duas fases; ~400 créditos) ·
+`--rodar --inicio 50 --sequenciais 0` (só a concorrente). Resultados em
+`scripts/poc/cascade_timed_probe.json` (rodada 1) e `cascade_timed_probe.concorrente.json`
+(rodada 2).
+
+---
+
 ## Fontes
 
 - [Google AI plans — Gemini API](https://ai.google.dev/gemini-api/docs/google-ai-plans)
@@ -1817,3 +2013,4 @@ Custo desta medição: ~$1,30.
 - [How do usage and length limits work?](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work)
 - [Anthropic Consumer Terms of Service](https://www.anthropic.com/legal/consumer-terms)
 - [Tavily — API reference (`/search`)](https://docs.tavily.com/documentation/api-reference/endpoint/search)
+- [Tavily — Rate Limits](https://docs.tavily.com/documentation/rate-limits)

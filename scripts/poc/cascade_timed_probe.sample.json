@@ -1,0 +1,1202 @@
+[
+  {
+    "nome": "Rio Star",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Lago Negro",
+    "municipio": "Gramado",
+    "uf": "RS",
+    "origem": "ta-snapshot"
+  },
+  {
+    "nome": "Cachoeira Do Buracão",
+    "municipio": "Ibicoara",
+    "uf": "BA",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Lismar Ltda / Game Station",
+    "municipio": "Caruaru",
+    "uf": "PE",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Beto Carrero World",
+    "municipio": "Penha",
+    "uf": "SC",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Boliche Do Gorilao",
+    "municipio": "Ribeirão Preto",
+    "uf": "SP",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia De Setiba",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Centro Histórico De Ouro Preto",
+    "municipio": "Ouro Preto",
+    "uf": "MG",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Parque Estadual Da Pedra Azul",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Sunset Thermas Park",
+    "municipio": "Paranapanema",
+    "uf": "SP",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia do Gunga",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Rota Do Lagarto",
+    "municipio": "Domingos Martins",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia Da Guarda Do Embaú",
+    "municipio": "Paulo Lopes",
+    "uf": "SC",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Convento Nossa Senhora Da Penha",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Mandu Ladino",
+    "municipio": "Teresina",
+    "uf": "PI",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia De Itaparica",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia Castanheiras",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Ilha Do Campeche",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Cataratas Do Iguaçu",
+    "municipio": "Foz do Iguaçu",
+    "uf": "PR",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Parque Unipraias Camboriú",
+    "municipio": "Balneário Camboriú",
+    "uf": "SC",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Parque Vila Germânica",
+    "municipio": "Blumenau",
+    "uf": "SC",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Splash Eco Park",
+    "municipio": "Abreu e Lima",
+    "uf": "PE",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Pão de Açúcar",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-snapshot"
+  },
+  {
+    "nome": "Santo Antônio De Lisboa",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Aldeia Aqua Park",
+    "municipio": "Bonito",
+    "uf": "MS",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia Do Flamengo",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Farol De Santa Luzia",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia de Cumbuco",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Praia Da Sereia",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Rua Das Pedras",
+    "municipio": "Campos dos Goytacazes",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Bondinho Pão De Açúcar",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Quarta Praia",
+    "municipio": "Cairu",
+    "uf": "BA",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Mirante Mangabeiras",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Le Jardin Parque de Lavanda",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Praia de Pajucara",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Cidade Da Diversao",
+    "municipio": "São João de Meriti",
+    "uf": "RJ",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Surf Park Resort",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia De Itapuã",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Mrx Entretenimentos Ltda",
+    "municipio": "Canela",
+    "uf": "RS",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Serra Do Rio Do Rastro",
+    "municipio": "Lauro Muller",
+    "uf": "SC",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Green Promocoes E Eventos Ltda",
+    "municipio": "Mato Verde",
+    "uf": "MG",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Recanto Caipira",
+    "municipio": "São Miguel do Gostoso",
+    "uf": "RN",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Pousada Refugio Do Vale",
+    "municipio": "Frederico Westphalen",
+    "uf": "RS",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Trilha Da Pedra Redonda",
+    "municipio": "Camanducaia",
+    "uf": "MG",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Centro Cultural Banco Do Brasil Belo Horizonte",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Parque Das Águas De São Lourenço - Mg",
+    "municipio": "São Lourenço",
+    "uf": "MG",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Centro Cultural Banco Do Brasil - Ccbb Rio De Janeiro",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Praia Farol Da Barra",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia Dos Padres",
+    "municipio": "Aracruz",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Ilha Do Boi",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Paineiras - Corcovado",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia Do Morro",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Arca Parque Diversões",
+    "municipio": "Trindade",
+    "uf": "GO",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Inhotim",
+    "municipio": "Brumadinho",
+    "uf": "MG",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Parque Das Aves",
+    "municipio": "Foz do Iguaçu",
+    "uf": "PR",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Baia do Sancho",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Projeto Tamar",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia De Ipanema",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Walf Agropecuaria",
+    "municipio": "Bonito",
+    "uf": "MS",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia Itaúnas",
+    "municipio": "Conceição da Barra",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Igreja Matriz De Santo Antônio",
+    "municipio": "Igarapé",
+    "uf": "MG",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Praia Da Costa",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia Coroa Vermelha",
+    "municipio": "Santa Cruz Cabrália",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Parque Estadual De Pedra Azul",
+    "municipio": "Vargem Alta",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Curva Da Jurema",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Rex Turismo",
+    "municipio": "Foz do Iguaçu",
+    "uf": "PR",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Spbw Parques E Entretenimento",
+    "municipio": "São Paulo",
+    "uf": "SP",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia Do Espelho",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Cfa Braunao",
+    "municipio": "Bom Jesus da Lapa",
+    "uf": "BA",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Rua Do Mucugê",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Espaco Por Do Sol",
+    "municipio": "Mirassol D'Oeste",
+    "uf": "MT",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Vila Encantada Parque Dos Dinossauros",
+    "municipio": "Pomerode",
+    "uf": "SC",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Gruta do Lago Azul",
+    "municipio": "Bonito",
+    "uf": "MS",
+    "origem": "ta-snapshot"
+  },
+  {
+    "nome": "Lagoinha Do Leste Beach",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Lagoa do Paraíso",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Escultura Do Peixe De Arame",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Parque Municipal Das Mangabeiras",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Agropecuaria Paraiso E Turismo",
+    "municipio": "Pirenópolis",
+    "uf": "GO",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Canyons De Furnas",
+    "municipio": "Capitólio",
+    "uf": "MG",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Igreja E Convento De São Francisco",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia Peracanga",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Hollywood Dream Cars",
+    "municipio": "Gramado",
+    "uf": "RS",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Barretos Country Thermas Park",
+    "municipio": "Barretos",
+    "uf": "SP",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Igreja de Santa Isabel",
+    "municipio": "Mucugê",
+    "uf": "BA",
+    "origem": "ta-snapshot"
+  },
+  {
+    "nome": "Figueira Da Esquina 🌳❤️",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Aqua Rio Aquario Marinho Rio De Janeiro S.A.",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Parque Ibirapuera",
+    "municipio": "São Paulo",
+    "uf": "SP",
+    "origem": "ta-snapshot"
+  },
+  {
+    "nome": "Praia Bacutia",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Lagoazul",
+    "municipio": "Capitólio",
+    "uf": "MG",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Play Games Shopping Metropole Ananindeua",
+    "municipio": "Pindobaçu",
+    "uf": "PA",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Alpen Motion",
+    "municipio": "Canela",
+    "uf": "RS",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia Do Canto",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia Da Barra Da Tijuca",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Parque Morro Do Cruzeiro (Acesso Monte)",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Pedra Da Sereia",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Jardim Botânico De Curitiba",
+    "municipio": "Curitiba",
+    "uf": "PR",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Puppy Play",
+    "municipio": "Jundiaí",
+    "uf": "SP",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Antunes Beach",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Nba Park Gramado",
+    "municipio": "Gramado",
+    "uf": "RS",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia Do Porto Da Barra",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Praia Dos Castelhanos",
+    "municipio": "Anchieta",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Pantanal Restaurante E Cafeteria",
+    "municipio": "Brotas",
+    "uf": "SP",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Castanheira Do Pensamento",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Mf-Par Adiministradora",
+    "municipio": "Goiânia",
+    "uf": "GO",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Pontao do Lago Sul",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Centro Histórico",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Praia Das Laranjeiras",
+    "municipio": "Balneário Camboriú",
+    "uf": "SC",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Ilha Das Garças",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Quadrado",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Jurerê Internacional",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Monumento Natural Dos Pontões Capixabas",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Parque Estadual Cachoeira Da Fumaça",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Museu Catavento",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Fazenda Rico Caipira",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Mini Mundo",
+    "municipio": "Gramado",
+    "uf": "RS",
+    "origem": "ta-snapshot"
+  },
+  {
+    "nome": "Farol Santa Luzia",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Harley Motor Show",
+    "municipio": "Gramado",
+    "uf": "RS",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Amb Salto Bandeirantes",
+    "municipio": "Santa Fé",
+    "uf": "PR",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Capixaba Foto Tour",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Aquario",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia De Muro Alto",
+    "municipio": "Ipojuca",
+    "uf": "PE",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Pauá Parque - Mirante Dos Canyons",
+    "municipio": "Capitólio",
+    "uf": "MG",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Mundo Das Criancas",
+    "municipio": "Maceió",
+    "uf": "AL",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia Do Rosa",
+    "municipio": "Imbituba",
+    "uf": "SC",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Brasilia Paddle Club",
+    "municipio": "Brasília",
+    "uf": "DF",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia Meaípe",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Sesc Unidade De Turismo E Lazer De Cruzeiro Do Sul",
+    "municipio": "Cruzeiro do Sul",
+    "uf": "AC",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia Do Forno",
+    "municipio": "Armação dos Búzios",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Jurerê",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Cristo Redentor",
+    "municipio": "Ubá",
+    "uf": "MG",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Camping Prainha De Ernestina",
+    "municipio": "Ernestina",
+    "uf": "RS",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Parque Lage",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Forno Beach",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Praça Da Liberdade",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia de São Miguel dos Milagres",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Termas Romanas Recanto Maestro",
+    "municipio": "Restinga Seca",
+    "uf": "RS",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Estádio Mineirão",
+    "municipio": "Buritizeiro",
+    "uf": "MG",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Parque Pedra Da Cebola",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Cia De Rodeio Sa",
+    "municipio": "Itajubá",
+    "uf": "MG",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Passeios No Paraiso",
+    "municipio": "Ilhabela",
+    "uf": "SP",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Parque Morro Dos Macacos",
+    "municipio": "Passo de Torres",
+    "uf": "SC",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Lençóis Maranhenses",
+    "municipio": "Barreirinhas",
+    "uf": "MA",
+    "origem": "ta-snapshot"
+  },
+  {
+    "nome": "Mercado Municipal de São Paulo",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Praia Da Pitinga",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia De Bombinhas",
+    "municipio": "Bombinhas",
+    "uf": "SC",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Thermas dos Laranjais",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Parque Botânico Vale",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Avenida Paulista",
+    "municipio": "São Paulo",
+    "uf": "SP",
+    "origem": "ta-snapshot"
+  },
+  {
+    "nome": "Cachoeira De Matilde",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Santuário Cristo Redentor",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Morro Da Igreja",
+    "municipio": "Urubici",
+    "uf": "SC",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Praia Da Joaquina",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Mirante Do Forte São João",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Morro Do Moreno",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia De Camburi",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Basílica De Nossa Senhora Do Pilar",
+    "municipio": "Ouro Preto",
+    "uf": "MG",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Maracanã",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Vila Acqua Park",
+    "municipio": "Nova Mutum",
+    "uf": "MT",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia Do Campeche",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Pelourinho",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Sitio Recanto Dos Canarios",
+    "municipio": "Domingos Martins",
+    "uf": "ES",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Tangua Park",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Coney Games",
+    "municipio": "Uberlândia",
+    "uf": "MG",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Cachoeira da Fumaça",
+    "municipio": "Palmeiras",
+    "uf": "BA",
+    "origem": "ta-snapshot"
+  },
+  {
+    "nome": "Barra da Tijuca Beach",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Poço Encantado",
+    "municipio": "Itaeté",
+    "uf": "BA",
+    "origem": "ta-snapshot"
+  },
+  {
+    "nome": "Praia Do Forte",
+    "municipio": "Mata de São João",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia De Lopes Mendes",
+    "municipio": "Mangaratiba",
+    "uf": "RJ",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Eco Parque Arraial D'Ajuda",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Jardim Botânico",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Fundação Projeto Tamar - Vitória",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Museu Do Amanhã",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Vila Do Cafe",
+    "municipio": "Serra Negra",
+    "uf": "SP",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Museu Garoto",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Play City",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Parque Dos Tesouros",
+    "municipio": "João Pessoa",
+    "uf": "PB",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Vale do Pati",
+    "municipio": "Mucugê",
+    "uf": "BA",
+    "origem": "ta-snapshot"
+  },
+  {
+    "nome": "Sea Servin",
+    "municipio": "João Pessoa",
+    "uf": "PB",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia de Juquehy",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Lagoa Turismo E Entretenimento",
+    "municipio": "Caldas Novas",
+    "uf": "GO",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Parque Estadual Campos do Jordao",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Amitse",
+    "municipio": "São Paulo",
+    "uf": "SP",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Paraiso Das Aguas",
+    "municipio": "Três Arroios",
+    "uf": "RS",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Praia Dos Carneiros",
+    "municipio": "Tamandaré",
+    "uf": "PE",
+    "origem": "ta-banco"
+  },
+  {
+    "nome": "Praia De Manguinhos",
+    "municipio": "Serra",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Nautico Fronteira Parque",
+    "municipio": "Fronteira",
+    "uf": "MG",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Mercado Central De Belo Horizonte",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Ilha Dos Frades",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Karcará Adventure",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Palácio Anchieta",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Aventura Pirata",
+    "municipio": "Balneário Camboriú",
+    "uf": "SC",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Jericoacoara Beach",
+    "municipio": "",
+    "uf": "",
+    "origem": "ta-fixture"
+  },
+  {
+    "nome": "Prainhas Do Pontal Do Atalaia",
+    "municipio": "Arraial do Cabo",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Hotel E Balneario Olho D'Agua Do Milho",
+    "municipio": "Caraúbas",
+    "uf": "RN",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Mirante Do Convento",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Pousada Agua Doce",
+    "municipio": "São Pedro do Paraná",
+    "uf": "PR",
+    "origem": "cadastur"
+  },
+  {
+    "nome": "Secretaria De Estado Do Turismo - Setur/Es",
+    "municipio": "",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Três Praias",
+    "municipio": "Guarapari",
+    "uf": "ES",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia De Copacabana",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  },
+  {
+    "nome": "Praia Do Arpoador",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "origem": "ta-piloto"
+  }
+]
