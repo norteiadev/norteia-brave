@@ -212,10 +212,15 @@ def test_mention_gate_ignores_generic_words() -> None:
     assert not menciona("a Pedra Azul fica na região", "Pedra do Elefante")  # all terms
 
 
-def test_groundedness_threshold_sits_in_the_measured_gap() -> None:
-    """§24: texts cluster at ≤0.50 (memory prose) and ≥0.86 (one stray) — the cut is between."""
-    assert 0.50 < MIN_GROUNDEDNESS < 0.86
+def test_groundedness_threshold_and_sensory_prose() -> None:
+    """A third of the claims loose is already too many (§25); prose with no claim passes."""
+    assert 2 / 3 < MIN_GROUNDEDNESS <= 0.75
     assert groundedness_ratio("um lugar tranquilo para ver o mar", "x") == 1.0
+
+
+def test_emoji_in_the_name_does_not_block_the_gate() -> None:
+    """§25: "Figueira Da Esquina 🌳❤️" was blocked because the emoji became a required term."""
+    assert menciona("A Figueira da Esquina, em Vitória", "Figueira Da Esquina 🌳❤️")
 
 
 # ---------------------------------------------------------------------------

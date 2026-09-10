@@ -25,15 +25,16 @@ import unicodedata
 # Below this fraction of grounded claims the prose is NOT written to descricao_editorial; it
 # is parked for steward review instead (see PlacesEnrichmentAgent).
 #
-# Calibrated on the §24 distribution (scripts/poc/cascade_scale_probe.json — 28 texts, 130
-# concrete claims). It is bimodal with an empty band between 0.50 and 0.86:
-#   0.33 Copacabana · 0.40 Pelourinho · 0.50 Quadrado   ← famous places, prose from memory
-#   0.86-0.92 × 5  (one stray "Mata Atlântica" / "Zona Portuária")
-#   1.00 × 20
-# Any cut inside (0.50, 0.86) splits this sample identically; 0.75 sits mid-band so a text
-# with one generic stray out of 4 claims still passes, and one with 2 of 4 does not. It routes
-# 3 of 28 (11%) to review — all three are fame-driven memory prose, true but unverifiable.
-# Recalibrate from a larger sample before tightening: 28 texts is small.
+# First calibrated on §24 (28 texts, 130 claims), which looked bimodal — 0.33-0.50 (famous
+# places written from memory) and 0.86-1.00, nothing between. The §25 run (189 texts over 200
+# real atrativos) filled that band: ten texts sit at 0.62-0.73, eight of them at exactly
+# 0.67 (one claim in three loose). The distribution is continuous; there is no natural cut.
+#   0.75 (kept): 17 of 189 (9%) to review — no text with a third of its claims ungrounded
+#                reaches descricao_editorial. ~900 drafts on 10k atrativos.
+#   0.60:         7 of 189 (4%) — only texts where most claims are loose. ~370 drafts.
+# 0.75 stays because the failure it prevents (a true-but-unsourced fact in the canonical base,
+# §24.2) is exactly what nothing downstream can detect, and review load is the cheaper side.
+# Lower it on steward evidence, not on volume.
 MIN_GROUNDEDNESS: float = 0.75
 
 # Words that alone do not identify the atrativo — "praia" matches any coastal text. Without
@@ -117,7 +118,13 @@ def termos_identificadores(nome: str) -> list[str]:
     (a fully generic name, e.g. "Centro Histórico") the whole folded name is returned — then
     only a context that writes the full expression matches.
     """
-    palavras = [p for p in _fold(nome).replace("-", " ").split() if len(p) > 2]
+    # A token with no letter or digit (an emoji: "Figueira Da Esquina 🌳❤️", §25) can never
+    # appear in search text, so keeping it would block the atrativo forever.
+    palavras = [
+        p
+        for p in _fold(nome).replace("-", " ").split()
+        if len(p) > 2 and any(c.isalnum() for c in p)
+    ]
     fortes = [p for p in palavras if p not in GENERICAS]
     return fortes or [_fold(nome)]
 
@@ -171,5 +178,6 @@ if __name__ == "__main__":  # pragma: no cover — ponytail runnable check
     assert not menciona("As praias de Vila Velha atraem visitantes.", "Praia Da Costa")
     assert menciona("O calçadão da Praia da Costa em Vila Velha", "Praia Da Costa")
     assert termos_identificadores("Centro Histórico") == ["centro historico"]
+    assert termos_identificadores("Figueira Da Esquina 🌳❤️") == ["figueira", "esquina"]
     assert groundedness_ratio("um lugar bonito", "x") == 1.0
     print("grounding self-check ok")
