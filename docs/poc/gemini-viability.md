@@ -869,6 +869,10 @@ Norteia conta ou não como "store the API results in part" é leitura que precis
 **antes** de adotar a Brave, não depois. **Não foi medido nem consultado juridicamente** — fica
 registrado como item aberto. Exa e Tavily não têm cláusula equivalente encontrada.
 
+> **Corrigido pela §29.2.** A Exa tem: os Terms §4.2(a) proíbem *"create derivative works from
+> […] any information […] obtained from or through, the Services"* sem permissão por escrito.
+> A Tavily segue sem cláusula encontrada.
+
 ### 17.6 Veredito
 
 **OmniRoute: não adotar como provider.** Resolve um problema que o Brave não tem (juggling de
@@ -1993,6 +1997,713 @@ Ferramenta: `.venv/bin/python scripts/poc/cascade_timed_probe.py --self-check` (
 
 ---
 
+## 26. A cascata com Gemini 2.5 Flash no lugar do Haiku (medido)
+
+A §25 fechou a rota Tavily + Haiku 4.5 em ~$209 para os 10 mil, com a busca sendo $160 disso.
+Pergunta: trocar o redator por **Gemini 2.5 Flash** muda a conta, a qualidade ou o prazo?
+
+Medido em 2026-09-14. Sonda: `scripts/poc/cascade_gemini_probe.py`. Custo total: **$1,89 no
+OpenRouter + 280 créditos Tavily** do free tier.
+
+### 26.1 O método
+
+O código da lane, sem alteração: `TourismCopywriter.write_cascade` (gate de menção → redator
+sem ferramenta → gate de groundedness). Dois enxertos, ambos fora dela:
+
+1. **A busca roda uma vez e fica em disco.** 140 atrativos × 2 queries da `cascade_queries`,
+   e os três redatores recebem byte a byte o mesmo contexto. Sem isso a comparação mediria a
+   deriva da Tavily (§23.2), não o modelo.
+2. **`generate()` é um adaptador para o OpenRouter**, com a forma do `RealLLMClient`
+   (max_tokens 2048, sem tools, `data_collection: deny`). O custo vem do campo `usage.cost` do
+   OpenRouter — o valor cobrado, não uma tabela.
+
+**Amostra: 140, não 200.** O free tier da Tavily tinha 286 créditos (714/1.000 usados) e a
+conta não tem PAYGO. Ficaram os 140 primeiros atrativos **da lane TA** da amostra da §25
+(`ta-piloto`, `ta-banco`, `ta-snapshot`, `ta-fixture`), na mesma ordem embaralhada; o Cadastur
+saiu. Cada fase: 40 sequenciais + 100 a concorrência 8.
+
+### 26.2 Duas armadilhas antes de medir
+
+1. **A API direta do Google não serve o 2.5 Flash para esta conta.** `gemini-2.5-flash` e
+   `gemini-2.5-flash-lite` respondem `404 — "This model models/gemini-2.5-flash is no longer
+   available to new users"` (a §9.1 já tinha visto). A página de depreciações diz *"No shutdown
+   date announced"* — o modelo existe, mas só para quem já o usava. **O caminho é o OpenRouter**
+   (`google/gemini-2.5-flash`, provedor Google, mesmo preço de lista: $0,30 / $2,50 por MTok,
+   thinking cobrado como saída) — que já é fornecedor do Brave, pelo DeepSeek. Vertex AI não
+   foi testado.
+2. **Os créditos da Anthropic acabaram no meio da rodada do Haiku.** 88 chamadas passaram, as
+   50 seguintes voltaram `400 — "Your credit balance is too low to access the Anthropic API"`, e
+   a lane engoliu o erro como `copywriter_failed_kept_floor`. O controle foi refeito com
+   `anthropic/claude-haiku-4.5` pelo OpenRouter (mesmo preço, mesmo adaptador do Gemini, o que
+   ainda deixa a latência comparável). **Consequência fora da POC:** hoje qualquer rota Anthropic
+   do copywriter — Sonnet ou Haiku — falha calada até recarregar os créditos.
+
+### 26.3 Resultado
+
+| | **Gemini 2.5 Flash** | Gemini 2.5 Flash + thinking | Haiku 4.5 (controle) |
+|---|---|---|---|
+| escrito e aprovado | **131 / 140 (93,6%)** | 129 (92,1%) | 128 (91,4%) |
+| barrado: sem menção | 2 | 2 | 2 |
+| DLQ: não fundamentada | **7 (5,0%)** | 6 (4,3%) | 10 (7,1%) |
+| falha | 0 | 3 (`finish_reason: error`) | 0 |
+| groundedness média | 0,93 | 0,92 | 0,94 |
+| texto p50 | 1.640 car. | 1.955 car. | 1.740 car. |
+| tokens in / out (thinking) | 3.759 / 416 (0) | 3.781 / 1.276 (802) | 4.640 / 523 |
+| **$ modelo / chamada** | **$0,00217** | $0,00429 | $0,00725 |
+| **$ / atrativo, com busca** | **$0,0181** | $0,0202 | $0,0232 |
+| latência do modelo p50 / p95 | **4,3 / 5,4 s** | 8,9 / 14,9 s | 7,2 / 8,5 s |
+
+**O Gemini custa 3,3x menos por chamada que o Haiku e responde 1,7x mais rápido**, com
+groundedness igual e menos textos para a DLQ. Mas a busca é $0,016 dos $0,018: **o modelo virou
+12% da conta**. A troca tira $0,005 por atrativo.
+
+**Thinking não compra nada.** Dobra custo e latência, não mexe na groundedness, e trouxe as
+três únicas falhas (resposta cortada com `finish_reason: error`). O OpenRouter manda o 2.5 Flash
+**sem** thinking por padrão; a API direta do Google liga thinking dinâmico por padrão — quem for
+por lá precisa de `thinkingBudget: 0`.
+
+**O contexto engordou desde a §25.** O Haiku lia 2.788 tokens por atrativo em 10/09 e lê 4.640
+hoje, sobre as mesmas queries — a Tavily passou a devolver mais texto. Por isso o Haiku saiu a
+$0,0232 e não os $0,0209 da §25. A comparação desta seção é pareada (mesmo contexto), então vale;
+o número absoluto da §25 é que envelheceu.
+
+### 26.4 O que passa pelo gate e não devia
+
+Groundedness mede se a afirmação está no contexto. Não mede se o texto é uma descrição. Lendo os
+aprovados, cada modelo erra de um jeito:
+
+| defeito que chega na coluna | Gemini 2.5 Flash | Haiku 4.5 |
+|---|---|---|
+| nota de bastidor em vez de descrição | 0 | **4** |
+| título markdown (`# Nome`) ou negrito | 0 | **3** |
+| texto truncado | **1** | 0 |
+| dado operacional proibido | 1 | 0 |
+| **total** | **2 (1,4%)** | **7 (5,0%)** |
+
+- **Haiku escreve para o operador.** *"Há uma confusão nos registros que recebemos. As fontes
+  indicam claramente que a Rua das Pedras é um atrativo localizado em Armação dos Búzios, não em
+  Campos dos Goytacazes"* — aprovado, groundedness alta, iria para `descricao_editorial`. O Haiku
+  está **certo** sobre o registro (é lixo da Nascente); o defeito é dizer isso dentro da prosa.
+- **Gemini escreve por cima.** O mesmo tipo de registro — *Cristo Redentor* com município Ubá/MG
+  — virou *"Em Ubá, Minas Gerais, há um convite para desbravar um dos maiores símbolos do Brasil,
+  mesmo que o monumento principal esteja no Rio de Janeiro"*, groundedness 0,92, aprovado. O
+  Haiku recusou esse (0,67, DLQ). Nenhum modelo sinaliza o registro-lixo de forma aproveitável:
+  um vaza a denúncia na prosa, o outro a esconde.
+- **O truncado do Gemini** (*Inhotim*: `"Em Brumadinho, Minas Gerais,"`, 28 caracteres) veio com
+  `finish_reason: error` e passou porque texto sem afirmação concreta tem groundedness 1,0. Uma
+  linha resolve: rejeitar `finish_reason != stop`.
+- O "operacional" do Gemini é o Projeto Tamar citando horário de funcionamento. As outras três
+  marcações do regex eram "melhor hora do dia" — permitida pelo prompt.
+
+Com as duas travas baratas que isso pede (`finish_reason` para o Gemini; bastidor/markdown para o
+Haiku), **o Gemini aprova 130 e o Haiku 121** dos 140.
+
+### 26.5 A conta dos 10 mil
+
+Mesma forma da §25 e do memorando de 10/09 (1.000 créditos grátis da Tavily abatidos; reserva =
+atrativos sem texto aprovado tentados mais 2 vezes):
+
+| | Haiku (10/09, §25) | Haiku (hoje, pareado) | **Gemini 2.5 Flash** |
+|---|---|---|---|
+| Tavily, 19 mil buscas pagas | $152 | $152 | $152 |
+| modelo | $49 | $72 | **$21** |
+| **esperado** | $201 | $224 | **$173** |
+| reserva de retentativa | $49 | $51 | $25 |
+| **teto** | $250 | $275 | **~$200** |
+| cost guard $10/dia | ~21 dias | ~23 dias | **~18 dias** |
+| cost guard $50/dia | ~4 dias | ~5 dias | ~4 dias |
+| 1 worker sequencial (busca 1,8 s + modelo) | 416/h | ~400/h | **~590/h** |
+
+**A economia é de $51 contra o Haiku de hoje (−23%)**, ou $28 contra o número aprovado em 10/09.
+O throughput continua sem importar: a chave Development da Tavily trava em 3.000 atrativos/h
+antes de qualquer modelo.
+
+### 26.6 Veredito
+
+- **Gemini 2.5 Flash é o redator melhor para esta cascata**, medido lado a lado no mesmo
+  contexto: 3,3x mais barato por chamada, 1,7x mais rápido, menos DLQ, e menos defeito passando
+  pelo gate (2 contra 7).
+- **Mas não muda a ordem de grandeza da conta.** $173 contra $224: a busca é 88% do custo com
+  Gemini. A decisão de orçamento continua sendo a da §25 — comprar ~$152 de PAYGO na Tavily e
+  decidir o `usd_daily_budget`.
+- **Três condições para usar:**
+  1. **Pelo OpenRouter.** A API direta não aceita conta nova no 2.5 Flash. É um modelo legado
+     (Google recomenda 3.x), sem data de desligamento, mas com a porta de entrada já fechada.
+  2. **Thinking desligado** (padrão no OpenRouter).
+  3. **`generate()` ganha um caminho OpenRouter** — hoje ele é só `AsyncAnthropic`. O SDK OpenAI
+     já está no client para o `extract()`. Junto: preço do Gemini na tabela do cost guard e
+     rejeição de `finish_reason != stop`.
+- **Independente do modelo:** os créditos da Anthropic estão zerados hoje, e registro com
+  município errado passa pelos dois gates com qualquer redator. O segundo pede gate na Rio, não
+  no copywriter.
+
+Ferramenta: `.venv/bin/python scripts/poc/cascade_gemini_probe.py --self-check` (offline) ·
+`--buscar --n 140` (280 créditos) · `--rodar --modelo google/gemini-2.5-flash [--thinking]` ·
+`--rodar --modelo anthropic/claude-haiku-4.5`. Resultados em
+`scripts/poc/cascade_gemini_probe.{gemini-2.5-flash,gemini-2.5-flash-thinking,claude-haiku-4.5}.json`
+(com os textos); o contexto em `cascade_gemini_probe.contexts.json`. O arquivo
+`cascade_gemini_probe.claude-haiku-4-5.json` é a rodada nativa que bateu nos créditos.
+
+---
+
+## 27. Wikipedia, Wikivoyage, Wikidata, OSM e OpenTripMap no lugar da Tavily (medido)
+
+A §26 deixou a busca como 88% da conta ($152 de $173). A pergunta: fontes abertas e gratuitas
+substituem a Tavily?
+
+**A §15.1 e a §16 já tinham respondido "não", mas na amostra errada.** Mediram atrativos
+obscuros do OSM no ES, onde 5% tinham Wikipedia, e a §24 mostrou depois que a carga real são
+atrativos do TripAdvisor. Esta seção mede as fontes **nos mesmos 140 atrativos da §26**, cujo
+contexto Tavily e texto Gemini já estavam em disco. A comparação é pareada: mesmo atrativo,
+mesmo redator (Gemini 2.5 Flash), mesmo prompt, mesmos dois gates.
+
+Medido em 2026-09-14. Sonda: `scripts/poc/fontes_abertas_probe.py`. Custo: **$0,53 no
+OpenRouter**. As fontes são gratuitas e sem chave.
+
+### 27.1 O método
+
+`--coletar` busca cada atrativo nas quatro fontes. `--escrever` roda `write_cascade` sem
+alteração, com o contexto de cada fonte no lugar da Tavily: cada fonte sozinha e as quatro
+juntas. Como cada uma é consultada:
+
+| fonte | consulta | o que entra no contexto |
+|---|---|---|
+| Wikipedia pt | busca "nome + município + estado" | o artigo do atrativo; sem artigo, os parágrafos do artigo do **município** que citam o atrativo |
+| Wikivoyage pt + en | mesma busca | os parágrafos da página do município que citam o atrativo (a Wikivoyage é organizada por destino) |
+| Wikidata | o item do artigo da Wikipedia; senão busca por nome com P17 = Brasil e P131 = município | 20 propriedades de atrativo (fundação, tombamento, altitude, arquiteto, parte de…) com rótulos pt |
+| OSM (Nominatim) | "nome, município, estado, Brasil", 1 req/s | categoria, endereço e tags; as tags `wikidata`/`wikipedia` servem de ponte |
+
+**Riqueza** = afirmações concretas distintas do texto aprovado que estão no contexto (mesma
+extração do gate de groundedness). É um proxy de "fatos", não gabarito manual.
+
+### 27.2 O casamento frouxo escolhe o artigo errado
+
+Na primeira coleta, o artigo era aceito quando o título tinha os termos identificadores do
+nome (a regra do gate de menção). **6 de 85 artigos eram de outro objeto:**
+
+| atrativo | artigo escolhido |
+|---|---|
+| Lagoa do Paraíso | *O Outro Lado do Paraíso* (telenovela) |
+| Mirante do Forte São João | *Mata de São João* (município) |
+| Cachoeira de Matilde | *Estação Ferroviária de Matilde* |
+| Igreja de Santa Isabel (Mucugê) | *Cemitério Santa Isabel de Mucugê* |
+| Convento Nossa Senhora da Penha | *Nossa Senhora da Penha de França* (a devoção) |
+| Praia de Pajuçara | *Pajuçara (Natal)* |
+
+O gate de menção descarta "lagoa", "mirante" e "igreja" de propósito (§24.1), e é isso que
+deixa a novela passar. Nenhum gate a jusante pega o erro: o texto sai fundamentado, só que
+sobre outra coisa. **Regra adotada (`confere`):** todas as palavras do nome, inclusive as
+genéricas, precisam estar no título ou na abertura do artigo. Ela elimina os 6 e rejeita 7
+artigos bons (*Santuário Cristo Redentor → Cristo Redentor*, *Barra da Tijuca*). Os números
+abaixo usam a regra estrita.
+
+### 27.3 Resultado por fonte
+
+| contexto | cita o atrativo | **aprovados** | DLQ | riqueza média | contexto p50 | $ modelo |
+|---|---|---|---|---|---|---|
+| Wikipedia | 86 | **80 (57%)** | 6 | **8,3** | 1.121 car. | $0,13 |
+| Wikivoyage pt+en | 72 | 48 (34%) | 24 | 4,0 | 73 car. | $0,08 |
+| Wikidata | 80 | 50 (36%) | 30 | 2,5 | 81 car. | $0,07 |
+| OSM | 97 | 70 (50%) | 27 | 1,9 | 171 car. | $0,08 |
+| **as quatro juntas** | 117 | **99 (71%)** | 18 | 7,3 | 2.078 car. | $0,17 |
+| Tavily (§26) | 138 | 131 (94%) | 7 | 7,4 | 11.911 car. | $0,30 |
+
+- **A Wikipedia é a fonte.** Cobre 57% dos atrativos do TA e, onde cobre, dá texto mais rico
+  que a Tavily (8,3 contra 7,4). A §15.1 via 5% porque media outra população.
+- **Wikivoyage e Wikidata complementam.** Sozinhos, o contexto é curto e o modelo completa de
+  memória: 24 e 30 textos na DLQ. Somados à Wikipedia, entram 7 atrativos (Wikivoyage) e 1
+  (Wikidata) que a Wikipedia não cobre. Três dos sete são justamente artigos que a regra estrita
+  rejeitou.
+- **O OSM acha mais objetos (97), mas não sustenta uma descrição.** Os 9 atrativos aprovados
+  **só** com OSM saíram com 1 a 3 fatos, contra 3 a 16 da Tavily nos mesmos atrativos, e vários
+  sobre o lugar errado:
+  - *Lagoa do Paraíso* virou uma lagoa no Cabula, em Salvador;
+  - *Projeto Tamar* virou o quiosque do aeroporto de Salvador;
+  - *Praia de Juquehy* casou com a "Modesti Imóveis Praia de Juquehy", e o texto aprovado é uma
+    recusa ("Desculpe, com as informações fornecidas…").
+
+  O valor do OSM é de **ponte**: a tag `wikidata` trouxe 5 itens (Pão de Açúcar, Praia de
+  Ipanema, Gruta do Lago Azul…) e a tag `wikipedia` trouxe 1 artigo (AquaRio) que a busca por
+  nome não achou.
+
+### 27.4 A cascata que funciona: abertas primeiro, Tavily no resto
+
+Regra: escreve com as fontes abertas quando o contexto aprovado tem **pelo menos uma fonte
+textual** (Wikipedia, Wikivoyage ou Wikidata) citando o atrativo. OSM sozinho não conta. O
+resto vai para a Tavily.
+
+| | só Tavily (§26) | **abertas → Tavily** |
+|---|---|---|
+| resolvidos pelas abertas | — | **90 (64%)** |
+| vão para a Tavily | 140 | 50 (36%) |
+| **aprovados no total** | 131 | **135** |
+| riqueza, pareada nos 86 aprovados pelos dois | 7,9 | **7,9** (mediana 7 contra 8) |
+| texto mais rico | Tavily em 45 | abertas em 38 (3 empates) |
+
+**A cascata aprova mais que a Tavily sozinha** e empata na riqueza. Os 4 atrativos a mais são
+casos em que a Tavily mandou para a DLQ e a Wikipedia tinha o artigo. A diferença não é
+uniforme. A Tavily ganha feio onde a Wikipedia só tem o bairro (*Parque Municipal das
+Mangabeiras*: 4 contra 14). As abertas ganham onde o artigo é longo (*AquaRio*: 14 contra 0,
+*Inhotim*: 14 contra 2).
+
+### 27.5 A conta dos 10 mil
+
+Mesma forma da §26 (1.000 créditos grátis da Tavily abatidos):
+
+| | Tavily + Gemini (§26) | **abertas → Tavily + Gemini** |
+|---|---|---|
+| buscas Tavily | 20.000 | 7.143 |
+| Tavily | $152 | **$49** |
+| Gemini (abertas em todos + Tavily no resto) | $21 | $20 |
+| **esperado** | **$173** | **$69** |
+| cost guard $10/dia | ~18 dias | **~7 dias** |
+
+**−60%.** Mas a amostra puxa para cima. Os 140 vêm das primeiras páginas do TA (Pão de Açúcar,
+Inhotim, Cataratas), e a cauda dos 10 mil tem menos Wikipedia. Sensibilidade:
+
+| abertas resolvem | Tavily | total |
+|---|---|---|
+| 64% (medido) | $49 | $69 |
+| 50% | $72 | ~$93 |
+| 30% | $104 | ~$125 |
+
+Mesmo no pior cenário a conta fica 28% abaixo da §26.
+
+### 27.6 OpenTripMap: fora, sem medir
+
+- **Licença.** O único plano publicado é *"Free — $0/mo — Non-commercial use — 5 000 requests /
+  day"* (dev.opentripmap.org/price). Não há plano comercial com preço; a cobrança é em rublo.
+  A Norteia é uso comercial.
+- **Dado.** A própria página diz *"based on cooperative processing of different open data
+  sources (OpenStreetMap, Wikidata, Wikipedia…)"*: as três fontes medidas acima, reprocessadas.
+  A cobertura no Brasil é no máximo a união delas. A §16.1 já tinha visto isso.
+
+### 27.7 Restrições de uso
+
+| fonte | licença | uso em produção |
+|---|---|---|
+| Wikipedia, Wikivoyage | **CC BY-SA 4.0** | exige atribuição; **share-alike** pode alcançar o texto derivado — decisão jurídica sobre `descricao_editorial` (a Tavily devolve páginas sem licença nenhuma, o que não é mais limpo) |
+| Wikidata | CC0 | livre |
+| OSM | ODbL | atribuição "© OpenStreetMap contributors" |
+| API da Wikimedia | — | User-Agent com contato, requisições **em série**; 10 mil × ~6 requisições cabem em horas, ou usar os dumps |
+| **Nominatim público** | — | *"No heavy uses (an absolute maximum of 1 request per second)"*; geocodificação em massa desencorajada; scripts recorrentes limitados a 4 req/min. **Para 10 mil, não.** A ponte do OSM viria de extrato Geofabrik ou Overpass próprio |
+
+### 27.8 Veredito
+
+- **Wikipedia: adotar como primeira fonte.** Cobre 57% dos atrativos do TA, com texto mais rico
+  que a Tavily onde cobre. Exige o casamento estrito (§27.2), senão escreve sobre a novela.
+- **Wikivoyage e Wikidata: adotar como complemento, nunca sozinhos.** Somam 8 atrativos e fatos
+  estruturados. Sozinhos, o modelo completa de memória.
+- **OSM: só como ponte**, por extrato, não pelo Nominatim. Como fonte de texto, reprovado.
+- **OpenTripMap: descartado** (licença não comercial, dado redundante).
+- **A cascata abertas → Tavily** resolve 64% sem busca paga, aprova 135 contra 131, empata na
+  riqueza e leva a conta de **$173 para ~$69** ($93-125 se a cauda tiver menos Wikipedia).
+- **Antes de implementar:** (1) decisão jurídica sobre CC BY-SA na descrição; (2) medir a
+  cobertura da Wikipedia numa amostra da **cauda** do TA, não das primeiras páginas, porque é
+  ela que decide entre $69 e $125.
+
+Ferramenta: `.venv/bin/python scripts/poc/fontes_abertas_probe.py --self-check` (offline) ·
+`--coletar` (sem key, ~12 min) · `--escrever` (~$0,53). Coleta em
+`scripts/poc/fontes_abertas_probe.fontes.json`, textos e relatório em
+`scripts/poc/fontes_abertas_probe.json`.
+
+---
+
+## 28. DeepSeek V4 Flash 0731 como pesquisador e como redador (medido)
+
+Duas perguntas:
+1. Com o DeepSeek fazendo **só a busca** e o Gemini escrevendo, quanto custa a busca?
+2. Com o DeepSeek fazendo **busca e redação**, quanto custa tudo?
+
+Medido em 2026-09-14 nos mesmos 140 atrativos da §26/§27. Sonda:
+`scripts/poc/deepseek_busca_probe.py`. Custo: **$3,34 no OpenRouter**, incluindo a rodada
+descartada da §28.3.
+
+### 28.1 A busca nativa da API da DeepSeek não executa
+
+A Responses API da DeepSeek aceita `tools=[{"type": "web_search"}]` (issue
+NousResearch/hermes-agent#79820, PR #79103). Testado com chave própria em `api.deepseek.com`:
+
+- **A tool é ecoada e ignorada.** A resposta devolve `tools: [{"type": "web_search"}]`, mas não
+  tem item `web_search_call`, não tem anotação, e a entrada fica em 73 tokens. A documentação atual
+  da DeepSeek diz exatamente isso: *"web_search / file_search / … other built-in tools —
+  **Ignored**"*.
+- **Forçada (`tool_choice`), o modelo admite:** *"Não consigo fazer busca na web em tempo real
+  neste ambiente"*.
+- **Sem forçar, ele finge.** Pedidos 5 fatos com fonte sobre a Praia do Forno, veio uma lista
+  confiante: das 4 URLs checáveis, **as 4 dão 404**, inclusive
+  `pt.wikipedia.org/wiki/Praia_do_Forno`, que não existe. É a §19 de novo, agora na DeepSeek.
+- **Pelo OpenRouter também não há busca nativa.** `engine: native` no DeepSeek cai no Exa sem
+  aviso (1 busca = $0,007). O OpenRouter só repassa busca nativa de Anthropic, Google, OpenAI,
+  Perplexity e SpaceXAI.
+
+O caminho medido é o do pedido original: **DeepSeek pelo OpenRouter com a server tool
+`openrouter:web_search`**. O modelo escolhe as queries e o OpenRouter executa no motor escolhido:
+
+| motor | preço por busca |
+|---|---|
+| Exa (auto) — padrão para o DeepSeek | $0,007 |
+| Parallel fast | $0,001 |
+| *(Tavily, para comparar)* | *$0,008* |
+
+### 28.2 O método
+
+1. **Pesquisa.** DeepSeek 0731 + `openrouter:web_search`, 5 resultados por busca e
+   `max_tool_calls: 2`, a paridade com as 2 queries da Tavily. O `max_uses: 2` sozinho **não
+   trava**: deixou passar 4 buscas no teste.
+2. **O contexto do redator é o texto bruto das buscas** (`annotations[].url_citation.content`),
+   não o resumo do DeepSeek. O resumo pode trazer memória do modelo, e o gate de groundedness
+   contra um resumo inventado lavaria a invenção.
+3. **Redação.** `write_cascade` sem alteração, com Gemini 2.5 Flash e com DeepSeek 0731. O
+   DeepSeek também escreveu sobre as fontes abertas da §27, para a cascata.
+
+### 28.3 Armadilha: o raciocínio do DeepSeek come a saída
+
+Na primeira rodada o DeepSeek redator falhou em **182 de 420** textos, todos com
+`finish_reason: length`. Ele raciocina por padrão, e os 2.048 tokens de `max_tokens` da lane
+acabavam antes do texto. **21 textos cortados passaram pelo gate como aprovados.** Refeito com
+`reasoning: {"enabled": false}`: zero cortes. A rodada descartada fica em
+`deepseek_busca_probe.com-raciocinio.json`. Na lane, o DeepSeek exige o raciocínio desligado
+e a rejeição de `finish_reason != stop`, o mesmo defeito do Gemini truncado da §26.4.
+
+### 28.4 Resultado
+
+| busca → redator | cita o atrativo | aprovados | DLQ | riqueza | $/atrativo | **10 mil** |
+|---|---|---|---|---|---|---|
+| Tavily → Gemini (§26) | 138 | 131 | 7 | 7,4 | $0,0181 | **$173**¹ |
+| **DeepSeek+Exa → Gemini** | 137 | **134** | 3 | **10,9** | $0,0157 | **$157** |
+| **DeepSeek+Parallel → Gemini** | 132 | 127 | 5 | 8,6 | $0,0047 | **$47** |
+| **DeepSeek+Exa → DeepSeek** | 137 | 129 | 8 | 7,6 | $0,0134 | **$134** |
+| **DeepSeek+Parallel → DeepSeek** | 132 | 122 | 10 | 6,7 | $0,0030 | **$30** |
+
+¹ Com os 1.000 créditos grátis da Tavily abatidos; sem eles, $181. O OpenRouter não tem cota grátis.
+
+**Riqueza pareada contra a Tavily (Gemini nos dois):** Exa 11,1 contra 7,4 em 127 atrativos;
+Parallel 8,7 contra 7,6 em 122. Com as buscas escolhidas pelo DeepSeek, o Gemini escreve **mais
+fatos** que com as queries fixas da Tavily. O contexto bruto também é maior: p50 de 18,2 mil
+caracteres (Exa) e 12,2 mil (Parallel).
+
+**Objetivo 1, o custo da busca, por atrativo:**
+
+| | taxa de busca | DeepSeek pesquisando | **busca total** | vs Tavily |
+|---|---|---|---|---|
+| Tavily (2 × $0,008) | $0,0160 | — | $0,0160 | — |
+| DeepSeek + Exa | $0,0120 (1,7 busca/atrativo) | $0,0010 | **$0,0129** | −19% |
+| DeepSeek + Parallel fast | $0,0018 | $0,0008 | **$0,0026** | **−84%** |
+
+O DeepSeek como pesquisador custa ~$0,001 por atrativo. O que decide é o motor. No Exa, o
+modelo fez 1 busca só em 41 dos 140 atrativos, e isso já barateia contra as 2 fixas da Tavily.
+
+**Objetivo 2, o DeepSeek também escrevendo:** a redação cai de $0,0028 (Gemini) para $0,0005
+por atrativo, 5,7x menos. Mas escreve com **30% menos fatos** no mesmo contexto (7,6 contra
+10,9 no Exa; 6,7 contra 8,6 no Parallel) e manda mais para a DLQ. Os defeitos são raros nos
+dois: nenhum recado ao operador, nenhum dado operacional, 1 texto com markdown (DeepSeek+Exa).
+
+### 28.5 Com a cascata da §27 (fontes abertas primeiro)
+
+| redator | busca no resto | aprovados | **10 mil** |
+|---|---|---|---|
+| Gemini | Tavily (§27) | 135 | $69 |
+| Gemini | DeepSeek + Exa | 135 | $68 |
+| **Gemini** | **DeepSeek + Parallel** | **130** | **$28** |
+| DeepSeek | DeepSeek + Exa | 134 | $50 |
+| **DeepSeek** | **DeepSeek + Parallel** | **126** | **$12** |
+
+### 28.6 O que pesa contra
+
+- **Latência: 45 s por atrativo, contra 2 s da Tavily.** Pesquisa p50 49 s e p95 80 s no Exa;
+  42 s e 62 s no Parallel. O modelo raciocina entre as buscas. Cabe nos 300 s do `enrich_places`,
+  mas os 10 mil levam ~15 h a concorrência 8, contra minutos com a Tavily. O teto de US$ 10/dia
+  continua sendo a trava.
+- **O resumo do DeepSeek cita fonte que não buscou.** 16 de 774 URLs (Exa) e 21 de 726
+  (Parallel) não vieram das buscas; perto de 1% dá 404. Mesmo patamar da auditoria da §21.7, e o
+  redator não usa o resumo. Mas confirma que o resumo não pode ser contexto.
+- **Termos de uso de Exa e Parallel via OpenRouter não verificados**, principalmente o direito de
+  armazenar o derivado (a cláusula que reprovou a Brave na §17.5).
+- **Parallel fast é o modo mais raso do motor.** Deu 16 `NAO_ENCONTRADO` no resumo, contra 9 do
+  Exa, e 5 atrativos a menos citados. O modo basic custa $0,005 e não foi medido.
+- **Pergunta aberta:** o DeepSeek só escolhe queries. Chamar o Parallel direto, com as 2 queries
+  fixas da `cascade_queries`, tiraria o modelo e os 45 s. Não medido.
+
+### 28.7 Veredito
+
+- **Objetivo 1:** com o DeepSeek só buscando, a busca custa **$0,0129 por atrativo no Exa
+  (−19%)** ou **$0,0026 no Parallel fast (−84%)**. Com o Gemini escrevendo, os 10 mil saem por
+  **$157 (Exa) ou $47 (Parallel)**, contra $173, com mais fatos por texto nos dois.
+- **Objetivo 2:** com o DeepSeek fazendo tudo, **$134 (Exa) ou $30 (Parallel)**. A economia
+  sobre o Gemini é de $17-23 nos 10 mil, e custa ~30% dos fatos. Não compensa.
+- **A combinação mais barata com qualidade:** fontes abertas → DeepSeek + Parallel → Gemini, a
+  **~$28 os 10 mil**, com 130 aprovados de 140.
+- **Antes de adotar:** (1) termos de uso de armazenamento do Parallel/Exa; (2) Parallel direto
+  com queries fixas, para tirar os 45 s; (3) na lane, desligar o raciocínio do DeepSeek e rejeitar
+  `finish_reason != stop`.
+
+Ferramenta: `.venv/bin/python scripts/poc/deepseek_busca_probe.py --self-check` ·
+`--pesquisar --motor exa|parallel` (~$1,81 / ~$0,36) · `--escrever [--so-deepseek]`. Pesquisas
+em `scripts/poc/deepseek_busca_probe.pesquisa.{exa,parallel}.json`; textos e relatório em
+`scripts/poc/deepseek_busca_probe.json`.
+
+> **Atualizado pela §29.** A Parallel direta substitui esta rota: mesma riqueza, 45 s → 0,6 s,
+> e ~$25 nos 10 mil na cascata. Os termos de uso da Parallel e da Exa têm cláusulas que pedem
+> confirmação por escrito antes de produção (§29.6).
+
+---
+
+## 29. Parallel direto no lugar do DeepSeek + Parallel (medido)
+
+A §28 deixou uma pergunta aberta: chamar a Search API da Parallel direto, com as 2 queries
+fixas da `cascade_queries`, substitui o DeepSeek + Parallel do OpenRouter, sem os 45 s e mais
+barato?
+
+Termos lidos em 2026-09-14; medido em 2026-09-15 nos mesmos 140 atrativos da §26–§28. Sonda:
+`scripts/poc/parallel_direto_probe.py`. Custo: **$0,81 no OpenRouter + 281 requisições
+Parallel**, dentro da cota grátis mensal. A leitura dos termos veio antes da medição e
+concluiu que eles barravam o uso. O usuário mandou medir mesmo assim e deixar os termos para
+depois. A §29.6 revisa essa conclusão para "ambígua".
+
+### 29.1 O método
+
+1. **Busca.** `POST /v1/search` com `search_queries = cascade_queries(...)`, as 2 da lane
+   **numa requisição só**, e o `objective` *"Fatos verificáveis sobre o atrativo turístico X em
+   município/UF: história, características, o que ver."*. Dois modos, `fast` e `turbo`, com
+   cache em disco. O modo `basic` ficaria só para o caso de o fast perder feio, e não perdeu.
+2. **Contexto do redator:** excerpts brutos, com `[título] url` por resultado. Sem resumo de LLM.
+3. **Redação:** `write_cascade` sem alteração, Gemini 2.5 Flash sem thinking, `max_tokens`
+   2048. **Diferença para a §26 e a §28: `finish_reason != stop` é rejeitado** e vira falha. Não
+   houve nenhum caso: 272 de 272 chamadas terminaram em `stop`.
+4. **Pareamento** atrativo a atrativo com a Tavily da §26 (riqueza de
+   `fontes_abertas_probe.json`) e com o DeepSeek + Parallel da §28.
+
+### 29.2 Resultado
+
+| busca → Gemini | cita o atrativo | **aprovados** | DLQ | sem menção | riqueza | busca p50 / p95 | contexto p50 |
+|---|---|---|---|---|---|---|---|
+| Tavily (§26) | 138 | 131 | 7 | 2 | 7,4 | ~1,8 s | 11,9 mil car. |
+| DeepSeek + Parallel fast (§28) | 132 | 127 | 5 | 8 | 8,6 | 42 / 62 s | 12,2 mil car. |
+| **Parallel direto fast** | 135 | 128 | 7 | 5 | 8,5 | **0,93 / 1,31 s** | 18,8 mil car. |
+| **Parallel direto turbo** | **137** | **135** | **2** | 3 | 8,3 | **0,56 / 0,80 s** | 22,9 mil car. |
+
+**Riqueza pareada** (só atrativos aprovados nas duas rotas):
+
+| | n | Parallel direto | outro | razão | mais rico / menos rico |
+|---|---|---|---|---|---|
+| turbo vs Tavily (§26) | 128 | 8,48 | 7,34 | **1,15** | 74 / 40 |
+| turbo vs DeepSeek+Parallel (§28) | 124 | 8,46 | 8,63 | **0,98** | 52 / 57 |
+| fast vs Tavily (§26) | 122 | 8,58 | 7,58 | 1,13 | 64 / 44 |
+| fast vs DeepSeek+Parallel (§28) | 118 | 8,64 | 8,88 | 0,97 | 54 / 55 |
+
+- **Tirar o DeepSeek não custou fatos.** As 2 queries fixas numa requisição dão 98% da riqueza
+  das queries que o modelo escolhia, e ficam 15% acima da Tavily com as mesmas queries. O
+  ganho sobre a Tavily vem do motor, não da escolha de queries.
+- **O turbo foi melhor que o fast**, o contrário do que o nome sugere: 7 atrativos aprovados a
+  mais, 5 textos a menos na DLQ e contexto maior. Os dois devolveram 10 resultados em quase todos os
+  atrativos (média 10,0 contra 9,5).
+- **O turbo funciona em português.** A tabela do OpenRouter diz *"English and Japanese"* para o
+  turbo, mas o resultado mostra outra coisa. Vale reconferir se a Parallel mudar o modo.
+- **Zero 429 e zero 5xx** em 281 requisições a concorrência 8.
+- **A resposta traz `usage`:** `[{"name": "sku_search", "count": 1}]`. É uma requisição cobrada
+  por atrativo, mesmo com 2 queries, o que confirma a hipótese de custo principal.
+
+### 29.3 O que passa pelo gate e não devia
+
+Lido texto a texto nos aprovados. O regex de "meta" marcou 3 textos no turbo e 7 no fast, e o de
+"operacional" marcou 2 e 5. Quase tudo era falso positivo:
+
+| defeito que chega na coluna | turbo | fast |
+|---|---|---|
+| recado ao operador | 0 | **1** — *Rua das Pedras*: *"Embora não seja tão amplamente detalhada nas fontes…"* |
+| markdown | 0 | 0 |
+| texto cortado | 0 | 0 |
+| dado operacional proibido | 0¹ | 0² |
+| registro com município errado, escrito por cima | 1 — *Cristo Redentor* em Ubá/MG | 1 — o mesmo, descrito como o do Corcovado |
+| entidade trocada | 1 — *Capixaba Foto Tour* virou a agência "Capixaba Turismo" | 1 — idem |
+| **total** | **2 (1,5%)** | **3 (2,3%)** |
+
+¹ Os 2 alertas são "melhor hora" (*Poço Encantado*, 10h–13h30, permitido pelo prompt) e *"dentro
+do horário de funcionamento"* sem o horário. ² Os 5 são "melhor hora" e duração de visita (1h30).
+
+**Nenhum defeito vem da busca nem do prompt.** Os dois que sobram no turbo são registro-lixo da
+Nascente (§26.4: *Cristo Redentor* com município Ubá) e um nome de negócio que nenhuma página
+cita literalmente ("Foto Tour" não aparece no contexto). O gate de menção deixa passar porque
+descarta termos genéricos. Os dois pedem gate na Rio, não troca de busca.
+
+### 29.4 Custo
+
+| | busca / atrativo | Gemini / atrativo | tokens in (Gemini) | **10 mil** | **10 mil com a cota grátis³** |
+|---|---|---|---|---|---|
+| Tavily → Gemini (§26) | $0,016 | $0,0022 | 3.759 | $173 | — |
+| DeepSeek + Parallel → Gemini (§28) | $0,0026 | $0,0021 | ~4.000 | $47 | — |
+| **Parallel fast → Gemini** | **$0,001** | $0,0028 | 5.796 | **$38** | $33 |
+| **Parallel turbo → Gemini** | **$0,001** | $0,0031 | 6.709 | **$41** | $36 |
+
+**Na cascata da §27** (fontes abertas primeiro, 90 dos 140 resolvidos; Parallel no resto):
+
+| | aprovados | **10 mil** | com a cota grátis³ |
+|---|---|---|---|
+| abertas → Tavily → Gemini (§27) | 135 | $69 | — |
+| abertas → DeepSeek + Parallel → Gemini (§28) | 130 | $28 | — |
+| abertas → Parallel fast → Gemini | 132 | $24 | $21 |
+| **abertas → Parallel turbo → Gemini** | **135** | **$25** | **$22** |
+
+³ 5 mil requisições por mês grátis (*"Run up to 5,000 requests per month for free"*), supondo os
+10 mil num mês só. Na cascata, as ~3.600 buscas cabem inteiras na cota.
+
+- **A busca virou o menor item da conta.** A $0,001 por atrativo, **o Gemini passa a ser ~75% do
+  custo**. O contexto do turbo é quase o dobro do da Tavily (6,7 mil tokens contra 3,8 mil), e é
+  isso que encarece a redação.
+- **Alavanca não medida:** `max_chars_total` limita o total de excerpts. Cortar o contexto pela
+  metade tiraria ~$8 do Gemini nos 10 mil sozinho e ~$3 na cascata. Mas pode custar a riqueza,
+  que é justamente o ganho medido. Só vale medir se o Gemini virar a restrição.
+- **Prazo:** 0,6 s de busca + 4,6 s de Gemini (p50) ≈ 5 s por atrativo. Os 10 mil levam ~1,7 h a
+  concorrência 8. O limite da Parallel é 600/min e o teto de US$ 10/dia deixa de ser trava:
+  $25 cabem em 3 dias, e na cascata com cota cabem em ~2.
+
+### 29.5 Critério de decisão
+
+| critério | exigido | **turbo** | fast |
+|---|---|---|---|
+| aprovados | ≥ 125 | **135** ✅ | 128 ✅ |
+| riqueza pareada vs §28 | ≥ 90% | **98%** ✅ | 97% ✅ |
+| busca p95 | < 5 s | **0,80 s** ✅ | 1,31 s ✅ |
+| custo de busca por atrativo | ≤ $0,0026 | **$0,001** ✅ | $0,001 ✅ |
+| termos permitem armazenar o derivado | sim | ⚠️ ambíguo, §29.6 | ⚠️ |
+
+### 29.6 Os termos de uso (lidos antes da medição, revistos depois)
+
+Esta subseção foi escrita antes de medir e concluía que os termos **barravam** o uso. A
+discussão depois da leitura corrigiu isso para **ambíguo**. O raciocínio segue abaixo.
+
+A cláusula que já tinha aparecido (*"copies or stores any significant portion of the
+Content"*) é mesmo do site: está nos **Terms of Service for Parallel Websites**, na lista
+"restrictions in how I can use our websites", e "Content" ali é o texto e as imagens do site.
+**Quem rege a API são os Customer Terms** (parallel.ai/customer-terms, vigentes desde
+11/08/2026), aceitos ao criar a conta na plataforma. "Customer Output" é *"the output generated
+and returned by the Services"*, ou seja, os excerpts da busca. Três trechos alcançam a lane.
+
+**1. Armazenar o derivado.** A licença de obra derivada vem com uma condição, §2(b):
+
+> *"Customer may modify, adapt, or create derivative works based on Customer Output and
+> incorporate Customer Output (and such derivative works) into materials that Customer provides
+> to its End Customers, provided that (i) Customer Output generated from one query shall be
+> primarily for the use of one End Customer only, and shall not be copied, cached, stored, or
+> made available to other End Customers or other third parties; (ii) Customer shall not copy,
+> cache, or store any significant portion of any Customer Output to create the AI and Data
+> Selling Services"*
+
+A §4(b) repete: *"each Customer Output shall be primarily for the exclusive use of the
+Authorized User who submitted the corresponding query"*. A `descricao_editorial` sai de uma
+consulta, fica gravada no Mar, vai para a norteia-api e é mostrada a todos os usuários do app.
+Mas a condição recai sobre o **Output**, não sobre a obra derivada. **Gravar só a descrição e
+descartar os excerpts cabe nesta cláusula.** A lane já não persiste o contexto: `brave/clients/llm.py`
+diz *"NEVER log prompt content"*, e o `descricao_rascunho` também é texto nosso. Guardar os
+excerpts, por exemplo numa tabela de fontes para auditoria, é o que ela veda.
+
+**2. Construir base de dados, uso comercial e cache.** §2(c)(vi):
+
+> *"use the Services or any Customer Output to (A) create synthetic training data to develop or
+> train a language model or any other machine learning model, or (B) create databases, data
+> brokerage, data selling/reselling businesses, or related products or services, whether
+> competitive with the Services or not"*
+
+Aqui o verbo é **usar**, não armazenar. Gerar descrições que vão para a base territorial é,
+na letra, usar o Output para criar uma base de dados, e a distinção entre dado deles e dado nosso
+não resolve esta cláusula. **A favor:** (A) e (B) têm o nome coletivo de *"AI and Data Selling
+Services"*, e o contexto é treino de modelo e venda de dados. A Norteia é plataforma de turismo
+e não vende a base. **Contra:** o *"whether competitive with the Services or not"* foi escrito para
+alargar o alcance, e o contrato não define "databases". A §2(c)(xii) (*"making available Customer
+Outputs from previous queries for future uses"*) fala do Output, não do derivado. **Leitura:
+ambígua, com defesa razoável; não é proibição clara.**
+
+O FAQ da documentação diz *"you own the output you create with Parallel, including the right
+to reprint, sell, and merchandise"*, mas começa com *"Subject to our Terms of Service"* e aponta
+para os Customer Terms. Na ordem de precedência da §11(a), o contrato vem primeiro.
+
+**3. Zero Data Retention.** Só no Enterprise. A página de preços lista ZDR, DPA e SSO no bloco
+**Enterprise** ("Get a demo"), e o próprio site diz *"ZDR Available for enterprises"*. No plano
+por uso vale a §4(b): *"Parallel may use Customer IP to train and improve the machine learning
+and other artificial intelligence models used to provide the Services"*. As queries da lane não
+têm dado pessoal. Isso pesa pouco aqui, mas pesaria numa lane com PII.
+
+**Duas consequências a mais:**
+- **Valem também para a rota da §28.** Os termos do OpenRouter dizem que o uso de serviços de terceiros
+  *"is solely between you and the applicable third-party provider, and governed by the terms of
+  service […] between you and that third party"*. O Parallel pelo OpenRouter não fica fora dos
+  Customer Terms.
+- **Benchmark.** A §2(c)(viii) proíbe *"create or provide to any third party the results of any
+  benchmark tests or other evaluation of the Services without Parallel's prior written
+  consent"*. As §28 e §29 são documento interno. Não publicar os números da Parallel fora do
+  time.
+
+### 29.7 Exa e Tavily, pela mesma régua
+
+A §17.5 registrou *"Exa e Tavily não têm cláusula equivalente encontrada"*. Relido hoje:
+
+| provedor | cláusula | leitura |
+|---|---|---|
+| **Parallel** (direto e via OpenRouter) | §2(b), §2(c)(vi)(B), §2(c)(xii) acima | **ambígua**: o derivado sem os excerpts tem defesa; guardar os excerpts, não |
+| **Exa** (direto e via OpenRouter) | Terms §4.2(a): *"download, modify, copy, distribute, transmit, display, perform, reproduce, duplicate, publish, license, **create derivative works from**, or offer for sale any information contained on, or obtained from or through, the Services, except for temporary files that are automatically cached by your web browser for display purposes, or as otherwise expressly permitted in these Terms or by us in writing"* | **barra sem permissão por escrito**. É mais ampla que a da Parallel, porque alcança qualquer derivado. A §17.5 errou |
+| **Tavily** | *"For clarity, the term 'Services' does not include Output"*. As restrições (copiar, criar obra derivada, revender) recaem sobre os Services. Sobre o Output só há a regra de uso aceitável, a de decisão automatizada e, na AI Functionality, a proibição de treinar modelo concorrente | **não achei cláusula** de armazenamento nem de base de dados |
+
+Não é parecer jurídico. É a leitura literal que a §17.5 pediu, feita antes de adotar.
+
+### 29.8 Os fatos de preço, confirmados
+
+| fato do handoff | confirmado | fonte |
+|---|---|---|
+| `POST https://api.parallel.ai/v1/search`, header `x-api-key`, `objective` + `search_queries` + `mode` | sim. `search_queries` é o único campo obrigatório, "provide 2-3 for best results"; `mode` padrão = `advanced` | API reference |
+| `/v1beta` é legado | sim: *"Use /v1beta/search … only when maintaining an existing integration"* | docs |
+| preço por modo | turbo e fast: **$0,001** por requisição; basic e advanced: **$0,005**; ambos com 10 resultados, e $0,001 por resultado adicional | docs/pricing (fórmula) |
+| cota grátis | **recorrente**: *"Run up to 5,000 requests per month for free"* e *"$5 in free credits per month"* (= 5 mil requisições fast), mais *"Earn up to $80 at signup"* | parallel.ai/pricing |
+| limite de taxa | **600/min**, *"Each POST to /v1/search"* | docs/rate-limits |
+| várias queries por requisição | sim, `search_queries` é lista: as 2 da lane cabem em **1 requisição** | API reference |
+
+### 29.9 Armadilhas
+
+- **Ler o termo do site no lugar do contrato da API.** O trecho *"copies or stores any
+  significant portion of the Content"* não se aplica ao resultado da API. O contrato certo são
+  os Customer Terms.
+- **O FAQ promete o que o contrato condiciona.** "You own the output" vem com "subject to".
+- **Termos de provedor acessado pelo OpenRouter continuam valendo.** Passar pelo OpenRouter não
+  lava a licença do motor.
+- **O cache em disco da sonda** (`parallel_direto_probe.busca.*.json`, excerpts brutos) é o que
+  a §2(b)(i) veda guardar. Em produção, não persistir. Os arquivos da POC ficam fora do
+  commit até a resposta da Parallel.
+- **O nome do modo engana.** O turbo ("latency-sensitive lookups", "English and Japanese" no
+  OpenRouter) aprovou mais e trouxe mais contexto em português que o fast.
+- **O contexto maior encarece o redator.** Com a busca a $0,001, o Gemini virou ~75% da conta.
+
+### 29.10 Veredito
+
+- **A Parallel direta, modo turbo, substitui o DeepSeek + Parallel.** Nos 140: 135 aprovados
+  (contra 127), 98% da riqueza pareada, busca p95 de 0,8 s (contra 62 s) e $0,001 por busca
+  (contra $0,0026). Passa nos quatro critérios técnicos; o de termos fica em aberto (§29.6).
+- **Também supera a Tavily com as mesmas queries:** 135 contra 131 aprovados, +15% de riqueza
+  pareada, 16x mais barata na busca.
+- **Combinação para a lane: fontes abertas → Parallel turbo (2 queries, 1 requisição) →
+  Gemini 2.5 Flash.** Os 10 mil saem por **~$25**, ou **~$22** com a cota grátis, com 135 de
+  140 aprovados e ~1,7 h de computação. Sem as abertas (se o CC BY-SA não passar no jurídico),
+  **~$41**, ou $36 com a cota, ainda abaixo dos $69 da rota com Tavily.
+- **Os defeitos que sobram (2 de 135) são de registro, não de busca:** município errado na
+  Nascente e nome de negócio sem página própria. O gate que falta é na Rio.
+- **Antes de produção:**
+  1. confirmação por escrito da Parallel sobre a §2(c)(vi)(B), com a pergunta *"we generate
+     our own editorial descriptions from Search API excerpts, discard the excerpts, and store
+     only our text in our tourism database — is that permitted?"* (hello@parallel.ai);
+  2. na lane: um client Parallel (`search()` com as 2 queries numa chamada; hoje `write_cascade`
+     chama `search()` uma vez por query), preço na tabela do cost guard, rejeição de
+     `finish_reason != stop` e **nenhuma persistência dos excerpts**;
+  3. as pendências da §27.8, CC BY-SA e cobertura da Wikipedia na cauda, que decidem entre
+     $25 e $41.
+- **Exa: não usar** sem permissão por escrito (§4.2(a)), e a Parallel já a supera no custo.
+
+Ferramenta: `.venv/bin/python scripts/poc/parallel_direto_probe.py --self-check` (offline) ·
+`--buscar --modo fast|turbo` (140 requisições, cota grátis) · `--escrever --modo fast|turbo`
+(~$0,40 cada) · `--relatorio`. Buscas em `parallel_direto_probe.busca.{fast,turbo}.json`,
+textos e relatório em `parallel_direto_probe.{fast,turbo}.json`. A chave é lida de
+`BRAVE_PARALLEL_API_KEY` ou `PARALLEL_API_KEY`.
+
+---
+
 ## Fontes
 
 - [Google AI plans — Gemini API](https://ai.google.dev/gemini-api/docs/google-ai-plans)
@@ -2014,3 +2725,16 @@ Ferramenta: `.venv/bin/python scripts/poc/cascade_timed_probe.py --self-check` (
 - [Anthropic Consumer Terms of Service](https://www.anthropic.com/legal/consumer-terms)
 - [Tavily — API reference (`/search`)](https://docs.tavily.com/documentation/api-reference/endpoint/search)
 - [Tavily — Rate Limits](https://docs.tavily.com/documentation/rate-limits)
+- [Gemini API — Deprecations](https://ai.google.dev/gemini-api/docs/deprecations)
+- [OpenRouter — google/gemini-2.5-flash](https://openrouter.ai/google/gemini-2.5-flash)
+- [OpenTripMap API — product](https://dev.opentripmap.org/product) · [price](https://dev.opentripmap.org/price)
+- [Nominatim Usage Policy](https://operations.osmfoundation.org/policies/nominatim/)
+- [MediaWiki API:Etiquette](https://www.mediawiki.org/wiki/API:Etiquette)
+- [OpenRouter — Web Search server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search)
+- [DeepSeek — Responses API](https://api-docs.deepseek.com/guides/responses_api)
+- [Parallel — Customer Terms](https://parallel.ai/customer-terms) · [Terms of Service (sites)](https://parallel.ai/terms-of-service) · [FAQs](https://docs.parallel.ai/resources/faqs)
+- [Parallel — Pricing](https://parallel.ai/pricing) · [API Pricing](https://docs.parallel.ai/getting-started/pricing) · [Rate limits](https://docs.parallel.ai/resources/rate-limits) · [Search API reference](https://docs.parallel.ai/api-reference/search/search)
+- [OpenRouter — Terms of Service](https://openrouter.ai/terms)
+- [Exa Labs — Terms of Service (PDF)](https://exa.ai/assets/Exa_Labs_Terms_of_Service.pdf)
+- [Tavily — Terms](https://www.tavily.com/terms)
+- [NousResearch/hermes-agent#79820](https://github.com/NousResearch/hermes-agent/issues/79820) · [PR #79103](https://github.com/NousResearch/hermes-agent/pull/79103)
