@@ -1,0 +1,151 @@
+[
+  {
+    "rio_id": "b4d822e2-a222-4831-8190-f59696570eaa",
+    "nome": "Praia Da Guarda Do Embaú",
+    "municipio": "Paulo Lopes",
+    "uf": "SC",
+    "descricao_editorial": "Ali onde o Rio da Madre se entrega ao Oceano Atlântico, a Guarda do Embaú guarda, no próprio nome, uma lenda antiga: moradores contam que baús de ouro escondidos por jesuítas e piratas durante a Guerra dos Farrapos deram origem à palavra guarda. Por décadas foi apenas uma vila de pescadores isolada, sem estrada asfaltada nem energia elétrica, até que surfistas, muitos deles cariocas, descobriram entre o fim dos anos 1970 e o começo dos 1980 as ondas tubulares formadas pelas correntes do rio no encontro com o mar. Reconhecida como a nona Reserva Mundial de Surf, e a primeira do Brasil, a praia segue vivendo dessa dupla identidade, point de surf respeitado internacionalmente e reduto de pescadores que ainda mantêm viva a travessia de canoa entre as margens, cercada por dunas, restinga e o verde da Mata Atlântica do Parque Estadual da Serra do Tabuleiro. No fim da tarde, quando a luz baixa ilumina o encontro das águas, o visual do rio abraçando o mar rende as fotos mais bonitas, melhor ainda vistas do alto das dunas na margem oposta. Leve protetor solar e um calçado que possa molhar, e reserve um tempo para simplesmente observar pescadores e surfistas dividindo o mesmo pedaço de areia.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_da_Guarda_do_Emba%C3%BA",
+      "https://www.waves.com.br/noticias/entre-o-rio-e-o-mar-historia-da-guarda-do-embau/",
+      "https://www.savethewaves.org/guarda-do-embau/"
+    ],
+    "queries": [
+      "Praia da Guarda do Embaú Paulo Lopes SC",
+      "Guarda do Embaú surf rio história"
+    ]
+  },
+  {
+    "rio_id": "04012a01-048a-46db-b9e7-814c9bb2bab1",
+    "nome": "Centro Cultural Banco Do Brasil Belo Horizonte",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "descricao_editorial": "Na Praça da Liberdade, coração do circuito cultural que reúne os prédios históricos de Belo Horizonte, um edifício neoclássico de seis andares guarda uma história que atravessa quase um século. Erguido a partir de 1926 sob projeto do arquiteto Luiz Signorelli, fundador da Escola de Arquitetura da então Universidade de Minas Gerais, o prédio foi concluído em 1930 para abrigar a Secretaria do Interior do estado, e chegou a servir de sede das forças revolucionárias mineiras naquele mesmo ano. Décadas depois, já ocupado pela Secretaria de Segurança Pública e pela Procuradoria do Estado, o edifício ganhou nova vida como Centro Cultural Banco do Brasil, reaproveitando a escadaria monumental, o pátio central e os detalhes ornamentados que marcam a arquitetura neoclássica brasileira do início do século vinte. Hoje a programação de exposições, música e teatro convive lado a lado com essa arquitetura de salões amplos e vãos generosos. Vale caminhar devagar pelos corredores internos observando os detalhes de estuque e ferro do período, e aproveitar a claridade da tarde que entra pelo pátio central para fotografar a fachada e a escadaria voltadas para a praça.",
+    "status": "ok",
+    "fontes": [
+      "https://ccbb.com.br/belo-horizonte/sobre-o-ccbb/",
+      "https://visite.museus.gov.br/instituicoes/centro-cultural-banco-do-brasil-de-belo-horizonte/",
+      "http://www.circuitoliberdade.mg.gov.br/pt-br/espacos/ccbb-centro-cultural-banco-do-brasil"
+    ],
+    "queries": [
+      "Centro Cultural Banco do Brasil Belo Horizonte Praça da Liberdade",
+      "CCBB Belo Horizonte prédio história arquitetura"
+    ]
+  },
+  {
+    "rio_id": "eb8be5e7-c109-4112-ae4c-cf8a356558fd",
+    "nome": "Prainhas Do Pontal Do Atalaia",
+    "municipio": "Arraial do Cabo",
+    "uf": "RJ",
+    "descricao_editorial": "Duas enseadas minúsculas, separadas por costões de pedra, escondem uma água tão transparente e azul-turquesa que ajudou a dar a Arraial do Cabo o apelido de Caribe brasileiro. As Prainhas do Pontal do Atalaia levam esse nome porque, de fato, são pequenas, faixas curtas de areia branca e fina emolduradas por rochedos, sem quiosques ou estrutura de praia convencional, o que preserva algo raro: a sensação de descoberta a cada curva do caminho. A área integra o promontório do Pontal do Atalaia, que também abriga um mirante conhecido pelo pôr do sol, de onde se avista boa parte da orla recortada da região dos Lagos. A transparência da água, entre as mais notáveis do litoral fluminense, faz das prainhas um convite natural à observação da vida marinha logo abaixo da superfície. A luz da manhã, mais suave, favorece fotos da água em tons de verde e azul antes que o sol alto achate as cores, e vale levar uma máscara de mergulho para espiar os cardumes junto às pedras.",
+    "status": "ok",
+    "fontes": [
+      "https://www.arraialdocabo.com.br/praias-de-arraial-do-cabo/prainhas-do-pontal-do-atalaia.htm",
+      "https://www.cariocasemfronteiras.com.br/mirante-do-pontal-do-atalaia-arraial/"
+    ],
+    "queries": [
+      "Prainhas do Pontal do Atalaia Arraial do Cabo",
+      "Pontal do Atalaia Arraial do Cabo trilha mirante"
+    ]
+  },
+  {
+    "rio_id": "df0fc37e-97ce-43c6-99f2-6240c5743835",
+    "nome": "Aquario",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "descricao_editorial": "Na Praça Muhammad Ali, na zona portuária do Rio de Janeiro, um edifício de linhas curvas abriga o maior aquário marinho da América do Sul. Inaugurado em outubro de 2016 como parte da revitalização da região do Porto Maravilha, o AquaRio reúne cerca de oito mil animais de mais de 350 espécies distribuídos por 28 tanques que somam 4,5 milhões de litros de água salgada, entre eles tubarões, arraias e recifes de corais recriados com fidelidade. Mais do que uma exibição, o espaço funciona como centro de pesquisa e educação ambiental, com atividades de bastidores que revelam o trabalho diário de biólogos no cuidado dos animais. Vale caminhar devagar entre os tanques observando de perto os recifes recriados e os cardumes coloridos, um passeio que rende boas fotos macro da vida marinha. Leve um casaco leve, pois o ambiente é climatizado e mais fresco que a rua do lado de fora, e fique atento aos momentos de alimentação dos animais, quando costumam ficar mais ativos e visíveis.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/AquaRio"
+    ],
+    "queries": [
+      "AquaRio Rio de Janeiro Gamboa aquário marinho",
+      "AquaRio maior aquário América do Sul espécies"
+    ]
+  },
+  {
+    "rio_id": "ccaa9cc7-5566-4b2d-bec5-ec7658256c3a",
+    "nome": "Eco Parque Arraial D'Ajuda",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "descricao_editorial": "Entre a vegetação densa e o calor do litoral sul da Bahia, o Eco Parque Arraial d'Ajuda convida a um passeio que troca a agitação das praias por um ritmo mais lento, em contato direto com o verde. É desses lugares em que vale desacelerar e prestar atenção aos detalhes, o cheiro da mata, o som dos pássaros, a luz que se filtra entre as árvores.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Eco Parque Arraial d'Ajuda tirolesa Porto Seguro",
+      "Eco Parque Arraial d'Ajuda Porto Seguro avaliações"
+    ]
+  },
+  {
+    "rio_id": "44ab9566-2fba-4cc7-b17d-f49e141911a1",
+    "nome": "Igreja E Convento De São Francisco",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "descricao_editorial": "No Centro Histórico de Salvador, um portal de arenito discreto esconde um dos interiores mais deslumbrantes do barroco brasileiro. Fundada em 1585 pelo frei franciscano Melchior de Santa Catarina, a Igreja e Convento de São Francisco foi reconstruída a partir de 1686, com a fachada concluída em 1720 e a decoração interna se estendendo até o fim do século dezoito. Por dentro, paredes, colunas, teto e capelas são cobertos por entalhes e douramento profuso, com motivos florais, frisos, arcos e figuras de anjos e pássaros espalhados por toda parte, um contraste proposital com a sobriedade da pedra na fachada externa. No claustro, painéis de azulejos portugueses pintados entre 1749 e 1752 narram cenas filosóficas e alegóricas ao redor do pátio quadrangular, enquanto o forro da nave guarda pinturas do ciclo mariano feitas entre 1733 e 1737, atribuídas ao frei Jerônimo da Graça. O conjunto integra o Centro Histórico de Salvador reconhecido pela Unesco como Patrimônio da Humanidade. Vale entrar pela manhã, quando a luz lateral realça o relevo dourado dos entalhes, e caminhar devagar pelo claustro observando painel por painel dos azulejos, um dos conjuntos mais completos desse tipo de arte no Brasil.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Igreja_e_Convento_de_S%C3%A3o_Francisco_(Salvador)"
+    ],
+    "queries": [
+      "Igreja e Convento de São Francisco Salvador Bahia ouro talha barroco",
+      "Igreja São Francisco Salvador azulejos história franciscanos"
+    ]
+  },
+  {
+    "rio_id": "a9b4723b-3825-4ec6-9226-0886f545c5bd",
+    "nome": "Parque Morro Do Cruzeiro (Acesso Monte)",
+    "municipio": "",
+    "uf": "ES",
+    "descricao_editorial": "No alto de um morro que dá nome ao lugar, um cruzeiro marca o ponto mais alto do caminho e convida a uma pausa para respirar o ar mais fresco da subida. É um desses lugares que recompensam quem chega com calma, com uma vista aberta e o silêncio de estar um pouco acima do dia a dia.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Parque Morro do Cruzeiro Vitória Espírito Santo mirante",
+      "Parque Morro do Cruzeiro Colatina Espírito Santo"
+    ]
+  },
+  {
+    "rio_id": "7988a449-d6a5-472f-b698-78ee9f343b3a",
+    "nome": "Mirante Do Convento",
+    "municipio": "",
+    "uf": "ES",
+    "descricao_editorial": "Perto de um convento, um mirante se abre para o horizonte, desses pontos que parecem feitos para a contemplação em silêncio. A luz do fim de tarde costuma ser generosa nesses altos, pintando o céu antes do entardecer.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Mirante do Convento Espírito Santo",
+      "Mirante do Convento Vila Velha Convento da Penha"
+    ]
+  },
+  {
+    "rio_id": "c88b6e30-e6d3-4f76-9d92-93769409ff25",
+    "nome": "Pauá Parque - Mirante Dos Canyons",
+    "municipio": "Capitólio",
+    "uf": "MG",
+    "descricao_editorial": "Capitólio ganhou fama nacional pelos paredões de pedra que mergulham direto nas águas esverdeadas do Lago de Furnas, um cenário de cânions que hoje atrai visitantes de todo o país em busca de mirantes sobre esse recorte de paisagem. É nesse contexto que um mirante como o do Pauá Parque ganha sentido: um ponto elevado voltado para os cânions, de onde se observa o contraste entre a rocha exposta e a água parada, quase espelhada, do reservatório. A melhor luz para fotografar essa paisagem costuma ser no início da manhã ou no fim da tarde, quando o sol baixo acentua as camadas de cor da rocha e evita o reflexo forte do meio-dia sobre a água. Vale levar binóculos para observar aves de rapina que sobrevoam os paredões, e um chapéu, já que a exposição ao sol no alto do mirante é direta.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Capit%C3%B3lio_(Minas_Gerais)"
+    ],
+    "queries": [
+      "Pauá Parque Mirante dos Canyons Capitólio MG",
+      "Capitólio MG cânions Lago de Furnas mirante"
+    ]
+  },
+  {
+    "rio_id": "3aedc05f-f059-45af-8e17-962a3c68dc86",
+    "nome": "Praia Das Laranjeiras",
+    "municipio": "Balneário Camboriú",
+    "uf": "SC",
+    "descricao_editorial": "Ao sul do centro urbano mais vertical de Balneário Camboriú, a Praia das Laranjeiras marca a transição para um trecho mais tranquilo do litoral, ligado à Praia Central por um teleférico que sobrevoa a Mata Atlântica remanescente entre os dois pontos. A praia integra a sequência de enseadas do sul do município, interligadas pela via costeira conhecida como Interpraias, o que a torna parte de um roteiro maior de descoberta ao longo da orla. O contraste entre os prédios altos do centro e o verde que emoldura Laranjeiras é um dos aspectos mais marcantes de visitar esse trecho da cidade. Da cabine do teleférico, no trajeto entre as praias, a vista aérea da mata e do mar rende fotos difíceis de repetir em outro ponto da cidade; já na areia, o fim da tarde costuma trazer uma luz mais suave para fotografar o mar sem o reflexo forte do sol a pino. Vale observar, ao longo da tarde, o contraste entre a vegetação preservada dos costões e o perfil urbano do centro, que reaparece ao fundo em quase todas as fotos tiradas da areia.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Balne%C3%A1rio_Cambori%C3%BA"
+    ],
+    "queries": [
+      "Praia das Laranjeiras Balneário Camboriú trilha bonde",
+      "Teleférico Balneário Camboriú Praia das Laranjeiras"
+    ]
+  }
+]

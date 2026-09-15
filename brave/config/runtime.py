@@ -28,6 +28,9 @@ Overlaid keys (everything else is ignored, forward-compat)
 - ``score.weight_validacao_humana``  → AppConfig.score.weight_validacao_humana
 - ``source.<name>.enabled``          → AppConfig.sources[name]
 - ``engine.mode``                    → AppConfig.engine.mode
+- ``description_enrichment_enabled`` / ``places_enrichment_enabled`` /
+  ``atrativo_description_batch_enabled`` / ``atrativo_description_cascade_enabled``
+                                     → the AppConfig flags of the same name
 
 Import posture (D-18): this module lives in ``brave.config`` and imports only
 ``brave.config.settings`` and ``brave.core.models`` — never ``brave.domains`` or
@@ -69,6 +72,7 @@ _ENGINE_MODE_KEY = "engine.mode"
 _DESC_ENRICH_KEY = "description_enrichment_enabled"
 _PLACES_ENRICH_KEY = "places_enrichment_enabled"
 _DESC_BATCH_KEY = "atrativo_description_batch_enabled"
+_DESC_CASCADE_KEY = "atrativo_description_cascade_enabled"
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +109,7 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
     desc_enrich: bool | None = None
     places_enrich: bool | None = None
     desc_batch: bool | None = None
+    desc_cascade: bool | None = None
 
     for dotted, value in overlays.items():
         attr = _SCORE_OVERLAY_KEYS.get(dotted)
@@ -122,6 +127,8 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
             places_enrich = bool(value)
         elif dotted == _DESC_BATCH_KEY:
             desc_batch = bool(value)
+        elif dotted == _DESC_CASCADE_KEY:
+            desc_cascade = bool(value)
         # Unknown keys are ignored (forward-compat with future config surfaces).
 
     updates: dict[str, Any] = {}
@@ -137,6 +144,8 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
         updates["places_enrichment_enabled"] = places_enrich
     if desc_batch is not None and desc_batch != base.atrativo_description_batch_enabled:
         updates["atrativo_description_batch_enabled"] = desc_batch
+    if desc_cascade is not None and desc_cascade != base.atrativo_description_cascade_enabled:
+        updates["atrativo_description_cascade_enabled"] = desc_cascade
 
     if not updates:
         return base
@@ -282,6 +291,7 @@ def _seed_values(config: AppConfig) -> dict[str, Any]:
         "description_enrichment_enabled": config.description_enrichment_enabled,
         "places_enrichment_enabled": config.places_enrichment_enabled,
         "atrativo_description_batch_enabled": config.atrativo_description_batch_enabled,
+        "atrativo_description_cascade_enabled": config.atrativo_description_cascade_enabled,
     }
 
 

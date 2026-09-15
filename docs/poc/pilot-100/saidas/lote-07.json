@@ -1,0 +1,156 @@
+[
+  {
+    "rio_id": "37e9ed1c-b0a7-4d86-aaca-c627548d4d70",
+    "nome": "Jardim Botânico",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "descricao_editorial": "Entre a Lagoa e o Cristo Redentor, um portão discreto abre caminho para um dos recantos mais frondosos do Rio de Janeiro. Alamedas de palmeiras imperiais conduzem por mais de meio milhão de metros quadrados de vegetação cultivada, onde convivem espécies trazidas de diferentes partes do mundo desde que Dom João VI fundou o espaço, em 1808, como um horto de aclimatação de plantas. O nome atual só veio décadas depois, já sob a República, mas o caráter de laboratório vivo permaneceu: hoje o Jardim Botânico integra a Reserva da Biosfera da Mata Atlântica e reúne milhares de espécies em estufas dedicadas a orquídeas e bromélias, além de lagos com vitórias-régias e um bosque de bambus que parece abafar o barulho da cidade lá fora. Vale reservar uma manhã inteira para a visita, quando a luz ainda é suave para fotografar as fileiras de palmeiras e a silhueta do Corcovado emoldurada pelas copas das árvores. Leve água e um chapéu, calce algo confortável para caminhar bastante, e pegue um mapa logo na entrada para não perder as estufas e os pontos com vista mais aberta para o morro.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Jardim_Bot%C3%A2nico_do_Rio_de_Janeiro",
+      "https://www.gov.br/jbrj/pt-br/assuntos/299",
+      "https://vidasemparedes.com.br/jardim-botanico-do-rio-de-janeiro/"
+    ],
+    "queries": [
+      "Jardim Botânico Rio de Janeiro história significado",
+      "Jardim Botânico do Rio de Janeiro visitar dicas"
+    ]
+  },
+  {
+    "rio_id": "505c26e3-9597-4ab3-ae28-db389586277e",
+    "nome": "Jurerê",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "descricao_editorial": "No norte da Ilha de Santa Catarina, a faixa de areia clara que hoje atende por Jurerê já foi conhecida apenas como Praia do Forte, referência à fortaleza colonial que ainda vigia a entrada do canal. O nome Jurerê vem da língua dos carijós e remete a uma pequena boca d'água, descrição do estreito que separa a ilha do continente. A partir dos anos 1980 a orla se dividiu em dois perfis distintos: de um lado, o núcleo tradicional de pescadores; do outro, o loteamento planejado que deu origem a Jurerê Internacional, hoje um dos endereços mais concorridos de Florianópolis, com beach clubs, gastronomia refinada e um mar calmo que convida ao mergulho tranquilo. A melhor hora para sentir o contraste da praia é o fim da tarde, quando o sol baixo dourado a areia e os primeiros sons de música ao vivo começam a sair dos clubes à beira-mar. É um bom trecho para caminhar em família pela manhã, antes do movimento, guardando a câmera para o horizonte aberto em direção à fortaleza que dá nome ao lugar.",
+    "status": "ok",
+    "fontes": [
+      "https://ndmais.com.br/turismo/jurere-internacional-saiba-tudo-sobre-a-praia-mais-famosa-de-florianopolis/",
+      "https://en.wikipedia.org/wiki/Jurer%C3%AA_Internacional"
+    ],
+    "queries": [
+      "Jurerê Florianópolis praia história",
+      "Jurerê Internacional Florianópolis o que é"
+    ]
+  },
+  {
+    "rio_id": "196d90be-a49a-42b5-9cbe-caffe77775b6",
+    "nome": "Parque Unipraias Camboriú",
+    "municipio": "Balneário Camboriú",
+    "uf": "SC",
+    "descricao_editorial": "Ligando duas praias de Balneário Camboriú por cima da mata que cobre o Morro da Aguada, o Parque Unipraias nasceu de um pouso de emergência: nos anos 1950, um problema no avião do empresário Normando Tedesco o fez aterrissar ali por acaso, e o encanto com a paisagem plantou a ideia de um teleférico entre a orla e o alto do morro. O projeto amadureceu por décadas até ser inaugurado em 1999, tornando-se o primeiro do mundo a conectar duas praias por bondinho aéreo. Hoje o passeio liga três estações, da Barra Sul ao topo a 240 metros de altitude, com trilhas em meio à Mata Atlântica preservada e mirantes que abrem a vista sobre toda a orla e o oceano. Vale reservar tempo para caminhar pelas passarelas do alto antes de descer para a praia de Laranjeiras, e escolher um dia de céu limpo para fotografar o contraste entre o verde da mata e o azul do mar. Para quem viaja com crianças, a Fantástica Floresta rende boas paradas ao longo do circuito.",
+    "status": "ok",
+    "fontes": [
+      "https://www.unipraias.com.br/historia",
+      "https://www.unipraias.com.br/atracoes"
+    ],
+    "queries": [
+      "Parque Unipraias Balneário Camboriú história teleférico",
+      "Parque Unipraias Camboriú atrações o que fazer"
+    ]
+  },
+  {
+    "rio_id": "ce950d30-df87-4bb9-ba76-0940f1be9471",
+    "nome": "Praça Da Liberdade",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "descricao_editorial": "A Praça da Liberdade nasceu junto com Belo Horizonte: quando a capital planejada foi erguida para substituir Ouro Preto como sede do governo mineiro, uma colina foi nivelada para receber o Palácio da Liberdade e as primeiras secretarias de Estado, e a praça foi inaugurada em dezembro de 1897, no mesmo momento em que a cidade nascia no papel. Antes chamada Campo da Aclamação, ganhou o nome atual em homenagem aos ideais republicanos, e seus prédios de linhas ecléticas, com influências neoclássicas e francesas, ainda guardam o desenho original, tombado como patrimônio histórico. Com a saída do governo estadual para a Cidade Administrativa, boa parte desses edifícios se transformou em museus e centros culturais, formando um circuito que hoje convive com gramados amplos, árvores centenárias e feiras que costumam tomar as calçadas nos fins de semana. O fim da tarde é o momento em que a luz valoriza as fachadas históricas, e vale caminhar devagar entre os prédios para notar os detalhes arquitetônicos antes de sentar na grama para ver o dia terminar.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Pra%C3%A7a_da_Liberdade_(Belo_Horizonte)",
+      "https://portalbelohorizonte.com.br/o-que-fazer/arte-e-cultura/circuito-liberdade/circuito-liberdade"
+    ],
+    "queries": [
+      "Praça da Liberdade Belo Horizonte história",
+      "Praça da Liberdade Belo Horizonte museus feirinha"
+    ]
+  },
+  {
+    "rio_id": "9cb71dae-ba2e-4919-bafa-857183dfaa08",
+    "nome": "Canyons De Furnas",
+    "municipio": "Capitólio",
+    "uf": "MG",
+    "descricao_editorial": "No Lago de Furnas, formado pelo represamento das águas para a usina hidrelétrica inaugurada em 1962, paredões de rocha sedimentar que antes eram cânions esculpidos por rios ganharam uma nova moldura de água ao redor. Em Capitólio, esse encontro entre a geologia antiga da região e o lago criado pelo homem resultou numa paisagem de falésias com mais de vinte metros de altura, piscinas naturais e quedas d'água que despencam direto no reservatório. A forma mais comum de conhecer os canyons é de barco, navegando entre os paredões e parando para mergulhar nas águas mais claras. Vale sair cedo, de preferência antes das onze da manhã, para ver o sol ainda iluminando as rochas por inteiro antes que a sombra tome conta dos paredões. Leve protetor solar, roupa de banho por baixo da roupa e uma proteção impermeável para a câmera, porque a vontade de parar para fotografar os paredões e as cachoeiras costuma surgir a cada curva do lago.",
+    "status": "ok",
+    "fontes": [
+      "https://www.sgb.gov.br/geossit/geossitios/ver/2336",
+      "https://turistando.in/passeio-de-lancha-em-capitolio-canyons-de-furnas/"
+    ],
+    "queries": [
+      "Canyons de Furnas Capitólio Minas Gerais formação",
+      "Canyons de Furnas passeio de barco Capitólio dicas"
+    ]
+  },
+  {
+    "rio_id": "6af1ec2f-42ba-48f5-bda5-8ac62073f446",
+    "nome": "Praia Da Pitinga",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "descricao_editorial": "Em Arraial d'Ajuda, a Praia da Pitinga é um dos cenários que mais aparecem em cartão-postal da região: areia fofa e clara logo na entrada, onde barracas de praia dividem espaço com os primeiros banhistas, e um trecho mais adiante onde a paisagem se torna selvagem, emoldurada por falésias altas que despontam sobre o mar. Seguindo por essa faixa mais preservada, a praia se conecta à vizinha Praia de Taípe, num percurso que vale caminhar com calma. É um bom passeio para o começo da manhã, quando a luz ainda é baixa e realça as cores das falésias e o contraste com a areia clara. Vale levar água e chapéu para a caminhada mais longa até o trecho selvagem, e reservar um tempo para admirar o paredão visto da própria areia, um dos ângulos mais bonitos da praia.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Arraial_d%27Ajuda"
+    ],
+    "queries": [
+      "Praia da Pitinga Arraial d'Ajuda Porto Seguro falésias",
+      "Praia da Pitinga Arraial d'Ajuda dicas visita"
+    ]
+  },
+  {
+    "rio_id": "f758a301-574d-46b3-8186-25acf2185e8f",
+    "nome": "Quadrado",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "descricao_editorial": "No coração de Trancoso, distrito de Porto Seguro, o Quadrado guarda o desenho de um antigo povoado jesuítico erguido a partir da missão de São João Batista dos Índios, no fim do século XVI. Casas simples se organizam ao redor de um gramado extenso que termina de frente para o mar, com a igreja branca de São João fechando a composição ao fundo. Por décadas o lugar permaneceu discreto, até ser redescoberto por viajantes ligados à contracultura no fim dos anos 1970, o que aos poucos transformou o vilarejo de pescadores num dos destinos mais procurados do litoral baiano, sem que o traçado colonial das casinhas coloridas perdesse o charme original. O fim de tarde é o momento mais concorrido e também o mais bonito: moradores e visitantes se acomodam na grama de frente para o horizonte para acompanhar o pôr do sol sobre o mar. Vale caminhar devagar pelas ruas ao redor, reparar nas fachadas pintadas em tons diferentes e guardar um tempo sentado na grama antes que o sol desça de vez.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Trancoso_(Porto_Seguro)"
+    ],
+    "queries": [
+      "Quadrado Trancoso Porto Seguro história igreja",
+      "Quadrado de Trancoso o que fazer pôr do sol"
+    ]
+  },
+  {
+    "rio_id": "e54ce17e-93b5-46bf-9758-da97949f5ec8",
+    "nome": "Praia De Ipanema",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "descricao_editorial": "Fundada como bairro em 1894, Ipanema começou a se popularizar no início do século XX, quando os bondes chegaram e o litoral sul do Rio de Janeiro passou a atrair a expansão da cidade. Foi ali, num bar à beira da praia, que Tom Jobim e Vinicius de Moraes encontraram a inspiração para compor Garota de Ipanema, canção que carregou o nome da praia para o mundo e ainda hoje é lembrada por uma estátua do compositor voltada para o mar. Os mais de dois quilômetros de areia abrigam quadras de vôlei e futevôlei, e a ponta do Arpoador reúne surfistas em busca de boas ondas. Uma tradição espontânea, nascida entre os frequentadores no fim dos anos 1960, se repete até hoje: aplaudir o sol quando ele desaparece no horizonte, geralmente visto do próprio Arpoador. Vale ir ao fim da tarde para participar desse ritual, prestar atenção aos postos que dividem a orla e redobrar o cuidado ao entrar no mar, já que as correntezas costumam ser fortes.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Ipanema"
+    ],
+    "queries": [
+      "Praia de Ipanema história Garota de Ipanema",
+      "Praia de Ipanema Rio de Janeiro postos dicas"
+    ]
+  },
+  {
+    "rio_id": "f424563a-debe-41a9-a18e-6a4cda5064af",
+    "nome": "Praia De Copacabana",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "descricao_editorial": "Batizada em homenagem a uma capela erguida em honra a Nossa Senhora de Copacabana no século XVIII, a praia que os tupis chamavam de Sacopenapã só se tornou point elegante do Rio de Janeiro quando obras de saneamento e a chegada dos bondes e túneis facilitaram o acesso a partir do fim do século XIX. O calçadão de pedras em desenho de ondas, reformado nos anos 1970 sob orientação do paisagista Roberto Burle Marx, tornou-se tão símbolo da praia quanto a própria orla, ampliada na mesma época por um aterro que alargou a faixa de areia. Apelidada de princesa do mar, Copacabana já recebeu multidões para eventos como a Jornada Mundial da Juventude e as competições olímpicas de vôlei de praia, além do tradicional réveillon que reúne shows e fogos de artifício na virada do ano. Vale caminhar pelo calçadão logo ao amanhecer, quando a orla ainda está tranquila e a luz realça o desenho das pedras portuguesas, e observar os quiosques e os jogos de futevôlei que tomam a areia ao longo do dia.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Praia_de_Copacabana"
+    ],
+    "queries": [
+      "Praia de Copacabana história Rio de Janeiro",
+      "Praia de Copacabana réveillon calçadão dicas"
+    ]
+  },
+  {
+    "rio_id": "2558dd85-4659-480d-b828-252532cb3f45",
+    "nome": "Aventura Pirata",
+    "municipio": "Balneário Camboriú",
+    "uf": "SC",
+    "descricao_editorial": "Na orla movimentada de Balneário Camboriú, um nome de ares lúdicos desperta a curiosidade de quem passeia à beira-mar. Entre o vento salgado da praia e o burburinho da avenida, fica o convite a espiar de perto o que o tema sugere.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Aventura Pirata Balneário Camboriú parque o que é",
+      "\"Aventura Pirata\" Balneário Camboriú brinquedos"
+    ]
+  }
+]

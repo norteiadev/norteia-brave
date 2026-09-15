@@ -445,12 +445,13 @@ class AppConfig(BaseSettings):
     # (default) the inline copywriter runs — that is ALL this flag controls: inline
     # copywriter on/off.
     # It does NOT restore the pre-batch inline behavior. In the same change, the shared
-    # WEB_SEARCH_TOOL went max_uses 3 → 2 and gained user_location, and brave.clients.llm
-    # now adds the $10/1,000 web_search fee to usd_cost — which feeds record_spend. So on
-    # the INLINE path too, grounding changed and the RECORDED cost per description rose by
-    # ~30%: the $10/day guard now trips after ~109 descriptions, not ~139. If you are
-    # debugging a mid-sweep CostGuardError, that is why — flipping this flag off will not
-    # take it back.
+    # WEB_SEARCH_TOOL gained user_location, and brave.clients.llm now adds the $10/1,000
+    # web_search fee to usd_cost — which feeds record_spend. So on the INLINE path too,
+    # grounding changed and the RECORDED cost per description rose by ~30%: the $10/day guard
+    # now trips after ~109 descriptions, not ~139. If you are debugging a mid-sweep
+    # CostGuardError, that is why — flipping this flag off will not take it back.
+    # (max_uses was NOT lowered: it stays 3 in copywriter.py, set an hour earlier on measured
+    # traffic — 2 searches every time, so the cap never binds and the cost math is unchanged.)
     # Overlay key ``atrativo_description_batch_enabled`` (brave.config.runtime).
     #
     # Measured (5 live copywriter calls, famous and obscure atrativos alike): EXACTLY 2 web
@@ -460,6 +461,31 @@ class AppConfig(BaseSettings):
     # suggested, and it is HIGHER for obscure attractions (their searches return more
     # material to read). Size any budget/batch estimate off those numbers.
     atrativo_description_batch_enabled: bool = False
+
+    # atrativo_description_cascade_enabled switches the INLINE copywriter from Sonnet +
+    # server-side web_search to the cascade (docs/poc/gemini-viability.md §23-§25): the lane
+    # searches Tavily itself (2 queries), refuses to write when the results do not mention the
+    # atrativo (mention gate — no model call), writes with Haiku 4.5 and NO tool, and parks
+    # prose below grounding.MIN_GROUNDEDNESS as a steward-review draft + DLQ instead of writing
+    # descricao_editorial. Measured: ~$0.021/atrativo against $0.075-0.12 on the web_search route.
+    # It does NOT control whether descriptions are written at all (description_enrichment_enabled
+    # does), and does NOT touch the Message Batches lane — with atrativo_description_batch_enabled
+    # on, the inline copywriter is off and this flag has no effect. Needs TAVILY_API_KEY; a
+    # missing key fails the client build, which disables inline enrichment for that sweep
+    # (logged as inline_enrichment_build_failed) rather than falling back to the costly route.
+    # Overlay key ``atrativo_description_cascade_enabled`` (brave.config.runtime). Default off.
+    atrativo_description_cascade_enabled: bool = False
+
+    # TAVILY_API_KEY — the cascade's search provider. exclude=True keeps it out of the Redis
+    # config snapshot (model_dump_json); readers take it from the env-built AppConfig().
+    tavily_api_key: str = Field(default="", exclude=True)
+
+    # PARALLEL_API_KEY — the cascade's search provider since §29 (replaced Tavily). Same
+    # exclude=True rule. A missing key fails the client build like Tavily's did.
+    parallel_api_key: str = Field(default="", exclude=True)
+    # PARALLEL_SEARCH_MODE — turbo | fast | basic | advanced. turbo measured best on the 140
+    # TA atrativos (135 approved vs 128 fast, p95 0.8 s, $0.001/request). Env-only.
+    parallel_search_mode: str = "turbo"
 
     # places_match_max_distance_km: Text-Search match radius (km) between the atrativo's
     # coordinates and a candidate Google place. The name threshold (rapidfuzz ≥85) is the

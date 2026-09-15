@@ -289,6 +289,54 @@ class LLMGeneration(Base):
 
 
 # ---------------------------------------------------------------------------
+# AtrativoBusca — every paid cascade search, whole (docs/poc/gemini-viability.md §29)
+# ---------------------------------------------------------------------------
+
+
+class AtrativoBusca(Base):
+    """One Parallel search the description cascade paid for, stored as the API returned it.
+
+    WHY: descriptions are written with Gemini 2.5 Flash now and will be regenerated later with
+    another model. Keeping the raw results lets that happen without paying the search again,
+    and gives stewards the sources behind a draft.
+
+    Keyed by ``canonical_key`` with NO foreign key: Rio rows are wiped by a reset-brave-db and
+    rebuilt with the same canonical_key, and a paid search must survive that (the table is in
+    the reset skill's REFERENCE_TABLES). One row per attempt, not per atrativo — the history
+    stays; readers take the latest ``created_at``.
+    """
+
+    __tablename__ = "atrativo_buscas"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    canonical_key: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    # Snapshot of what was searched — regeneration must not depend on the Rio row existing.
+    nome: Mapped[str] = mapped_column(String(512), nullable=False)
+    municipio: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    uf: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    queries: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    search_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # JSONB (like local_businesses): the raw results are meant to be queried later
+    # (by url, by publish_date), not only read whole.
+    results: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    usage: Mapped[Any] = mapped_column(JSON, nullable=True)
+    warnings: Mapped[Any] = mapped_column(JSON, nullable=True)
+    usd_cost: Mapped[float] = mapped_column(Numeric(10, 6), nullable=False)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<AtrativoBusca key={self.canonical_key!r} results={len(self.results or [])}>"
+
+
+# ---------------------------------------------------------------------------
 # RunHistory — durable engine-sweep run trail (UI-PAINEL-2, Varreduras view)
 # ---------------------------------------------------------------------------
 

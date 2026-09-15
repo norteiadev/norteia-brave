@@ -50,7 +50,9 @@ PROTECTED_TABLES = {"alembic_version"}
 # wipe. The first three are seeded at migrate time by scripts.seed_reference_data;
 # local_businesses is filled on demand by scripts.cadastur_import (an MTur quarterly
 # register — re-downloading ~500k rows after every wipe would be absurd).
-REFERENCE_TABLES = {"municipios", "distritos", "uf_geoids", "local_businesses"}
+# atrativo_buscas holds PAID Parallel searches (docs/poc/gemini-viability.md §29), keyed by
+# canonical_key with no FK: descriptions are regenerated from it, so a wipe must not re-bill.
+REFERENCE_TABLES = {"municipios", "distritos", "uf_geoids", "local_businesses", "atrativo_buscas"}
 
 
 def _repo_root() -> str:

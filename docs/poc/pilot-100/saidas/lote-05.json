@@ -1,0 +1,163 @@
+[
+  {
+    "rio_id": "5d9f6a9f-c59d-4cbe-9a65-fb5bc2b955bb",
+    "nome": "Morro Do Moreno",
+    "municipio": "",
+    "uf": "ES",
+    "descricao_editorial": "O Morro do Moreno se ergue como uma sentinela natural sobre Vila Velha, com seus 184 metros de altura oferecendo uma das vistas mais amplas do litoral capixaba: de um lado a Praia da Costa se estende até o horizonte, do outro a Terceira Ponte recorta a Baía de Vitória. Ainda no século XVI, Vasco Fernandes Coutinho colocou o colono João Moreno para vigiar o topo do morro e proteger a região contra ataques de navios corsários, e é dele que vem o nome que o lugar carrega até hoje. Com o tempo, o posto de observação virou referência para orientar embarcações que entravam na baía, e em 2021 o morro foi declarado monumento natural de Vila Velha, reconhecimento de um dos últimos fragmentos de Mata Atlântica preservados em área urbana na região. A trilha até o alto reúne caminhantes, esportistas e quem simplesmente busca um fim de tarde bonito, e é justamente o fim de tarde o horário mais generoso com a luz, quando o sol se põe sobre a baía e ilumina a Praia da Costa em tons dourados. O mirante conhecido como Testa, um dos pontos mais fotografados do percurso, fica sobre uma laje de pedra que pede atenção redobrada, principalmente depois de chuva, quando a superfície fica escorregadia. Vale levar água, calçado com boa aderência e reservar um tempo para observar o Convento da Penha, vizinho de topo, que compõe o cenário ao lado da vista para Vitória.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Morro_do_Moreno",
+      "https://esbrasil.com.br/morro-do-moreno-uma-vista-privilegiada-de-vila-velha/",
+      "https://es360.com.br/personagens/noticia/morro-do-moreno-conheca-a-historia-por-tras-do-nome/"
+    ],
+    "queries": [
+      "Morro do Moreno Vila Velha Espírito Santo mirante",
+      "Morro do Moreno história Vila Velha ES"
+    ]
+  },
+  {
+    "rio_id": "1d4b4571-8d56-4cd9-8eb4-3ce2453ae6bf",
+    "nome": "Farol De Santa Luzia",
+    "municipio": "Vila Velha",
+    "uf": "ES",
+    "descricao_editorial": "No fim da Praia da Costa, em Vila Velha, o Farol de Santa Luzia marca o horizonte com sua torre octogonal de doze metros, erguida para guiar embarcações rumo à Baía de Vitória e ao Porto de Tubarão. Inaugurado em 1871, durante o reinado de Dom Pedro II, o farol teve suas peças metálicas fabricadas na Escócia e sua localização estratégica idealizada pelo Barão de Cotegipe, então ministro da Marinha Imperial. Ao longo dos anos, o mecanismo original a mercúrio foi substituído por rolamentos magnéticos, ampliando o alcance do facho de luz para 60 quilômetros mar afora. Hoje sob a guarda da Marinha do Brasil, o farol funciona também como um pequeno museu, com uma Sala da Memória que narra, em desenhos nas paredes, a trajetória da navegação na costa capixaba, do navegador Américo Vespúcio até a instalação do próprio farol na Praia da Costa. É um passeio que rende boas fotos no fim de tarde, quando a luz baixa contrasta com o branco e o metal da torre, e vale observar de perto o artesanato e as peças náuticas expostas no entorno, pequenos detalhes que contam a história marítima do lugar.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Farol_de_Santa_Luzia",
+      "https://esbrasil.com.br/conheca-as-belezas-do-farol-de-santa-luzia-em-vila-velha/",
+      "https://terracapixaba.com/en/2024/01/farol-de-santa-luzia-um-belissimo-cartao-postal-de-vila-velha.html"
+    ],
+    "queries": [
+      "Farol de Santa Luzia Praia da Costa Vila Velha história",
+      "Farol Santa Luzia Vila Velha turismo"
+    ]
+  },
+  {
+    "rio_id": "320c86ef-9146-45ac-b636-0c3e46e2327a",
+    "nome": "Curva Da Jurema",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "descricao_editorial": "Entre a Praia do Canto e a Ilha do Boi, a Curva da Jurema é uma das praias mais tradicionais de Vitória, protegida pelas ilhas do Boi e do Frade, que deixam o mar praticamente sem ondas e favorecem esportes como a vela. Ali funciona uma escola municipal de vela, e não é raro ver veleiros cortando a água calma enquanto famílias aproveitam a sombra das árvores plantadas ao longo da faixa de areia. Recentemente revitalizada, a orla ganhou quiosques renovados que servem a culinária capixaba, ciclovia e um calçadão que convida a caminhadas tranquilas com a baía como pano de fundo. O fim de tarde é o momento mais bonito para estar por ali, quando o sol se põe e colore o mar de laranja, um cenário que rende boas fotos do calçadão. Vale caminhar até a ponta da praia para observar os barcos ancorados e sentir a brisa que torna esse trecho da ilha um refúgio dentro da própria capital.",
+    "status": "ok",
+    "fontes": [
+      "https://esbrasil.com.br/praia-curva-da-jurema-conheca/",
+      "https://vitoria.es.gov.br/noticia/curva-da-jurema-esta-de-cara-nova-50994",
+      "https://www.vitoria.es.gov.br/semmam/curva-da-jurema"
+    ],
+    "queries": [
+      "Curva da Jurema Ilha do Boi Vitória praia",
+      "\"Curva da Jurema\" Vitória ES"
+    ]
+  },
+  {
+    "rio_id": "ab8cf263-4999-4fb4-a024-67499ef3a08d",
+    "nome": "Cachoeira De Matilde",
+    "municipio": "",
+    "uf": "ES",
+    "descricao_editorial": "Na zona rural de Alfredo Chaves, a cerca de 90 quilômetros de Vitória, a Cachoeira de Matilde despenca em uma queda livre que está entre as maiores do Espírito Santo, formada pelas águas do rio Benevente. Também chamada de Cachoeira Engenheiro Reeve, ela leva o nome do distrito de Matilde, que já foi ponto de passagem da antiga Estrada de Ferro Leopoldina, no início do século XX, quando a região se conectava por trilhos ao restante do estado. A antiga estação ferroviária, ainda de pé no distrito, é um lembrete silencioso desse passado, um contraste bonito com a força bruta da queda d'água. Um caminho pavimentado leva até o mirante de onde se observa a cachoeira despencando entre a mata nativa, ponto ideal para fotos com a vegetação preservada ao fundo. O banho não é permitido por causa da correnteza forte, mas o lugar atrai quem pratica escalada e rapel nas paredes de rocha ao redor. A visita rende mais nas primeiras horas do dia, com a luz suave entrando pela mata e o som da água ainda sem o movimento das horas mais cheias.",
+    "status": "ok",
+    "fontes": [
+      "https://www.penaestrada.blog.br/cachoeira-de-matilde/",
+      "https://esbrasil.com.br/cachoeira-de-matilde-encanta-com-beleza-imponencia/",
+      "https://capixabadagema.com.br/cachoeira-de-matilde/"
+    ],
+    "queries": [
+      "Cachoeira de Matilde Espírito Santo Santa Teresa",
+      "\"Cachoeira de Matilde\" ES turismo"
+    ]
+  },
+  {
+    "rio_id": "72a73a20-3d77-4cd0-81dd-973a35477e89",
+    "nome": "Castanheira Do Pensamento",
+    "municipio": "",
+    "uf": "ES",
+    "descricao_editorial": "Debaixo da copa larga de uma castanheira, à sombra generosa que essas árvores costumam oferecer ao litoral capixaba, o lugar convida a uma pausa contemplativa. É desses cantos que pedem passos mais lentos e um olhar atento aos detalhes do entorno, sem pressa de seguir adiante.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Castanheira do Pensamento Espírito Santo árvore",
+      "\"Castanheira do Pensamento\" turismo"
+    ]
+  },
+  {
+    "rio_id": "2ac08819-a792-4cca-a974-9e80437984ce",
+    "nome": "Secretaria De Estado Do Turismo - Setur/Es",
+    "municipio": "",
+    "uf": "ES",
+    "descricao_editorial": "Em Vitória, a Secretaria de Estado do Turismo do Espírito Santo, a Setur, é o órgão que planeja, coordena e promove o turismo capixaba, articulando praias, serras, cachoeiras e patrimônio histórico em uma estratégia única para o estado. É dali que partem boa parte das iniciativas que buscam aproximar o visitante da diversidade do Espírito Santo, do litoral de Vila Velha às montanhas do Caparaó. Para quem está desenhando um roteiro pelo estado, vale observar os materiais e sinalizações com QR Code que a Setur espalha pelos pontos turísticos capixabas, pequenos detalhes que ajudam a conectar a visita física à história e aos dados de cada lugar percorrido.",
+    "status": "ok",
+    "fontes": [
+      "https://setur.es.gov.br/",
+      "https://www.es.gov.br/Contents/Item/Display/440"
+    ],
+    "queries": [
+      "Secretaria de Estado do Turismo Setur Espírito Santo",
+      "fetch: setur.es.gov.br"
+    ]
+  },
+  {
+    "rio_id": "aedc0f17-cca9-4a88-9716-4fa76bd9cedd",
+    "nome": "Parque Estadual Cachoeira Da Fumaça",
+    "municipio": "",
+    "uf": "ES",
+    "descricao_editorial": "Na divisa entre Alegre e Ibitirama, na região da Serra do Caparaó, o Parque Estadual Cachoeira da Fumaça guarda uma queda d'água de 144 metros de altura, considerada a maior do Espírito Santo entre as de fluxo perene. A força da água ao se espatifar nas pedras se desfaz em uma nuvem de gotículas que lembra fumaça, o que deu nome ao lugar. Criado em 1984 e ampliado por decreto em 2009, o parque protege 162,5 hectares de nascentes e remanescentes de Mata Atlântica, com floresta estacional semidecidual, bromélias, helicônias e espécies como gato-do-mato e lontra. As trilhas, autoguiadas ou acompanhadas por monitores, atravessam a mata até pontos de observação da cachoeira, ideais para fotos amplas que captam tanto a queda quanto a névoa que ela produz. A visita rende mais nas primeiras horas da manhã, quando a luz ainda é suave e o som da água domina o ambiente antes do movimento do meio do dia. Vale calçado fechado para a trilha e atenção à fauna e à flora nativas que cercam o caminho.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Parque_Estadual_da_Cachoeira_da_Fuma%C3%A7a",
+      "https://iema.es.gov.br/PECF",
+      "https://semeia.org.br/conexao-semeia/parques-do-mes/conheca-o-parque-estadual-cachoeira-da-fumaca/"
+    ],
+    "queries": [
+      "Parque Estadual Cachoeira da Fumaça Espírito Santo",
+      "fetch: pt.wikipedia.org/wiki/Parque_Estadual_da_Cachoeira_da_Fumaça"
+    ]
+  },
+  {
+    "rio_id": "9754e7f1-cfe5-4616-9817-49bc086d8b0b",
+    "nome": "Pelourinho",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "descricao_editorial": "No coração do Centro Histórico de Salvador, o Pelourinho reúne ladeiras de pedra, casarões coloniais de fachadas coloridas e igrejas barrocas em um dos conjuntos arquitetônicos mais importantes da América Latina. O nome vem da coluna de pedra que ali existiu, onde pessoas escravizadas eram publicamente castigadas durante o Brasil Colônia, uma marca dolorosa que hoje convive com a força da cultura afro-brasileira que pulsa nas ruas: o samba-reggae do Olodum, as rodas de capoeira, os terreiros e a culinária baiana têm no Pelourinho um dos seus palcos mais vivos. Fundada em 1549, Salvador foi a primeira capital do Brasil até 1763, e o bairro, reconhecido como Patrimônio Mundial pela Unesco desde 1985, carrega essa camada histórica em cada esquina. Caminhar pelo Largo do Pelourinho, oficialmente Praça José de Alencar, no fim da tarde permite ver a luz dourada realçar as cores das fachadas, um dos melhores momentos para fotos das ladeiras e dos detalhes em azulejo das igrejas. Vale observar de perto os relevos das portas e janelas, ouvir a música que costuma tomar as ruas e reservar tempo para simplesmente se perder pelos becos que ligam uma praça a outra.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Pelourinho_(Salvador)",
+      "https://www.archdaily.com/1136294/pelourinho-in-salvador-from-colonial-architecture-to-olodum",
+      "https://www.correiobraziliense.com.br/aqui/2025/09/04/pelourinho-simbolo-cultural-e-historico-de-salvador/"
+    ],
+    "queries": [
+      "Pelourinho Salvador Bahia história centro histórico",
+      "Pelourinho Salvador patrimônio mundial Unesco casarões coloridos"
+    ]
+  },
+  {
+    "rio_id": "3c6dc0dd-a9ba-4550-8e0b-8a31c53aabe5",
+    "nome": "Ilha Dos Frades",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "descricao_editorial": "No meio da Baía de Todos os Santos, a cerca de 25 quilômetros de Salvador, a Ilha dos Frades é a maior ilha do território soteropolitano, com um formato que lembra uma estrela de quinze pontas e mata atlântica preservada onde ainda se encontra pau-brasil nativo. O nome remonta ao período colonial, quando, segundo a tradição local, dois frades foram mortos ali pelos índios tupinambás que já habitavam a região antes da chegada dos portugueses. Vestígios desse passado aparecem em igrejas antigas e em um forte que serviu de prisão ao general Bento Gonçalves durante a Revolução Farroupilha, no século XIX. As praias de Loreto, Paramaná e da Ponta de Nossa Senhora de Guadalupe, esta última com selo Bandeira Azul, têm areia clara e mar calmo, um convite ao mergulho e à observação da vida marinha na baía. O melhor horário para aportar é pela manhã, quando o mar está mais tranquilo e a luz realça o verde da mata contra o azul da água, cenário perfeito para fotos da orla vista do barco. Vale prestar atenção ao ritmo simples da ilha, tão diferente da agitação da capital baiana que fica na mesma baía.",
+    "status": "ok",
+    "fontes": [
+      "https://en.wikipedia.org/wiki/Ilha_dos_Frades",
+      "https://quantocustaviajar.com/blog/ilha-dos-frades-salvador-bahia/",
+      "https://www.bahiaterra.com/posts/ilha-dos-frades"
+    ],
+    "queries": [
+      "Ilha dos Frades Baía de Todos os Santos Salvador",
+      "Ilha dos Frades praias história Salvador Bahia"
+    ]
+  },
+  {
+    "rio_id": "05c85908-dfaa-44a6-9c84-ad3353f6d1f2",
+    "nome": "Escultura Do Peixe De Arame",
+    "municipio": "",
+    "uf": "ES",
+    "descricao_editorial": "Uma escultura de peixe feita em arame desponta como um detalhe curioso na paisagem urbana capixaba, o tipo de obra que chama atenção de quem passa e convida a parar por alguns segundos para observar os fios entrelaçados formando a silhueta do animal. É um convite a olhar com mais atenção os pequenos monumentos que pontuam o dia a dia das cidades.",
+    "status": "sem_fonte",
+    "fontes": [],
+    "queries": [
+      "Escultura do Peixe de Arame Espírito Santo",
+      "fetch: bing.com/search \"Escultura do Peixe de Arame\" Espirito Santo"
+    ]
+  }
+]

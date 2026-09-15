@@ -42,9 +42,10 @@ from sqlalchemy.orm import Session
 
 from brave.clients.places import _normalize_name
 from brave.config.settings import ScoreConfig
+from brave.core.models import AtrativoBusca
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import route_by_score
-from brave.lanes.atrativos.copywriter import TourismCopywriter
+from brave.lanes.atrativos.copywriter import CASCADE_MODEL, CascadeResult, TourismCopywriter
 from brave.lanes.atrativos.schemas import SignalResult
 from brave.lanes.atrativos.signal_agent import (
     CLOSED_STATUSES,
@@ -206,6 +207,9 @@ class PlacesEnrichmentAgent:
         voice_model_slug:   Anthropic slug for the copywriter (a Sonnet slug).
         description_enabled: Gate the copywriter sub-step (description_enrichment_enabled).
         enable_web_search:   Offer the web_search tool to the copywriter (real sweeps only).
+        search_client:      Tavily client → the copywriter runs in CASCADE mode (CASCADE_MODEL,
+                            mention + groundedness gates) instead of Sonnet + web_search.
+                            atrativo_description_cascade_enabled. None → web_search mode.
         now:                Injectable reference clock (atualidade / recency). None → now.
         max_distance_km:    Text-Search match radius in km (places_match_max_distance_km).
     """
@@ -222,6 +226,7 @@ class PlacesEnrichmentAgent:
         enable_web_search: bool = True,
         now: datetime | None = None,
         max_distance_km: float = 20.0,
+        search_client: Any = None,
     ) -> None:
         self._places_client = places_client
         self._session = session
@@ -233,7 +238,10 @@ class PlacesEnrichmentAgent:
         self._max_distance_km = max_distance_km
         self._copywriter = (
             TourismCopywriter(
-                llm_client, model=voice_model_slug, enable_web_search=enable_web_search
+                llm_client,
+                model=CASCADE_MODEL if search_client is not None else voice_model_slug,
+                enable_web_search=enable_web_search,
+                search_client=search_client,
             )
             if llm_client is not None
             else None
@@ -450,13 +458,42 @@ class PlacesEnrichmentAgent:
         description_written = bool(new_normalized.get("descricao_editorial"))
         # Same predicate as the Step-1 gate (routing + attempt budget included) — the two
         # conditions MUST agree, so this branch reuses it instead of restating it.
+        cascade: CascadeResult | None = None
         if wants_description and self._copywriter is not None:
             prose: str | None = None
             no_spend = False
             try:
-                prose = await self._copywriter.write(
-                    nome, municipio, uf, places_context=details
-                )
+                if self._copywriter.cascade:
+                    cascade = await self._copywriter.write_cascade(
+                        nome, municipio, uf, places_context=details
+                    )
+                    prose = cascade.prose
+                    if cascade.busca is not None:
+                        # Every paid search is kept whole, whatever the verdict — descriptions
+                        # get regenerated later with another model from these rows (§29).
+                        b = cascade.busca
+                        self._session.add(
+                            AtrativoBusca(
+                                canonical_key=rio.canonical_key or "",
+                                nome=nome,
+                                municipio=municipio or None,
+                                uf=uf or None,
+                                provider="parallel",
+                                mode=b.mode,
+                                objective=b.objective,
+                                queries=b.queries,
+                                search_id=b.search_id,
+                                results=b.results,
+                                usage=b.usage,
+                                warnings=b.warnings,
+                                usd_cost=b.usd,
+                                latency_ms=b.latency_ms,
+                            )
+                        )
+                else:
+                    prose = await self._copywriter.write(
+                        nome, municipio, uf, places_context=details
+                    )
             except CostGuardError:
                 # The daily budget tripped BEFORE dispatch: no token spent, so no attempt
                 # happened. Burning the budget here would let one budget trip per sweep
@@ -478,6 +515,15 @@ class PlacesEnrichmentAgent:
                 # _MAX_DESCRIPTION_ATTEMPTS the record stops re-entering the pass (see the
                 # constant for why this is a count, not a flag).
                 new_normalized["descricao_attempts"] = attempts + 1
+            if cascade is not None:
+                # Gate verdicts are board-only (excluded from the Mar canonical). A gated pass
+                # burns an attempt like any spend without prose — the search was paid — so a
+                # record the index does not cover stops re-searching after
+                # _MAX_DESCRIPTION_ATTEMPTS, and a later pass can still succeed if coverage
+                # improves. Success clears a stale verdict from an earlier attempt.
+                new_normalized["descricao_gate"] = cascade.motivo
+                new_normalized["descricao_rascunho"] = cascade.rascunho
+                new_normalized["descricao_groundedness"] = cascade.groundedness
 
         # Step 5: mark enriched (idempotency), mutate normalized, re-score. sub_state is
         # left untouched — a dlq record stays in the plain DLQ (sub_state=None) queue.
@@ -504,6 +550,18 @@ class PlacesEnrichmentAgent:
 
         # Re-score: atualidade/completude may have changed → borderline record can move mar↔dlq.
         route_by_score(self._session, rio, self._config)
+        # Ungrounded prose goes to the human queue, not to Mar: the draft sits in
+        # descricao_rascunho for a steward, and the reason overrides the score one so the DLQ
+        # says what to look at. The invariant does not depend on this routing — the draft is
+        # never written to descricao_editorial, so no re-score can carry it to Mar.
+        if cascade is not None and cascade.motivo == "nao_fundamentada":
+            rio.routing = "dlq"
+            rio.dlq_reason = "descricao_nao_fundamentada"
+        # The search never names the record's município: a steward must fix the record (a
+        # Nascente homonym geocode), not the description — so it leaves Mar's path too.
+        if cascade is not None and cascade.motivo == "municipio_nao_confirmado":
+            rio.routing = "dlq"
+            rio.dlq_reason = "municipio_nao_confirmado"
         self._session.flush()
 
         # Append-only Log-tab timeline event (keyed by canonical_key — the drawer key).
@@ -521,6 +579,7 @@ class PlacesEnrichmentAgent:
             data={
                 "hours_written": hours_written,
                 "description_written": description_written,
+                "descricao_gate": cascade.motivo if cascade is not None else None,
                 "atualidade_value": new_normalized.get("atualidade_value"),
                 "routing": rio.routing,
             },

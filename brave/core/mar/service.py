@@ -159,7 +159,8 @@ def promote_to_mar(
 
     # Build canonical payload from normalized record. most_recent_review_at, contact
     # (Phase F), google_enriched (the Places-enrichment idempotency marker) and
-    # descricao_attempts (the copywriter retry counter) are internal/board-only —
+    # descricao_attempts (the copywriter retry counter) and the cascade gate verdicts
+    # (descricao_gate / _rascunho / _groundedness) are internal/board-only —
     # exclude them alongside the five reliability *_value criteria so the norteia-api
     # Mar push shape stays byte-identical.
     canonical: dict[str, Any] = {
@@ -167,7 +168,8 @@ def promote_to_mar(
         if k not in ("origem_value", "completude_value", "corroboracao_value",
                      "atualidade_value", "validacao_humana_value",
                      "most_recent_review_at", "contact", "google_enriched",
-                     "descricao_attempts")
+                     "descricao_attempts", "descricao_gate", "descricao_rascunho",
+                     "descricao_groundedness")
     }
 
     # Build provenance (D-06) — full per-criterion breakdown + score_version

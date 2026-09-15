@@ -1,0 +1,72 @@
+[
+  {
+    "rio_id": "a1ff8c84-3074-4d0d-9f4a-1047126042e8",
+    "nome": "Praia Da Joaquina",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Praia Da Joaquina\" — município Florianópolis/SC.\nEndereço: Joaquina Beach, Santa Catarina, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "447a608f-dea9-4ffc-b112-5fe971f75f69",
+    "nome": "Praia Da Barra Da Tijuca",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Praia Da Barra Da Tijuca\" — município Rio de Janeiro/RJ.\nEndereço: Praia da Barra da Tijuca, Rio de Janeiro, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "67f4ed96-0ef3-4e1c-89ed-9829fc8d9684",
+    "nome": "Pedra Da Sereia",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Pedra Da Sereia\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "34edb104-3b6c-46c3-93d8-975b93abedc1",
+    "nome": "Ilha Das Garças",
+    "municipio": "",
+    "uf": "ES",
+    "contexto": "Atrativo: \"Ilha Das Garças\" — município /ES.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "d0a87651-1368-4071-8912-84bde2ac5231",
+    "nome": "Museu Do Amanhã",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Museu Do Amanhã\" — município Rio de Janeiro/RJ.\nEndereço: Praça Mauá, 1 - Centro, Rio de Janeiro - RJ, 20081-240, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "fdeef914-f704-4a35-8241-41669864557c",
+    "nome": "Maracanã",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Maracanã\" — município Rio de Janeiro/RJ.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "d4568c2f-974b-4f86-8a1a-008b88565ba6",
+    "nome": "Parque Das Águas De São Lourenço - Mg",
+    "municipio": "São Lourenço",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Parque Das Águas De São Lourenço - Mg\" — município São Lourenço/MG.\nEndereço: Al. João Lage, S/N - Centro, São Lourenço - MG, 37470-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "477d2d23-5434-46dc-a99b-8ed86e6286f7",
+    "nome": "Projeto Tamar",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Projeto Tamar\" — município Salvador/BA.\nEndereço: Pr. Gago Coutinho, s/n - Aeroporto, Salvador - BA, 41510-045, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "44fc127a-db71-4441-81c0-de09471251d8",
+    "nome": "Praia Farol Da Barra",
+    "municipio": "Salvador",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Praia Farol Da Barra\" — município Salvador/BA.\nEndereço: Farol da Barra - Barra, Salvador - Bahia, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "de2f4d1a-5b41-41cd-9eeb-b21e242d339d",
+    "nome": "Parque Municipal Das Mangabeiras",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Parque Municipal Das Mangabeiras\" — município Belo Horizonte/MG.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  }
+]

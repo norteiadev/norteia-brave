@@ -480,10 +480,13 @@ async def test_canary_session_expired_returns_422_and_deletes_key(fake_redis, mo
     session = {"cookies": {"datadome": "x"}, "query_ids": {"destinations": "qid"}}
     fake_redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session))
 
-    async def _raise_expired(self, geo_id, max_pages=None):
+    async def _raise_expired(self, geo_id, start_page=1, max_pages=334):
         raise SessionExpiredError("403 DataDome block")
+        yield  # pragma: no cover — makes this an async generator, like the real one
 
-    monkeypatch.setattr(TripAdvisorClient, "fetch_attractions", _raise_expired)
+    monkeypatch.setattr(
+        TripAdvisorClient, "fetch_attractions_paginated_gql", _raise_expired
+    )
 
     with pytest.raises(HTTPException) as ei:
         await ts_module._run_canary(session, TripAdvisorConfig(), fake_redis)
@@ -502,11 +505,15 @@ async def test_canary_session_expired_returns_422_and_deletes_key(fake_redis, mo
 
 @pytest.mark.asyncio
 async def test_canary_probes_fetch_attractions(fake_redis, monkeypatch):
-    """Canary must call fetch_attractions (qid a5cb7fa004b5e4b5), never fetch_destinations.
+    """Canary must probe the listing transport the INGEST LANE uses, never fetch_destinations.
 
-    Monkeypatches fetch_destinations to raise AssertionError — if canary accidentally
-    calls it the test fails immediately. fetch_attractions returns a non-empty list
-    to simulate a valid session response.
+    That transport is ``fetch_attractions_paginated_gql`` (qid 79aaeeb847e55e58). The
+    older single-page ``fetch_attractions`` is pinned to the retired qid
+    a5cb7fa004b5e4b5, which TripAdvisor now answers with
+    ``[{"errors":[{"message":"PersistedQueryNotFound"}]}]`` — parsed as zero cards. A
+    canary on that query reported "empty result" for every session and DELETED valid
+    freshly-injected credentials, so both fakes below fail the test if the canary
+    reaches for the wrong transport.
     """
     import json
 
@@ -516,37 +523,51 @@ async def test_canary_probes_fetch_attractions(fake_redis, monkeypatch):
 
     session = {
         "cookies": {"datadome": "x", "TASID": "E75FBE95"},
-        "query_ids": {"attractions": "a5cb7fa004b5e4b5"},
+        "query_ids": {"attractions": "79aaeeb847e55e58"},
     }
     fake_redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session))
 
-    fetch_attractions_called_with: list[dict] = []
+    listing_called_with: list[dict] = []
 
-    async def _record_and_return(self, geo_id, max_pages=None):
-        fetch_attractions_called_with.append({"geo_id": geo_id, "max_pages": max_pages})
-        return [
-            {
-                "name": "Iguazu Falls",
-                "locationId": 312332,
-                "rating": 4.9,
-                "review_count": 45811,
-                "category": "Waterfalls",
-            }
-        ]
+    async def _record_and_yield(self, geo_id, start_page=1, max_pages=334):
+        listing_called_with.append({"geo_id": geo_id, "max_pages": max_pages})
+        yield (
+            0,
+            [
+                {
+                    "name": "Iguazu Falls",
+                    "locationId": 312332,
+                    "rating": 4.9,
+                    "review_count": 45811,
+                    "category": "Waterfalls",
+                }
+            ],
+        )
 
     async def _raise_if_called(self, uf, max_pages=None):
-        raise AssertionError("canary must not call fetch_destinations — use fetch_attractions")
+        raise AssertionError(
+            "canary must not call fetch_destinations — use fetch_attractions_paginated_gql"
+        )
 
-    monkeypatch.setattr(TripAdvisorClient, "fetch_attractions", _record_and_return)
+    async def _raise_if_deprecated(self, geo_id, max_pages=None):
+        raise AssertionError(
+            "canary must not call the deprecated fetch_attractions (retired qid "
+            "a5cb7fa004b5e4b5) — use fetch_attractions_paginated_gql"
+        )
+
+    monkeypatch.setattr(
+        TripAdvisorClient, "fetch_attractions_paginated_gql", _record_and_yield
+    )
+    monkeypatch.setattr(TripAdvisorClient, "fetch_attractions", _raise_if_deprecated)
     monkeypatch.setattr(TripAdvisorClient, "fetch_destinations", _raise_if_called)
 
     # Should complete without raising (valid non-empty session)
     await ts_module._run_canary(session, TripAdvisorConfig(), fake_redis)
 
-    assert len(fetch_attractions_called_with) == 1, "fetch_attractions must be called exactly once"
-    assert fetch_attractions_called_with[0]["geo_id"] == 303380, (
-        f"Canary must probe geo_id=303380 (Minas Gerais); got: {fetch_attractions_called_with[0]['geo_id']}"
+    assert len(listing_called_with) == 1, "the listing transport must be called exactly once"
+    assert listing_called_with[0]["geo_id"] == 303380, (
+        f"Canary must probe geo_id=303380 (Minas Gerais); got: {listing_called_with[0]['geo_id']}"
     )
-    assert fetch_attractions_called_with[0]["max_pages"] == 1, (
-        f"Canary must use max_pages=1; got: {fetch_attractions_called_with[0]['max_pages']}"
+    assert listing_called_with[0]["max_pages"] == 1, (
+        f"Canary must stay single-page; got: {listing_called_with[0]['max_pages']}"
     )

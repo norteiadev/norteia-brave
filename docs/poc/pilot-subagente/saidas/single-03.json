@@ -1,0 +1,19 @@
+[
+  {
+    "rio_id": "99063015-feb9-4168-89eb-db1c129ad6c4",
+    "nome": "Palácio Anchieta",
+    "municipio": "Vitória",
+    "uf": "ES",
+    "descricao_editorial": "No alto da Cidade Alta, de frente para o porto de Vitória, o Palácio Anchieta domina a paisagem com a solidez de quem viu a cidade nascer. Suas paredes grossas guardam quase cinco séculos de histórias, começando ainda no século XVI, quando jesuítas ergueram ali, com trabalho indígena, o Colégio e a Igreja de São Tiago. Foi o padre José de Anchieta quem deu ao edifício parte de sua forma definitiva, e é dele que o palácio herdou o nome, adotado em decreto de 1945 em sua homenagem, o mesmo espaço que hoje guarda seu túmulo simbólico. Com a expulsão dos jesuítas das terras portuguesas no século XVIII, o antigo colégio passou a abrigar serviços públicos e, pouco depois, tornou-se sede do governo capixaba, papel que mantém até hoje, tornando-o um dos mais antigos assentos de poder executivo do país. Vale caminhar pelo entorno no fim da tarde, quando a luz baixa realça a fachada e o contraste entre a arquitetura colonial e o movimento do porto ao fundo cria um dos ângulos mais bonitos para fotografar o conjunto. Observar os detalhes de pedra e cal nas partes mais antigas da construção ajuda a perceber as várias camadas de reconstrução que o prédio atravessou ao longo dos séculos.",
+    "status": "ok",
+    "fontes": [
+      "https://pt.wikipedia.org/wiki/Pal%C3%A1cio_Anchieta_(Esp%C3%ADrito_Santo)",
+      "https://dio.es.gov.br/Not%C3%ADcia/patrimonio-palacio-anchieta-completa-466-anos-de-historia",
+      "https://www.folhavitoria.com.br/politica/igreja-colegio-sede-do-es-conheca-a-historia-do-palacio-anchieta/"
+    ],
+    "queries": [
+      "Palácio Anchieta Vitória ES história sede governo",
+      "Palácio Anchieta Vitória jesuítas colégio história"
+    ]
+  }
+]

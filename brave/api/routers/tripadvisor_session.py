@@ -155,11 +155,24 @@ async def _run_canary(session: dict[str, Any], ta_config: Any, redis: Redis) -> 
         # Bound it to a single page so a slow large-UF paginate can't exceed the
         # timeout and destroy a valid session.
         # geo_id=303380 = Minas Gerais (any valid UF geoId works; NOT national 294280).
-        # fetch_attractions uses qid a5cb7fa004b5e4b5 — validating it confirms the
-        # real AttractionsFusion listing query works for this session.
+        #
+        # The canary MUST use the same transport the ingest lane uses
+        # (fetch_attractions_paginated_gql, qid 79aaeeb847e55e58). The deprecated
+        # single-page fetch_attractions is pinned to qid a5cb7fa004b5e4b5, which
+        # TripAdvisor has retired: it now answers HTTP 200 with
+        # [{"errors":[{"message":"PersistedQueryNotFound"}]}], which parses to zero
+        # cards. Validating against it made every canary read "empty result" and
+        # DELETE a perfectly good freshly-injected session — a 422 that no operator
+        # could get past, while the lane itself was fine.
+        async def _first_page() -> list[dict[str, Any]]:
+            async for _offset, cards in client.fetch_attractions_paginated_gql(
+                geo_id=303380, max_pages=1
+            ):
+                return cards
+            return []
+
         results = await asyncio.wait_for(
-            client.fetch_attractions(geo_id=303380, max_pages=1),
-            timeout=_CANARY_TIMEOUT_SECONDS,
+            _first_page(), timeout=_CANARY_TIMEOUT_SECONDS
         )
     except (SessionExpiredError, asyncio.TimeoutError) as exc:
         # Session is provably bad (DataDome 403/429) or unresponsive within the

@@ -1,0 +1,72 @@
+[
+  {
+    "rio_id": "37e9ed1c-b0a7-4d86-aaca-c627548d4d70",
+    "nome": "Jardim Botânico",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Jardim Botânico\" — município Rio de Janeiro/RJ.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "505c26e3-9597-4ab3-ae28-db389586277e",
+    "nome": "Jurerê",
+    "municipio": "Florianópolis",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Jurerê\" — município Florianópolis/SC.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "196d90be-a49a-42b5-9cbe-caffe77775b6",
+    "nome": "Parque Unipraias Camboriú",
+    "municipio": "Balneário Camboriú",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Parque Unipraias Camboriú\" — município Balneário Camboriú/SC.\nEndereço: Av. Atlântica, 6006 - Centro, Balneário Camboriú - SC, 88330-908, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "ce950d30-df87-4bb9-ba76-0940f1be9471",
+    "nome": "Praça Da Liberdade",
+    "municipio": "Belo Horizonte",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Praça Da Liberdade\" — município Belo Horizonte/MG.\nEndereço: Praça da Liberdade - Savassi, Belo Horizonte - MG, 30140-010, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "9cb71dae-ba2e-4919-bafa-857183dfaa08",
+    "nome": "Canyons De Furnas",
+    "municipio": "Capitólio",
+    "uf": "MG",
+    "contexto": "Atrativo: \"Canyons De Furnas\" — município Capitólio/MG.\nEndereço: R. dos Canyons, 10, São José da Barra - MG, 37945-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "6af1ec2f-42ba-48f5-bda5-8ac62073f446",
+    "nome": "Praia Da Pitinga",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Praia Da Pitinga\" — município Porto Seguro/BA.\nEndereço: Pitinga - Arraial d'Ajuda, Porto Seguro - BA, 45810-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "f758a301-574d-46b3-8186-25acf2185e8f",
+    "nome": "Quadrado",
+    "municipio": "Porto Seguro",
+    "uf": "BA",
+    "contexto": "Atrativo: \"Quadrado\" — município Porto Seguro/BA.\nEndereço: Praça São João Batista, 150 - Quadrado, Porto Seguro - BA, 45818-000, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "e54ce17e-93b5-46bf-9758-da97949f5ec8",
+    "nome": "Praia De Ipanema",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Praia De Ipanema\" — município Rio de Janeiro/RJ.\nEndereço: Ipanema Beach, Rio de Janeiro, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "f424563a-debe-41a9-a18e-6a4cda5064af",
+    "nome": "Praia De Copacabana",
+    "municipio": "Rio de Janeiro",
+    "uf": "RJ",
+    "contexto": "Atrativo: \"Praia De Copacabana\" — município Rio de Janeiro/RJ.\nEndereço: Copacabana Beach, Rio de Janeiro, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  },
+  {
+    "rio_id": "2558dd85-4659-480d-b828-252532cb3f45",
+    "nome": "Aventura Pirata",
+    "municipio": "Balneário Camboriú",
+    "uf": "SC",
+    "contexto": "Atrativo: \"Aventura Pirata\" — município Balneário Camboriú/SC.\nEndereço: Av. Atlântica, 4530 - Centro, Balneário Camboriú - SC, 88330-027, Brazil.\nEscreva a descrição editorial da Norteia para este atrativo. Se o contexto acima for insuficiente, busque na web fontes confiáveis antes de escrever."
+  }
+]

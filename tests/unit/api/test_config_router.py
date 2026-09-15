@@ -332,3 +332,20 @@ def test_http_patch_success(client):
     assert r.json()["config"]["score"]["threshold_mar"] == 88.0
     assert shared.rows["score.threshold_mar"].value == {"v": 88.0}
     assert any(a.action == "config_updated" for a in shared.audits)
+
+
+def test_patch_toggles_atrativo_description_cascade(db, redis, monkeypatch):
+    # Defaults OFF, round-trips through the overlay — and the Tavily key never reaches the
+    # snapshot (AppConfig excludes it from dumps), so GET cannot echo it.
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-secret")
+    monkeypatch.setenv("PARALLEL_API_KEY", "prl-secret")
+    snap = get_config_snapshot(db=db, redis=redis)
+    assert snap["atrativo_description_cascade_enabled"] is False
+    assert "tavily_api_key" not in snap and "tvly-secret" not in str(snap)
+    assert "parallel_api_key" not in snap and "prl-secret" not in str(snap)
+
+    out = update_config(
+        body={"atrativo_description_cascade_enabled": True}, db=db, redis=redis
+    )
+    assert out["config"]["atrativo_description_cascade_enabled"] is True
+    assert db.rows["atrativo_description_cascade_enabled"].value == {"v": True}
