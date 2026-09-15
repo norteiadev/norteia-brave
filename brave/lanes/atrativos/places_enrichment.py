@@ -207,9 +207,10 @@ class PlacesEnrichmentAgent:
         voice_model_slug:   Anthropic slug for the copywriter (a Sonnet slug).
         description_enabled: Gate the copywriter sub-step (description_enrichment_enabled).
         enable_web_search:   Offer the web_search tool to the copywriter (real sweeps only).
-        search_client:      Tavily client → the copywriter runs in CASCADE mode (CASCADE_MODEL,
+        search_client:      Parallel client → the copywriter runs in CASCADE mode (cascade_model,
                             mention + groundedness gates) instead of Sonnet + web_search.
                             atrativo_description_cascade_enabled. None → web_search mode.
+        cascade_model:      Writer slug in cascade mode (atrativo_cascade_model).
         now:                Injectable reference clock (atualidade / recency). None → now.
         max_distance_km:    Text-Search match radius in km (places_match_max_distance_km).
     """
@@ -227,6 +228,7 @@ class PlacesEnrichmentAgent:
         now: datetime | None = None,
         max_distance_km: float = 20.0,
         search_client: Any = None,
+        cascade_model: str = CASCADE_MODEL,
     ) -> None:
         self._places_client = places_client
         self._session = session
@@ -239,7 +241,7 @@ class PlacesEnrichmentAgent:
         self._copywriter = (
             TourismCopywriter(
                 llm_client,
-                model=CASCADE_MODEL if search_client is not None else voice_model_slug,
+                model=cascade_model if search_client is not None else voice_model_slug,
                 enable_web_search=enable_web_search,
                 search_client=search_client,
             )

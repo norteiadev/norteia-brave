@@ -259,10 +259,24 @@ def _cascade_search_client(app_config: AppConfig, effective: AppConfig, redis_cl
 
     Only called on the real-copywriter branch (run_real_externals already true). The key is
     read from the env-built app_config: the overlay snapshot never carries it.
+
+    Also refuses to build when the cascade writer is a Gemini-direct slug that generate()
+    cannot serve (empty BRAVE_LLM_GEMINI_API_KEY, or a model with no price). Failing HERE
+    disables inline enrichment for the sweep; failing inside generate() would read as a plain
+    copywriter failure and burn one descricao_attempt per atrativo — 3 sweeps and the whole
+    backlog is excluded from descriptions.
     """
     if not effective.atrativo_description_cascade_enabled:
         return None
+    from brave.clients.llm import gemini_is_priced  # noqa: PLC0415
     from brave.clients.parallel import RealParallelClient  # noqa: PLC0415
+
+    model = app_config.atrativo_cascade_model
+    if model.startswith("gemini-"):
+        if not app_config.llm.gemini_api_key:
+            raise RuntimeError(f"cascade model {model!r} needs BRAVE_LLM_GEMINI_API_KEY")
+        if not gemini_is_priced(model):
+            raise RuntimeError(f"cascade model {model!r} has no Gemini price")
 
     return RealParallelClient(
         app_config.parallel_api_key,
@@ -1107,6 +1121,7 @@ def sweep_tripadvisor(
                 enable_web_search=app_config.run_real_externals,
                 max_distance_km=app_config.places_match_max_distance_km,
                 search_client=_copy_search,
+                cascade_model=app_config.atrativo_cascade_model,
             )
         except Exception:  # noqa: BLE001 — enrichment build must not crash the sweep
             logger.warning("inline_enrichment_build_failed", uf=uf)
@@ -1536,6 +1551,7 @@ def enrich_places_task(self, rio_id: str) -> None:
             enable_web_search=app_config.run_real_externals,
             max_distance_km=app_config.places_match_max_distance_km,
             search_client=copy_search,
+            cascade_model=app_config.atrativo_cascade_model,
         )
 
         asyncio.run(agent.run(rio))
