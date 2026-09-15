@@ -44,6 +44,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from brave.config.settings import LLMConfig
 from brave.core.models import LLMGeneration
 from brave.observability.cost_guard import pre_dispatch_check, record_spend
+from brave.shared.exceptions import PermanentError
 
 logger = structlog.get_logger(__name__)
 
@@ -180,12 +181,14 @@ class RealLLMClient:
         # Build instructor-wrapped AsyncOpenAI for extract()
         # mode=Mode.TOOLS is set at construction time (not per-call) because
         # OpenRouter does not support MD_JSON mode — we lock to TOOLS here.
-        _openai_client = AsyncOpenAI(
+        # Kept raw too: generate() sends OpenRouter slugs (e.g. "google/gemini-2.5-flash")
+        # through plain chat completions — no response_model, so no instructor.
+        self._openrouter = AsyncOpenAI(
             api_key=config.openrouter_api_key,
             base_url=config.openrouter_base_url,
         )
         self._instructor_client: instructor.AsyncInstructor = instructor.from_openai(
-            _openai_client,
+            self._openrouter,
             mode=instructor.Mode.TOOLS,
         )
 
@@ -324,11 +327,12 @@ class RealLLMClient:
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> str:
-        """Generate a free-form text response via native AsyncAnthropic (D-05a).
+        """Generate a free-form text response (D-05a).
 
         Used by WhatsAppAgent ask_followup_node for PT-BR conversation turns, and by
         TourismCopywriter (atrativo descriptions) with the server-side web_search tool.
-        NOT via OpenRouter — uses the native Anthropic SDK for direct quota control.
+        Claude slugs go through the native Anthropic SDK (direct quota control); a
+        "vendor/model" slug (the cascade's Gemini) goes to OpenRouter, see _generate_openrouter.
 
         max_tokens=2048 is REQUIRED — anthropic 0.109.x has no default (RESEARCH.md Pitfall 7).
 
@@ -345,10 +349,15 @@ class RealLLMClient:
 
         Raises:
             CostGuardError: If daily USD budget exceeded before dispatch.
+            PermanentError: OpenRouter reply cut short (finish_reason != "stop").
         """
         # Cost guard — BEFORE any LLM call (D-20, T-02-03)
         if self._redis_client is not None:
             pre_dispatch_check(self._redis_client, self._config)
+
+        # An OpenRouter slug ("vendor/model") never reaches Anthropic.
+        if "/" in model:
+            return await self._generate_openrouter(messages, model, system=system, tools=tools)
 
         create_kwargs: dict[str, Any] = {
             "model": model,
@@ -431,6 +440,84 @@ class RealLLMClient:
             self._session.flush()
 
         return text
+
+    @retry(
+        retry=retry_if_exception(_is_openai_retryable),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    async def _openrouter_completion(self, **kwargs: Any) -> Any:
+        return await self._openrouter.chat.completions.create(**kwargs)
+
+    async def _generate_openrouter(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        *,
+        system: str | None,
+        tools: list[dict[str, Any]] | None,
+    ) -> str:
+        """generate() for OpenRouter slugs — the cascade copywriter's Gemini 2.5 Flash (§26).
+
+        Same body the POC measured: max_tokens 2048, provider.data_collection deny (D-04), no
+        ``reasoning`` field (thinking off is OpenRouter's default for 2.5 Flash; on, it doubled
+        cost and latency and brought the only truncated replies). Cost is OpenRouter's billed
+        ``usage.cost``, as in extract() — no local price table to drift.
+
+        A reply with finish_reason != "stop" raises: a cut text has few concrete claims, so it
+        passes the groundedness gate (Gemini "Inhotim", 28 characters, §26.4) — it must never
+        reach the column.
+        """
+        if tools:
+            raise ValueError(f"generate(): server-side tools are Anthropic-only; got {model!r}")
+        full = ([{"role": "system", "content": system}] if system is not None else []) + list(
+            messages
+        )
+        response = await self._openrouter_completion(
+            model=model,
+            max_tokens=2048,
+            messages=full,
+            extra_body={
+                "provider": {"data_collection": self._config.provider_data_collection},
+                "usage": {"include": True},
+            },
+        )
+        choice = response.choices[0]
+        usage = response.usage
+        prompt_tokens: int = usage.prompt_tokens if usage else 0
+        completion_tokens: int = usage.completion_tokens if usage else 0
+        usd_cost: float = (
+            float(usage.model_extra.get("cost", 0.0)) if usage and usage.model_extra else 0.0
+        )
+        logger.info(
+            "llm_generate_ok",
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            finish_reason=choice.finish_reason,
+            usd_cost=usd_cost,
+        )
+
+        # The call was billed whatever finish_reason says — record before rejecting it.
+        if self._redis_client is not None and self._session is not None:
+            record_spend(self._redis_client, usd_cost)
+            self._session.add(
+                LLMGeneration(
+                    id=uuid.uuid4(),
+                    lane=self._lane,
+                    model_slug=model,
+                    resolved_provider=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    usd_cost=usd_cost,
+                )
+            )
+            self._session.flush()
+
+        if choice.finish_reason != "stop":
+            raise PermanentError(f"generate(): {model} finish_reason={choice.finish_reason!r}")
+        return choice.message.content or ""
 
 
 # ---------------------------------------------------------------------------

@@ -480,6 +480,13 @@ class AppConfig(BaseSettings):
     # config snapshot (model_dump_json); readers take it from the env-built AppConfig().
     tavily_api_key: str = Field(default="", exclude=True)
 
+    # PARALLEL_API_KEY — the cascade's search provider since §29 (replaced Tavily). Same
+    # exclude=True rule. A missing key fails the client build like Tavily's did.
+    parallel_api_key: str = Field(default="", exclude=True)
+    # PARALLEL_SEARCH_MODE — turbo | fast | basic | advanced. turbo measured best on the 140
+    # TA atrativos (135 approved vs 128 fast, p95 0.8 s, $0.001/request). Env-only.
+    parallel_search_mode: str = "turbo"
+
     # places_match_max_distance_km: Text-Search match radius (km) between the atrativo's
     # coordinates and a candidate Google place. The name threshold (rapidfuzz ≥85) is the
     # PRIMARY guard; this only disambiguates + rejects a gross wrong-city match. Kept

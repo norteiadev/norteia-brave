@@ -255,17 +255,20 @@ def _get_session() -> tuple[Session, Any]:
 
 
 def _cascade_search_client(app_config: AppConfig, effective: AppConfig, redis_client: Any) -> Any:
-    """Tavily client when atrativo_description_cascade_enabled, else None (web_search mode).
+    """Parallel client when atrativo_description_cascade_enabled, else None (web_search mode).
 
     Only called on the real-copywriter branch (run_real_externals already true). The key is
     read from the env-built app_config: the overlay snapshot never carries it.
     """
     if not effective.atrativo_description_cascade_enabled:
         return None
-    from brave.clients.tavily import RealTavilyClient  # noqa: PLC0415
+    from brave.clients.parallel import RealParallelClient  # noqa: PLC0415
 
-    return RealTavilyClient(
-        app_config.tavily_api_key, redis_client=redis_client, llm_config=app_config.llm
+    return RealParallelClient(
+        app_config.parallel_api_key,
+        mode=app_config.parallel_search_mode,
+        redis_client=redis_client,
+        llm_config=app_config.llm,
     )
 
 

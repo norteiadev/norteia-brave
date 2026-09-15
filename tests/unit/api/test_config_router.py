@@ -338,9 +338,11 @@ def test_patch_toggles_atrativo_description_cascade(db, redis, monkeypatch):
     # Defaults OFF, round-trips through the overlay — and the Tavily key never reaches the
     # snapshot (AppConfig excludes it from dumps), so GET cannot echo it.
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-secret")
+    monkeypatch.setenv("PARALLEL_API_KEY", "prl-secret")
     snap = get_config_snapshot(db=db, redis=redis)
     assert snap["atrativo_description_cascade_enabled"] is False
     assert "tavily_api_key" not in snap and "tvly-secret" not in str(snap)
+    assert "parallel_api_key" not in snap and "prl-secret" not in str(snap)
 
     out = update_config(
         body={"atrativo_description_cascade_enabled": True}, db=db, redis=redis

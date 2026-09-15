@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 
 from brave.clients.places import _normalize_name
 from brave.config.settings import ScoreConfig
+from brave.core.models import AtrativoBusca
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import route_by_score
 from brave.lanes.atrativos.copywriter import CASCADE_MODEL, CascadeResult, TourismCopywriter
@@ -467,6 +468,28 @@ class PlacesEnrichmentAgent:
                         nome, municipio, uf, places_context=details
                     )
                     prose = cascade.prose
+                    if cascade.busca is not None:
+                        # Every paid search is kept whole, whatever the verdict — descriptions
+                        # get regenerated later with another model from these rows (§29).
+                        b = cascade.busca
+                        self._session.add(
+                            AtrativoBusca(
+                                canonical_key=rio.canonical_key or "",
+                                nome=nome,
+                                municipio=municipio or None,
+                                uf=uf or None,
+                                provider="parallel",
+                                mode=b.mode,
+                                objective=b.objective,
+                                queries=b.queries,
+                                search_id=b.search_id,
+                                results=b.results,
+                                usage=b.usage,
+                                warnings=b.warnings,
+                                usd_cost=b.usd,
+                                latency_ms=b.latency_ms,
+                            )
+                        )
                 else:
                     prose = await self._copywriter.write(
                         nome, municipio, uf, places_context=details
@@ -534,6 +557,11 @@ class PlacesEnrichmentAgent:
         if cascade is not None and cascade.motivo == "nao_fundamentada":
             rio.routing = "dlq"
             rio.dlq_reason = "descricao_nao_fundamentada"
+        # The search never names the record's município: a steward must fix the record (a
+        # Nascente homonym geocode), not the description — so it leaves Mar's path too.
+        if cascade is not None and cascade.motivo == "municipio_nao_confirmado":
+            rio.routing = "dlq"
+            rio.dlq_reason = "municipio_nao_confirmado"
         self._session.flush()
 
         # Append-only Log-tab timeline event (keyed by canonical_key — the drawer key).

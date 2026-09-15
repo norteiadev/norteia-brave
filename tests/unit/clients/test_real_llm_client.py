@@ -393,3 +393,63 @@ async def test_generate_accumulates_web_search_fee_across_pause_turns(
     expected = (14_000 * 3.0 + 500 * 15.0) / 1_000_000 + 3 * 0.01
     rows = sqlite_session.query(LLMGeneration).all()
     assert float(rows[0].usd_cost) == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# generate() via OpenRouter — "vendor/model" slugs (the cascade's Gemini, §26/§29)
+# ---------------------------------------------------------------------------
+
+
+def _openrouter_completion(*, finish: str = "stop", cost: float = 0.0021, text: str = "descrição"):
+    usage = SimpleNamespace(prompt_tokens=4_000, completion_tokens=400, model_extra={"cost": cost})
+    choice = SimpleNamespace(finish_reason=finish, message=SimpleNamespace(content=text))
+    return SimpleNamespace(choices=[choice], usage=usage)
+
+
+async def test_generate_openrouter_slug_body_cost_and_row(monkeypatch, fake_redis, sqlite_session):
+    client = _generate_client(
+        monkeypatch, redis_client=fake_redis, session=sqlite_session, lane="test"
+    )
+    create = AsyncMock(return_value=_openrouter_completion())
+    client._openrouter.chat.completions.create = create
+    client._anthropic_client.messages.create = AsyncMock()
+
+    out = await client.generate(
+        [{"role": "user", "content": "x"}], model="google/gemini-2.5-flash", system="sys"
+    )
+
+    assert out == "descrição"
+    assert not client._anthropic_client.messages.create.called
+    kw = create.call_args.kwargs
+    assert kw["model"] == "google/gemini-2.5-flash" and kw["max_tokens"] == 2048
+    assert kw["messages"] == [{"role": "system", "content": "sys"}, {"role": "user", "content": "x"}]
+    assert kw["extra_body"]["provider"] == {"data_collection": "deny"}
+    assert "reasoning" not in kw["extra_body"]
+    (row,) = sqlite_session.query(LLMGeneration).all()
+    assert row.model_slug == "google/gemini-2.5-flash"
+    assert float(row.usd_cost) == pytest.approx(0.0021), "OpenRouter's billed cost, not a table"
+
+
+async def test_generate_openrouter_rejects_cut_reply_but_records_spend(
+    monkeypatch, fake_redis, sqlite_session
+):
+    from brave.shared.exceptions import PermanentError
+
+    client = _generate_client(
+        monkeypatch, redis_client=fake_redis, session=sqlite_session, lane="test"
+    )
+    client._openrouter.chat.completions.create = AsyncMock(
+        return_value=_openrouter_completion(finish="length", text="Em Brumadinho,")
+    )
+
+    with pytest.raises(PermanentError, match="finish_reason='length'"):
+        await client.generate([{"role": "user", "content": "x"}], model="google/gemini-2.5-flash")
+    assert len(sqlite_session.query(LLMGeneration).all()) == 1
+
+
+async def test_generate_openrouter_refuses_server_tools(monkeypatch):
+    client = _generate_client(monkeypatch)
+    with pytest.raises(ValueError, match="Anthropic-only"):
+        await client.generate(
+            [{"role": "user", "content": "x"}], model="google/gemini-2.5-flash", tools=[{"x": 1}]
+        )

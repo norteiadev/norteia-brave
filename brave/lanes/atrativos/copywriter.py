@@ -22,17 +22,22 @@ D-18 boundary: no imports from brave.lanes.destinos or brave.tasks.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from brave.lanes.atrativos.grounding import MIN_GROUNDEDNESS, groundedness_ratio, menciona
+from brave.lanes.atrativos.grounding import (
+    MIN_GROUNDEDNESS,
+    groundedness_ratio,
+    menciona,
+    menciona_municipio,
+)
 from brave.shared.exceptions import CostGuardError
 
 if TYPE_CHECKING:
     from brave.clients.base import LLMClientProtocol
+    from brave.clients.parallel import ParallelSearch
 
 logger = structlog.get_logger(__name__)
 
@@ -55,10 +60,13 @@ WEB_SEARCH_TOOL: dict[str, Any] = {
     "max_uses": 3,
 }
 
-# Cascade writer. The model is not the variable once the context is fixed: Sonnet, Haiku and
-# the free flash-lite put the same facts in the prose (§23.3). Haiku over flash-lite because
-# 3 of 30 flash-lite calls returned HTTP 503 and its free tier has a daily ceiling (§24.4).
-CASCADE_MODEL = "claude-haiku-4-5"
+# Cascade writer, via OpenRouter (RealLLMClient routes slugs with "/" there). Measured side by
+# side on the same context (docs/poc/gemini-viability.md §26): 3.3x cheaper per call than
+# Haiku 4.5, 1.7x faster, fewer drafts to the DLQ and fewer defects past the gate; 135/140
+# approved on the Parallel turbo context (§29). Thinking stays off — OpenRouter's default for
+# this model; turning it on doubled cost and latency and brought the only truncated replies.
+# Google's direct API refuses 2.5 Flash to new accounts, so OpenRouter is the route.
+CASCADE_MODEL = "google/gemini-2.5-flash"
 
 COPYWRITER_SYSTEM = """Você é um copywriter especialista em turismo e conhecedor de destinos brasileiros, escrevendo para a Norteia — uma bússola confiável que orienta jornadas pelo Brasil real, com presença e propósito. Voz: inspiradora, humana, curiosa, prática e acolhedora, para um público inclusivo (famílias, casais, viajantes solo) — nunca um único segmento.
 
@@ -166,22 +174,37 @@ def cascade_queries(nome: str, municipio: str, uf: str) -> list[str]:
     return [f"{nome} {local} história".strip(), f'"{nome}" {local} atrativo turístico'.strip()]
 
 
+def cascade_objective(nome: str, municipio: str, uf: str) -> str:
+    """The natural-language objective Parallel ranks the excerpts against (§29 wording)."""
+    local = "/".join(x for x in (municipio, uf) if x)
+    return (
+        f"Fatos verificáveis sobre o atrativo turístico {nome}"
+        + (f" em {local}" if local else "")
+        + ": história, características, o que ver."
+    )
+
+
 @dataclass(frozen=True)
 class CascadeResult:
     """Outcome of one cascade pass.
 
     prose:        passed BOTH gates — ready for descricao_editorial.
     motivo:       why there is no prose: "sem_mencao" (the search does not mention the
-                  atrativo; the model was never called) or "nao_fundamentada" (written, but
+                  atrativo; the model was never called), "municipio_nao_confirmado" (the
+                  search never names the record's município — likely a wrong-município
+                  record; the model was never called) or "nao_fundamentada" (written, but
                   below MIN_GROUNDEDNESS). None on success and on a plain failure.
     rascunho:     the ungrounded prose, kept for steward review — never canonical.
     groundedness: grounded fraction of the concrete claims, when a text was generated.
+    busca:        the paid search, whole — set on EVERY outcome after the search succeeded,
+                  so the caller can persist it (atrativo_buscas) whatever the verdict.
     """
 
     prose: str | None
     motivo: str | None = None
     rascunho: str | None = None
     groundedness: float | None = None
+    busca: ParallelSearch | None = None
 
 
 class TourismCopywriter:
@@ -190,8 +213,8 @@ class TourismCopywriter:
     Two modes:
       - web_search (default, ``write``): one Sonnet call with the server-side web_search tool.
       - cascade (``search_client`` given, ``write_cascade``): the lane runs the search itself
-        (Tavily), gates on mention, writes with a cheap model and NO tool, then gates the
-        output on groundedness. Measured in docs/poc/gemini-viability.md §23-§25.
+        (Parallel), gates on mention and município, writes with a cheap model and NO tool, then
+        gates the output on groundedness. Measured in docs/poc/gemini-viability.md §23-§29.
 
     Args:
         llm_client: LLMClientProtocol (Real uses Anthropic + web_search; Null returns a stub).
@@ -199,8 +222,8 @@ class TourismCopywriter:
                     in cascade mode).
         enable_web_search: When False, the web_search tool is not offered (description is
                     grounded only in the Places context — cheaper, offline-safe).
-        search_client: RealTavilyClient-shaped (``async search(query) -> str``). Enables the
-                    cascade; ``write`` is unaffected by it.
+        search_client: RealParallelClient-shaped (``async search(queries, objective) ->
+                    ParallelSearch``). Enables the cascade; ``write`` is unaffected by it.
     """
 
     def __init__(
@@ -227,17 +250,20 @@ class TourismCopywriter:
         uf: str,
         places_context: dict[str, Any] | None = None,
     ) -> CascadeResult:
-        """Search → mention gate → write (no tool) → groundedness gate.
+        """Search → mention gate → município gate → write (no tool) → groundedness gate.
 
         Same failure posture as ``write``: any search/LLM failure degrades to an empty result
         (the caller keeps the floor), except ``CostGuardError``, which propagates — both the
-        search and the model check the budget before dispatch.
+        search and the model check the budget before dispatch. A guard trip on the MODEL after
+        a paid search loses that search (the exception carries no result); rare, and the next
+        pass searches again.
         """
         if not nome or self._search_client is None:
             return CascadeResult(None)
         try:
-            partes = await asyncio.gather(
-                *(self._search_client.search(q) for q in cascade_queries(nome, municipio, uf))
+            # Both queries in ONE request — billed once (§29).
+            busca = await self._search_client.search(
+                cascade_queries(nome, municipio, uf), cascade_objective(nome, municipio, uf)
             )
         except CostGuardError:
             logger.warning("copywriter_cost_guard_blocked", nome=nome, uf=uf)
@@ -245,13 +271,20 @@ class TourismCopywriter:
         except Exception:  # noqa: BLE001 — search failure keeps the TA floor
             logger.warning("copywriter_search_failed_kept_floor", nome=nome, uf=uf)
             return CascadeResult(None)
-        fontes = "\n\n".join(p for p in partes if p)
+        fontes = busca.fontes()
 
         # Input gate: context that does not name the atrativo is where every model fabricated
         # (§23.4). No model call → no spend, and the record goes on without a description.
         if not menciona(fontes, nome):
             logger.info("copywriter_gate_sem_mencao", nome=nome, uf=uf)
-            return CascadeResult(None, motivo="sem_mencao")
+            return CascadeResult(None, motivo="sem_mencao", busca=busca)
+
+        # The search never names the record's município: the record, not the search, is
+        # likely wrong (Nascente geocoded a homonym). Writing would describe the real place
+        # under the wrong town — both models did, and groundedness passed it (§26.4, §29.3).
+        if not menciona_municipio(fontes, municipio):
+            logger.info("copywriter_gate_municipio_nao_confirmado", nome=nome, uf=uf)
+            return CascadeResult(None, motivo="municipio_nao_confirmado", busca=busca)
 
         user = _build_context(nome, municipio, uf, places_context or {}, fontes=fontes)
         try:
@@ -266,10 +299,10 @@ class TourismCopywriter:
             raise
         except Exception:  # noqa: BLE001 — copywriter failure keeps the TA floor
             logger.warning("copywriter_failed_kept_floor", nome=nome, uf=uf)
-            return CascadeResult(None)
+            return CascadeResult(None, busca=busca)
         texto = _strip_dashes(raw or "")
         if not texto:
-            return CascadeResult(None)
+            return CascadeResult(None, busca=busca)
 
         # Output gate: grounded against EVERYTHING the model was given (Places context and the
         # atrativo header included), not only the search — those are facts we supplied too.
@@ -277,9 +310,9 @@ class TourismCopywriter:
         if ratio < MIN_GROUNDEDNESS:
             logger.info("copywriter_gate_nao_fundamentada", nome=nome, uf=uf, groundedness=ratio)
             return CascadeResult(
-                None, motivo="nao_fundamentada", rascunho=texto, groundedness=ratio
+                None, motivo="nao_fundamentada", rascunho=texto, groundedness=ratio, busca=busca
             )
-        return CascadeResult(texto, groundedness=ratio)
+        return CascadeResult(texto, groundedness=ratio, busca=busca)
 
     async def write(
         self,

@@ -135,6 +135,21 @@ def menciona(contexto: str, nome: str) -> bool:
     return all(t in alvo for t in termos_identificadores(nome))
 
 
+def menciona_municipio(contexto: str, municipio: str) -> bool:
+    """The context names the record's município at least once (whole words, accent-folded).
+
+    Catches the gross wrong-município record: "Cristo Redentor" filed under Ubá/MG got 0
+    mentions of Ubá in the Parallel context, while every other of the 106 §29 atrativos with a
+    município got ≥ 11. Word boundaries matter — a substring test finds "uba" inside "cuba".
+    Limited on purpose: the cascade queries carry the município, so a record whose município is
+    wrong but whose search still returns pages about that town (e.g. a homonym) passes. An empty
+    município is not judged.
+    """
+    if not municipio.strip():
+        return True
+    return re.search(rf"\b{re.escape(_fold(municipio.strip()))}\b", _fold(contexto)) is not None
+
+
 def afirmacoes_concretas(texto: str) -> list[str]:
     """The verifiable claims of a text: numbers, measures and compound proper names.
 
@@ -180,4 +195,7 @@ if __name__ == "__main__":  # pragma: no cover — ponytail runnable check
     assert termos_identificadores("Centro Histórico") == ["centro historico"]
     assert termos_identificadores("Figueira Da Esquina 🌳❤️") == ["figueira", "esquina"]
     assert groundedness_ratio("um lugar bonito", "x") == 1.0
+    assert menciona_municipio("Turismo em Ubá, MG", "Ubá")
+    assert not menciona_municipio("Viagem para Cuba", "Ubá")
+    assert menciona_municipio("qualquer coisa", "")
     print("grounding self-check ok")
