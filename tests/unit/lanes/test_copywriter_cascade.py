@@ -1,7 +1,8 @@
 """Cascade copywriter — Parallel search → mention + município gates → Gemini (no tool) → groundedness.
 
-100% offline: respx mocks BOTH network boundaries (api.parallel.ai and openrouter.ai), so the
-real RealParallelClient and RealLLMClient run end to end without a key. fakeredis carries the
+100% offline: respx mocks the network boundaries (api.parallel.ai, Google AI Studio and, for the
+rollback route, openrouter.ai), so the real RealParallelClient and RealLLMClient run end to end
+without a key. fakeredis carries the
 daily cost-guard counter.
 
 The gate cases the lane exists for (docs/poc/gemini-viability.md §23-§24, §29):
@@ -41,6 +42,11 @@ from brave.lanes.atrativos.grounding import (
 from brave.observability.cost_guard import _daily_key
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+GEMINI_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+)
+# 4000 in + 400 out at the Flex rates (0.15 / 1.25 per MTok).
+_GEMINI_FLEX_USD = (4000 * 0.15 + 400 * 1.25) / 1_000_000
 
 # What Parallel returns for a município-level query: real coastal text, no word of the atrativo.
 _GENERICO = [
@@ -81,12 +87,19 @@ def _parallel_reply(results: list[dict]) -> dict:
     }
 
 
+def _gemini_reply(text: str, *, finish: str = "STOP") -> dict:
+    return {
+        "candidates": [{"content": {"role": "model", "parts": [{"text": text}]}, "finishReason": finish}],
+        "usageMetadata": {"promptTokenCount": 4000, "candidatesTokenCount": 400, "serviceTier": "flex"},
+    }
+
+
 def _openrouter_reply(text: str, *, finish: str = "stop", cost: float = 0.0021) -> dict:
     return {
         "id": "gen-test",
         "object": "chat.completion",
         "created": 0,
-        "model": CASCADE_MODEL,
+        "model": "google/gemini-2.5-flash",
         "choices": [
             {"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": finish}
         ],
@@ -100,6 +113,7 @@ def real_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
     monkeypatch.setenv("BRAVE_LLM_OPENROUTER_API_KEY", "test-openrouter")
     monkeypatch.setenv("BRAVE_LLM_ANTHROPIC_API_KEY", "test-anthropic")
+    monkeypatch.setenv("BRAVE_LLM_GEMINI_API_KEY", "test-gemini")
 
 
 def _clients(redis: fakeredis.FakeRedis) -> tuple:
@@ -117,17 +131,29 @@ def _spent(redis: fakeredis.FakeRedis) -> float:
     return float(redis.get(_daily_key()) or 0.0)
 
 
-async def _write(search_results: list[dict], text: str = "nunca deveria ser lido", **kw: Any) -> tuple:
-    """Run write_cascade through both real clients; returns (out, parallel_route, llm_route, redis)."""
+async def _write(
+    search_results: list[dict],
+    text: str = "nunca deveria ser lido",
+    *,
+    model: str = CASCADE_MODEL,
+    **kw: Any,
+) -> tuple:
+    """Run write_cascade through both real clients; returns (out, parallel_route, llm_route, redis).
+
+    The default writer is Gemini direct; a "vendor/model" slug mocks the OpenRouter route.
+    """
     parallel = respx.post(PARALLEL_SEARCH_URL).mock(
         return_value=httpx.Response(200, json=_parallel_reply(search_results))
     )
-    llm_route = respx.post(OPENROUTER_URL).mock(
-        return_value=httpx.Response(200, json=_openrouter_reply(text, **kw))
-    )
+    if "/" in model:
+        reply = _openrouter_reply(text, **kw)
+        llm_route = respx.post(OPENROUTER_URL).mock(return_value=httpx.Response(200, json=reply))
+    else:
+        reply = _gemini_reply(text, **kw)
+        llm_route = respx.post(GEMINI_URL).mock(return_value=httpx.Response(200, json=reply))
     redis = fakeredis.FakeRedis()
     llm, search = _clients(redis)
-    out = await TourismCopywriter(llm, CASCADE_MODEL, search_client=search).write_cascade(
+    out = await TourismCopywriter(llm, model, search_client=search).write_cascade(
         "Praia Da Costa", "Vila Velha", "ES"
     )
     return out, parallel, llm_route, redis
@@ -178,13 +204,13 @@ async def test_gate_passes_context_that_names_the_atrativo(real_env: None) -> No
     assert out.motivo is None and out.groundedness == 1.0
     assert out.busca is not None and out.busca.search_id == "search_test"
 
+    assert CASCADE_MODEL == "gemini-2.5-flash", "the default writer is Gemini direct (§30)"
     body = json.loads(llm_route.calls.last.request.content)
-    assert body["model"] == "google/gemini-2.5-flash"
     assert "tools" not in body, "cascade mode must not offer web_search"
-    assert body["provider"] == {"data_collection": "deny"}
-    assert "reasoning" not in body, "thinking stays at OpenRouter's default (off) — §26"
-    assert body["messages"][0]["role"] == "system"
-    user = body["messages"][1]["content"]
+    assert body["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}, "§26"
+    assert body["serviceTier"] == "flex"
+    assert "systemInstruction" in body
+    user = body["contents"][0]["parts"][0]["text"]
     assert "FONTES ENCONTRADAS NA WEB" in user and "Morro do Moreno" in user
     assert "busque na web" not in user, "an impossible instruction invites 'conforme pesquisei'"
 
@@ -195,8 +221,23 @@ async def test_gate_passes_context_that_names_the_atrativo(real_env: None) -> No
         "mode": "turbo",
     }
     assert parallel.calls.last.request.headers["x-api-key"] == "test-parallel"
-    # OpenRouter's billed cost + one turbo search.
-    assert _spent(redis) == pytest.approx(0.0021 + 0.001)
+    # Flex-priced tokens + one turbo search.
+    assert _spent(redis) == pytest.approx(_GEMINI_FLEX_USD + 0.001)
+
+
+@respx.mock
+async def test_openrouter_slug_is_the_rollback_route(real_env: None) -> None:
+    """ATRATIVO_CASCADE_MODEL=google/gemini-2.5-flash writes through OpenRouter, as before §30."""
+    out, _, llm_route, redis = await _write(
+        _COM_MENCAO, _PROSA_FUNDAMENTADA, model="google/gemini-2.5-flash"
+    )
+
+    assert out.prose == _PROSA_FUNDAMENTADA
+    body = json.loads(llm_route.calls.last.request.content)
+    assert body["model"] == "google/gemini-2.5-flash"
+    assert body["provider"] == {"data_collection": "deny"}
+    assert "reasoning" not in body, "thinking stays at OpenRouter's default (off) — §26"
+    assert _spent(redis) == pytest.approx(0.0021 + 0.001), "OpenRouter's billed cost + search"
 
 
 @respx.mock
@@ -213,11 +254,11 @@ async def test_ungrounded_prose_is_a_draft_not_a_description(real_env: None) -> 
 @respx.mock
 async def test_cut_reply_never_becomes_a_description(real_env: None) -> None:
     """§26.4: a truncated Gemini text has no claims, so groundedness would pass it."""
-    out, _, _, redis = await _write(_COM_MENCAO, "Em Vila Velha,", finish="length")
+    out, _, _, redis = await _write(_COM_MENCAO, "Em Vila Velha,", finish="MAX_TOKENS")
 
     assert out.prose is None and out.motivo is None
     assert out.busca is not None, "the search was paid — still persisted"
-    assert _spent(redis) == pytest.approx(0.0021 + 0.001), "the cut call was billed too"
+    assert _spent(redis) == pytest.approx(_GEMINI_FLEX_USD + 0.001), "the cut call was billed too"
 
 
 @respx.mock
@@ -304,7 +345,9 @@ def _rio() -> MagicMock:
     return rio
 
 
-async def _run_agent(rio: MagicMock, results: list[dict], prosa: str) -> tuple:
+async def _run_agent(
+    rio: MagicMock, results: list[dict], prosa: str, cascade_model: str = CASCADE_MODEL
+) -> tuple:
     from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
     from tests.fakes.fake_llm import FakeLLMClient
     from tests.fakes.fake_places import FakePlacesClient
@@ -316,6 +359,7 @@ async def _run_agent(rio: MagicMock, results: list[dict], prosa: str) -> tuple:
         session=session,
         llm_client=llm,
         search_client=_FakeSearch(results),
+        cascade_model=cascade_model,
     )
     with patch("brave.lanes.atrativos.places_enrichment.write_audit"), \
          patch("brave.lanes.atrativos.places_enrichment.record_event"), \
@@ -336,6 +380,11 @@ async def test_agent_ungrounded_goes_to_dlq_without_description() -> None:
     assert rio.normalized["descricao_attempts"] == 1
     assert (rio.routing, rio.dlq_reason) == ("dlq", "descricao_nao_fundamentada")
     assert len(buscas) == 1
+
+
+async def test_agent_writes_with_the_configured_cascade_model() -> None:
+    llm, _ = await _run_agent(_rio(), _COM_MENCAO, _PROSA_FUNDAMENTADA, "gemini-2.5-flash-lite")
+    assert llm.generate_calls[-1]["model"] == "gemini-2.5-flash-lite"
 
 
 async def test_agent_gate_block_keeps_record_moving_and_stores_the_search() -> None:

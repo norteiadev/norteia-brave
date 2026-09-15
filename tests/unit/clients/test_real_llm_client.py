@@ -11,6 +11,7 @@ Tests:
   T6 — generate() prices the web_search server-tool fee on top of tokens
   T7 — generate() with no server_tool_use prices tokens only (no regression)
   T8 — generate() accumulates the search fee across pause_turn resumes
+  Gemini direct — body, Flex→standard fallback, billed-tier pricing, spend before rejection
 """
 
 from __future__ import annotations
@@ -21,7 +22,9 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+import respx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -452,4 +455,242 @@ async def test_generate_openrouter_refuses_server_tools(monkeypatch):
     with pytest.raises(ValueError, match="Anthropic-only"):
         await client.generate(
             [{"role": "user", "content": "x"}], model="google/gemini-2.5-flash", tools=[{"x": 1}]
+        )
+
+
+# ---------------------------------------------------------------------------
+# generate() via Gemini direct — bare "gemini-*" slugs, Google AI Studio (§30)
+# ---------------------------------------------------------------------------
+
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+
+
+def _gemini_reply(
+    text: str = "descrição",
+    *,
+    finish: str = "STOP",
+    tier: str | None = "flex",
+    prompt: int = 4_000,
+    cached: int = 0,
+    out: int = 400,
+) -> dict[str, Any]:
+    usage: dict[str, Any] = {"promptTokenCount": prompt, "candidatesTokenCount": out}
+    if cached:
+        usage["cachedContentTokenCount"] = cached
+    if tier is not None:
+        usage["serviceTier"] = tier
+    return {
+        "candidates": [{"content": {"role": "model", "parts": [{"text": text}]}, "finishReason": finish}],
+        "usageMetadata": usage,
+    }
+
+
+def _gemini_client(monkeypatch, fake_redis, sqlite_session, **cfg: Any):
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+
+    from brave.clients.llm import RealLLMClient
+    from brave.config.settings import LLMConfig
+
+    config = LLMConfig(
+        openrouter_api_key="test-key", gemini_api_key="g-key", usd_daily_budget=10.0, **cfg
+    )
+    return RealLLMClient(config=config, redis_client=fake_redis, session=sqlite_session, lane="t")
+
+
+def _flex_usd(prompt: int = 4_000, out: int = 400) -> float:
+    return (prompt * 0.15 + out * 1.25) / 1_000_000
+
+
+def _standard_usd(prompt: int = 4_000, out: int = 400) -> float:
+    return (prompt * 0.30 + out * 2.50) / 1_000_000
+
+
+@respx.mock
+async def test_generate_gemini_body_routing_and_row(monkeypatch, fake_redis, sqlite_session):
+    import json
+
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    route = respx.post(GEMINI_URL).mock(return_value=httpx.Response(200, json=_gemini_reply()))
+    client._openrouter.chat.completions.create = AsyncMock()
+    client._anthropic_client.messages.create = AsyncMock()
+
+    out = await client.generate(
+        [{"role": "user", "content": "x"}, {"role": "assistant", "content": "y"}],
+        model="gemini-2.5-flash",
+        system="sys",
+    )
+
+    assert out == "descrição"
+    assert not client._openrouter.chat.completions.create.called
+    assert not client._anthropic_client.messages.create.called
+    req = route.calls.last.request
+    assert req.headers["x-goog-api-key"] == "g-key"
+    assert "key=" not in str(req.url), "?key= answers a misleading 429 (§9.2)"
+    body = json.loads(req.content)
+    assert body["systemInstruction"] == {"parts": [{"text": "sys"}]}
+    assert body["contents"] == [
+        {"role": "user", "parts": [{"text": "x"}]},
+        {"role": "model", "parts": [{"text": "y"}]},
+    ]
+    assert body["generationConfig"] == {
+        "maxOutputTokens": 2048,
+        "thinkingConfig": {"thinkingBudget": 0},
+    }, "Google's default is dynamic thinking — it must be switched off explicitly"
+    assert body["serviceTier"] == "flex"
+    (row,) = sqlite_session.query(LLMGeneration).all()
+    assert (row.model_slug, row.resolved_provider) == ("gemini-2.5-flash", "google-ai-studio:flex")
+    assert float(row.usd_cost) == pytest.approx(_flex_usd())
+
+
+@respx.mock
+async def test_generate_gemini_flex_503_falls_back_to_standard(
+    monkeypatch, fake_redis, sqlite_session
+):
+    import json
+
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    route = respx.post(GEMINI_URL).mock(
+        side_effect=[httpx.Response(503), httpx.Response(200, json=_gemini_reply(tier="standard"))]
+    )
+
+    assert await client.generate([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
+
+    assert route.call_count == 2
+    assert json.loads(route.calls[0].request.content)["serviceTier"] == "flex"
+    assert "serviceTier" not in json.loads(route.calls[1].request.content)
+    (row,) = sqlite_session.query(LLMGeneration).all()
+    assert row.resolved_provider == "google-ai-studio:standard"
+    assert float(row.usd_cost) == pytest.approx(_standard_usd())
+
+
+@respx.mock
+async def test_generate_gemini_flex_timeout_falls_back_to_standard(
+    monkeypatch, fake_redis, sqlite_session
+):
+    import json
+
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    # No serviceTier in the standard reply: the tier of the attempt that answered prices it.
+    route = respx.post(GEMINI_URL).mock(
+        side_effect=[httpx.ReadTimeout("flex queue"), httpx.Response(200, json=_gemini_reply(tier=None))]
+    )
+
+    await client.generate([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
+
+    assert route.call_count == 2
+    assert "serviceTier" not in json.loads(route.calls[1].request.content)
+    (row,) = sqlite_session.query(LLMGeneration).all()
+    assert row.resolved_provider == "google-ai-studio:standard"
+    assert float(row.usd_cost) == pytest.approx(_standard_usd())
+
+
+@respx.mock
+async def test_generate_gemini_billed_tier_is_the_source_of_truth(
+    monkeypatch, fake_redis, sqlite_session
+):
+    """Flex requested but Google says standard was billed → standard price."""
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    respx.post(GEMINI_URL).mock(return_value=httpx.Response(200, json=_gemini_reply(tier="standard")))
+
+    await client.generate([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
+
+    (row,) = sqlite_session.query(LLMGeneration).all()
+    assert row.resolved_provider == "google-ai-studio:standard"
+    assert float(row.usd_cost) == pytest.approx(_standard_usd())
+
+
+@respx.mock
+async def test_generate_gemini_prices_cached_tokens_and_records_spend(
+    monkeypatch, fake_redis, sqlite_session
+):
+    from brave.observability.cost_guard import _daily_key
+
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    respx.post(GEMINI_URL).mock(
+        return_value=httpx.Response(200, json=_gemini_reply(prompt=4_000, cached=1_000, out=400))
+    )
+
+    await client.generate([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
+
+    expected = (3_000 * 0.15 + 1_000 * 0.03 + 400 * 1.25) / 1_000_000
+    (row,) = sqlite_session.query(LLMGeneration).all()
+    assert float(row.usd_cost) == pytest.approx(expected)
+    assert float(fake_redis.get(_daily_key())) == pytest.approx(expected)
+
+
+@respx.mock
+async def test_generate_gemini_rejects_cut_reply_but_records_spend(
+    monkeypatch, fake_redis, sqlite_session
+):
+    from brave.shared.exceptions import PermanentError
+
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    respx.post(GEMINI_URL).mock(
+        return_value=httpx.Response(200, json=_gemini_reply("Em Brumadinho,", finish="MAX_TOKENS"))
+    )
+
+    with pytest.raises(PermanentError, match="MAX_TOKENS"):
+        await client.generate([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
+    (row,) = sqlite_session.query(LLMGeneration).all()
+    assert float(row.usd_cost) == pytest.approx(_flex_usd())
+
+
+@respx.mock
+async def test_generate_gemini_blocked_prompt_raises(monkeypatch, fake_redis, sqlite_session):
+    from brave.shared.exceptions import PermanentError
+
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    respx.post(GEMINI_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "promptFeedback": {"blockReason": "SAFETY"},
+                "usageMetadata": {"promptTokenCount": 4_000, "serviceTier": "flex"},
+            },
+        )
+    )
+
+    with pytest.raises(PermanentError, match="SAFETY"):
+        await client.generate([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
+
+
+@respx.mock
+async def test_generate_gemini_unpriced_model_and_empty_key_fail_before_dispatch(
+    monkeypatch, fake_redis, sqlite_session
+):
+    from brave.shared.exceptions import PermanentError
+
+    route = respx.post(url__regex=r".*generativelanguage.*")
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    with pytest.raises(ValueError, match="no Gemini price"):
+        await client.generate([{"role": "user", "content": "x"}], model="gemini-9-ultra")
+
+    client._config = client._config.model_copy(update={"gemini_api_key": ""})
+    with pytest.raises(PermanentError, match="BRAVE_LLM_GEMINI_API_KEY"):
+        await client.generate([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
+    assert not route.called
+
+
+@respx.mock
+async def test_generate_gemini_standard_tier_sends_one_request_without_service_tier(
+    monkeypatch, fake_redis, sqlite_session
+):
+    import json
+
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session, gemini_service_tier="standard")
+    route = respx.post(GEMINI_URL).mock(
+        return_value=httpx.Response(200, json=_gemini_reply(tier="standard"))
+    )
+
+    await client.generate([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
+
+    assert route.call_count == 1
+    assert "serviceTier" not in json.loads(route.calls.last.request.content)
+
+
+async def test_generate_gemini_refuses_server_tools(monkeypatch, fake_redis, sqlite_session):
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    with pytest.raises(ValueError, match="Anthropic-only"):
+        await client.generate(
+            [{"role": "user", "content": "x"}], model="gemini-2.5-flash", tools=[{"x": 1}]
         )

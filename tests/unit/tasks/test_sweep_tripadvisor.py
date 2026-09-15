@@ -908,3 +908,108 @@ class TestSweepTripAdvisorInlineEnrichment:
     def test_inline_places_agent_at_nascente_rio_mar(self, monkeypatch):
         captured = self._run(monkeypatch, depth="nascente_rio_mar")
         assert captured.get("places_agent") is not None
+
+
+# ---------------------------------------------------------------------------
+# Cascade writer on Gemini direct: a missing key fails the BUILD, not every generate()
+# ---------------------------------------------------------------------------
+
+
+class TestSweepCascadeGeminiBuild:
+    """With the cascade on and a gemini-* writer, an empty BRAVE_LLM_GEMINI_API_KEY must stop
+    the inline agent from being built (inline_enrichment_build_failed). If it were built, every
+    generate() would fail as a plain copywriter failure and burn one descricao_attempt per
+    atrativo — no agent means no attempt is ever touched."""
+
+    def _run(self, monkeypatch, *, gemini_key: str, model: str = "gemini-2.5-flash"):
+        import contextlib
+
+        from structlog.testing import capture_logs
+
+        from brave.clients.null_nominatim import NullGeocoderClient
+        from brave.config.settings import LLMConfig
+
+        fake_redis = fakeredis.FakeRedis()
+        mock_db_session = MagicMock()
+        mock_db_session.execute.return_value = MagicMock(all=lambda: [])
+        captured: dict[str, Any] = {}
+
+        class _StubIngest:
+            def __init__(self, **kw: Any) -> None:
+                captured.update(kw)
+
+            async def produce(self, uf: str, **kw: Any) -> list[str]:
+                return []
+
+        # The real-client guards read the env-built AppConfig; the sweep reads the mock.
+        monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+        mock_app_config = MagicMock()
+        mock_app_config.run_real_externals = True
+        mock_app_config.atrativo_voice_model_slug = "claude-sonnet-4-5"
+        mock_app_config.places_match_max_distance_km = 20.0
+        mock_app_config.parallel_api_key = "prl"
+        mock_app_config.parallel_search_mode = "turbo"
+        mock_app_config.atrativo_cascade_model = model
+        mock_app_config.llm = LLMConfig(openrouter_api_key="or", gemini_api_key=gemini_key)
+        effective = MagicMock(
+            places_enrichment_enabled=False,
+            description_enrichment_enabled=True,
+            atrativo_description_batch_enabled=False,
+            atrativo_description_cascade_enabled=True,
+        )
+
+        monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
+        monkeypatch.setattr(
+            "brave.tasks.pipeline.load_effective_config", lambda session, redis=None: effective
+        )
+        monkeypatch.setattr("brave.shared.ibge_distritos.load_distritos", lambda session: [])
+        monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
+        monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setattr(
+            "brave.tasks.pipeline._get_session", lambda: (mock_db_session, MagicMock())
+        )
+        monkeypatch.setattr("brave.lanes.tripadvisor.ibge.load_ibge_municipios", lambda session: [])
+        monkeypatch.setattr(
+            "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
+            lambda **kw: _StubIngest(**kw),
+        )
+        monkeypatch.setattr("brave.config.settings.TripAdvisorConfig", lambda: MagicMock())
+        monkeypatch.setattr(
+            "brave.lanes.tripadvisor.client.TripAdvisorClient", lambda **kw: MagicMock()
+        )
+        monkeypatch.setattr(
+            "brave.clients.nominatim.NominatimGeocoderClient",
+            lambda config, redis: NullGeocoderClient(),
+        )
+
+        mock_self = MagicMock()
+        mock_self.MaxRetriesExceededError = type("MRE", (Exception,), {})
+        mock_self.retry.side_effect = lambda **kw: mock_self.MaxRetriesExceededError()
+
+        from brave.tasks.pipeline import sweep_tripadvisor  # noqa: PLC0415
+
+        with capture_logs() as logs, contextlib.suppress(Exception):
+            sweep_tripadvisor.__wrapped__.__func__(mock_self, uf="ES", depth="nascente_rio")
+        return captured, [e["event"] for e in logs]
+
+    def test_empty_gemini_key_disables_inline_enrichment(self, monkeypatch):
+        captured, events = self._run(monkeypatch, gemini_key="")
+        assert "places_agent" in captured, "the sweep must still reach the ingest"
+        assert captured["places_agent"] is None
+        assert "inline_enrichment_build_failed" in events
+
+    def test_unpriced_gemini_model_disables_inline_enrichment(self, monkeypatch):
+        captured, events = self._run(monkeypatch, gemini_key="g", model="gemini-2.5-flsh")
+        assert captured["places_agent"] is None
+        assert "inline_enrichment_build_failed" in events
+
+    def test_gemini_key_set_builds_the_cascade_writer(self, monkeypatch):
+        captured, events = self._run(monkeypatch, gemini_key="g")
+        agent = captured["places_agent"]
+        assert agent is not None and "inline_enrichment_build_failed" not in events
+        assert agent._copywriter.cascade and agent._copywriter._model == "gemini-2.5-flash"
+
+    def test_openrouter_rollback_needs_no_gemini_key(self, monkeypatch):
+        captured, _ = self._run(monkeypatch, gemini_key="", model="google/gemini-2.5-flash")
+        agent = captured["places_agent"]
+        assert agent is not None and agent._copywriter._model == "google/gemini-2.5-flash"
