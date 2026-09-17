@@ -3,8 +3,10 @@
 Tests verify:
   - task skips silently when run_real_externals=False (offline/CI)
   - task skips silently when no session in Redis (TTL ≤ 0)
-  - SessionExpiredError → needs_bootstrap set + engine turned OFF
-  - SessionMissingError → same fallback
+  - the ping goes over the GraphQL transport (the same one the sweep uses)
+  - a successful ping slides the session TTL even with no rotated cookie
+  - SessionExpiredError / SessionMissingError NEVER touch the engine (260917-tkd)
+  - needs_bootstrap only after 3 CONSECUTIVE failures; one success resets the streak
   - Non-session RuntimeError → task returns normally (beat must not crash)
   - Task registered in app.tasks after importing pipeline
   - TripAdvisorConfig.keepalive_interval_seconds default and env-override
@@ -29,6 +31,8 @@ from brave.lanes.tripadvisor.client import (
 # Redis key constants (mirrors pipeline.py)
 _TA_NEEDS_BOOTSTRAP_KEY = "brave:ta:needs_bootstrap"
 _ENGINE_ENABLED_KEY = "brave:engine:enabled"
+_ENGINE_MODE_KEY = "brave:engine:mode"
+_TA_KEEPALIVE_FAILURES_KEY = "brave:ta:keepalive_failures"
 
 
 # ---------------------------------------------------------------------------
@@ -36,24 +40,46 @@ _ENGINE_ENABLED_KEY = "brave:engine:enabled"
 # ---------------------------------------------------------------------------
 
 
-class _StubExpiredClient:
-    """Stub TripAdvisorClient whose fetch_attractions_paginated raises SessionExpiredError."""
+class _StubOkClient:
+    """Stub TripAdvisorClient that answers one GraphQL page and records the call.
+
+    The HTML transport raises: a call to it is the regression this fix exists for.
+    """
+
+    calls: list[dict] = []
 
     def __init__(self, config, redis):
         pass
 
+    async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=1):
+        _StubOkClient.calls.append(
+            {"geo_id": geo_id, "start_page": start_page, "max_pages": max_pages}
+        )
+        yield 0, [{"name": "Atrativo", "locationId": "1"}]
+
     async def fetch_attractions_paginated(self, geo_id, start_page, max_pages):
+        raise AssertionError("the keepalive must not use the HTML transport (DataDome 403s it)")
+        yield  # noqa: unreachable — makes this an async generator  # type: ignore[misc]
+
+
+class _StubExpiredClient:
+    """Stub TripAdvisorClient whose GraphQL ping raises SessionExpiredError."""
+
+    def __init__(self, config, redis):
+        pass
+
+    async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=1):
         raise SessionExpiredError("datadome expired — re-inject required")
         yield  # noqa: unreachable — makes this an async generator  # type: ignore[misc]
 
 
 class _StubMissingClient:
-    """Stub TripAdvisorClient whose fetch_attractions_paginated raises SessionMissingError."""
+    """Stub TripAdvisorClient whose GraphQL ping raises SessionMissingError."""
 
     def __init__(self, config, redis):
         pass
 
-    async def fetch_attractions_paginated(self, geo_id, start_page, max_pages):
+    async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=1):
         raise SessionMissingError("no session in Redis")
         yield  # noqa: unreachable — makes this an async generator  # type: ignore[misc]
 
@@ -64,9 +90,25 @@ class _StubRuntimeErrorClient:
     def __init__(self, config, redis):
         pass
 
-    async def fetch_attractions_paginated(self, geo_id, start_page, max_pages):
+    async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=1):
         raise RuntimeError("unexpected network error")
         yield  # noqa: unreachable — makes this an async generator  # type: ignore[misc]
+
+
+def _run_keepalive(monkeypatch, fake, stub) -> None:
+    """Wire fakeredis + a stub client and run the beat once."""
+    monkeypatch.setattr("redis.from_url", lambda url, **kw: fake)
+    monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost/0")
+
+    class _MockAppConfig:
+        run_real_externals = True
+
+    monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: _MockAppConfig())
+    monkeypatch.setattr("brave.lanes.tripadvisor.client.TripAdvisorClient", stub)
+
+    from brave.tasks.pipeline import ta_keepalive  # noqa: PLC0415
+
+    ta_keepalive()
 
 
 # ---------------------------------------------------------------------------
@@ -132,69 +174,91 @@ class TestTaKeepaliveTask:
             "needs_bootstrap must NOT be set when task skips due to missing session"
         )
 
-    def test_session_expired_sets_needs_bootstrap_and_engine_off(self, monkeypatch):
-        """SessionExpiredError from fetch_attractions_paginated → needs_bootstrap + engine OFF."""
+    def test_ping_uses_the_graphql_transport(self, monkeypatch):
+        """The beat pings AttractionsFusion over GraphQL — the same transport the sweep
+        uses. The HTML page is 403'd by DataDome even on a healthy session, which is what
+        used to kill live sweeps."""
         fake = fakeredis.FakeRedis()
         _seed_session(fake, ttl=1800)
+        _StubOkClient.calls = []
 
-        # Global redis.from_url patch so both ta_keepalive and _mark_needs_bootstrap
-        # use the SAME fakeredis instance (per plan: "monkeypatch redis.from_url GLOBALLY")
-        monkeypatch.setattr("redis.from_url", lambda url, **kw: fake)
-        monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost/0")
+        _run_keepalive(monkeypatch, fake, _StubOkClient)
 
-        class _MockAppConfig:
-            run_real_externals = True
+        assert _StubOkClient.calls == [{"geo_id": 294280, "start_page": 1, "max_pages": 1}]
+        assert fake.get(_TA_NEEDS_BOOTSTRAP_KEY) is None
 
-        monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: _MockAppConfig())
-        monkeypatch.setattr(
-            "brave.lanes.tripadvisor.client.TripAdvisorClient", _StubExpiredClient
-        )
+    def test_successful_ping_slides_the_ttl_and_clears_the_streak(self, monkeypatch):
+        """A 200 that rotates no cookie still keeps the session alive: the beat expires
+        the key forward itself (persist_rotated_cookies only writes when cookies rotate)."""
+        fake = fakeredis.FakeRedis()
+        _seed_session(fake, ttl=120)  # nearly dead
+        fake.set(_TA_KEEPALIVE_FAILURES_KEY, 2)
+        _StubOkClient.calls = []
 
-        from brave.tasks.pipeline import ta_keepalive  # noqa: PLC0415
+        _run_keepalive(monkeypatch, fake, _StubOkClient)
 
-        ta_keepalive()  # must not raise
+        from brave.config.settings import TripAdvisorConfig
 
-        assert fake.get(_TA_NEEDS_BOOTSTRAP_KEY) is not None, (
-            "needs_bootstrap must be set after SessionExpiredError"
-        )
-        assert fake.get(_ENGINE_ENABLED_KEY) == b"0", (
-            "engine:enabled must be set to 0 (OFF) after SessionExpiredError"
-        )
-        assert fake.get("brave:engine:mode") == b"DESLIGADO", (
-            "operator mode must be DESLIGADO — leaving it LIGADO while enabled=0 "
-            "makes the topbar 'Ligar' a no-op (stuck UI)"
-        )
+        assert fake.ttl(BRAVE_TA_SESSION_KEY) > 120, "the TTL must slide forward"
+        assert fake.ttl(BRAVE_TA_SESSION_KEY) <= TripAdvisorConfig().session_ttl
+        assert fake.get(_TA_KEEPALIVE_FAILURES_KEY) is None, "a success resets the streak"
 
-    def test_session_missing_also_triggers_fallback(self, monkeypatch):
-        """SessionMissingError has the same fallback: needs_bootstrap + engine OFF."""
+    def test_session_expired_never_touches_the_engine(self, monkeypatch):
+        """THE regression this fix exists for: one 403 must not stop a running sweep.
+        Deciding a session is dead belongs to sweep_tripadvisor (R1), not to a health beat."""
         fake = fakeredis.FakeRedis()
         _seed_session(fake, ttl=1800)
+        fake.set(_ENGINE_MODE_KEY, "LIGADO")
+        fake.set(_ENGINE_ENABLED_KEY, "1")
 
-        monkeypatch.setattr("redis.from_url", lambda url, **kw: fake)
-        monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost/0")
+        _run_keepalive(monkeypatch, fake, _StubExpiredClient)
 
-        class _MockAppConfig:
-            run_real_externals = True
+        assert fake.get(_ENGINE_MODE_KEY) == b"LIGADO", "the keepalive must not turn the motor off"
+        assert fake.get(_ENGINE_ENABLED_KEY) == b"1"
+        assert fake.get(_TA_NEEDS_BOOTSTRAP_KEY) is None, "one failure is not a verdict"
+        assert fake.get(_TA_KEEPALIVE_FAILURES_KEY) == b"1"
 
-        monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: _MockAppConfig())
-        monkeypatch.setattr(
-            "brave.lanes.tripadvisor.client.TripAdvisorClient", _StubMissingClient
-        )
+    def test_needs_bootstrap_only_after_three_consecutive_failures(self, monkeypatch):
+        """Two failures stay quiet; the third marks the operator flag — engine still on."""
+        fake = fakeredis.FakeRedis()
+        _seed_session(fake, ttl=1800)
+        fake.set(_ENGINE_MODE_KEY, "LIGADO")
 
-        from brave.tasks.pipeline import ta_keepalive  # noqa: PLC0415
+        for _ in range(2):
+            _run_keepalive(monkeypatch, fake, _StubExpiredClient)
+        assert fake.get(_TA_NEEDS_BOOTSTRAP_KEY) is None
 
-        ta_keepalive()
+        _run_keepalive(monkeypatch, fake, _StubExpiredClient)
 
-        assert fake.get(_TA_NEEDS_BOOTSTRAP_KEY) is not None, (
-            "needs_bootstrap must be set after SessionMissingError"
-        )
-        assert fake.get(_ENGINE_ENABLED_KEY) == b"0", (
-            "engine:enabled must be 0 (OFF) after SessionMissingError"
-        )
-        assert fake.get("brave:engine:mode") == b"DESLIGADO", (
-            "operator mode must be DESLIGADO — leaving it LIGADO while enabled=0 "
-            "makes the topbar 'Ligar' a no-op (stuck UI)"
-        )
+        assert fake.get(_TA_NEEDS_BOOTSTRAP_KEY) is not None
+        assert fake.get(_ENGINE_MODE_KEY) == b"LIGADO", "even a streak leaves the motor alone"
+
+    def test_a_success_between_failures_resets_the_streak(self, monkeypatch):
+        """Blips scattered over hours must never add up to a verdict."""
+        fake = fakeredis.FakeRedis()
+        _seed_session(fake, ttl=1800)
+        _StubOkClient.calls = []
+
+        for _ in range(2):
+            _run_keepalive(monkeypatch, fake, _StubExpiredClient)
+        _run_keepalive(monkeypatch, fake, _StubOkClient)
+        for _ in range(2):
+            _run_keepalive(monkeypatch, fake, _StubExpiredClient)
+
+        assert fake.get(_TA_NEEDS_BOOTSTRAP_KEY) is None
+        assert fake.get(_TA_KEEPALIVE_FAILURES_KEY) == b"2"
+
+    def test_session_missing_follows_the_same_rule(self, monkeypatch):
+        """SessionMissingError counts like an expiry: no engine change, no marker at one."""
+        fake = fakeredis.FakeRedis()
+        _seed_session(fake, ttl=1800)
+        fake.set(_ENGINE_MODE_KEY, "LIGADO")
+
+        _run_keepalive(monkeypatch, fake, _StubMissingClient)
+
+        assert fake.get(_ENGINE_MODE_KEY) == b"LIGADO"
+        assert fake.get(_TA_NEEDS_BOOTSTRAP_KEY) is None
+        assert fake.get(_TA_KEEPALIVE_FAILURES_KEY) == b"1"
 
     def test_non_session_error_does_not_crash(self, monkeypatch):
         """A non-session RuntimeError must be caught and logged; the beat must not crash."""
