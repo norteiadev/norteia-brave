@@ -2789,10 +2789,12 @@ não espera pelo Flex: **tenta uma vez, com teto de tempo, e refaz em standard n
 - **Projeção para os 10 mil: ~$26** — ~$16 de Gemini e ~$10 de Parallel. Com o teto de $45/dia
   o dinheiro deixa de ser o gargalo; o limite passa a ser o relógio (~7 atrativos/min com dois
   sweeps em paralelo, ou seja ~24 h).
-- **Achado de operação, alheio a esta rota:** o beat `ta_keepalive` renova a sessão pela página
-  HTML do `tripadvisor.com`, que o DataDome responde 403 mesmo com o GraphQL saudável, e no 403
-  ele desliga o engine. A primeira rodada do piloto morreu assim em 59 atrativos. Sweeps longos
-  precisam do beat parado até isso ser corrigido.
+- **Achado de operação, alheio a esta rota (já corrigido):** o beat `ta_keepalive` renovava a
+  sessão pela página HTML do `tripadvisor.com`, que o DataDome responde 403 mesmo com o GraphQL
+  saudável, e no 403 ele desligava o engine. A primeira rodada do piloto morreu assim em 59
+  atrativos, e o contorno na hora foi parar o beat. A quick `260917-tkd` fechou isso: o ping
+  passou para o transporte GraphQL do sweep, o TTL da sessão desliza a cada ping bom e a falha
+  virou contador consecutivo, sem nunca tocar no motor. Sweeps longos rodam com o beat ligado.
 
 ### 30.5 O que ficou de fora
 

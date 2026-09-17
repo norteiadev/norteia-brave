@@ -50,6 +50,28 @@ logger = structlog.get_logger(__name__)
 # and then re-trigger the sweep. Cleared when a new session is successfully injected.
 _TA_NEEDS_BOOTSTRAP_KEY = "brave:ta:needs_bootstrap"
 
+# Consecutive ta_keepalive session failures (260917-tkd). The beat pings the same
+# GraphQL transport the sweep uses, so a single failure is far more likely to be a
+# blip than a dead session — only a streak marks needs_bootstrap, and the beat never
+# touches the engine either way.
+_TA_KEEPALIVE_FAILURES_KEY = "brave:ta:keepalive_failures"
+_KEEPALIVE_FAILURES_BEFORE_BOOTSTRAP = 3
+
+
+def _bump_keepalive_failures(redis: Any, ttl: int) -> int:
+    """Increment the consecutive-failure counter and return it (0 when Redis is down).
+
+    The counter carries the session TTL so failures from an old session never add up
+    with today's. Best-effort, like _mark_needs_bootstrap: the beat must not raise.
+    """
+    try:
+        falhas = int(redis.incr(_TA_KEEPALIVE_FAILURES_KEY))
+        redis.expire(_TA_KEEPALIVE_FAILURES_KEY, max(ttl, 1))
+        return falhas
+    except Exception:  # noqa: BLE001
+        logger.warning("ta_keepalive_counter_failed")
+        return 0
+
 
 def _mark_needs_bootstrap() -> None:
     """Set the needs_bootstrap Redis marker after a session fail-fast.
@@ -2642,17 +2664,22 @@ def ta_keepalive() -> None:
     """Keep-alive beat: refresh DataDome cookies when session is live (260629-p2v).
 
     Fires on a periodic interval (BRAVE_TA_KEEPALIVE_INTERVAL_SECONDS, default 600s).
-    Issues ONE light HTML GET via fetch_attractions_paginated(max_pages=1) to re-mint
-    datadome + __vt. Cookie write-back is handled inside fetch_attractions_paginated
-    (session.persist_rotated_cookies), sliding the session TTL automatically.
+    Issues ONE light AttractionsFusion GraphQL page (the SAME transport the sweep uses)
+    to re-mint datadome + __vt. Cookie write-back happens inside the fetch
+    (session.persist_rotated_cookies); a successful ping also slides the session TTL
+    explicitly, so a 200 that carries no Set-Cookie still keeps the session alive.
 
     Skips silently when:
       - run_real_externals is False (offline / CI)
       - No session in Redis (brave:ta:session TTL <= 0)
 
-    On 403/SessionExpiredError/SessionMissingError:
-      Same fallback as sweep_tripadvisor: sets needs_bootstrap + engine OFF.
-      Does NOT crash the beat (exception is caught and logged).
+    On 403/SessionExpiredError/SessionMissingError (260917-tkd):
+      Counts CONSECUTIVE failures in brave:ta:keepalive_failures and marks
+      needs_bootstrap only from the third one on. It NEVER touches the engine.
+      Deciding a session is dead belongs to the sweep, which fails fast and turns the
+      motor off (R1) — a health beat must not be what kills a healthy run. The old
+      behaviour (HTML transport + set_mode(DESLIGADO)) cut the 2026-09-15 pilot at 59
+      atrativos: DataDome 403s the HTML page while the GraphQL sweep keeps getting 200.
 
     On any other exception: logs error_type at WARNING and returns. Never raises.
 
@@ -2676,7 +2703,6 @@ def ta_keepalive() -> None:
         return
 
     from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
-    from brave.core import engine as collection_engine  # noqa: PLC0415
     from brave.lanes.tripadvisor.client import (  # noqa: PLC0415
         SessionExpiredError,
         SessionMissingError,
@@ -2690,26 +2716,33 @@ def ta_keepalive() -> None:
         import asyncio as _asyncio  # noqa: PLC0415
 
         async def _ping() -> None:
-            # ONE HTML GET (all-Brazil geoId 294280, page 1) to re-mint datadome.
-            # geo_id=294280 is the all-Brazil national listing (same as bulk sweep).
-            # fetch_attractions_paginated calls persist_rotated_cookies internally.
-            async for _offset, _cards in ta_client.fetch_attractions_paginated(
+            # ONE AttractionsFusion GraphQL page (all-Brazil geoId 294280, page 1) to
+            # re-mint datadome — the same transport, host and query the sweep uses, so
+            # the beat can never call a session dead while the sweep is collecting.
+            # The fetch calls persist_rotated_cookies internally.
+            async for _offset, _cards in ta_client.fetch_attractions_paginated_gql(
                 geo_id=294280, start_page=1, max_pages=1
             ):
-                pass  # write-back + TTL slide happened inside; result not needed
+                break  # one page is enough; write-back happened inside
 
         _asyncio.run(_ping())
+        # Slide the TTL even when the response carried no Set-Cookie: the ping proved
+        # the session works, and persist_rotated_cookies only writes when cookies rotate.
+        rc.expire(BRAVE_TA_SESSION_KEY, ta_config.session_ttl)
+        rc.delete(_TA_KEEPALIVE_FAILURES_KEY)
         logger.info("ta_keepalive_ok", ttl_before=ttl)
 
     except (SessionExpiredError, SessionMissingError) as exc:
-        # Same fallback as sweep_tripadvisor: needs_bootstrap + engine OFF.
-        # set_mode(DESLIGADO) subsumes set_enabled(False) + mark_idle + inflight=0 and
-        # resets the operator mode so mode/enabled never desync into a stuck "Ligar".
-        _mark_needs_bootstrap()
-        collection_engine.set_mode(rc, collection_engine.DESLIGADO)
+        # NEVER touches the engine (260917-tkd). Consecutive failures only; the marker
+        # is operator visibility, and the sweep still owns the R1 hard-off.
+        falhas = _bump_keepalive_failures(rc, ta_config.session_ttl)
+        if falhas >= _KEEPALIVE_FAILURES_BEFORE_BOOTSTRAP:
+            _mark_needs_bootstrap()
         logger.warning(
             "ta_keepalive_session_expired",
             error_type=type(exc).__name__,
+            falhas_consecutivas=falhas,
+            marcou_bootstrap=falhas >= _KEEPALIVE_FAILURES_BEFORE_BOOTSTRAP,
             # T-p2v-02: never log str(exc) — may contain cookie fragments
         )
 

@@ -1,0 +1,19 @@
+graph TD
+    A["Beat a cada 600s<br/>brave.ta_keepalive"] --> B{"run_real_externals?"}
+    B -- "nao" --> Z1["sai quieto<br/>ta_keepalive_skipped_offline"]
+    B -- "sim" --> C{"sessao viva?<br/>TTL de brave:ta:session acima de zero"}
+    C -- "nao" --> Z2["sai quieto<br/>skipped_no_session"]
+    C -- "sim" --> D["PING: 1 pagina GraphQL<br/>AttractionsFusion .com.br<br/>geoId 294280, pagee=0<br/>mesmo transporte do sweep"]
+
+    D -- "HTTP 200" --> E["persist_rotated_cookies<br/>merge do Set-Cookie na sessao"]
+    E --> F["expire de session_ttl<br/>TTL desliza mesmo sem cookie novo"]
+    F --> G["zera brave:ta:keepalive_failures<br/>log ta_keepalive_ok"]
+
+    D -- "403 / 429<br/>SessionExpired ou Missing" --> H["incr brave:ta:keepalive_failures<br/>contador carrega o TTL da sessao"]
+    H --> I{"3 falhas seguidas<br/>sem nenhum sucesso no meio?"}
+    I -- "nao" --> J["so loga<br/>ENGINE INTOCADO"]
+    I -- "sim" --> K["marca needs_bootstrap<br/>painel avisa o operador<br/>ENGINE AINDA INTOCADO"]
+
+    D -- "outro erro<br/>DNS, proxy, loop" --> L["log ta_keepalive_error<br/>beat sobrevive e tenta de novo"]
+
+    M["sweep_tripadvisor<br/>gate R1"] -. "unico que desliga o motor,<br/>quando a sessao morre de verdade" .-> N["set_mode DESLIGADO<br/>operador injeta cURL novo"]
