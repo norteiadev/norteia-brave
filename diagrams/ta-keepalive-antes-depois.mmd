@@ -1,0 +1,16 @@
+graph LR
+    subgraph ANTES["ANTES - matou o piloto em 59 atrativos"]
+        direction TB
+        A1["Beat pinga a pagina HTML<br/>tripadvisor.com"] --> A2["DataDome responde 403<br/>mesmo com a sessao boa"]
+        A2 --> A3["marca needs_bootstrap<br/>e set_mode DESLIGADO"]
+        A3 --> A4["produtores param na virada<br/>da pagina seguinte<br/>ta_atrativos_producer_halt"]
+    end
+
+    subgraph DEPOIS["DEPOIS - correcao 260917-tkd"]
+        direction TB
+        B1["Beat pinga GraphQL .com.br<br/>mesmo transporte do sweep"] --> B2["200 enquanto o sweep coleta<br/>falso positivo eliminado"]
+        B2 --> B3["TTL desliza a cada ping bom<br/>falha vira contador consecutivo"]
+        B3 --> B4["motor segue rodando<br/>needs_bootstrap so na 3a falha"]
+    end
+
+    ANTES -. "o beat deixou de ser<br/>quem desliga o motor" .-> DEPOIS

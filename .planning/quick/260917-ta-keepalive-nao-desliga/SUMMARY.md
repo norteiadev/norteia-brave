@@ -39,6 +39,16 @@ branch: fix/ta-keepalive-nao-desliga
 - **Ao vivo:** pendente, porque a sessão do TripAdvisor já expirou (TTL −2). Na próxima injeção
   de cURL dá para conferir `ta_keepalive_ok` e o TTL deslizando com o engine intacto.
 
+## Diagramas
+
+- `diagrams/ta-keepalive-fluxo.*` — o ciclo do beat passo a passo: os dois portões de saída, o
+  ping GraphQL, o ramo do 200 (cookies, TTL, contador zerado) e o ramo do 403 (contador, marcador
+  só na terceira, engine intocado).
+- `diagrams/ta-keepalive-antes-depois.*` — o contraste com o comportamento que matou o piloto.
+
+Cada um sai em `.mmd` (fonte), `.svg`, `.png` e `.excalidraw` (editável em excalidraw.com; o da
+comparação abre como imagem única, porque o conversor não quebra `subgraph`).
+
 ## Pendências
 
 - **§30.4 de `docs/poc/gemini-viability.md`** ainda diz que sweeps longos precisam do beat
