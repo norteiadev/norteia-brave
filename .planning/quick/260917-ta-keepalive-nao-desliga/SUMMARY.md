@@ -51,7 +51,7 @@ comparação abre como imagem única, porque o conversor não quebra `subgraph`)
 
 ## Pendências
 
-- **§30.4 de `docs/poc/gemini-viability.md`** ainda diz que sweeps longos precisam do beat
-  parado. Essa seção vive na branch do PR #27; corrigir quando as duas entrarem na main.
+- ~~§30.4 de `docs/poc/gemini-viability.md`~~ — corrigido depois que o PR #27 entrou na main:
+  a seção agora registra a correção em vez de mandar parar o beat.
 - **A outra metade da resiliência:** um único 403 transitório no próprio sweep continua
   desligando o motor (R1). Mexer nisso muda a semântica do gate e precisa de decisão.

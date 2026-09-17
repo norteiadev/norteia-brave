@@ -2704,6 +2704,114 @@ textos e relatório em `parallel_direto_probe.{fast,turbo}.json`. A chave é lid
 
 ---
 
+## 30. Gemini direto no AI Studio, tier Flex, implantado na lane (medido)
+
+A §26 escolheu o Gemini 2.5 Flash como redator, mas pela rota do OpenRouter, porque a chave
+antiga do AI Studio respondia 404 ("no longer available to new users") para o 2.5 Flash. Com
+uma chave nova, com billing, o modelo passou a responder — e com ele o **tier Flex**, que custa
+metade e é um campo a mais no corpo da requisição.
+
+### 30.1 O que o Flex muda no preço
+
+| modelo · tier | entrada | saída | cache lido |
+|---|---|---|---|
+| 2.5 Flash standard | $0,30 | $2,50 | $0,03 |
+| 2.5 Flash **flex** | $0,15 | $1,25 | $0,03 |
+| 2.5 Flash-Lite standard | $0,10 | $0,40 | $0,01 |
+| 2.5 Flash-Lite **flex** | $0,05 | $0,20 | $0,01 |
+
+USD por 1M de tokens, ai.google.dev/gemini-api/docs/pricing em 2026-09-15. O Google **não
+devolve custo na resposta** (o OpenRouter devolvia `usage.cost`), então o preço sai desta tabela,
+pelo tier que o `usageMetadata.serviceTier` diz ter sido cobrado.
+
+### 30.2 Os mesmos 100 atrativos, trocando só o redator
+
+Buscas da §29 (Parallel turbo), `thinkingBudget: 0`, concorrência 8.
+
+| rota | aprovados | riqueza (pareada) | p50 / p95 | relógio | USD/10k |
+|---|---|---|---|---|---|
+| OpenRouter, standard (§26) | ~98% | 8,36 | ~4 s | — | ~33 |
+| direto, **Flex** | 97 | 9,55 | 5,8 s / **172 s** | 735 s | **15,7** |
+| direto, Flash-Lite Flex | 97 | 6,06 (**73%**) | 2,3 s / 3,2 s | 33 s | 4,15 |
+| `claude -p` Sonnet (§28.x) | 93 | 7,34 | — | — | ~0 (assinatura) |
+
+A diferença de riqueza entre as duas colunas do 2.5 Flash é ruído de amostra: é o mesmo modelo.
+
+**O problema do Flex apareceu na cauda: 21 das 100 chamadas levaram 503** e só passaram no
+retry, e 1 falhou depois de 6 tentativas. Daí o p95 de 172 s. É por isso que a implementação
+não espera pelo Flex: **tenta uma vez, com teto de tempo, e refaz em standard no primeiro 503,
+429 ou timeout**.
+
+### 30.3 O que foi implementado
+
+- **Roteamento por slug em `RealLLMClient.generate()`**: `gemini-*` vai para o
+  `:generateContent` do AI Studio, `vendor/model` continua no OpenRouter, `claude-*` na
+  Anthropic. O redator da cascata virou configuração (`ATRATIVO_CASCADE_MODEL`), então
+  `google/gemini-2.5-flash` é o rollback sem deploy.
+- **Uma tentativa Flex** com teto `BRAVE_LLM_GEMINI_FLEX_TIMEOUT_S` (60 s), depois standard com
+  a política de retry de sempre. `BRAVE_LLM_GEMINI_SERVICE_TIER=standard` desliga o Flex.
+- **`thinkingConfig.thinkingBudget: 0` explícito.** No OpenRouter o thinking já vinha desligado;
+  no Google direto o padrão é dinâmico, que na §26 dobrou custo e latência e truncou respostas.
+- **Autenticação no header `x-goog-api-key`.** Como `?key=` na URL, a API responde um 429
+  enganoso (§9.2).
+- **Gasto gravado antes da rejeição.** `record_spend` e a linha em `llm_generations` saem antes
+  de recusar um `finishReason != STOP` ou um prompt bloqueado — a chamada foi cobrada de todo
+  jeito. O `resolved_provider` guarda `google-ai-studio:<tier cobrado>`, que é como se mede a
+  fatia real de Flex.
+- **Modelo fora da tabela de preço levanta erro antes de despachar**, e o build do pipeline
+  recusa um redator `gemini-*` sem chave. Se essa recusa só aparecesse dentro do `generate()`,
+  o copywriter trataria como falha comum e **gastaria uma `descricao_attempt` por atrativo**:
+  em 3 sweeps o backlog inteiro ficaria excluído de descrição.
+- **D-04 não se aplica aqui.** O `provider.data_collection: deny` é um campo do OpenRouter; no
+  tier pago do AI Studio o próprio Google declara que não treina com os dados. O billing ativo
+  é pré-requisito operacional da rota.
+
+### 30.4 O piloto: 246 atrativos de DF e GO na lane real
+
+2026-09-15, sweeps por UF com `max_atrativos_per_uf`, cascata ligada, Places ligado.
+
+| métrica | piloto | alvo |
+|---|---|---|
+| aprovação no gate de fundamentação | 96,6% (226 de 234 textos) | ≥ 95% |
+| fatia Flex | 85,9% (33 caíram para standard: 20 por 503, 13 por timeout) | ~80% |
+| custo médio por chamada | $0,00166 | ≤ $0,0022 |
+| custo por atrativo com a busca | $0,00281 | — |
+| p95 da chamada | 63 s (p50 4 s) | ≤ 60 s |
+| falhas do copywriter | 0 (234 respostas completas) | ≤ 2% |
+
+- **Os 20 atrativos sem descrição** foram 10 barrados no gate de menção (o modelo nem foi
+  chamado), 7 reprovados na fundamentação (viraram rascunho no DLQ) e 3 descartados porque o
+  Places os marcou como fechados.
+- **Qualidade dos 226 textos:** mediana de 1.702 caracteres, fundamentação média 0,97 (mínima
+  0,75), nenhum travessão e nenhum markdown.
+- **O p95 estoura a meta por construção**: quando o Flex bate o teto de 60 s, a chamada standard
+  soma mais ~4 s. Baixar `BRAVE_LLM_GEMINI_FLEX_TIMEOUT_S` para ~45 s traz o p95 para dentro.
+- **Projeção para os 10 mil: ~$26** — ~$16 de Gemini e ~$10 de Parallel. Com o teto de $45/dia
+  o dinheiro deixa de ser o gargalo; o limite passa a ser o relógio (~7 atrativos/min com dois
+  sweeps em paralelo, ou seja ~24 h).
+- **Achado de operação, alheio a esta rota (já corrigido):** o beat `ta_keepalive` renovava a
+  sessão pela página HTML do `tripadvisor.com`, que o DataDome responde 403 mesmo com o GraphQL
+  saudável, e no 403 ele desligava o engine. A primeira rodada do piloto morreu assim em 59
+  atrativos, e o contorno na hora foi parar o beat. A quick `260917-tkd` fechou isso: o ping
+  passou para o transporte GraphQL do sweep, o TTL da sessão desliza a cada ping bom e a falha
+  virou contador consecutivo, sem nunca tocar no motor. Sweeps longos rodam com o beat ligado.
+
+### 30.5 O que ficou de fora
+
+- **Batch API** (assíncrona, 24 h): analisada e rejeitada para o sync na §26.
+- **Context caching**: o prefixo fixo tem 475 tokens, abaixo do mínimo de 2.048, e as fontes são
+  únicas por atrativo. O cache implícito pegou ~3% dos tokens.
+- **Flash-Lite** ($4/10k, 73% dos fatos): disponível trocando só `ATRATIVO_CASCADE_MODEL`, porque
+  já está na tabela de preço.
+- **Free tier com várias chaves**: os prompts entram em treino, o Flex não existe lá, e é o mesmo
+  problema de termos das duas contas Parallel.
+
+Ferramenta: `.venv/bin/python scripts/poc/gemini_direct_probe.py gemini-2.5-flash flex 8`
+(100 atrativos, ~$0,16 por rodada; `standard` e `gemini-2.5-flash-lite` também). Resultados em
+`scripts/poc/gemini_direct_probe.{modelo}.{tier}.json`.
+
+---
+
 ## Fontes
 
 - [Google AI plans — Gemini API](https://ai.google.dev/gemini-api/docs/google-ai-plans)
