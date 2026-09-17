@@ -15,6 +15,8 @@ CR-02: No Field(alias=...) on any field in any config class.
   All fields resolve ONLY from their exact prefixed env var name.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -74,6 +76,18 @@ class LLMConfig(BaseSettings):
     # Anthropic (Claude Sonnet — Phase 3 WhatsApp; stubbed in Phase 1)
     # No alias (CR-02): resolves ONLY from BRAVE_LLM_ANTHROPIC_API_KEY.
     anthropic_api_key: str = Field(default="")
+
+    # Google AI Studio (Gemini direct) — the cascade copywriter's writer since the Flex tier
+    # was measured (docs/poc/gemini-viability.md §30). No alias (CR-02): resolves ONLY from
+    # BRAVE_LLM_GEMINI_API_KEY. D-04 does not apply here: the paid tier does not train on
+    # prompts, so an active billing account is an operational prerequisite of this key.
+    gemini_api_key: str = Field(default="")
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    # flex = -50% price, but 21/100 calls took a 503 when measured; generate() tries Flex once
+    # and falls back to standard. "standard" switches Flex off.
+    gemini_service_tier: Literal["flex", "standard"] = "flex"
+    # Ceiling on the single Flex attempt before the standard fallback (Flex p95 was 172 s).
+    gemini_flex_timeout_s: float = 60.0
 
     model_config = SettingsConfigDict(env_prefix="BRAVE_LLM_", populate_by_name=True)
 
@@ -486,6 +500,10 @@ class AppConfig(BaseSettings):
     # PARALLEL_SEARCH_MODE — turbo | fast | basic | advanced. turbo measured best on the 140
     # TA atrativos (135 approved vs 128 fast, p95 0.8 s, $0.001/request). Env-only.
     parallel_search_mode: str = "turbo"
+    # ATRATIVO_CASCADE_MODEL — the cascade writer. A bare "gemini-*" slug goes to Google AI
+    # Studio direct (BRAVE_LLM_GEMINI_API_KEY, Flex tier); "vendor/model" goes to OpenRouter,
+    # so "google/gemini-2.5-flash" is the rollback without a deploy. Env-only.
+    atrativo_cascade_model: str = "gemini-2.5-flash"
 
     # places_match_max_distance_km: Text-Search match radius (km) between the atrativo's
     # coordinates and a candidate Google place. The name threshold (rapidfuzz ≥85) is the

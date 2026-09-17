@@ -1,4 +1,4 @@
-"""RealLLMClient — OpenRouter/DeepSeek extraction + Anthropic conversation implementation.
+"""RealLLMClient — OpenRouter/DeepSeek extraction + Anthropic/OpenRouter/Gemini generation.
 
 Uses instructor 1.15.x (Mode.TOOLS) wrapping AsyncOpenAI pointed at OpenRouter for extract(),
 and native AsyncAnthropic 0.109.x for generate().
@@ -26,6 +26,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+import httpx
 import instructor
 import structlog
 from anthropic import AsyncAnthropic
@@ -41,6 +42,8 @@ from openai import (
 )
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from brave.clients.tavily import _is_retryable as _is_httpx_retryable
+from brave.clients.tavily import _wait as _httpx_wait
 from brave.config.settings import LLMConfig
 from brave.core.models import LLMGeneration
 from brave.observability.cost_guard import pre_dispatch_check, record_spend
@@ -76,6 +79,35 @@ _CACHE_WRITE_MULTIPLIER: float = 1.25
 # description that fee is ~30% of the real bill, so omitting it made record_spend — and the daily
 # budget guard that reads it — structurally low.
 _WEB_SEARCH_USD_PER_REQUEST: float = 0.01
+
+# Google AI Studio (Gemini direct) returns no cost, so it is priced here: (input, output,
+# cache_read) USD per MTok by (model, BILLED tier), ai.google.dev/gemini-api/docs/pricing on
+# 2026-09-15. A model missing from the table raises before dispatch — failing loud beats a
+# cost guard counting wrong. Thinking tokens bill at the output rate.
+_GEMINI_PRICES_USD_PER_MTOK: dict[tuple[str, str], tuple[float, float, float]] = {
+    ("gemini-2.5-flash", "standard"): (0.30, 2.50, 0.03),
+    ("gemini-2.5-flash", "flex"): (0.15, 1.25, 0.03),
+    ("gemini-2.5-flash-lite", "standard"): (0.10, 0.40, 0.01),
+    ("gemini-2.5-flash-lite", "flex"): (0.05, 0.20, 0.01),
+}
+
+# Flex sheds load with these; the same body is re-sent at the standard tier right away.
+_GEMINI_FLEX_FALLBACK_STATUS: frozenset[int] = frozenset({429, 503})
+_GEMINI_TIMEOUT_S: float = 60.0
+
+
+def gemini_is_priced(model: str) -> bool:
+    """True when generate() can price ``model`` (the pipeline refuses to build otherwise)."""
+    return (model, "standard") in _GEMINI_PRICES_USD_PER_MTOK
+
+
+def _gemini_cost(model: str, tier: str, usage: dict[str, Any]) -> float:
+    price_in, price_out, price_cache = _GEMINI_PRICES_USD_PER_MTOK[(model, tier)]
+    prompt = int(usage.get("promptTokenCount") or 0)
+    cached = int(usage.get("cachedContentTokenCount") or 0)
+    output = int(usage.get("candidatesTokenCount") or 0) + int(usage.get("thoughtsTokenCount") or 0)
+    return ((prompt - cached) * price_in + cached * price_cache + output * price_out) / 1_000_000
+
 
 # Bound on pause_turn resumes when a server-side tool (web_search) is enabled — a backstop
 # so a runaway server-side loop can never spin generate() forever.
@@ -194,6 +226,10 @@ class RealLLMClient:
 
         # Build native AsyncAnthropic for generate()
         self._anthropic_client = AsyncAnthropic(api_key=config.anthropic_api_key)
+
+        # Gemini direct: built on the first gemini-* call, so lanes that never write with
+        # Gemini construct this client exactly as before.
+        self._gemini_http: httpx.AsyncClient | None = None
 
     @retry(
         retry=retry_if_exception(_is_openai_retryable),  # WR-01: transient only
@@ -349,15 +385,19 @@ class RealLLMClient:
 
         Raises:
             CostGuardError: If daily USD budget exceeded before dispatch.
-            PermanentError: OpenRouter reply cut short (finish_reason != "stop").
+            PermanentError: OpenRouter/Gemini reply cut short (finish reason not stop), a
+                            prompt blocked by Gemini, or an empty Gemini key.
         """
         # Cost guard — BEFORE any LLM call (D-20, T-02-03)
         if self._redis_client is not None:
             pre_dispatch_check(self._redis_client, self._config)
 
-        # An OpenRouter slug ("vendor/model") never reaches Anthropic.
+        # An OpenRouter slug ("vendor/model") never reaches Anthropic; a bare gemini-* slug
+        # goes to Google AI Studio direct.
         if "/" in model:
             return await self._generate_openrouter(messages, model, system=system, tools=tools)
+        if model.startswith("gemini-"):
+            return await self._generate_gemini(messages, model, system=system, tools=tools)
 
         create_kwargs: dict[str, Any] = {
             "model": model,
@@ -518,6 +558,141 @@ class RealLLMClient:
         if choice.finish_reason != "stop":
             raise PermanentError(f"generate(): {model} finish_reason={choice.finish_reason!r}")
         return choice.message.content or ""
+
+    async def _gemini_post(
+        self, url: str, body: dict[str, Any], *, timeout: float = _GEMINI_TIMEOUT_S
+    ) -> dict[str, Any]:
+        http = self._gemini_http
+        if http is None:
+            http = self._gemini_http = httpx.AsyncClient(timeout=_GEMINI_TIMEOUT_S)
+        # Header auth: ?key= in the URL answers a misleading 429 (§9.2).
+        r = await http.post(
+            url, headers={"x-goog-api-key": self._config.gemini_api_key}, json=body, timeout=timeout
+        )
+        r.raise_for_status()
+        result: dict[str, Any] = r.json()
+        return result
+
+    @retry(
+        retry=retry_if_exception(_is_httpx_retryable),
+        stop=stop_after_attempt(3),
+        wait=_httpx_wait,
+        reraise=True,
+    )
+    async def _gemini_post_standard(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._gemini_post(url, body)
+
+    async def _generate_gemini(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        *,
+        system: str | None,
+        tools: list[dict[str, Any]] | None,
+    ) -> str:
+        """generate() for bare gemini-* slugs — Google AI Studio ``:generateContent`` (§30).
+
+        Flex tier (-50%) when configured: ONE attempt capped at gemini_flex_timeout_s; on 503,
+        429 or timeout the same body is re-sent right away at the standard tier (with the usual
+        retries). 21/100 Flex calls took a 503 when measured, so without the fallback a fifth
+        of the atrativos would pay a long wait or fail.
+
+        Thinking is switched off explicitly: Google's default for 2.5 Flash is dynamic thinking,
+        which doubled cost and latency and brought truncated replies (§26). The price comes from
+        the tier Google says it BILLED (usageMetadata.serviceTier), not the one requested.
+
+        No D-04 here: the paid AI Studio tier does not use prompts to improve Google products.
+        """
+        if tools:
+            raise ValueError(f"generate(): server-side tools are Anthropic-only; got {model!r}")
+        if not gemini_is_priced(model):
+            raise ValueError(f"generate(): no Gemini price for {model!r}")
+        if not self._config.gemini_api_key:
+            raise PermanentError("generate(): BRAVE_LLM_GEMINI_API_KEY is empty")
+
+        body: dict[str, Any] = {
+            "contents": [
+                {
+                    "role": "model" if m["role"] == "assistant" else "user",
+                    "parts": [{"text": m["content"]}],
+                }
+                for m in messages
+            ],
+            "generationConfig": {"maxOutputTokens": 2048, "thinkingConfig": {"thinkingBudget": 0}},
+        }
+        if system is not None:
+            body["systemInstruction"] = {"parts": [{"text": system}]}
+        url = f"{self._config.gemini_base_url}/models/{model}:generateContent"
+
+        tier = self._config.gemini_service_tier
+        data: dict[str, Any] | None = None
+        if tier == "flex":
+            reason: str | None = None
+            try:
+                data = await self._gemini_post(
+                    url, {**body, "serviceTier": "flex"}, timeout=self._config.gemini_flex_timeout_s
+                )
+            except httpx.TimeoutException:
+                reason = "timeout"
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code not in _GEMINI_FLEX_FALLBACK_STATUS:
+                    raise
+                reason = str(exc.response.status_code)
+            if data is None:
+                logger.warning("gemini_flex_fallback", model=model, reason=reason)
+                tier = "standard"
+        if data is None:
+            data = await self._gemini_post_standard(url, body)
+
+        usage = data.get("usageMetadata") or {}
+        billed = str(usage.get("serviceTier") or tier).lower()
+        if (model, billed) not in _GEMINI_PRICES_USD_PER_MTOK:
+            # Over-count rather than guess low: price an unexpected tier at standard.
+            logger.warning("gemini_unknown_service_tier", model=model, service_tier=billed)
+            usd_cost = _gemini_cost(model, "standard", usage)
+        else:
+            usd_cost = _gemini_cost(model, billed, usage)
+        prompt_tokens = int(usage.get("promptTokenCount") or 0)
+        completion_tokens = int(usage.get("candidatesTokenCount") or 0) + int(
+            usage.get("thoughtsTokenCount") or 0
+        )
+        candidates = data.get("candidates") or []
+        finish = candidates[0].get("finishReason") if candidates else None
+        logger.info(
+            "llm_generate_ok",
+            model=model,
+            service_tier=billed,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            finish_reason=finish,
+            usd_cost=usd_cost,
+        )
+
+        # Billed whatever the reply says — record before rejecting it. resolved_provider
+        # carries the billed tier: that is how the pilot measures the real Flex share.
+        if self._redis_client is not None and self._session is not None:
+            record_spend(self._redis_client, usd_cost)
+            self._session.add(
+                LLMGeneration(
+                    id=uuid.uuid4(),
+                    lane=self._lane,
+                    model_slug=model,
+                    resolved_provider=f"google-ai-studio:{billed}",
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    usd_cost=usd_cost,
+                )
+            )
+            self._session.flush()
+
+        if not candidates:
+            block = (data.get("promptFeedback") or {}).get("blockReason")
+            raise PermanentError(f"generate(): {model} no candidates, blockReason={block!r}")
+        # A cut reply passes the groundedness gate (§26.4) — never let it reach the column.
+        if finish != "STOP":
+            raise PermanentError(f"generate(): {model} finishReason={finish!r}")
+        parts = (candidates[0].get("content") or {}).get("parts") or []
+        return "".join(p.get("text", "") for p in parts)
 
 
 # ---------------------------------------------------------------------------

@@ -60,13 +60,15 @@ WEB_SEARCH_TOOL: dict[str, Any] = {
     "max_uses": 3,
 }
 
-# Cascade writer, via OpenRouter (RealLLMClient routes slugs with "/" there). Measured side by
-# side on the same context (docs/poc/gemini-viability.md §26): 3.3x cheaper per call than
-# Haiku 4.5, 1.7x faster, fewer drafts to the DLQ and fewer defects past the gate; 135/140
-# approved on the Parallel turbo context (§29). Thinking stays off — OpenRouter's default for
-# this model; turning it on doubled cost and latency and brought the only truncated replies.
-# Google's direct API refuses 2.5 Flash to new accounts, so OpenRouter is the route.
-CASCADE_MODEL = "google/gemini-2.5-flash"
+# Cascade writer default — production reads AppConfig.atrativo_cascade_model (env
+# ATRATIVO_CASCADE_MODEL). Gemini 2.5 Flash, measured side by side on the same context
+# (docs/poc/gemini-viability.md §26): 3.3x cheaper per call than Haiku 4.5, 1.7x faster, fewer
+# drafts to the DLQ and fewer defects past the gate; 135/140 approved on the Parallel turbo
+# context (§29). The bare slug goes to Google AI Studio direct on the Flex tier (§30, ~$19 per
+# 10k against ~$33 on OpenRouter); "google/gemini-2.5-flash" routes the same model through
+# OpenRouter. Thinking stays off on both routes — on, it doubled cost and latency and brought
+# the only truncated replies.
+CASCADE_MODEL = "gemini-2.5-flash"
 
 COPYWRITER_SYSTEM = """Você é um copywriter especialista em turismo e conhecedor de destinos brasileiros, escrevendo para a Norteia — uma bússola confiável que orienta jornadas pelo Brasil real, com presença e propósito. Voz: inspiradora, humana, curiosa, prática e acolhedora, para um público inclusivo (famílias, casais, viajantes solo) — nunca um único segmento.
 

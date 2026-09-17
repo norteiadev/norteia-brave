@@ -114,8 +114,10 @@ def test_get_returns_effective_snapshot(db, redis):
 
 def test_get_redacts_secrets(db, redis, monkeypatch):
     monkeypatch.setenv("BRAVE_LLM_OPENROUTER_API_KEY", "sk-super-secret")
+    monkeypatch.setenv("BRAVE_LLM_GEMINI_API_KEY", "gm-super-secret")
     snap = get_config_snapshot(db=db, redis=redis)
     assert snap["llm"]["openrouter_api_key"] == "***"  # never echoed verbatim
+    assert snap["llm"]["gemini_api_key"] == "***"
 
 
 def test_get_reflects_an_existing_overlay_row(db, redis):

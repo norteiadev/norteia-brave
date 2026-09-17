@@ -67,6 +67,7 @@ _DESC_CASCADE_KEY = "atrativo_description_cascade_enabled"
 _SECRET_PATHS: tuple[tuple[str, str], ...] = (
     ("llm", "openrouter_api_key"),
     ("llm", "anthropic_api_key"),
+    ("llm", "gemini_api_key"),
     ("whatsapp", "twilio_auth_token"),
     ("whatsapp", "twilio_account_sid"),
     ("whatsapp", "messaging_service_sid"),
