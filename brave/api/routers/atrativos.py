@@ -1,7 +1,8 @@
 """Atrativos operator API — audited stage transitions for atrativos (UI-PAINEL-2).
 
-Endpoint:
+Endpoints:
   PATCH /api/v1/atrativos/{rio_id}/transition — generic, audited stage transition
+  POST  /api/v1/atrativos/promote-bulk        — dry-run + batch promote of DLQ atrativos
 
 Security (T-17.1-03-03):
   - require_steward_or_bearer (mutation)
@@ -22,11 +23,15 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.api.deps import get_db, require_editing_unlocked, require_steward_or_bearer
 from brave.api.routers.cms import _ROUTING_TO_COLUMN, TransitionBody
+from brave.config.runtime import load_effective_config
 from brave.core.dlq.service import validate_and_promote_rio
+from brave.core.mar.service import _attraction_review_recent
 from brave.core.models import RioRecord
 from brave.observability.audit import write_audit
 
@@ -192,3 +197,129 @@ def transition_atrativo(
                 ) from exc
 
     return {"status": "ok", "to": body.to}
+
+
+class PromoteBulkBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    uf: str | None = None
+    min_score: float = 65.0
+    require_description: bool = True
+    limit: int = Field(200, ge=1, le=200)
+    dry_run: bool = True
+
+
+def _query_promote_bulk_candidates(db: Session, uf: str | None) -> list[RioRecord]:
+    # ponytail: unbounded SELECT, fine at the measured ~427-10k row DLQ scale;
+    # add a hard cap if the DLQ ever grows past ~50k rows.
+    stmt = select(RioRecord).where(
+        RioRecord.entity_type == "attraction", RioRecord.routing == "dlq"
+    )
+    if uf:
+        stmt = stmt.where(RioRecord.uf == uf.upper())
+    return list(db.execute(stmt.order_by(RioRecord.score.desc())).scalars().all())
+
+
+def _bucket_promote_bulk_candidates(
+    rows: list[RioRecord], min_score: float, require_description: bool
+) -> tuple[list[RioRecord], dict[str, int]]:
+    """Split DLQ rows into promotable candidates + excluded-by-reason counts.
+
+    Pure (no DB). First matching reason wins, so each row is counted once.
+    """
+    candidates: list[RioRecord] = []
+    excluded = {"below_score": 0, "no_description": 0, "recency": 0}
+    for rio in rows:
+        normalized = rio.normalized or {}
+        if float(rio.score or 0.0) < min_score:
+            excluded["below_score"] += 1
+        elif require_description and not normalized.get("descricao_editorial"):
+            excluded["no_description"] += 1
+        elif not _attraction_review_recent(normalized):
+            excluded["recency"] += 1
+        else:
+            candidates.append(rio)
+    return candidates, excluded
+
+
+@router.post(
+    "/api/v1/atrativos/promote-bulk",
+    status_code=200,
+    dependencies=[Depends(require_steward_or_bearer), Depends(require_editing_unlocked)],
+)
+def promote_bulk_atrativos(body: PromoteBulkBody, db: Session = Depends(get_db)) -> dict:
+    """Batch twin of the single-card promote: same reliability gate, per-record.
+
+    dry_run=True only counts (no commit, no audit, no push). dry_run=False promotes
+    up to `limit` candidates, each in its own commit — a raise rolls back that one
+    record and the loop goes on. Push dispatch never fails the request: the record
+    is already in Mar and push_attraction_task is idempotent by source_ref.
+    """
+    rows = _query_promote_bulk_candidates(db, body.uf)
+    candidates, excluded = _bucket_promote_bulk_candidates(
+        rows, body.min_score, body.require_description
+    )
+    if body.dry_run:
+        return {
+            "candidates": len(candidates),
+            "excluded": excluded,
+            "would_promote": min(len(candidates), body.limit),
+        }
+
+    config = load_effective_config(db).score
+    batch_id = str(uuid.uuid4())
+    # Ids up front: a rollback expires ORM instances, so re-fetch inside the loop.
+    ids = [r.id for r in candidates[: body.limit]]
+    promoted_ids: list[str] = []
+    held: list[dict] = []
+    failed: list[dict] = []
+    for rid in ids:
+        try:
+            rio = db.get(RioRecord, rid)
+            if rio is None:
+                failed.append({"id": str(rid), "error": "not found"})
+                continue
+            before_state = {"routing": rio.routing}
+            validate_and_promote_rio(db, rio, config=config)
+            db.refresh(rio)
+            is_mar = rio.routing == "mar"
+            after_state = {"routing": rio.routing, "batch_id": batch_id}
+            if not is_mar:
+                after_state["reason"] = rio.dlq_reason
+            write_audit(
+                session=db,
+                action="transition_mar" if is_mar else "promote_held",
+                entity_type=rio.entity_type,
+                record_id=rio.id,
+                before_state=before_state,
+                after_state=after_state,
+                actor="steward",
+            )
+            db.commit()
+            if is_mar:
+                promoted_ids.append(str(rio.id))
+            else:
+                held.append({"id": str(rio.id), "reason": rio.dlq_reason})
+        except Exception as exc:  # noqa: BLE001 — one bad record never aborts the batch
+            db.rollback()
+            logger.warning("atrativo_promote_bulk_record_failed", rio_id=str(rid), error=str(exc))
+            failed.append({"id": str(rid), "error": str(exc)})
+
+    push_failed: list[str] = []
+    for pid in promoted_ids:
+        try:
+            from brave.tasks.pipeline import push_attraction_task
+
+            push_attraction_task.delay(pid)
+        except Exception as exc:  # noqa: BLE001 — already committed to Mar; never raise
+            logger.error("atrativo_push_dispatch_failed", rio_id=pid, error=str(exc))
+            push_failed.append(pid)
+
+    return {
+        "batch_id": batch_id,
+        "promoted": len(promoted_ids),
+        "held": held,
+        "failed": failed,
+        "push_failed": push_failed,
+        "remaining": max(0, len(candidates) - len(ids)),
+    }
