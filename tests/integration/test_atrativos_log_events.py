@@ -308,3 +308,28 @@ async def test_dlq_routed_record_absent_from_failure_cards(
     assert source_ref not in refs, (
         "a DLQ-routed record must not appear in the Falha column (failures/cards)"
     )
+
+
+@pytest.mark.integration
+def test_batched_events_keep_timeline_order(db_session: Session) -> None:
+    """record_event no longer flushes: one card's events ride ONE flush, in call order.
+
+    The Log tab orders by created_at (clock_timestamp()), so the batched INSERT must
+    still give strictly increasing timestamps in session.add order.
+    """
+    from brave.observability.record_events import record_event
+
+    ref = f"tripadvisor:attraction:batch-{uuid.uuid4()}"
+    stages = [f"stage_{i}" for i in range(7)]
+    for stage in stages:
+        record_event(db_session, source="tripadvisor", source_ref=ref, stage=stage, status="ok")
+    assert db_session.new  # still pending — nothing hit the DB yet
+    db_session.flush()
+
+    rows = db_session.scalars(
+        select(RecordEvent)
+        .where(RecordEvent.source_ref == ref)
+        .order_by(RecordEvent.created_at.asc())
+    ).all()
+    assert [r.stage for r in rows] == stages
+    assert len({r.created_at for r in rows}) == len(stages)
