@@ -54,20 +54,20 @@ export function PainelView() {
   const { data: engine } = useQuery({
     queryKey: engineKeys.status,
     queryFn: fetchEngineStatus,
-    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    // Only the cheap engine state/progress read polls fast (3s) while a sweep
+    // runs. The board + metrics (12 queries, 4 with limit:500) stay on the shared
+    // 10s cadence so the panel does not compete with the sweep for Postgres.
+    refetchInterval: (query) =>
+      query.state.data?.state === "running" ? 3000 : ENGINE_REFETCH_INTERVAL_MS,
     refetchOnWindowFocus: false,
   });
   const editingUnlocked = engine?.editing_unlocked ?? true;
 
-  // Bug 3: while a sweep runs the board polls fast (3s) so cards land in near
-  // real time; idle it falls back to the shared 10s cadence.
-  const boardIntervalMs =
-    engine?.state === "running" ? 3000 : ENGINE_REFETCH_INTERVAL_MS;
-
-  const { cards, isPending, nascenteCount } = usePainelBoard(boardIntervalMs, uf);
-  // Metrics poll at the same fast cadence as the board so the % bar visibly
-  // moves while the engine sweeps.
-  const metrics = usePainelMetrics(uf, boardIntervalMs);
+  const { cards, isPending, nascenteCount } = usePainelBoard(
+    ENGINE_REFETCH_INTERVAL_MS,
+    uf,
+  );
+  const metrics = usePainelMetrics(uf);
 
   const actions = usePainelMutations({
     onOptimistic: (card, target) =>

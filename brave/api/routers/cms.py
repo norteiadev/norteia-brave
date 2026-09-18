@@ -23,7 +23,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 from sqlalchemy.orm.attributes import flag_modified
 
 from brave.api.deps import (
@@ -270,7 +270,13 @@ def list_destinos(
 
     # Count total before paging (dashboard.py pattern)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = db.execute(stmt.offset(offset).limit(limit)).all()
+    # List rows never read the 1536-float vector, the breakdown or Mar provenance.
+    page = stmt.options(
+        defer(RioRecord.embedding),
+        defer(RioRecord.score_breakdown),
+        defer(MarRecord.provenance),
+    )
+    rows = db.execute(page.offset(offset).limit(limit)).all()
 
     items = [
         {
@@ -783,7 +789,9 @@ def list_atrativos(
         stmt = stmt.where(RioRecord.routing == routing)
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = list(db.scalars(stmt.offset(offset).limit(limit)).all())
+    # List rows never read the 1536-float vector or the score breakdown.
+    page = stmt.options(defer(RioRecord.embedding), defer(RioRecord.score_breakdown))
+    rows = list(db.scalars(page.offset(offset).limit(limit)).all())
 
     # Phase F/H: WhatsApp eligibility (no horário AND no preço) — lets the Kanban
     # disable the manual DLQ→WhatsApp move for ineligible cards. Server-side batch

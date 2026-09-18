@@ -9,11 +9,13 @@ canonical) plus the territorial-key blocking invariant (CR-02 — never across U
 import uuid
 from unittest.mock import MagicMock
 
+from sqlalchemy.dialects import postgresql
+
 from brave.api.routers.dedup import (
     DedupPairItem,
     DedupPairsResponse,
+    _active_mar_by_key,
     _compute_field_diff,
-    _find_active_mar_for,
     _token_similarity,
     list_dedup_pairs,
 )
@@ -96,17 +98,19 @@ def test_token_similarity_is_a_float_between_0_and_1():
 # ---------------------------------------------------------------------------
 
 
-def test_find_active_mar_for_is_territorial_blocked():
+def test_active_mar_by_key_is_territorial_blocked():
     """The pairing query blocks on uf + municipio_id + entity_type and active-only."""
     db = MagicMock()
-    db.scalars.return_value.first.return_value = None
+    db.execute.return_value.all.return_value = []
 
     cand = _rio(uf="BA", municipio_id="123", entity_type="destination")
-    result = _find_active_mar_for(db, cand)
+    result = _active_mar_by_key(db, [cand])
 
-    assert result is None
-    stmt = db.scalars.call_args[0][0]
-    sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    assert result == {}
+    stmt = db.execute.call_args[0][0]
+    sql = str(
+        stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    )
     assert "uf" in sql
     assert "municipio_id" in sql
     assert "entity_type" in sql
@@ -134,7 +138,7 @@ def test_list_dedup_pairs_envelope_shape_exact():
     mar = _mar(canonical={"name": "Trancoso", "categoria": "vila"})
 
     db.scalars.return_value.all.return_value = [cand]
-    db.scalars.return_value.first.return_value = mar
+    db.execute.return_value.all.return_value = [(mar, "BA", "123", "destination")]
 
     resp = list_dedup_pairs(uf=None, offset=0, limit=50, db=db)
 
@@ -177,7 +181,7 @@ def test_list_dedup_pairs_skips_candidates_without_a_mar_pair():
     cand = _rio(uf="BA", municipio_id="999", entity_type="destination",
                 normalized={"name": "Solo"})
     db.scalars.return_value.all.return_value = [cand]
-    db.scalars.return_value.first.return_value = None  # no Mar on this key
+    db.execute.return_value.all.return_value = []  # no Mar on this key
 
     resp = list_dedup_pairs(uf=None, offset=0, limit=50, db=db)
     assert resp["items"] == []
