@@ -7,6 +7,8 @@ import { BR_UFS } from "@/lib/painel-data";
 export interface PainelFiltersProps {
   uf: string | null;
   onUfChange: (uf: string | null) => void;
+  onPromoverLote: () => void;
+  promoverLoteDisabled?: boolean;
 }
 
 /**
@@ -18,7 +20,12 @@ export interface PainelFiltersProps {
  * State and data live in the container (plan 17-05); only the popover open/close
  * is local. Tokens are the scoped painel CSS vars only — no hardcoded hex.
  */
-export function PainelFilters({ uf, onUfChange }: PainelFiltersProps) {
+export function PainelFilters({
+  uf,
+  onUfChange,
+  onPromoverLote,
+  promoverLoteDisabled,
+}: PainelFiltersProps) {
   const [open, setOpen] = useState(false);
   const ufLabel = uf ?? "Todas";
   const ufRef = useRef<HTMLDivElement>(null);
@@ -92,6 +99,15 @@ export function PainelFilters({ uf, onUfChange }: PainelFiltersProps) {
           </div>
         ) : null}
       </div>
+      <button
+        type="button"
+        data-testid="promover-lote-btn"
+        disabled={promoverLoteDisabled}
+        onClick={onPromoverLote}
+        className="h-8 rounded-lg border border-[var(--painel-border-outer)] bg-[var(--card)] px-3 text-[12.5px] font-medium text-[var(--painel-text)] disabled:opacity-50"
+      >
+        Promover em lote
+      </button>
     </div>
   );
 }

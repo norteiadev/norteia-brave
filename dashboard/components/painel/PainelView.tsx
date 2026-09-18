@@ -1,12 +1,19 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 import { PainelBoard } from "@/components/painel/PainelBoard";
 import { PainelDrawer } from "@/components/painel/PainelDrawer";
 import { PainelFilters } from "@/components/painel/PainelFilters";
 import { PainelMetrics } from "@/components/painel/PainelMetrics";
+import { ApiError } from "@/lib/api-client";
+import {
+  promoteBulkAtrativos,
+  type PromoteBulkDryRunResult,
+  type PromoteBulkRunResult,
+} from "@/lib/atrativos-api";
 import {
   ENGINE_REFETCH_INTERVAL_MS,
   engineKeys,
@@ -75,6 +82,52 @@ export function PainelView() {
     onRevert: () => setOverrides({}),
   });
 
+  // Promover em lote: dry-run → confirm → real run, scoped to the current UF.
+  const qc = useQueryClient();
+  const [bulkInFlight, setBulkInFlight] = useState(false);
+  const onPromoverLote = async () => {
+    if (bulkInFlight) return;
+    setBulkInFlight(true);
+    try {
+      const dry = (await promoteBulkAtrativos({
+        uf,
+        dry_run: true,
+      })) as PromoteBulkDryRunResult;
+      if (dry.would_promote === 0) {
+        toast.error(
+          "Nenhum atrativo elegível para promoção em lote com os filtros atuais.",
+        );
+        return;
+      }
+      if (
+        !window.confirm(
+          `Promover ${dry.would_promote} de ${dry.candidates} atrativos para o Mar? (excluídos: ${dry.excluded.below_score} por score, ${dry.excluded.no_description} sem descrição, ${dry.excluded.recency} sem review recente)`,
+        )
+      )
+        return;
+      const run = (await promoteBulkAtrativos({
+        uf,
+        dry_run: false,
+      })) as PromoteBulkRunResult;
+      toast.success(
+        `${run.promoted} promovidos, ${run.held.length} retidos, ${run.failed.length} falharam. Restam ${run.remaining}.`,
+      );
+      void qc.invalidateQueries({ queryKey: ["destinos"] });
+      void qc.invalidateQueries({ queryKey: ["atrativos"] });
+      void qc.invalidateQueries({ queryKey: ["engine", "status"] });
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError && err.status === 423
+          ? "Motor ligado — pause o motor para editar os cards."
+          : err instanceof Error
+            ? err.message
+            : "Falha na promoção em lote.",
+      );
+    } finally {
+      setBulkInFlight(false);
+    }
+  };
+
   // Apply optimistic column overrides, then the UF-scope filter (type filtering
   // is gone — destinos are excluded in the data layer), then the name search.
   const effective = cards.map((c) =>
@@ -90,7 +143,12 @@ export function PainelView() {
     <div data-testid="painel-view" className="flex h-full min-h-0 flex-col">
       <div className="flex flex-col gap-[14px] px-[22px] pb-1 pt-[18px]">
         <PainelMetrics atrativo={metrics.atrativo} />
-        <PainelFilters uf={uf} onUfChange={setUf} />
+        <PainelFilters
+          uf={uf}
+          onUfChange={setUf}
+          onPromoverLote={() => void onPromoverLote()}
+          promoverLoteDisabled={bulkInFlight}
+        />
         <input
           data-testid="painel-search"
           type="text"
