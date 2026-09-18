@@ -1541,7 +1541,7 @@ class _EnrichCtx(NamedTuple):
     effective: AppConfig
     distritos: Any
     ibge_lookup: Any  # None unless the real Places client is on
-    redis: Any  # None unless the inline copywriter is on
+    redis: Any  # None unless the caller passed one (describe_uf does)
 
 
 def _enrich_ctx(session: Session, redis_client: Any = None) -> _EnrichCtx:
@@ -1558,17 +1558,16 @@ def _enrich_ctx(session: Session, redis_client: Any = None) -> _EnrichCtx:
     if app_config.run_real_externals and effective.places_enrichment_enabled:
         from brave.clients.places import load_municipio_name_ibge_lookup
         ibge_lookup = load_municipio_name_ibge_lookup(session)
-    if redis_client is None and _description_on(app_config, effective):
-        import redis as _copy_redis_lib  # noqa: PLC0415
-
-        redis_client = _copy_redis_lib.from_url(
-            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-        )
     return _EnrichCtx(app_config, effective, load_distritos(session), ibge_lookup, redis_client)
 
 
 def _enrich_agent(
-    session: Session, ctx: _EnrichCtx, rio_id: str | None = None, llm_session: Any = None
+    session: Session,
+    ctx: _EnrichCtx,
+    rio_id: str | None = None,
+    llm_session: Any = None,
+    *,
+    describe: bool = False,
 ) -> tuple[Any, Any]:
     """Build (PlacesEnrichmentAgent, its Parallel search client or None).
 
@@ -1603,7 +1602,10 @@ def _enrich_agent(
     # Copywriter LLM (description sub-step): real Anthropic (web_search) only under
     # run_real_externals + description_enrichment_enabled; else Null (skipped).
     # Batch mode moves the description off this path to submit/collect_description_batch.
-    _desc_on = _description_on(app_config, effective)
+    # ``describe`` is the hard rule on top of the flags: ONLY brave.describe_uf (the Painel's
+    # "describe" action) passes it. A sweep / enrich_places_task / repair script never writes
+    # a description, whatever the overlay says.
+    _desc_on = describe and _description_on(app_config, effective)
     if _desc_on:
         from brave.clients.llm import RealLLMClient
         copy_redis = ctx.redis
@@ -1925,7 +1927,9 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
 
         if ids:
             rows = _RowBuffer()
-            agent, search = _enrich_agent(session, _enrich_ctx(session, rc), llm_session=rows)
+            agent, search = _enrich_agent(
+                session, _enrich_ctx(session, rc), llm_session=rows, describe=True
+            )
             # Everything a coroutine needs is read here, as plain values, before the gather.
             jobs = []
             for rio_id in ids:
