@@ -60,13 +60,8 @@ afterEach(() => {
 describe("Painel — Promover em lote", () => {
   it("dry-run → confirm → real run → toast + board refetch, scoped to the UF filter", async () => {
     server.use(promoteBulkDryRunSuccess());
-    // Swap in the real-run handler at the moment the steward confirms.
-    const confirm = vi.spyOn(window, "confirm").mockImplementation(() => {
-      server.use(promoteBulkRunSuccess({ promoted: 10, remaining: 2 }));
-      return true;
-    });
 
-    const { getByTestId } = renderWithClient(<PainelView />);
+    const { getByTestId, findByTestId } = renderWithClient(<PainelView />);
     fireEvent.click(getByTestId("filter-uf-trigger"));
     fireEvent.click(getByTestId("filter-uf-BA"));
     await waitFor(() => expect(atrativoListGets).toBeGreaterThan(0));
@@ -74,14 +69,19 @@ describe("Painel — Promover em lote", () => {
 
     fireEvent.click(getByTestId("promover-lote-btn"));
 
+    const dialog = await findByTestId("promover-lote-dialog");
+    const message = dialog.textContent ?? "";
+    expect(message).toContain("Promover 12 atrativos");
+    expect(message).toContain("12 elegíveis em BA");
+    // Swap in the real-run handler at the moment the steward confirms.
+    server.use(promoteBulkRunSuccess({ promoted: 10, remaining: 2 }));
+    fireEvent.click(getByTestId("promover-lote-confirm"));
+
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
     expect(bulkBodies).toEqual([
       { uf: "BA", dry_run: true },
       { uf: "BA", dry_run: false },
     ]);
-    expect(confirm).toHaveBeenCalledTimes(1);
-    const message = confirm.mock.calls[0][0] as string;
-    expect(message).toContain("Promover 12 de 12");
     expect(message).toContain("3 por score");
     expect(message).toContain("2 sem descrição");
     expect(message).toContain("1 sem review recente");
@@ -97,28 +97,29 @@ describe("Painel — Promover em lote", () => {
 
   it("cancelling the confirm makes no second request", async () => {
     server.use(promoteBulkDryRunSuccess());
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
-    const { getByTestId } = renderWithClient(<PainelView />);
+    const { getByTestId, findByTestId, queryByTestId } = renderWithClient(
+      <PainelView />,
+    );
     fireEvent.click(getByTestId("promover-lote-btn"));
 
-    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    fireEvent.click(await findByTestId("promover-lote-cancel"));
     await waitFor(() =>
-      expect(getByTestId("promover-lote-btn")).not.toBeDisabled(),
+      expect(queryByTestId("promover-lote-dialog")).toBeNull(),
     );
+    expect(getByTestId("promover-lote-btn")).not.toBeDisabled();
     expect(bulkBodies).toEqual([{ uf: null, dry_run: true }]);
     expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("zero candidates never opens the confirm", async () => {
     server.use(promoteBulkZeroCandidates());
-    const confirm = vi.spyOn(window, "confirm");
 
-    const { getByTestId } = renderWithClient(<PainelView />);
+    const { getByTestId, queryByTestId } = renderWithClient(<PainelView />);
     fireEvent.click(getByTestId("promover-lote-btn"));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
-    expect(confirm).not.toHaveBeenCalled();
+    expect(queryByTestId("promover-lote-dialog")).toBeNull();
     expect(bulkBodies).toHaveLength(1);
   });
 
@@ -137,12 +138,10 @@ describe("Painel — Promover em lote", () => {
         HttpResponse.json({ detail: "locked" }, { status: 423 }),
       ),
     );
-    const confirm = vi.spyOn(window, "confirm");
-
-    const { getByTestId } = renderWithClient(<PainelView />);
+    const { getByTestId, queryByTestId } = renderWithClient(<PainelView />);
     fireEvent.click(getByTestId("promover-lote-btn"));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(LOCKED_COPY));
-    expect(confirm).not.toHaveBeenCalled();
+    expect(queryByTestId("promover-lote-dialog")).toBeNull();
   });
 });

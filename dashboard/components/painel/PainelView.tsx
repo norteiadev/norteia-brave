@@ -8,6 +8,16 @@ import { PainelBoard } from "@/components/painel/PainelBoard";
 import { PainelDrawer } from "@/components/painel/PainelDrawer";
 import { PainelFilters } from "@/components/painel/PainelFilters";
 import { PainelMetrics } from "@/components/painel/PainelMetrics";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ApiError } from "@/lib/api-client";
 import {
   promoteBulkAtrativos,
@@ -82,9 +92,18 @@ export function PainelView() {
     onRevert: () => setOverrides({}),
   });
 
-  // Promover em lote: dry-run → confirm → real run, scoped to the current UF.
+  // Promover em lote: dry-run → AlertDialog confirm → real run, scoped to the UF.
   const qc = useQueryClient();
   const [bulkInFlight, setBulkInFlight] = useState(false);
+  const [bulkDry, setBulkDry] = useState<PromoteBulkDryRunResult | null>(null);
+  const bulkError = (err: unknown) =>
+    toast.error(
+      err instanceof ApiError && err.status === 423
+        ? "Motor ligado — pause o motor para editar os cards."
+        : err instanceof Error
+          ? err.message
+          : "Falha na promoção em lote.",
+    );
   const onPromoverLote = async () => {
     if (bulkInFlight) return;
     setBulkInFlight(true);
@@ -99,12 +118,17 @@ export function PainelView() {
         );
         return;
       }
-      if (
-        !window.confirm(
-          `Promover ${dry.would_promote} de ${dry.candidates} atrativos para o Mar? (excluídos: ${dry.excluded.below_score} por score, ${dry.excluded.no_description} sem descrição, ${dry.excluded.recency} sem review recente)`,
-        )
-      )
-        return;
+      setBulkDry(dry);
+    } catch (err) {
+      bulkError(err);
+    } finally {
+      setBulkInFlight(false);
+    }
+  };
+  const onConfirmarLote = async () => {
+    setBulkDry(null);
+    setBulkInFlight(true);
+    try {
       const run = (await promoteBulkAtrativos({
         uf,
         dry_run: false,
@@ -116,13 +140,7 @@ export function PainelView() {
       void qc.invalidateQueries({ queryKey: ["atrativos"] });
       void qc.invalidateQueries({ queryKey: ["engine", "status"] });
     } catch (err) {
-      toast.error(
-        err instanceof ApiError && err.status === 423
-          ? "Motor ligado — pause o motor para editar os cards."
-          : err instanceof Error
-            ? err.message
-            : "Falha na promoção em lote.",
-      );
+      bulkError(err);
     } finally {
       setBulkInFlight(false);
     }
@@ -179,6 +197,40 @@ export function PainelView() {
       />
 
       <PainelDrawer card={selected} onClose={() => setSelected(null)} />
+
+      <AlertDialog
+        open={bulkDry !== null}
+        onOpenChange={(open) => {
+          if (!open) setBulkDry(null);
+        }}
+      >
+        {/* Portal renders outside the /painel subtree — re-scope the light tokens. */}
+        <AlertDialogContent className="painel-light" data-testid="promover-lote-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Promover {bulkDry?.would_promote} atrativos para o Mar?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {bulkDry?.candidates} elegíveis{uf ? ` em ${uf}` : ""}. Excluídos:{" "}
+              {bulkDry?.excluded.below_score} por score,{" "}
+              {bulkDry?.excluded.no_description} sem descrição,{" "}
+              {bulkDry?.excluded.recency} sem review recente. Cada promoção fica
+              registrada como validação humana e é publicada na norteia-api.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="promover-lote-cancel">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="promover-lote-confirm"
+              onClick={() => void onConfirmarLote()}
+            >
+              Promover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
