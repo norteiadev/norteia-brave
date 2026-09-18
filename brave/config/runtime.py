@@ -55,6 +55,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 # Redis key holding the memoized effective-config snapshot (JSON of AppConfig).
 SNAPSHOT_KEY = "brave:config:snapshot"
+_SNAPSHOT_MAX_AGE_SECONDS = 60
 
 # Dotted config_settings key → ScoreConfig attribute name.
 _SCORE_OVERLAY_KEYS: dict[str, str] = {
@@ -181,8 +182,12 @@ def _read_snapshot(redis: Redis) -> AppConfig | None:
 def _write_snapshot(redis: Redis, config: AppConfig) -> None:
     """Store the effective config JSON under SNAPSHOT_KEY (best-effort)."""
     # Caching is an optimization — never let a Redis blip fail a config read.
+    # Expiry bounds staleness: Celery tasks now read this snapshot too, and a reader that
+    # loaded the overlay just before a writer's commit can re-write the OLD config right
+    # after the bust. Without an expiry that stale snapshot (e.g. a cost flag the operator
+    # just turned off) would be served forever.
     with contextlib.suppress(Exception):
-        redis.set(SNAPSHOT_KEY, config.model_dump_json())
+        redis.set(SNAPSHOT_KEY, config.model_dump_json(), ex=_SNAPSHOT_MAX_AGE_SECONDS)
 
 
 def bust_config_snapshot(redis: Redis) -> None:

@@ -19,6 +19,7 @@ def _rio(routing="dlq", **normalized):
         entity_type="attraction",
         uf="AP",
         routing=routing,
+        dlq_reason=None,
         sub_state=None,
         score=None,
         canonical_key="tripadvisor:1",

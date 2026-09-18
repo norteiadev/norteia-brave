@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import DateTime, Integer, column, func, select, values
 from sqlalchemy.orm import Session
 
 from brave.api.deps import get_db, require_bearer, require_steward_or_bearer
@@ -110,53 +110,52 @@ def _dispatch(task, uf: str, *, task_label: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _window_counts(db: Session, started_at: datetime, ended_at: datetime | None) -> tuple[int, int]:
-    """Count synced / failed over a run's [started_at, ended_at] window (A4).
+def _window_counts(db: Session, runs: list[RunHistory]) -> dict[uuid.UUID, tuple[int, int]]:
+    """Count synced / failed over each run's [started_at, ended_at] window (A4).
 
     synced = MarRecord rows published in the window (models.py:224).
     failed = RioRecord rows routed dlq/descarte with processed_at in the window
              (models.py:147) PLUS PoisonQuarantine rows in the window (models.py:310).
 
+    One grouped query per table for the WHOLE page (the run windows travel as a
+    VALUES list), instead of three COUNTs per run.
+
     When ended_at is None (run still finalizing) the window's upper bound is now().
     This is a deliberate time-window approximation — see the module docstring (A4).
     """
-    upper = ended_at or datetime.now(timezone.utc)
+    if not runs:
+        return {}
+    now = datetime.now(timezone.utc)
+    w = values(
+        column("i", Integer),
+        column("lo", DateTime(timezone=True)),
+        column("hi", DateTime(timezone=True)),
+        name="w",
+    ).data([(i, r.started_at, r.ended_at or now) for i, r in enumerate(runs)])
 
-    synced = (
-        db.scalar(
-            select(func.count(MarRecord.id)).where(
-                MarRecord.published_at >= started_at,
-                MarRecord.published_at <= upper,
-            )
+    def _grouped(model, ts, *where) -> dict[int, int]:
+        stmt = (
+            select(w.c.i, func.count())
+            .select_from(w)
+            .join(model, ts.between(w.c.lo, w.c.hi))
+            .where(*where)
+            .group_by(w.c.i)
         )
-        or 0
+        return {i: n for i, n in db.execute(stmt).all()}
+
+    synced = _grouped(MarRecord, MarRecord.published_at)
+    failed_rio = _grouped(
+        RioRecord, RioRecord.processed_at, RioRecord.routing.in_(("dlq", "descarte"))
     )
-    failed_rio = (
-        db.scalar(
-            select(func.count(RioRecord.id)).where(
-                RioRecord.routing.in_(("dlq", "descarte")),
-                RioRecord.processed_at.isnot(None),
-                RioRecord.processed_at >= started_at,
-                RioRecord.processed_at <= upper,
-            )
-        )
-        or 0
-    )
-    failed_poison = (
-        db.scalar(
-            select(func.count(PoisonQuarantine.id)).where(
-                PoisonQuarantine.quarantined_at >= started_at,
-                PoisonQuarantine.quarantined_at <= upper,
-            )
-        )
-        or 0
-    )
-    return synced, failed_rio + failed_poison
+    failed_poison = _grouped(PoisonQuarantine, PoisonQuarantine.quarantined_at)
+    return {
+        r.id: (synced.get(i, 0), failed_rio.get(i, 0) + failed_poison.get(i, 0))
+        for i, r in enumerate(runs)
+    }
 
 
-def _to_item(db: Session, run: RunHistory) -> RunItem:
-    """Build a RunItem, recomputing synced/failed/total on-read for this run."""
-    synced, failed = _window_counts(db, run.started_at, run.ended_at)
+def _to_item(run: RunHistory, synced: int, failed: int) -> RunItem:
+    """Build a RunItem from a run + its on-read synced/failed counts."""
     return RunItem(
         id=str(run.id),
         started_at=run.started_at.isoformat() if run.started_at else "",
@@ -199,13 +198,17 @@ def list_runs(
         stmt = stmt.where(RunHistory.depth == depth)
     stmt = stmt.order_by(RunHistory.started_at.desc())
 
-    runs = list(db.scalars(stmt).all())
     if uf:
-        runs = [r for r in runs if uf in (r.ufs or [])]
+        runs = [r for r in db.scalars(stmt).all() if uf in (r.ufs or [])]
+        total = len(runs)
+        page = runs[offset : offset + limit]
+    else:
+        # No JSON-array filter → page in SQL instead of loading every run.
+        total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+        page = list(db.scalars(stmt.offset(offset).limit(limit)).all())
 
-    total = len(runs)
-    page = runs[offset : offset + limit]
-    items = [_to_item(db, run) for run in page]
+    counts = _window_counts(db, page)
+    items = [_to_item(run, *counts[run.id]) for run in page]
 
     return RunsResponse(items=items, total=total, offset=offset, limit=limit).model_dump()
 

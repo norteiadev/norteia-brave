@@ -155,8 +155,8 @@ class ContactResult(BaseModel):
 class SignalResult(BaseModel):
     """Operating signal data gathered by SignalAgent.
 
-    business_status: CLOSED_PERMANENTLY or CLOSED_TEMPORARILY triggers hard
-    descarte before reliability scoring (D-05). Corroboração is a fixed 0.0 constant
+    business_status: CLOSED_PERMANENTLY triggers hard descarte before reliability
+    scoring (D-05); CLOSED_TEMPORARILY parks the record in the DLQ. Corroboração is a fixed 0.0 constant
     (the Apify IG social-signal source was retired in Phase E); it never fails the record.
     """
 
@@ -165,7 +165,7 @@ class SignalResult(BaseModel):
         description=(
             "Status de funcionamento do Google Places: OPERATIONAL, CLOSED_PERMANENTLY, "
             "CLOSED_TEMPORARILY, ou outro valor retornado pela API. "
-            "CLOSED_PERMANENTLY ou CLOSED_TEMPORARILY → hard descarte (D-05)."
+            "CLOSED_PERMANENTLY → hard descarte (D-05); CLOSED_TEMPORARILY → DLQ."
         ),
     )
     weekday_text: list[str] = Field(

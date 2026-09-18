@@ -1,9 +1,8 @@
 """Unit tests for the Google weekdayDescriptions → hours-map converter.
 
 The output contract is language-neutral (English keys, ASCII hyphen, status tokens) —
-labels are the frontend's i18n job. Input is accepted in English OR PT-BR because
-GetPlaceRequest currently sends no language_code (clients/places.py:369) and a future
-locale pin must not change the stored map.
+labels are the frontend's i18n job. Input is accepted in English OR PT-BR: GetPlaceRequest
+asks for pt-BR since 2026-09-18, and records enriched before that hold English strings.
 """
 
 import pytest
@@ -61,7 +60,9 @@ def test_twelve_hour_boundaries(raw, expected):
     assert to_hours_map(_week(raw, raw, raw)) == {"daily": expected}
 
 
-@pytest.mark.parametrize("raw", ["Open 24 hours", "Aberto 24 horas", "24 horas"])
+@pytest.mark.parametrize(
+    "raw", ["Open 24 hours", "Aberto 24 horas", "Atendimento 24 horas", "24 horas"]
+)
 def test_open_24h_token(raw):
     assert to_hours_map(_week(raw, raw, raw)) == {"daily": "open_24h"}
 

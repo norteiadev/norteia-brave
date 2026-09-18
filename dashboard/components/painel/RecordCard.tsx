@@ -48,6 +48,7 @@ export function RecordCard({
   // Edit-lock: a card is only draggable when NOT nascente AND editing is unlocked.
   const draggable = !isNascente && editingUnlocked;
   const noDescription = card.type === "atrativo" && card.descriptionPending === true;
+  const temporarilyClosed = card.temporarilyClosed === true;
 
   return (
     <div
@@ -91,7 +92,7 @@ export function RecordCard({
       </div>
 
       {/* source label (hidden when null — L-2) + duplicate / sem-descrição flags */}
-      {card.source != null || card.duplicate || noDescription ? (
+      {card.source != null || card.duplicate || noDescription || temporarilyClosed ? (
         <div className="flex items-center justify-between gap-2">
           {card.source != null ? (
             <span className="text-[11px] text-[var(--painel-hint)]">
@@ -100,7 +101,15 @@ export function RecordCard({
           ) : (
             <span />
           )}
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            {temporarilyClosed ? (
+              <span
+                data-testid="record-card-temporarily-closed"
+                className="rounded-[5px] bg-[var(--status-descarte)]/15 px-[7px] py-px text-[10px] font-semibold text-[var(--status-descarte)]"
+              >
+                Fechado Temporariamente
+              </span>
+            ) : null}
             {noDescription ? (
               <span className="rounded-[5px] bg-[var(--status-dlq)]/15 px-[7px] py-px text-[10px] font-semibold text-[var(--status-dlq)]">
                 Sem descrição

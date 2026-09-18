@@ -340,3 +340,69 @@ class TestClientWriteBack:
             result = await client.fetch_destinations(uf="BA")
 
         assert result, "fetch_destinations must return data even when write-back raises"
+
+
+# ---------------------------------------------------------------------------
+# Persistent HTTP client + unchanged-jar write skip (perf/sync-lanes, Etapa 4)
+# ---------------------------------------------------------------------------
+
+
+def test_unchanged_jar_skips_rewrite_but_slides_ttl():
+    """Same cookies back → no payload rewrite, TTL still reset to session_ttl."""
+    import fakeredis
+
+    from brave.config.settings import TripAdvisorConfig
+    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.lanes.tripadvisor.session import persist_rotated_cookies
+
+    redis = fakeredis.FakeRedis()
+    ta_config = TripAdvisorConfig()
+    # Non-canonical JSON spacing: a rewrite would normalise it, a skip leaves it.
+    raw = json.dumps(_make_session(cookies={"datadome": "same"}), indent=1)
+    redis.setex(BRAVE_TA_SESSION_KEY, 60, raw)
+
+    persist_rotated_cookies(redis, {"datadome": "same"}, ta_config)
+
+    assert redis.get(BRAVE_TA_SESSION_KEY).decode() == raw
+    assert redis.ttl(BRAVE_TA_SESSION_KEY) > 60  # slid to session_ttl
+
+
+@pytest.mark.asyncio
+async def test_shared_client_reused_and_sends_rotated_cookie_once(monkeypatch):
+    """Inside ``async with client`` one AsyncClient serves every page, the rotated
+    cookie replaces (not duplicates) the stored one, and the client is closed on exit."""
+    import fakeredis
+    import httpx
+    import respx
+
+    from brave.config.settings import AppConfig
+    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+
+    redis = fakeredis.FakeRedis()
+    session_data = _make_session(cookies={"datadome": "old"})
+    redis.setex(BRAVE_TA_SESSION_KEY, 1800, json.dumps(session_data))
+    client = TripAdvisorClient(config=AppConfig().tripadvisor, redis=redis)
+    monkeypatch.setattr(client, "_get_session", lambda: session_data)
+    monkeypatch.setattr("brave.lanes.tripadvisor.geo.resolve_geo_id", lambda uf, r, c: 303380)
+
+    full_page = [{"data": {"locations": [{"locationId": i} for i in range(20)]}}]
+    with respx.mock:
+        route = respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
+            side_effect=[
+                httpx.Response(
+                    200,
+                    json=full_page,
+                    headers={"Set-Cookie": "datadome=new; Path=/; Domain=.tripadvisor.com.br"},
+                ),
+                httpx.Response(200, json=[{"data": {"locations": []}}]),
+            ]
+        )
+        async with client:
+            shared = client._hc
+            await client.fetch_destinations(uf="BA")
+            assert client._hc is shared
+
+    assert route.call_count == 2
+    assert route.calls[0].request.headers["cookie"] == "datadome=old"
+    assert route.calls[1].request.headers["cookie"] == "datadome=new"
+    assert shared.is_closed and client._hc is None

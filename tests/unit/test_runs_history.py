@@ -48,29 +48,22 @@ def _run(**overrides) -> RunHistory:
 
 
 def test_window_counts_sums_rio_and_poison_failures():
-    """synced = Mar count; failed = rio(dlq/descarte) + poison counts."""
+    """synced = Mar count; failed = rio(dlq/descarte) + poison counts, per run."""
     db = MagicMock()
-    # order of db.scalar calls: synced, failed_rio, failed_poison
-    db.scalar.side_effect = [7, 3, 2]
+    # order of db.execute calls: synced, failed_rio, failed_poison → (run idx, count)
+    db.execute.return_value.all.side_effect = [[(0, 7)], [(0, 3)], [(0, 2)]]
+    run = _run()
 
-    synced, failed = runs_router._window_counts(
-        db,
-        datetime(2026, 6, 28, 10, 0, tzinfo=timezone.utc),
-        datetime(2026, 6, 28, 11, 0, tzinfo=timezone.utc),
-    )
-    assert synced == 7
-    assert failed == 5  # 3 rio + 2 poison
+    assert runs_router._window_counts(db, [run]) == {run.id: (7, 5)}  # 3 rio + 2 poison
 
 
 def test_window_counts_uses_now_when_ended_at_none():
     """A still-running run (ended_at=None) aggregates up to now() without error."""
     db = MagicMock()
-    db.scalar.side_effect = [1, 0, 0]
-    synced, failed = runs_router._window_counts(
-        db, datetime(2026, 6, 28, 10, 0, tzinfo=timezone.utc), None
-    )
-    assert synced == 1
-    assert failed == 0
+    db.execute.return_value.all.side_effect = [[(0, 1)], [], []]
+    run = _run(ended_at=None)
+
+    assert runs_router._window_counts(db, [run]) == {run.id: (1, 0)}
 
 
 # ---------------------------------------------------------------------------
@@ -83,8 +76,9 @@ def test_list_runs_envelope_shape_and_on_read_counts():
     db = MagicMock()
     run = _run()
     db.scalars.return_value.all.return_value = [run]
+    db.scalar.return_value = 1  # SQL-side total (no uf filter)
     # window counts for the single run: synced, failed_rio, failed_poison
-    db.scalar.side_effect = [5, 2, 1]
+    db.execute.return_value.all.side_effect = [[(0, 5)], [(0, 2)], [(0, 1)]]
 
     result = runs_router.list_runs(
         uf=None, source=None, depth=None, offset=0, limit=50, db=db
@@ -117,8 +111,8 @@ def test_list_runs_filters_uf_over_json_array():
     ba = _run(ufs=["BA"])
     se = _run(ufs=["SE"])
     db.scalars.return_value.all.return_value = [ba, se]
-    # only the BA run survives the filter → one window-count triple
-    db.scalar.side_effect = [0, 0, 0]
+    # only the BA run survives the filter → no window rows → zero counts
+    db.execute.return_value.all.return_value = []
 
     result = runs_router.list_runs(
         uf="BA", source=None, depth=None, offset=0, limit=50, db=db

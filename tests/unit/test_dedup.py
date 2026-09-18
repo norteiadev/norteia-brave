@@ -133,3 +133,24 @@ def test_find_duplicate_skips_vector_when_no_municipio():
     assert result is None
     # scalars should NOT be called for fuzzy search (no municipio_id = no block)
     # The vector search requires a block to be defined
+
+
+def test_find_duplicate_skips_vector_query_for_zero_stub_embedding():
+    """A zero-vector (stub) embedding never matches — the pgvector query is skipped;
+    a real vector still runs it."""
+    from brave.core.rio import dedup
+
+    session = MagicMock()
+    session.scalar.return_value = None  # No hash match
+    kwargs = dict(
+        session=session,
+        uf="BA",
+        municipio_id="456",
+        entity_type="destination",
+        content_hash="zero-stub",
+    )
+    with patch.object(dedup._rio_repo, "find_dedup_candidates", return_value=[]) as q:
+        assert dedup.find_duplicate(**kwargs, embedding=[0.0] * 1536) is None
+        q.assert_not_called()
+        assert dedup.find_duplicate(**kwargs, embedding=[0.1] * 1536) is None
+        q.assert_called_once()

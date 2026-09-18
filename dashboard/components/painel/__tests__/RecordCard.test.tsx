@@ -119,6 +119,21 @@ describe("RecordCard", () => {
     expect(screen.queryByText("Sem descrição")).not.toBeInTheDocument();
   });
 
+  it("renders the 'Fechado Temporariamente' pill only when temporarilyClosed", () => {
+    const { rerender } = render(
+      <RecordCard
+        card={makeCard({ type: "atrativo", source: null, temporarilyClosed: true })}
+        onDragStart={noop}
+        onRetry={noop}
+      />,
+    );
+    expect(screen.getByText("Fechado Temporariamente")).toBeInTheDocument();
+    rerender(
+      <RecordCard card={makeCard({ type: "atrativo" })} onDragStart={noop} onRetry={noop} />,
+    );
+    expect(screen.queryByText("Fechado Temporariamente")).not.toBeInTheDocument();
+  });
+
   it("does NOT render a '—' placeholder when source is null (L-2)", () => {
     render(
       <RecordCard

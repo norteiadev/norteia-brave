@@ -42,13 +42,15 @@ from sqlalchemy.orm import Session
 
 from brave.clients.places import _normalize_name
 from brave.config.settings import ScoreConfig
-from brave.core.models import AtrativoBusca
+from brave.core.models import AtrativoBusca, Municipio
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import route_by_score
 from brave.lanes.atrativos.copywriter import CASCADE_MODEL, CascadeResult, TourismCopywriter
 from brave.lanes.atrativos.schemas import SignalResult
 from brave.lanes.atrativos.signal_agent import (
     CLOSED_STATUSES,
+    TEMPORARILY_CLOSED,
+    TEMPORARILY_CLOSED_REASON,
     _compute_atualidade,
     _is_recent_review,
     _newest_review_dt,
@@ -106,6 +108,17 @@ _NAME_MATCH_THRESHOLD: int = 85
 # ["beach","natural_feature","establishment"] and DID return an editorialSummary — a natural
 # feature is a legitimate atrativo, only the administrative entity is not.
 _GEOGRAPHIC_TYPE_MARKER: str = "political"
+
+# Match radius around the município SEAT for a record with no coords of its own. Wide
+# because big rural municípios put real atrativos far from the seat (Chapada falls sit
+# 60+ km from São João d'Aliança's) and border parks sit in the next município (Terra
+# Ronca, ~40 km); the same-name mismatches it must reject were all 190+ km away.
+_SEAT_RADIUS_KM: float = 80.0
+
+# PT-BR wording of Places' business_status for the atrativo's Log tab.
+_CLOSED_LABELS: dict[str, str] = {
+    "CLOSED_PERMANENTLY": "fechado permanentemente",
+}
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -165,6 +178,13 @@ def _best_match(
         name = r.get("name") or ""
         score = fuzz.token_set_ratio(folded_target, _normalize_name(name))
         if score < _NAME_MATCH_THRESHOLD:
+            continue
+        # No target coords → no distance guard, and a name alone matched a church in Vitória
+        # for one in Pirenópolis, and the river "Rio Preto" for "Cachoeira Saltos do Rio
+        # Preto" (token_set_ratio scores a contained name 100). Then only a candidate Places
+        # puts in a município of the target's UF qualifies (the client resolves
+        # municipio_ibge within the UF, "" otherwise).
+        if not have_target_coords and r.get("municipio_ibge") == "":
             continue
         loc = r.get("location") or {}
         rlat, rlng = loc.get("lat"), loc.get("lng")
@@ -249,8 +269,92 @@ class PlacesEnrichmentAgent:
             else None
         )
 
-    async def run(self, rio: RioRecord) -> None:
+    async def locate(self, nome: str, uf: str) -> dict[str, Any] | None:
+        """Find WHERE an atrativo is when no other source could place it in a município.
+
+        One Text Search, the same confident-match guards as run() (no coords to compare,
+        so name + not-a-geographic-entity), and only results Places placed in a município
+        of THIS UF (``municipio_ibge`` resolves within the UF only). Returns the matched
+        result — place_id, location, municipio_ibge — or None. Never raises: a Places
+        failure just means the card stays unmatched.
+
+        No confident match, but every in-UF result sits in the SAME município → returns
+        only ``{"municipio_ibge", "consensus": True}``: the card is placed in the município
+        the search clusters in, WITHOUT a place_id (none of the results is provably this
+        atrativo, so run() keeps its own strict match). Measured on the 7 Chapada cards
+        the name guard rejected: all 7 clustered correctly (e.g. "Jardim de Maytreia" vs
+        "Mirante Jardim de Maytrea", score 83.7). Disagreeing results → None.
+        """
+        try:
+            results = await self._places_client.text_search(nome, uf)
+        except Exception:  # noqa: BLE001 — a Places defect never breaks the ingest
+            logger.warning("places_locate_failed", uf=uf)
+            return None
+        in_uf = [
+            r
+            for r in results
+            if r.get("municipio_ibge") and _GEOGRAPHIC_TYPE_MARKER not in (r.get("types") or [])
+        ]
+        match = _best_match(in_uf, nome, None, None, self._max_distance_km)
+        if match is not None:
+            return match
+        municipios = {r["municipio_ibge"] for r in in_uf}
+        if len(municipios) == 1:
+            return {"municipio_ibge": municipios.pop(), "consensus": True}
+        return None
+
+    def wants_description(self, rio: RioRecord) -> bool:
+        """The description sub-step's gate. Reads ``rio`` only — no I/O, no writes."""
+        normalized = rio.normalized or {}
+        return bool(
+            self._description_enabled
+            and self._copywriter is not None
+            and not normalized.get("descricao_editorial")
+            and bool(normalized.get("name"))
+            and rio.routing != "descarte"
+            and int(normalized.get("descricao_attempts") or 0) < _MAX_DESCRIPTION_ATTEMPTS
+            # A live batch already holds a PAID request for this record's description.
+            # Turning atrativo_description_batch_enabled OFF (the operator action that flag
+            # exists to support) re-enables THIS inline copywriter within one sweep, and
+            # nothing else here can see the in-flight request: descricao_editorial is still
+            # absent and descricao_attempts is still 0. Without this guard the flip bills a
+            # second full-price Sonnet+web_search call for prose Anthropic is already
+            # producing, and collect overwrites the inline one an hour later. The stamp is
+            # cleared in the same transaction as the batched writes, so it un-blocks itself.
+            and not rio.descricao_batch_id
+        )
+
+    async def write_description(
+        self, nome: str, municipio: str, uf: str, details: dict[str, Any]
+    ) -> tuple[str | None, CascadeResult | None, bool]:
+        """The copywriter's network I/O: (prose, cascade, no_spend). Never touches the Session.
+
+        Split out of run() so brave.describe_uf can gather it for a whole chunk and hand
+        each result back through ``run(rio, description=...)``.
+        """
+        assert self._copywriter is not None
+        try:
+            if self._copywriter.cascade:
+                cascade = await self._copywriter.write_cascade(
+                    nome, municipio, uf, places_context=details
+                )
+                return cascade.prose, cascade, False
+            prose = await self._copywriter.write(nome, municipio, uf, places_context=details)
+            return prose, None, False
+        except CostGuardError:
+            # The daily budget tripped BEFORE dispatch: no token spent, so no attempt
+            # happened. Burning the budget here would let one budget trip per sweep
+            # exclude the WHOLE backlog from descriptions after 3 sweeps.
+            return None, None, True
+
+    async def run(
+        self,
+        rio: RioRecord,
+        description: tuple[str | None, CascadeResult | None, bool] | None = None,
+    ) -> None:
         """Enrich one atrativo with Google Places signals (hours + review liveness).
+
+        ``description`` is an already-fetched write_description() result; None → fetch here.
 
         Runs for a TA atrativo REGARDLESS of routing — a dlq'd record (TA scores
         ~55 < 80 and only reaches Mar via steward validation) still gets Google hours,
@@ -285,23 +389,7 @@ class PlacesEnrichmentAgent:
             or (normalized.get("place_id_cache") and normalized.get("weekday_text"))
         )
         attempts = int(normalized.get("descricao_attempts") or 0)
-        wants_description = (
-            self._description_enabled
-            and self._copywriter is not None
-            and not normalized.get("descricao_editorial")
-            and bool(normalized.get("name"))
-            and rio.routing != "descarte"
-            and attempts < _MAX_DESCRIPTION_ATTEMPTS
-            # A live batch already holds a PAID request for this record's description.
-            # Turning atrativo_description_batch_enabled OFF (the operator action that flag
-            # exists to support) re-enables THIS inline copywriter within one sweep, and
-            # nothing else here can see the in-flight request: descricao_editorial is still
-            # absent and descricao_attempts is still 0. Without this guard the flip bills a
-            # second full-price Sonnet+web_search call for prose Anthropic is already
-            # producing, and collect overwrites the inline one an hour later. The stamp is
-            # cleared in the same transaction as the batched writes, so it un-blocks itself.
-            and not rio.descricao_batch_id
-        )
+        wants_description = self.wants_description(rio)
         # Exhausted budget is SILENT otherwise (the record just stops getting descriptions,
         # forever, until an operator clears the counter in JSONB). Log it on every pass so
         # "descriptions stopped" is diagnosable from the logs alone.
@@ -341,7 +429,17 @@ class PlacesEnrichmentAgent:
             try:
                 if not place_id and nome:
                     results = await self._places_client.text_search(nome, uf)
-                    match = _best_match(results, nome, lat, lng, self._max_distance_km)
+                    ref_lat, ref_lng, radius = lat, lng, self._max_distance_km
+                    if (lat is None or lng is None) and municipio_ibge:
+                        # No coords of its own: measure from the município seat instead,
+                        # wider (see _SEAT_RADIUS_KM) — otherwise a same-name place anywhere
+                        # in the UF wins (Luziânia's Igreja N. S. do Rosário took the one
+                        # in Flores de Goiás, ~190 km away).
+                        seat = self._session.get(Municipio, municipio_ibge)
+                        if isinstance(seat, Municipio):
+                            ref_lat, ref_lng = seat.lat, seat.lng
+                            radius = max(radius, _SEAT_RADIUS_KM)
+                    match = _best_match(results, nome, ref_lat, ref_lng, radius)
                     if match is not None:
                         place_id = match.get("place_id") or ""
                 if place_id:
@@ -357,16 +455,42 @@ class PlacesEnrichmentAgent:
             if business_status in CLOSED_STATUSES:
                 new_normalized["google_enriched"] = True
                 persist_normalized(self._session, rio, normalized, new_normalized)
+                routing_before = rio.routing
                 rio.routing = "descarte"
                 rio.dlq_reason = "closed_place"
+                cause = {
+                    "reason": "closed_place",
+                    "business_status": business_status,
+                    "place_id": place_id,
+                    "place_name": details.get("name") or None,
+                    "place_address": details.get("formatted_address") or None,
+                }
                 write_audit(
                     session=self._session,
                     action="places_hard_descarte",
                     entity_type="attraction",
                     record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
-                    before_state={"routing": rio.routing},
-                    after_state={"routing": "descarte", "reason": "closed_place"},
+                    before_state={"routing": routing_before},
+                    after_state={"routing": "descarte", **cause},
                     actor="places_enrichment_agent",
+                )
+                # The atrativo's Log tab must say WHY it left the pipeline — the audit row
+                # alone is invisible there. Public business data only (Places listing).
+                canonical_key = rio.canonical_key or ""
+                record_event(
+                    session=self._session,
+                    source=canonical_key.split(":", 1)[0] if canonical_key else "unknown",
+                    source_ref=canonical_key,
+                    stage="places_descarte",
+                    status="fail",
+                    message=(
+                        f"Google Places marca como {_CLOSED_LABELS.get(business_status, business_status)}"
+                        + (f" ({cause['place_name']})" if cause["place_name"] else "")
+                    ),
+                    entity_type="attraction",
+                    uf=rio.uf,
+                    rio_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
+                    data={**cause, "routing_before": routing_before},
                 )
                 self._session.flush()
                 logger.info("places_enrich_hard_descarte", rio_id=str(rio.id))
@@ -462,47 +586,34 @@ class PlacesEnrichmentAgent:
         # conditions MUST agree, so this branch reuses it instead of restating it.
         cascade: CascadeResult | None = None
         if wants_description and self._copywriter is not None:
-            prose: str | None = None
-            no_spend = False
-            try:
-                if self._copywriter.cascade:
-                    cascade = await self._copywriter.write_cascade(
-                        nome, municipio, uf, places_context=details
-                    )
-                    prose = cascade.prose
-                    if cascade.busca is not None:
-                        # Every paid search is kept whole, whatever the verdict — descriptions
-                        # get regenerated later with another model from these rows (§29).
-                        b = cascade.busca
-                        self._session.add(
-                            AtrativoBusca(
-                                canonical_key=rio.canonical_key or "",
-                                nome=nome,
-                                municipio=municipio or None,
-                                uf=uf or None,
-                                provider="parallel",
-                                mode=b.mode,
-                                objective=b.objective,
-                                queries=b.queries,
-                                search_id=b.search_id,
-                                results=b.results,
-                                usage=b.usage,
-                                warnings=b.warnings,
-                                usd_cost=b.usd,
-                                latency_ms=b.latency_ms,
-                            )
-                        )
-                else:
-                    prose = await self._copywriter.write(
-                        nome, municipio, uf, places_context=details
-                    )
-            except CostGuardError:
-                # The daily budget tripped BEFORE dispatch: no token spent, so no attempt
-                # happened. Burning the budget here would let one budget trip per sweep
-                # exclude the WHOLE backlog from descriptions after 3 sweeps.
-                no_spend = True
+            if description is None:
+                description = await self.write_description(nome, municipio, uf, details)
+            prose, cascade, no_spend = description
+            if no_spend:
                 logger.warning(
                     "copywriter_cost_guard_no_attempt", rio_id=str(rio.id), attempts=attempts
+                )
+            if cascade is not None and cascade.busca is not None:
+                # Every paid search is kept whole, whatever the verdict — descriptions
+                # get regenerated later with another model from these rows (§29).
+                b = cascade.busca
+                self._session.add(
+                    AtrativoBusca(
+                        canonical_key=rio.canonical_key or "",
+                        nome=nome,
+                        municipio=municipio or None,
+                        uf=uf or None,
+                        provider="parallel",
+                        mode=b.mode,
+                        objective=b.objective,
+                        queries=b.queries,
+                        search_id=b.search_id,
+                        results=b.results,
+                        usage=b.usage,
+                        warnings=b.warnings,
+                        usd_cost=b.usd,
+                        latency_ms=b.latency_ms,
+                    )
                 )
             if prose:
                 new_normalized["descricao_editorial"] = prose
@@ -564,6 +675,13 @@ class PlacesEnrichmentAgent:
         if cascade is not None and cascade.motivo == "municipio_nao_confirmado":
             rio.routing = "dlq"
             rio.dlq_reason = "municipio_nao_confirmado"
+        # Temporarily closed (Places, confident match): enriched like any other record, but
+        # never promoted — a steward decides. Wins over the other DLQ reasons: it is the one
+        # the steward must see first (the Painel badges it "Fechado Temporariamente").
+        temporarily_closed = details.get("business_status") == TEMPORARILY_CLOSED
+        if temporarily_closed:
+            rio.routing = "dlq"
+            rio.dlq_reason = TEMPORARILY_CLOSED_REASON
         self._session.flush()
 
         # Append-only Log-tab timeline event (keyed by canonical_key — the drawer key).
@@ -575,10 +693,16 @@ class PlacesEnrichmentAgent:
             source_ref=canonical_key,
             stage="places_enriched",
             status="ok" if (hours_written or description_written) else "skip",
+            message=(
+                "Google Places marca como fechado temporariamente — mantido no DLQ"
+                if temporarily_closed
+                else None
+            ),
             entity_type="attraction",
             uf=rio.uf,
             rio_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
             data={
+                "business_status": details.get("business_status"),
                 "hours_written": hours_written,
                 "description_written": description_written,
                 "descricao_gate": cascade.motivo if cascade is not None else None,

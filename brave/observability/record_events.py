@@ -4,7 +4,8 @@ Writes RecordEvent rows for each stage a record passes through the Brave
 pipeline (TripAdvisor synced → município resolved → validated → ingested →
 deduped → scored → routed, or a terminal ``quarantined`` on failure). Powers the
 drawer "Log" tab. Mirrors ``brave.observability.audit.write_audit`` (insert +
-session.flush() + structlog).
+structlog) but does NOT flush: the ~7 events of one card ride the caller's next
+flush/commit in one batch, in ``session.add`` order (``created_at`` stays increasing).
 
 Append-only: callers emit alongside the existing pipeline emission points and
 ALWAYS behind the idempotency early-returns (``store_raw`` content_hash /
@@ -58,7 +59,7 @@ def record_event(
 
     Args:
         session:     SQLAlchemy synchronous Session (the caller's — this appends
-                     to it and flushes; the caller owns the commit).
+                     to it; the caller owns the flush/commit).
         source:      Collection lane / source slug (e.g. "tripadvisor", "mtur").
         source_ref:  Universal drawer key. For a TA attraction:
                      "tripadvisor:attraction:{locationId}" (== RioRecord.canonical_key).
@@ -74,7 +75,7 @@ def record_event(
                      dlq_reason, IBGE reason, name/uf, locationId). NEVER PII.
 
     Returns:
-        The created RecordEvent row (already flushed).
+        The created RecordEvent row (pending — NOT flushed; ``id`` is client-side).
     """
     event = RecordEvent(
         id=uuid.uuid4(),
@@ -90,7 +91,6 @@ def record_event(
         data=data,
     )
     session.add(event)
-    session.flush()
 
     # Emit structlog JSON entry for log correlation.
     # NOTE: Only public-geo / engineering fields — never raw payload content / PII.
@@ -145,7 +145,7 @@ def record_event_once(
     if existing is not None:
         return None
 
-    return record_event(
+    event = record_event(
         session,
         source=source,
         source_ref=source_ref,
@@ -158,3 +158,7 @@ def record_event_once(
         rio_id=rio_id,
         data=data,
     )
+    # Rare terminal path: flush so the next identity check sees this row even on an
+    # autoflush=False session.
+    session.flush()
+    return event

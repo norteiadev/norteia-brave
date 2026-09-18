@@ -309,7 +309,9 @@ def process_nascente_record(
         municipio_id=municipio_id,
         routing="in_progress",
         normalized=normalized,
-        embedding=embedding,
+        # ponytail: don't persist 1536 zeros per row while compute_embedding is a
+        # stub (column is nullable; HNSW index skips NULLs). Real vectors persist as-is.
+        embedding=embedding if any(embedding) else None,
         canonical_key=canonical_key,
     )
     _rio_repo.add(session, rio)

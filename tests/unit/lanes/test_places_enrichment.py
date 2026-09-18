@@ -714,3 +714,154 @@ async def test_a_description_committed_during_the_places_call_is_not_erased() ->
     assert rio.normalized["google_enriched"] is True
     # Re-read under a row lock — merging a value read without one just narrows the window.
     session.refresh.assert_called_once_with(rio, ["normalized"], with_for_update=True)
+
+
+@pytest.mark.asyncio
+async def test_hard_descarte_writes_the_cause_to_the_atrativo_log() -> None:
+    """The Log tab says why the record left the pipeline, and the audit's before_state
+    is the routing BEFORE the descarte (it used to read the already-mutated value)."""
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    details = _details(business_status="CLOSED_PERMANENTLY")
+    details["name"] = "Water Park Itumbiara"
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": details},
+    )
+    rio = _make_rio()
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    with patch("brave.lanes.atrativos.places_enrichment.write_audit") as audit, \
+         patch("brave.lanes.atrativos.places_enrichment.record_event") as event, \
+         patch("brave.lanes.atrativos.places_enrichment.route_by_score"):
+        await agent.run(rio)
+
+    ev = event.call_args.kwargs
+    assert ev["stage"] == "places_descarte"
+    assert ev["status"] == "fail"
+    assert ev["message"] == "Google Places marca como fechado permanentemente (Water Park Itumbiara)"
+    assert ev["data"]["business_status"] == "CLOSED_PERMANENTLY"
+    assert ev["data"]["place_id"] == "ChIJmatriz001"
+    assert ev["data"]["routing_before"] == "dlq"
+    assert audit.call_args.kwargs["before_state"] == {"routing": "dlq"}
+
+
+@pytest.mark.asyncio
+async def test_locate_only_accepts_a_confident_match_placed_in_the_uf() -> None:
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    in_uf = {**_search_result(name="Cachoeira do Macaquinho"), "municipio_ibge": "5200605"}
+    other_uf = {**_search_result(name="Cachoeira do Macaquinho"), "municipio_ibge": ""}
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Cachoeira do Macaquinho": [in_uf]}),
+        session=_make_session(),
+    )
+    assert (await agent.locate("Cachoeira do Macaquinho", "GO"))["municipio_ibge"] == "5200605"
+
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Cachoeira do Macaquinho": [other_uf]}),
+        session=_make_session(),
+    )
+    assert await agent.locate("Cachoeira do Macaquinho", "GO") is None
+
+
+@pytest.mark.asyncio
+async def test_locate_falls_back_to_the_municipio_every_in_uf_result_agrees_on() -> None:
+    """No name match, but all in-UF results cluster in one município → município only,
+    never a place_id (none of them is provably the atrativo). Disagreement → None."""
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    def res(name, ibge):
+        return {**_search_result(name=name), "municipio_ibge": ibge}
+
+    agree = [res("Mirante Jardim de Maytrea", "5200605"), res("Rio Preto", ""),
+             res("Gota Sat Som", "5200605")]
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Jardim de Maytreia": agree}),
+        session=_make_session(),
+    )
+    assert await agent.locate("Jardim de Maytreia", "GO") == {
+        "municipio_ibge": "5200605",
+        "consensus": True,
+    }
+
+    split = [res("Cachoeira do Macacão", "5200605"), res("Cachoeira dos Macacos", "5220207")]
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Cachoeira do Vale do Rio Macaco": split}),
+        session=_make_session(),
+    )
+    assert await agent.locate("Cachoeira do Vale do Rio Macaco", "GO") is None
+
+
+@pytest.mark.asyncio
+async def test_coordless_record_never_matches_a_place_outside_its_uf() -> None:
+    """Without coords there is no distance guard: a same-name church in another state
+    (municipio_ibge "" — the client resolves it within the UF only) must not match."""
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    elsewhere = {**_search_result(), "municipio_ibge": ""}
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [elsewhere]},
+        fixture_details={"ChIJmatriz001": _details()},
+    )
+    rio = _make_rio()
+    rio.normalized = {k: v for k, v in rio.normalized.items() if k not in ("lat", "lon")}
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    await _run(agent, rio)
+
+    assert fake.place_details_calls == []
+    assert "google_place_id" not in rio.normalized
+
+
+@pytest.mark.asyncio
+async def test_coordless_record_matches_only_near_its_municipio_seat() -> None:
+    """No coords: the município seat stands in for them, with a wider radius — a same-name
+    place 190 km away in the same UF is rejected, one near the seat is accepted."""
+    from brave.core.models import Municipio
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    seat = Municipio(ibge_code="5212501", nome="Luziânia", uf="GO", lat=-16.2525, lng=-47.95)
+    far = {**_search_result(lat=-14.4497, lng=-46.9469), "municipio_ibge": "5208152"}
+    near = {**_search_result(lat=-16.30, lng=-47.90, place_id="ChIJnear"), "municipio_ibge": "5212501"}
+
+    for results, expected in (([far], []), ([far, near], ["ChIJnear"])):
+        fake = FakePlacesClient(
+            fixture_results={"Igreja Matriz": results},
+            fixture_details={"ChIJnear": _details()},
+        )
+        session = _make_session()
+        session.get.return_value = seat
+        rio = _make_rio(extra_normalized={"municipio_id": "5212501"})
+        rio.normalized = {k: v for k, v in rio.normalized.items() if k not in ("lat", "lon")}
+        await _run(PlacesEnrichmentAgent(places_client=fake, session=session, now=_NOW), rio)
+        assert fake.place_details_calls == expected
+
+
+@pytest.mark.asyncio
+async def test_temporarily_closed_is_enriched_but_parked_in_dlq() -> None:
+    """CLOSED_TEMPORARILY: no descarte — hours/coords are kept, the record goes to the DLQ
+    with dlq_reason "closed_temporarily" even when the re-score would promote it."""
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": _details(business_status="CLOSED_TEMPORARILY")},
+    )
+    rio = _make_rio()
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+
+    def promote(_session, r, _config):
+        r.routing = "mar"
+
+    with patch("brave.lanes.atrativos.places_enrichment.write_audit"), \
+         patch("brave.lanes.atrativos.places_enrichment.record_event") as event, \
+         patch("brave.lanes.atrativos.places_enrichment.route_by_score", side_effect=promote):
+        await agent.run(rio)
+
+    assert rio.routing == "dlq"
+    assert rio.dlq_reason == "closed_temporarily"
+    assert rio.normalized["weekday_text"]  # enriched, not discarded
+    assert rio.normalized["signal"]["business_status"] == "CLOSED_TEMPORARILY"
+    ev = event.call_args.kwargs
+    assert ev["stage"] == "places_enriched"
+    assert ev["data"]["business_status"] == "CLOSED_TEMPORARILY"
+    assert "fechado temporariamente" in ev["message"]

@@ -26,9 +26,12 @@ push_mar provenance flattening (D-15, D-16):
 """
 
 import asyncio
+import contextlib
+import hashlib
+import json
 import os
 import uuid
-from typing import Any
+from typing import Any, NamedTuple
 
 import structlog
 from celery import shared_task
@@ -263,17 +266,38 @@ def _log_conversation_messages(
 # ---------------------------------------------------------------------------
 
 
+_ENGINES: dict[str, tuple[Any, Any]] = {}  # db_url -> (engine, sessionmaker)
+
+
 def _get_session() -> tuple[Session, Any]:
     """Create a synchronous SQLAlchemy session from environment config.
 
-    Returns (session, engine) pair; caller must close both.
+    The engine + sessionmaker are a per-process singleton keyed by db_url, built on the
+    FIRST call inside a task — i.e. after the prefork worker forked, never at import, so
+    no pooled connection is shared across processes. Returns (session, engine); the
+    caller closes the session (returning the connection to the pool) and must NOT
+    dispose the shared engine.
     """
     db_url = os.environ.get("BRAVE_DB_URL")
     if not db_url:
         raise PermanentError("BRAVE_DB_URL not set — cannot create DB session")
-    engine = create_engine(db_url, echo=False)
-    SessionFactory = sessionmaker(bind=engine)
-    return SessionFactory(), engine
+    if db_url not in _ENGINES:
+        engine = create_engine(db_url, echo=False, pool_pre_ping=True)
+        _ENGINES[db_url] = (engine, sessionmaker(bind=engine))
+    engine, factory = _ENGINES[db_url]
+    return factory(), engine
+
+
+def _load_config(session: Session) -> AppConfig:
+    """Effective config for a task, served from the Redis snapshot when present.
+
+    The snapshot is busted by every config_settings writer (config router, engine mode);
+    a Redis outage degrades to the plain DB read inside load_effective_config.
+    """
+    import redis as _redis_lib  # noqa: PLC0415
+
+    rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+    return load_effective_config(session, rc)
 
 
 def _cascade_search_client(app_config: AppConfig, effective: AppConfig, redis_client: Any) -> Any:
@@ -308,6 +332,19 @@ def _cascade_search_client(app_config: AppConfig, effective: AppConfig, redis_cl
     )
 
 
+async def _with_http_clients(coro: Any, *clients: Any) -> Any:
+    """Await ``coro`` with each client's persistent HTTP connection held open.
+
+    One connection per client for the whole sweep instead of a TLS/proxy handshake
+    per request; closed when the sweep ends. Null clients have nothing to hold.
+    """
+    async with contextlib.AsyncExitStack() as stack:
+        for client in clients:
+            if hasattr(client, "__aenter__"):
+                await stack.enter_async_context(client)
+        return await coro
+
+
 # ---------------------------------------------------------------------------
 # Poison quarantine helper (re-exported from brave.core.quarantine — D-18)
 # ---------------------------------------------------------------------------
@@ -316,7 +353,7 @@ def _cascade_search_client(app_config: AppConfig, effective: AppConfig, redis_cl
 # (e.g. producers under brave/lanes/) can import it from core
 # without depending on the tasks layer.  This re-export keeps existing callers
 # working without any change.
-from datetime import UTC
+from datetime import UTC, datetime
 
 from brave.core.quarantine import quarantine_poison  # noqa: F401 (re-export)
 
@@ -350,7 +387,7 @@ def process_nascente(self, nascente_id: str) -> None:
     session, engine = _get_session()
     try:
         nascente_uuid = uuid.UUID(nascente_id)
-        config = load_effective_config(session).score
+        config = _load_config(session).score
 
         nascente = get_nascente(session, nascente_uuid)
         if nascente is None:
@@ -381,7 +418,6 @@ def process_nascente(self, nascente_id: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -401,11 +437,9 @@ def process_nascente(self, nascente_id: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 def _http_error_body(exc: BaseException) -> str | None:
@@ -437,6 +471,27 @@ def _build_push_payload(mar_record: Any, rio_record: RioRecord) -> dict[str, Any
     from brave.core.mar.service import build_push_payload
 
     return build_push_payload(mar_record, rio_record)
+
+
+def _push_hash(payload: dict[str, Any]) -> str:
+    """sha256 of the push payload — identity of what norteia-api last accepted."""
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+
+def _mark_pushed(session: Session, mar: Any, api_client: Any, digest: str) -> None:
+    """Stamp the Mar row after a 2xx so an identical re-push skips the POST.
+
+    Only for the real client: the Null client sends nothing, and stamping there
+    would make the first real push (externals turned on later) a silent no-op.
+    ponytail: no force flag — to re-push an unchanged record (e.g. norteia-api lost
+    it), ``UPDATE mar_records SET push_hash = NULL``; add a flag if stewards need it.
+    """
+    if isinstance(api_client, NorteiaApiClient):
+        mar.push_hash = digest
+        mar.pushed_at = datetime.now(UTC)
+        session.commit()
 
 
 @shared_task(
@@ -506,6 +561,9 @@ def push_mar(self, rio_id: str) -> None:
 
         # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
         payload = _build_push_payload(mar, rio)
+        digest = _push_hash(payload)
+        if mar.push_hash == digest:
+            return  # norteia-api already holds this exact payload — skip the POST
 
         # Step 4: Push to norteia-api
         async def _push() -> dict[str, Any]:
@@ -523,6 +581,7 @@ def push_mar(self, rio_id: str) -> None:
                     return await api_client.push_attraction(payload)
 
         asyncio.run(_push())
+        _mark_pushed(session, mar, api_client, digest)
 
     except PermanentError as exc:
         session.rollback()
@@ -544,7 +603,6 @@ def push_mar(self, rio_id: str) -> None:
 
     finally:
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -564,7 +622,7 @@ def reprocess_record_task(self, rio_id: str) -> None:
     """
     session, engine = _get_session()
     try:
-        config = load_effective_config(session).score
+        config = _load_config(session).score
         reprocess_record(session, uuid.UUID(rio_id), config)
         session.commit()
     except Exception as exc:
@@ -580,7 +638,6 @@ def reprocess_record_task(self, rio_id: str) -> None:
             )
     finally:
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -653,6 +710,9 @@ def push_destination_task(self, rio_id: str) -> None:
 
         # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
         payload = _build_push_payload(mar, rio)
+        digest = _push_hash(payload)
+        if mar.push_hash == digest:
+            return  # norteia-api already holds this exact payload — skip the POST
 
         # Step 4: Push to norteia-api — always push_destination (D-09)
         async def _push() -> dict[str, Any]:
@@ -663,6 +723,7 @@ def push_destination_task(self, rio_id: str) -> None:
                 return await api_client.push_destination(payload)
 
         asyncio.run(_push())
+        _mark_pushed(session, mar, api_client, digest)
 
     except PermanentError as exc:
         session.rollback()
@@ -686,7 +747,6 @@ def push_destination_task(self, rio_id: str) -> None:
 
     finally:
         session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -733,7 +793,7 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
     session, engine = _get_session()
     try:
         app_config = AppConfig()
-        config = load_effective_config(session).score
+        config = _load_config(session).score
 
         # Select Places client based on run_real_externals flag
         if app_config.run_real_externals:
@@ -825,7 +885,6 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -844,7 +903,6 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         # Producer-completes lifecycle: dispatched by engine_sweep_run
@@ -852,7 +910,6 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
         # run. Best-effort, never breaks the task (single outermost finally).
         _producer_finally_lifecycle()
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -933,7 +990,8 @@ def sweep_tripadvisor(
     # (T-15-07-04). Only the bulk_national branch assigns rc.
     rc = None
     try:
-        config = load_effective_config(session).score
+        effective = _load_config(session)
+        config = effective.score
         app_config = AppConfig()
 
         # T1 (pfr-01): ta_config must be defined before the branch so it is always
@@ -1018,12 +1076,16 @@ def sweep_tripadvisor(
                 geocoder=geocoder,
             )
             asyncio.run(
-                bulk_ingest.produce_paginated(
-                    geo_id,
-                    _effective_start_page,
-                    max_pages or 334,
-                    rc,
-                    run_rio=run_rio,
+                _with_http_clients(
+                    bulk_ingest.produce_paginated(
+                        geo_id,
+                        _effective_start_page,
+                        max_pages or 334,
+                        rc,
+                        run_rio=run_rio,
+                    ),
+                    ta_client,
+                    geocoder,
                 )
             )
             sweep_progress.mark_done(rc)
@@ -1081,10 +1143,10 @@ def sweep_tripadvisor(
         # behind run_real_externals + the operator flags; the Null clients keep the TA floor + advance the record offline
         # (ZERO external spend). Replaces the old post-produce enrich_description/_places
         # dispatch, which the 600s time_limit could kill before it ran.
-        effective = load_effective_config(session)
         # Build resiliently: a client-construction failure (e.g. a missing key) disables
         # inline enrichment for this sweep and logs — it must never crash the ingest.
         places_agent = None
+        _distritos: list = []
         try:
             from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
             from brave.shared.ibge_distritos import load_distritos
@@ -1136,6 +1198,7 @@ def sweep_tripadvisor(
             geocoder=geocoder,
             ta_config=ta_config,
             places_agent=places_agent,
+            distritos=_distritos,
         )
         # Per-UF path enriches review recency (fetch_recent_review per card) so
         # atualidade lifts the reliability score. The bulk_national branch above leaves
@@ -1148,12 +1211,16 @@ def sweep_tripadvisor(
             os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         )
         ingested_rio_ids = _asyncio.run(
-            atrativos_ingest.produce(
-                uf,
-                run_rio=run_rio,
-                enrich_reviews=True,
-                redis=_prod_rc,
-                max_per_uf=max_per_uf,
+            _with_http_clients(
+                atrativos_ingest.produce(
+                    uf,
+                    run_rio=run_rio,
+                    enrich_reviews=True,
+                    redis=_prod_rc,
+                    max_per_uf=max_per_uf,
+                ),
+                ta_client,
+                geocoder,
             )
         )
 
@@ -1210,7 +1277,6 @@ def sweep_tripadvisor(
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -1229,7 +1295,6 @@ def sweep_tripadvisor(
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         # Producer-completes lifecycle: the per-UF TA producer is dispatched by
@@ -1240,7 +1305,6 @@ def sweep_tripadvisor(
         # completed the run (idempotent: the GETSET claim makes this a no-op).
         _producer_finally_lifecycle()
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -1319,7 +1383,6 @@ def find_contacts_task(self, rio_id: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -1338,11 +1401,9 @@ def find_contacts_task(self, rio_id: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -1378,7 +1439,7 @@ def gather_signals_task(self, rio_id: str) -> None:
             raise PermanentError(f"RioRecord {rio_id} not found")
 
         app_config = AppConfig()
-        config = load_effective_config(session).score
+        config = _load_config(session).score
 
         if app_config.run_real_externals:
             places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
@@ -1423,7 +1484,6 @@ def gather_signals_task(self, rio_id: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -1442,11 +1502,9 @@ def gather_signals_task(self, rio_id: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 def _description_on(app_config: AppConfig, effective: AppConfig) -> bool:
@@ -1463,18 +1521,53 @@ def _description_on(app_config: AppConfig, effective: AppConfig) -> bool:
     )
 
 
-def _enrich_one(session: Session, rio: RioRecord) -> None:
-    """Run PlacesEnrichmentAgent on one RioRecord (no commit — the caller owns it).
+class _EnrichCtx(NamedTuple):
+    """The per-record-invariant inputs of _enrich_one, built once per chunk/task."""
 
-    The body of enrich_places_task, shared with brave.describe_uf so the per-UF
-    description producer walks exactly the same client selection + agent path.
+    app_config: AppConfig
+    effective: AppConfig
+    distritos: Any
+    ibge_lookup: Any  # None unless the real Places client is on
+    redis: Any  # None unless the inline copywriter is on
+
+
+def _enrich_ctx(session: Session, redis_client: Any = None) -> _EnrichCtx:
+    """Load config + the IBGE reference tables (~16k rows) once, not once per atrativo.
+
+    Only DB/Redis-backed state lives here. The async HTTP clients are built per
+    asyncio.run (_enrich_agent): a pooled connection must not outlive its loop.
     """
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
     from brave.shared.ibge_distritos import load_distritos
 
-    rio_id = str(rio.id)
     app_config = AppConfig()
-    effective = load_effective_config(session)
+    effective = _load_config(session)
+    ibge_lookup = None
+    if app_config.run_real_externals and effective.places_enrichment_enabled:
+        from brave.clients.places import load_municipio_name_ibge_lookup
+        ibge_lookup = load_municipio_name_ibge_lookup(session)
+    if redis_client is None and _description_on(app_config, effective):
+        import redis as _copy_redis_lib  # noqa: PLC0415
+
+        redis_client = _copy_redis_lib.from_url(
+            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        )
+    return _EnrichCtx(app_config, effective, load_distritos(session), ibge_lookup, redis_client)
+
+
+def _enrich_agent(
+    session: Session, ctx: _EnrichCtx, rio_id: str | None = None, llm_session: Any = None
+) -> tuple[Any, Any]:
+    """Build (PlacesEnrichmentAgent, its Parallel search client or None).
+
+    The client selection of enrich_places_task, shared with brave.describe_uf so the
+    per-UF description producer walks exactly the same path. ``llm_session`` is where the
+    copywriter writes its llm_generations rows (default: ``session``); describe_uf passes
+    a _RowBuffer so its gathered coroutines never touch the Session. The async clients
+    are bound to the event loop that first uses them: one agent per asyncio.run.
+    """
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    app_config, effective = ctx.app_config, ctx.effective
     config = effective.score
 
     # Real Places client requires BOTH run_real_externals AND the operator-toggleable
@@ -1483,13 +1576,10 @@ def _enrich_one(session: Session, rio: RioRecord) -> None:
     # — a real local sweep runs with ZERO Google Places spend on enrichment.
     if app_config.run_real_externals and effective.places_enrichment_enabled:
         places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
-        from brave.clients.places import (
-            RealPlacesClient,
-            load_municipio_name_ibge_lookup,
-        )
+        from brave.clients.places import RealPlacesClient
         places_client = RealPlacesClient(
             api_key=places_api_key,
-            ibge_lookup=load_municipio_name_ibge_lookup(session),
+            ibge_lookup=ctx.ibge_lookup,
         )
     else:
         if app_config.run_real_externals and not effective.places_enrichment_enabled:
@@ -1502,16 +1592,12 @@ def _enrich_one(session: Session, rio: RioRecord) -> None:
     # Batch mode moves the description off this path to submit/collect_description_batch.
     _desc_on = _description_on(app_config, effective)
     if _desc_on:
-        import redis as _copy_redis_lib  # noqa: PLC0415
-
         from brave.clients.llm import RealLLMClient
-        copy_redis = _copy_redis_lib.from_url(
-            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-        )
+        copy_redis = ctx.redis
         copy_llm = RealLLMClient(
             config=app_config.llm,
             redis_client=copy_redis,
-            session=session,
+            session=session if llm_session is None else llm_session,
             lane="atrativo_copywriter",
         )
         copy_search = _cascade_search_client(app_config, effective, copy_redis)
@@ -1525,7 +1611,7 @@ def _enrich_one(session: Session, rio: RioRecord) -> None:
         session=session,
         config=config,
         llm_client=copy_llm,
-        distritos=load_distritos(session),
+        distritos=ctx.distritos,
         voice_model_slug=app_config.atrativo_voice_model_slug,
         description_enabled=_desc_on,
         enable_web_search=app_config.run_real_externals,
@@ -1533,7 +1619,14 @@ def _enrich_one(session: Session, rio: RioRecord) -> None:
         search_client=copy_search,
         cascade_model=app_config.atrativo_cascade_model,
     )
+    return agent, copy_search
 
+
+def _enrich_one(session: Session, rio: RioRecord, ctx: _EnrichCtx | None = None) -> None:
+    """Run PlacesEnrichmentAgent on one RioRecord (no commit — the caller owns it)."""
+    if ctx is None:
+        ctx = _enrich_ctx(session)
+    agent, _search = _enrich_agent(session, ctx, str(rio.id))
     asyncio.run(agent.run(rio))
 
 
@@ -1589,7 +1682,6 @@ def enrich_places_task(self, rio_id: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -1608,16 +1700,110 @@ def enrich_places_task(self, rio_id: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 # Records per describe_uf run. Each one can take up to enrich_places' 300s budget, so a
 # chunk fits the hour time_limit; a full chunk self-chains the next one by id cursor.
 _DESCRIBE_CHUNK = 25
+# Copywriter calls (search + LLM) in flight at once inside one chunk. Network I/O only:
+# every Session access stays serial, outside the gathered coroutines.
+_DESCRIBE_CONCURRENCY = 5
+
+
+class _RowBuffer:
+    """Session stand-in for the gathered copywriter calls: holds their llm_generations
+    rows until the serial write phase adds them to the real Session."""
+
+    def __init__(self) -> None:
+        self.rows: list[Any] = []
+
+    def add(self, row: Any) -> None:
+        self.rows.append(row)
+
+    def flush(self) -> None:
+        pass
+
+
+async def _describe_chunk(
+    session: Session,
+    agent: Any,
+    search: Any,
+    rows: _RowBuffer,
+    jobs: list[tuple[uuid.UUID, tuple[str, str, str]]],
+    stop: Any,
+    uf: str,
+) -> bool:
+    """One describe_uf chunk in ONE event loop. True when the soft time limit cut it short.
+
+    Phase 1 gathers the copywriter I/O, _DESCRIBE_CONCURRENCY at a time, and never touches
+    the Session. ``stop(rio_id)`` (engine halt + cost guard) runs per record, right before
+    its I/O. Phase 2 hands each result to agent.run and commits, one record at a time — a
+    failure on either side rolls back that record only.
+    """
+    from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
+
+    sem = asyncio.Semaphore(_DESCRIBE_CONCURRENCY)
+    fetched: dict[uuid.UUID, Any] = {}
+
+    async def _fetch(rio_id: uuid.UUID, args: tuple[str, str, str]) -> None:
+        async with sem:
+            if stop(rio_id):
+                return
+            try:
+                # details={}: every record here is google_enriched (no Places context).
+                fetched[rio_id] = await agent.write_description(*args, {})
+            except SoftTimeLimitExceeded:
+                raise
+            except Exception as exc:  # noqa: BLE001 — kept per record, raised in phase 2
+                fetched[rio_id] = exc
+
+    cut = False
+    try:
+        try:
+            # _fetch keeps every per-record failure in ``fetched``; only the soft time limit
+            # escapes, and the results already in ``fetched`` are still written below.
+            await asyncio.gather(*(_fetch(rio_id, args) for rio_id, args in jobs))
+        except SoftTimeLimitExceeded:
+            cut = True
+            logger.warning("describe_uf_soft_time_limit", uf=uf, fetched=len(fetched))
+
+        for rio_id, _args in jobs:
+            result = fetched.get(rio_id)
+            if result is None:  # stopped or cut before its I/O finished
+                continue
+            try:
+                if isinstance(result, Exception):
+                    raise result
+                rio = session.get(RioRecord, rio_id)  # fresh: a batch may have claimed it
+                if rio is not None:
+                    await agent.run(rio, description=result)
+                session.commit()
+            except SoftTimeLimitExceeded:
+                # ~60s before the hard kill, which would skip the finally and leak the
+                # inflight token: drop this record and hand the rest of the UF on.
+                session.rollback()
+                cut = True
+                logger.warning("describe_uf_soft_time_limit", uf=uf, rio_id=str(rio_id))
+                break
+            except Exception:  # noqa: BLE001 — one bad record must not abort the chunk
+                session.rollback()
+                logger.warning("describe_uf_record_failed", uf=uf, rio_id=str(rio_id), exc_info=True)
+
+        # The spend happened whatever became of each record, so these rows go in their own
+        # commit instead of riding (and rolling back with) a record's transaction.
+        try:
+            session.add_all(rows.rows)
+            session.commit()
+        except Exception:  # noqa: BLE001
+            session.rollback()
+            logger.warning("describe_uf_llm_generations_failed", uf=uf, exc_info=True)
+    finally:
+        if search is not None:
+            await search.aclose()
+    return cut
 
 
 @shared_task(
@@ -1631,7 +1817,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
     """Write descricao_editorial for one UF's atrativos (engine action "describe").
 
     The TA sweep never writes descriptions; this producer backfills them afterwards,
-    per UF, through the SAME path as enrich_places_task (_enrich_one). Only google_enriched
+    per UF, through the SAME agent as enrich_places_task (_enrich_agent). Only google_enriched
     records are selected, so the agent skips the paid Places sub-step and only runs the
     copywriter. Selection shares copy_batch's eligibility predicate (no FOR UPDATE — the
     agent's own descricao_batch_id guard covers a batch that claims the row meanwhile).
@@ -1643,6 +1829,9 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
     _producer_finally_lifecycle exactly once. The cursor always advances, so a record whose
     description keeps failing cannot loop the chain. A per-record failure is logged and
     rolled back — it never aborts the chunk.
+
+    The chunk runs in one event loop (_describe_chunk): copywriter I/O concurrent, bounded
+    by _DESCRIBE_CONCURRENCY; Session reads before it and writes after it, serial.
     """
     import redis as _redis_lib  # noqa: PLC0415
     from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
@@ -1659,7 +1848,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
     chained = False
     try:
         app_config = AppConfig()
-        effective = load_effective_config(session)
+        effective = _load_config(session)
         if not _description_on(app_config, effective):
             logger.warning("describe_uf_description_disabled", uf=uf)
             return
@@ -1683,14 +1872,16 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
         if after_id:
             stmt = stmt.where(RioRecord.id > uuid.UUID(after_id))
         ids = list(session.scalars(stmt.order_by(RioRecord.id).limit(limit)).all())
-
         halted = cut = False
-        n = 0  # ids consumed — the cursor resumes after ids[n - 1]
-        for rio_id in ids:
+
+        def _stop(rio_id: uuid.UUID) -> bool:
+            nonlocal halted
+            if halted:
+                return True
             if collection_engine.should_halt_producer(rc):
                 halted = True
                 logger.info("describe_uf_halted", uf=uf, at_rio_id=str(rio_id))
-                break
+                return True
             try:
                 pre_dispatch_check(rc, app_config.llm)
             except CostGuardError:
@@ -1699,31 +1890,53 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
                 # nothing. The budget resets at midnight; the chain ends here.
                 halted = True
                 logger.warning("describe_uf_cost_guard", uf=uf, at_rio_id=str(rio_id))
-                break
-            n += 1
-            try:
-                rio = session.get(RioRecord, rio_id)
-                if rio is not None:
-                    _enrich_one(session, rio)
-                session.commit()
-            except SoftTimeLimitExceeded:
-                # ~60s before the hard kill, which would skip the finally and leak the
-                # inflight token: drop this record and hand the rest of the UF on.
-                session.rollback()
-                cut = True
-                logger.warning("describe_uf_soft_time_limit", uf=uf, rio_id=str(rio_id))
-                break
-            except Exception:  # noqa: BLE001 — one bad record must not abort the chunk
-                session.rollback()
-                logger.warning("describe_uf_record_failed", uf=uf, rio_id=str(rio_id), exc_info=True)
+            return halted
 
-        remaining = None if max_n is None else max_n - n
+        if ids:
+            rows = _RowBuffer()
+            agent, search = _enrich_agent(session, _enrich_ctx(session, rc), llm_session=rows)
+            # Everything a coroutine needs is read here, as plain values, before the gather.
+            jobs = []
+            for rio_id in ids:
+                rio = session.get(RioRecord, rio_id)
+                if rio is not None and agent.wants_description(rio):
+                    norm = rio.normalized or {}
+                    jobs.append((
+                        rio_id,
+                        (norm.get("name") or "", norm.get("municipio") or "", rio.uf or norm.get("uf") or ""),
+                    ))
+            # End the read transaction: no connection sits idle-in-transaction through the
+            # gather, and phase 2's session.get reloads every record (expired), not a copy
+            # as old as the gather.
+            session.rollback()
+            try:
+                cut = asyncio.run(_describe_chunk(session, agent, search, rows, jobs, _stop, uf))
+            except SoftTimeLimitExceeded:
+                # The signal handler raises wherever the main thread is — almost always the
+                # idle event loop (select), not a coroutine — so it escapes asyncio.run past
+                # every handler in _describe_chunk. Still hand the UF on, and keep the spend
+                # rows of the calls that finished. Their prose is lost (no attempt burned).
+                cut = True
+                logger.warning("describe_uf_soft_time_limit", uf=uf, in_event_loop=True)
+                try:
+                    session.rollback()
+                    session.add_all(rows.rows)
+                    session.commit()
+                except Exception:  # noqa: BLE001
+                    session.rollback()
+                    logger.warning("describe_uf_llm_generations_failed", uf=uf, exc_info=True)
+
+        # ponytail: the cursor moves past the whole chunk even when cut — records the soft
+        # limit dropped burn no attempt and the next describe run picks them up. Resume from
+        # the first unfetched id if the limit ever trips in practice (25 records, 5 at a
+        # time, is minutes against a 59-minute limit).
+        remaining = None if max_n is None else max_n - len(ids)
         if (
             not halted
             and (cut or len(ids) == _DESCRIBE_CHUNK)
             and (remaining is None or remaining > 0)
         ):
-            describe_uf.delay(uf, remaining, after_id=str(ids[n - 1]))
+            describe_uf.delay(uf, remaining, after_id=str(ids[-1]))
             chained = True
     finally:
         # Only the terminal run of the chain decrements: a self-chained successor carries
@@ -1731,7 +1944,6 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
         if not chained:
             _producer_finally_lifecycle()
         session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -1777,7 +1989,7 @@ def submit_description_batch_task(self) -> None:
     session, engine = _get_session()
     try:
         app_config = AppConfig()
-        effective = load_effective_config(session)
+        effective = _load_config(session)
         if not (
             app_config.run_real_externals
             and effective.description_enrichment_enabled
@@ -1797,7 +2009,6 @@ def submit_description_batch_task(self) -> None:
         logger.warning("copy_batch_submit_failed", error=str(exc))
     finally:
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -1834,7 +2045,7 @@ def collect_description_batches_task(self) -> None:
         if not app_config.run_real_externals:
             reap_stale_claims(session, None)
             return
-        effective = load_effective_config(session)
+        effective = _load_config(session)
         client, redis_client = _batch_deps(app_config)
         collect_batches(
             session,
@@ -1848,7 +2059,6 @@ def collect_description_batches_task(self) -> None:
         logger.warning("copy_batch_collect_failed", error=str(exc))
     finally:
         session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -1938,6 +2148,9 @@ def push_attraction_task(self, rio_id: str) -> None:
 
         # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
         payload = _build_push_payload(mar, rio)
+        digest = _push_hash(payload)
+        if mar.push_hash == digest:
+            return  # norteia-api already holds this exact payload — skip the POST
 
         # Step 4: Push to norteia-api — always push_attraction (D-10)
         async def _push() -> dict[str, Any]:
@@ -1948,6 +2161,7 @@ def push_attraction_task(self, rio_id: str) -> None:
                 return await api_client.push_attraction(payload)
 
         asyncio.run(_push())
+        _mark_pushed(session, mar, api_client, digest)
 
     except PermanentError as exc:
         session.rollback()
@@ -1971,7 +2185,6 @@ def push_attraction_task(self, rio_id: str) -> None:
 
     finally:
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -2027,7 +2240,7 @@ def outreach_task(self, rio_id: str) -> None:
             return  # Already advanced past this step — idempotent no-op
 
         app_config = AppConfig()
-        config = load_effective_config(session).score
+        config = _load_config(session).score
 
         # Select WhatsApp client (production: Twilio or Null; never Fake, T-03-04-07)
         if app_config.run_real_externals:
@@ -2145,7 +2358,6 @@ def outreach_task(self, rio_id: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -2164,11 +2376,9 @@ def outreach_task(self, rio_id: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -2220,7 +2430,7 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
             return  # Conversation already completed or never started — no-op
 
         app_config = AppConfig()
-        config = load_effective_config(session).score
+        config = _load_config(session).score
 
         # Select WhatsApp client (production: Twilio or Null; never Fake, T-03-04-07)
         if app_config.run_real_externals:
@@ -2315,7 +2525,6 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -2334,11 +2543,9 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -2499,7 +2706,6 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -2518,11 +2724,9 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -2716,7 +2920,6 @@ def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> Non
                 session.commit()
         finally:
             session.close()
-            db_engine.dispose()
     except Exception as exc:  # best-effort — never abort the sweep
         logger.warning(
             "engine_run_history_finalize_failed", run_id=run_id, error=str(exc)
@@ -2946,5 +3149,4 @@ def prune_record_events_task(self, retention_days: int = 90) -> int:
         return 0
     finally:
         session.close()
-        engine.dispose()
 

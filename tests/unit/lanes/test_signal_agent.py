@@ -69,7 +69,7 @@ def _make_mock_session() -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Hard Descarte (CLOSED_PERMANENTLY / CLOSED_TEMPORARILY)
+# Tests: Hard Descarte (CLOSED_PERMANENTLY) / DLQ (CLOSED_TEMPORARILY)
 # ---------------------------------------------------------------------------
 
 
@@ -112,11 +112,9 @@ async def test_signal_agent_hard_descarte_closed_permanently() -> None:
 
 
 @pytest.mark.asyncio
-async def test_signal_agent_hard_descarte_closed_temporarily() -> None:
-    """CLOSED_TEMPORARILY triggers hard descarte before scoring.
-
-    Same assertions as CLOSED_PERMANENTLY.
-    """
+async def test_signal_agent_closed_temporarily_parks_in_dlq() -> None:
+    """CLOSED_TEMPORARILY is a steward's call, not a descarte (2026-09-18): DLQ with
+    dlq_reason "closed_temporarily" — the Painel badges it "Fechado Temporariamente"."""
     from brave.lanes.atrativos.signal_agent import SignalAgent
 
     closed_tmp_fixture = {
@@ -142,9 +140,9 @@ async def test_signal_agent_hard_descarte_closed_temporarily() -> None:
     with patch("brave.lanes.atrativos.signal_agent.write_audit"):
         await agent.run(rio)
 
-    assert rio.routing == "descarte"
+    assert rio.routing == "dlq"
     assert rio.sub_state is None
-    assert rio.dlq_reason == "closed_place"
+    assert rio.dlq_reason == "closed_temporarily"
 
 
 # ---------------------------------------------------------------------------

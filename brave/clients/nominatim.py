@@ -22,6 +22,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -128,6 +130,25 @@ class NominatimGeocoderClient:
         self._min_interval: float = config.min_request_interval
         self._last_request_ts: float = 0.0
         self._cache_ttl: int = config.cache_ttl
+        self._hc: httpx.AsyncClient | None = None
+
+    async def __aenter__(self) -> NominatimGeocoderClient:
+        self._hc = httpx.AsyncClient(timeout=self._config.timeout_seconds)
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        hc, self._hc = self._hc, None
+        if hc is not None:
+            await hc.aclose()
+
+    @asynccontextmanager
+    async def _http(self) -> AsyncIterator[httpx.AsyncClient]:
+        """Shared client inside ``async with self`` (one sweep), else a one-shot client."""
+        if self._hc is not None:
+            yield self._hc
+            return
+        async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as hc:
+            yield hc
 
     @retry(
         # Analog: brave/clients/places.py lines 223-228
@@ -184,7 +205,7 @@ class NominatimGeocoderClient:
         }
         headers = {"User-Agent": self._config.user_agent}
 
-        async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as hc:
+        async with self._http() as hc:
             resp = await hc.get(
                 self._config.base_url, params=params, headers=headers
             )
@@ -287,7 +308,7 @@ class NominatimGeocoderClient:
         }
         headers = {"User-Agent": self._config.user_agent}
 
-        async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as hc:
+        async with self._http() as hc:
             resp = await hc.get(
                 self._config.base_url, params=params, headers=headers
             )

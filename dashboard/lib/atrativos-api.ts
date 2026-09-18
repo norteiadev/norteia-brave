@@ -52,6 +52,12 @@ export interface AtrativoListItem {
    * lane writes it. OPTIONAL: absent ⇒ no pill.
    */
   description_pending?: boolean;
+  /**
+   * Google Places says the place is closed for now (CLOSED_TEMPORARILY). The record is
+   * parked in the DLQ instead of discarded; drives the "Fechado Temporariamente" pill.
+   * OPTIONAL: absent ⇒ no pill.
+   */
+  temporarily_closed?: boolean;
 }
 
 /** A single audit log row from the AuditLog table. */

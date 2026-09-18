@@ -58,6 +58,9 @@ const STAGE_LABELS: Record<string, string> = {
   scored: "Pontuado (confiabilidade)",
   routed: "Roteado",
   description_enriched: "Descrição editorial gerada",
+  places_enriched: "Enriquecido (Google Places)",
+  places_descarte: "Descartado pelo Google Places",
+  places_match_reverted: "Match do Google Places desfeito",
   quarantined: "Quarentena (falha)",
 };
 
@@ -350,6 +353,25 @@ export function PainelDrawer({ card, onClose }: PainelDrawerProps) {
               >
                 {descricaoEditorial ?? "—"}
               </Field>
+            ) : null}
+
+            {card?.temporarilyClosed ? (
+              <div
+                data-testid="drawer-temporarily-closed-warning"
+                className="flex gap-2.5 rounded-[9px] p-3"
+                style={{
+                  background: "color-mix(in oklch, var(--status-descarte) 10%, white)",
+                  border:
+                    "1px solid color-mix(in oklch, var(--status-descarte) 30%, white)",
+                }}
+              >
+                <span className="font-bold text-[var(--status-descarte)]">⏸</span>
+                <p className="m-0 text-[11.5px] leading-[1.45] text-[var(--painel-navy)]">
+                  <strong>Fechado Temporariamente</strong> segundo o Google Places.
+                  O registro fica no DLQ até um revisor decidir se promove ou
+                  descarta.
+                </p>
+              </div>
             ) : null}
 
             {card?.duplicate ? (

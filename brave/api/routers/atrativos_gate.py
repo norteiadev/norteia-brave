@@ -50,7 +50,7 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from redis import Redis
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from brave.api.deps import (
     get_config,
@@ -214,7 +214,10 @@ def list_whatsapp_gate_queue(
     )
     if uf:
         query = query.where(RioRecord.uf == uf)
-    query = query.limit(limit)
+    # The gate list never reads the 1536-float vector or the score breakdown.
+    query = query.options(
+        defer(RioRecord.embedding), defer(RioRecord.score_breakdown)
+    ).limit(limit)
 
     rows = list(db.scalars(query).all())
     return [

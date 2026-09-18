@@ -1,16 +1,18 @@
 """Unit tests: brave.describe_uf — the per-UF description producer (engine action "describe").
 
 The TA sweep never writes descriptions; describe_uf backfills them per UF through the
-same _enrich_one path as enrich_places_task, 25 ids per run on an id keyset cursor,
-self-chaining while the chunk comes back full. Only the terminal run of a chain
-decrements the engine inflight counter.
+same agent as enrich_places_task, 25 ids per run on an id keyset cursor, self-chaining
+while the chunk comes back full. Only the terminal run of a chain decrements the engine
+inflight counter. Inside a chunk the copywriter I/O is gathered (_DESCRIBE_CONCURRENCY at
+a time) and the Session writes stay serial.
 
-100% offline: fakeredis, a MagicMock DB session, _enrich_one and the self-chain .delay
+100% offline: fakeredis, a MagicMock DB session, a fake agent and the self-chain .delay
 replaced by spies. No DB, no external API.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from unittest.mock import MagicMock
 
@@ -20,7 +22,7 @@ from sqlalchemy.dialects import postgresql
 
 from brave.config.settings import LLMConfig
 from brave.core import engine as collection_engine
-from brave.observability.cost_guard import _daily_key
+from brave.observability.cost_guard import _daily_key, record_spend
 from brave.tasks import pipeline
 
 _ON = MagicMock(
@@ -40,13 +42,44 @@ def harness(monkeypatch):
     monkeypatch.setattr("redis.from_url", lambda *_a, **_k: fake)
 
     session = MagicMock()
-    session.get.side_effect = lambda model, rio_id: MagicMock(id=rio_id)
+    session.get.side_effect = lambda model, rio_id: MagicMock(
+        id=rio_id, uf="SP", normalized={"name": str(rio_id)}
+    )
     monkeypatch.setattr(pipeline, "_get_session", lambda: (session, MagicMock()))
     monkeypatch.setattr(pipeline, "AppConfig", lambda: _ON)
     monkeypatch.setattr(pipeline, "load_effective_config", lambda s, r=None: _ON)
 
     enriched: list = []
-    monkeypatch.setattr(pipeline, "_enrich_one", lambda s, rio: enriched.append(rio.id))
+    ctx_builds = MagicMock(side_effect=lambda s, r=None: object())
+    monkeypatch.setattr(pipeline, "_enrich_ctx", ctx_builds)
+
+    class Agent:
+        """Stands in for PlacesEnrichmentAgent: I/O half + write half, both spied."""
+
+        inflight = peak = 0
+        on_fetch = on_write = staticmethod(lambda rio_id: None)
+
+        def wants_description(self, rio):
+            return True
+
+        async def write_description(self, nome, municipio, uf, details):
+            self.inflight += 1
+            self.peak = max(self.peak, self.inflight)
+            try:
+                self.on_fetch(uuid.UUID(nome))
+                await asyncio.sleep(0)
+            finally:
+                self.inflight -= 1
+            return ("prosa", None, False)
+
+        async def run(self, rio, description=None):
+            assert description == ("prosa", None, False)
+            self.on_write(rio.id)
+            enriched.append(rio.id)
+
+    agent = Agent()
+    agent_builds = MagicMock(side_effect=lambda *a, **k: (agent, None))
+    monkeypatch.setattr(pipeline, "_enrich_agent", agent_builds)
     lifecycle = MagicMock()
     monkeypatch.setattr(pipeline, "_producer_finally_lifecycle", lifecycle)
 
@@ -58,6 +91,7 @@ def harness(monkeypatch):
         pass
 
     h = H()
+    h.agent, h.agent_builds, h.ctx_builds = agent, agent_builds, ctx_builds
     h.redis, h.session, h.enriched, h.lifecycle, h.chain, h.run = (
         fake, session, enriched, lifecycle, chain, run
     )
@@ -74,6 +108,34 @@ def harness(monkeypatch):
 def _stmt(h):
     stmt = h.session.scalars.call_args.args[0]
     return stmt, stmt.compile(dialect=postgresql.dialect())
+
+
+def test_ctx_and_agent_built_once_per_chunk(harness):
+    """Reference tables, config and clients are built once for the chunk, not per atrativo."""
+    ids = harness.ids(3)
+    harness.run("ES")
+    assert harness.ctx_builds.call_count == 1
+    assert harness.agent_builds.call_count == 1
+    assert harness.enriched == ids
+
+
+def test_io_is_concurrent_but_bounded(harness):
+    ids = harness.ids(pipeline._DESCRIBE_CHUNK)
+    harness.run("SP")
+    assert harness.agent.peak == pipeline._DESCRIBE_CONCURRENCY
+    assert harness.enriched == ids  # written serially, in id order
+
+
+def test_cost_guard_tripped_mid_chunk_stops_launching_io(harness):
+    """Spend recorded by the records in flight trips the guard for the ones still queued:
+    the check runs per record right before its I/O, not once per chunk."""
+    ids = harness.ids(pipeline._DESCRIBE_CHUNK)
+    harness.agent.on_fetch = lambda rio_id: record_spend(harness.redis, 4.0)
+    harness.run("SP")
+
+    assert harness.enriched == ids[:3]  # 4 + 4 + 4 >= 10: the 4th is never launched
+    harness.chain.delay.assert_not_called()
+    harness.lifecycle.assert_called_once()
 
 
 def test_selects_by_uf_with_cursor_and_chunk_limit(harness):
@@ -145,18 +207,17 @@ def test_halt_stops_before_next_record_and_is_terminal(harness, monkeypatch):
 
 def test_record_failure_is_logged_and_the_chunk_continues(harness, monkeypatch):
     ids = harness.ids(3)
-    done: list = []
 
-    def flaky(session, rio):
-        if rio.id == ids[0]:
+    def flaky(rio_id):
+        if rio_id == ids[0]:
             raise RuntimeError("copywriter blew up")
-        done.append(rio.id)
 
-    monkeypatch.setattr(pipeline, "_enrich_one", flaky)
+    harness.agent.on_fetch = flaky
     harness.run("SP")
 
-    assert done == ids[1:]
-    harness.session.rollback.assert_called_once()
+    assert harness.enriched == ids[1:]
+    # one to end the read transaction before the gather, one for the failed record
+    assert harness.session.rollback.call_count == 2
     harness.lifecycle.assert_called_once()
 
 
@@ -166,18 +227,62 @@ def test_soft_time_limit_hands_the_rest_of_the_uf_on(harness, monkeypatch):
     from celery.exceptions import SoftTimeLimitExceeded
 
     ids = harness.ids(pipeline._DESCRIBE_CHUNK)
-    done: list = []
 
-    def slow(session, rio):
-        if rio.id == ids[2]:
+    def slow(rio_id):
+        if rio_id == ids[2]:
             raise SoftTimeLimitExceeded()
-        done.append(rio.id)
 
-    monkeypatch.setattr(pipeline, "_enrich_one", slow)
+    harness.agent.on_write = slow
     harness.run("SP", max_n=60)
 
-    assert done == ids[:2]
-    harness.chain.delay.assert_called_once_with("SP", 57, after_id=str(ids[2]))
+    assert harness.enriched == ids[:2]
+    # the cursor moves past the whole chunk: the dropped records burn no attempt and the
+    # next describe run selects them again
+    harness.chain.delay.assert_called_once_with("SP", 35, after_id=str(ids[-1]))
+    harness.lifecycle.assert_not_called()
+
+
+def test_soft_time_limit_during_io_still_chains(harness):
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    ids = harness.ids(pipeline._DESCRIBE_CHUNK)
+
+    def slow(rio_id):
+        if rio_id == ids[2]:
+            raise SoftTimeLimitExceeded()
+
+    harness.agent.on_fetch = slow
+    harness.run("SP")
+
+    harness.chain.delay.assert_called_once_with("SP", None, after_id=str(ids[-1]))
+    harness.lifecycle.assert_not_called()
+
+
+def test_soft_time_limit_in_the_idle_event_loop_still_chains(harness, monkeypatch):
+    """Celery raises the soft limit from a signal handler: with the loop idle in select()
+    it surfaces in asyncio.run, past every handler inside _describe_chunk."""
+    import signal
+
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    ids = harness.ids(pipeline._DESCRIBE_CHUNK)
+
+    async def hang(nome, municipio, uf, details):
+        await asyncio.sleep(30)
+
+    def _raise(*_a):
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(harness.agent, "write_description", hang)
+    old = signal.signal(signal.SIGALRM, _raise)
+    signal.setitimer(signal.ITIMER_REAL, 0.2)
+    try:
+        harness.run("SP")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+
+    harness.chain.delay.assert_called_once_with("SP", None, after_id=str(ids[-1]))
     harness.lifecycle.assert_not_called()
 
 

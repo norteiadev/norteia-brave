@@ -23,7 +23,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 from sqlalchemy.orm.attributes import flag_modified
 
 from brave.api.deps import (
@@ -40,6 +40,10 @@ from brave.core.models import (
     RecordEvent,
     RioRecord,
     mask_phone,
+)
+from brave.lanes.atrativos.signal_agent import (
+    TEMPORARILY_CLOSED,
+    TEMPORARILY_CLOSED_REASON,
 )
 from brave.observability.audit import write_audit
 
@@ -115,6 +119,19 @@ _ROUTING_TO_COLUMN: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _temporarily_closed(rio: RioRecord) -> bool:
+    """Google Places says the atrativo is closed for now → "Fechado Temporariamente" badge.
+
+    Either signal counts: the DLQ reason both lanes set, or the business_status the TA
+    enrichment keeps in normalized["signal"] — which survives a steward moving the record
+    on, so the badge keeps warning after it leaves the DLQ.
+    """
+    if rio.dlq_reason == TEMPORARILY_CLOSED_REASON:
+        return True
+    signal = (rio.normalized or {}).get("signal") or {}
+    return signal.get("business_status") == TEMPORARILY_CLOSED
 
 
 def _safe_contacts(contacts: dict | None) -> dict | None:
@@ -270,7 +287,13 @@ def list_destinos(
 
     # Count total before paging (dashboard.py pattern)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = db.execute(stmt.offset(offset).limit(limit)).all()
+    # List rows never read the 1536-float vector, the breakdown or Mar provenance.
+    page = stmt.options(
+        defer(RioRecord.embedding),
+        defer(RioRecord.score_breakdown),
+        defer(MarRecord.provenance),
+    )
+    rows = db.execute(page.offset(offset).limit(limit)).all()
 
     items = [
         {
@@ -783,7 +806,9 @@ def list_atrativos(
         stmt = stmt.where(RioRecord.routing == routing)
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = list(db.scalars(stmt.offset(offset).limit(limit)).all())
+    # List rows never read the 1536-float vector or the score breakdown.
+    page = stmt.options(defer(RioRecord.embedding), defer(RioRecord.score_breakdown))
+    rows = list(db.scalars(page.offset(offset).limit(limit)).all())
 
     # Phase F/H: WhatsApp eligibility (no horário AND no preço) — lets the Kanban
     # disable the manual DLQ→WhatsApp move for ineligible cards. Server-side batch
@@ -808,6 +833,7 @@ def list_atrativos(
             ),
             "validation_pending": rio.sub_state == "aguardando_consulta_whatsapp",
             "whatsapp_eligible": _is_whatsapp_eligible(rio.normalized),
+            "temporarily_closed": _temporarily_closed(rio),
             # Kanban "Sem descrição" badge — derived, so it clears the moment the
             # description lane writes descricao_editorial (no extra column to sync).
             "description_pending": (
@@ -885,6 +911,7 @@ def get_atrativo_detail(
         "normalized": _safe_normalized(rio.normalized),
         "source": nascente.source if nascente else None,
         "dlq_reason": rio.dlq_reason,
+        "temporarily_closed": _temporarily_closed(rio),
         "processed_at": rio.processed_at.isoformat() if rio.processed_at else None,
         "score_version": rio.score_version,
         "events": _record_events_for(db, rio.canonical_key),

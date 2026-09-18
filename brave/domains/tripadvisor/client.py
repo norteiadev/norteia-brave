@@ -35,6 +35,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
@@ -148,6 +149,43 @@ class TripAdvisorClient:
     def __init__(self, config: TripAdvisorConfig, redis: Any) -> None:
         self._config = config
         self._redis = redis
+        self._hc: httpx.AsyncClient | None = None
+
+    # ------------------------------------------------------------------
+    # Persistent HTTP client (opt-in: ``async with ta_client:`` around a sweep)
+    # ------------------------------------------------------------------
+
+    async def __aenter__(self) -> TripAdvisorClient:
+        self._hc = httpx.AsyncClient(
+            follow_redirects=True, proxy=self._config.proxy_url or None
+        )
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        hc, self._hc = self._hc, None
+        if hc is not None:
+            await hc.aclose()
+
+    @asynccontextmanager
+    async def _http(
+        self, cookies: dict[str, str], proxy: str | None
+    ) -> AsyncIterator[httpx.AsyncClient]:
+        """Yield the HTTP client for one request.
+
+        Inside ``async with self`` the shared client is reused (one TLS/proxy
+        connection for the whole sweep). Its jar is reset to exactly ``cookies``
+        before each request, so what goes on the wire matches a fresh
+        ``AsyncClient(cookies=cookies)``. Outside it, a one-shot client as before.
+        """
+        if self._hc is None:
+            async with httpx.AsyncClient(
+                cookies=cookies, follow_redirects=True, proxy=proxy
+            ) as hc:
+                yield hc
+            return
+        self._hc.cookies.clear()
+        self._hc.cookies.update(cookies)
+        yield self._hc
 
     # ------------------------------------------------------------------
     # Session management
@@ -416,9 +454,7 @@ class TripAdvisorClient:
                     "extensions": {"preRegisteredQueryId": query_id},
                 }
             ]
-            async with httpx.AsyncClient(
-                cookies=cookies, follow_redirects=True, proxy=proxy
-            ) as hc:
+            async with self._http(cookies, proxy) as hc:
                 resp = await hc.post(
                     _TA_GRAPHQL_URL,
                     json=payload,
@@ -571,9 +607,7 @@ class TripAdvisorClient:
         max_retries = self._config.attractions_transient_max_retries
         for attempt in range(max_retries + 1):
             payload = _build_payload()  # regenerate pageview_uid per attempt
-            async with httpx.AsyncClient(
-                cookies=cookies, follow_redirects=True, proxy=proxy
-            ) as hc:
+            async with self._http(cookies, proxy) as hc:
                 resp = await hc.post(
                     _TA_GRAPHQL_URL,
                     json=payload,
@@ -663,7 +697,7 @@ class TripAdvisorClient:
                 "extensions": {"preRegisteredQueryId": "444040f131735091"},
             }
         ]
-        async with httpx.AsyncClient(cookies=cookies, follow_redirects=True, proxy=proxy) as hc:
+        async with self._http(cookies, proxy) as hc:
             resp = await hc.post(_TA_GRAPHQL_URL, json=payload, headers=headers)
         if resp.status_code in (403, 429):
             raise SessionExpiredError(
@@ -722,7 +756,7 @@ class TripAdvisorClient:
                 "extensions": {"preRegisteredQueryId": "d3d4987463b78a39"},
             }
         ]
-        async with httpx.AsyncClient(cookies=cookies, follow_redirects=True, proxy=proxy) as hc:
+        async with self._http(cookies, proxy) as hc:
             resp = await hc.post(_TA_GRAPHQL_URL, json=payload, headers=headers)
         if resp.status_code in (403, 429):
             raise SessionExpiredError(
@@ -835,9 +869,7 @@ class TripAdvisorClient:
                 break  # defensive — clamp already guarantees this
             url = _TA_HTML_URL.format(geo_id=geo_id, offset=offset)
 
-            async with httpx.AsyncClient(
-                cookies=cookies, follow_redirects=True, proxy=proxy
-            ) as hc:
+            async with self._http(cookies, proxy) as hc:
                 resp = await hc.get(url, headers=headers)
 
             if resp.status_code in (403, 429):
@@ -987,9 +1019,7 @@ class TripAdvisorClient:
                 break  # defensive — clamp already guarantees this
 
             payload = _build_payload(offset)
-            async with httpx.AsyncClient(
-                cookies=cookies, follow_redirects=True, proxy=proxy
-            ) as hc:
+            async with self._http(cookies, proxy) as hc:
                 resp = await hc.post(_TA_GRAPHQL_URL, json=payload, headers=headers)
 
             if resp.status_code in (403, 429):
@@ -1087,9 +1117,7 @@ class TripAdvisorClient:
                 "extensions": {"preRegisteredQueryId": _REVIEWS_QID},
             }
         ]
-        async with httpx.AsyncClient(
-            cookies=cookies, follow_redirects=True, proxy=proxy
-        ) as hc:
+        async with self._http(cookies, proxy) as hc:
             resp = await hc.post(_TA_GRAPHQL_URL, json=payload, headers=headers)
 
         if resp.status_code in (403, 429):

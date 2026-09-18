@@ -32,8 +32,8 @@ from typing import Any, Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import Session, defer
 
 from brave.api.deps import get_db, require_bearer, require_steward_or_bearer
 from brave.core.models import MarRecord, RioRecord
@@ -165,25 +165,41 @@ def _token_similarity(
     return round(len(a & b) / len(union), 4)
 
 
-def _find_active_mar_for(db: Session, candidate: RioRecord) -> MarRecord | None:
-    """Return the ACTIVE Mar row on the candidate's territorial key, or None.
+def _active_mar_by_key(
+    db: Session, candidates: list[RioRecord]
+) -> dict[tuple[str, str | None, str], MarRecord]:
+    """Map each candidate territorial key → ONE ACTIVE Mar row on it.
 
     Territorial-key block (CR-02): join MarRecord → its rio → match
-    uf + municipio_id + entity_type against the candidate. NEVER widen across UF.
+    uf + municipio_id + entity_type against the candidates. NEVER widen across UF.
     Active-only via superseded_by_id IS NULL (models.py:191).
+
+    One DISTINCT ON query for the whole page (was one query per candidate, up to 500).
     """
-    stmt = (
-        select(MarRecord)
-        .join(RioRecord, MarRecord.rio_id == RioRecord.id)
-        .where(
-            RioRecord.uf == candidate.uf,
-            RioRecord.municipio_id == candidate.municipio_id,
-            RioRecord.entity_type == candidate.entity_type,
-            MarRecord.superseded_by_id.is_(None),
+    keys = {(c.uf, c.municipio_id, c.entity_type) for c in candidates}
+    if not keys:
+        return {}
+    key_cols = (RioRecord.uf, RioRecord.municipio_id, RioRecord.entity_type)
+    # Not tuple_(...).in_(keys): a NULL municipio_id never matches inside IN, while the
+    # per-candidate query this replaced (== None → IS NULL) did pair NULL-municipio rows.
+    key_match = or_(
+        *(
+            and_(
+                RioRecord.uf == uf,
+                RioRecord.municipio_id.is_not_distinct_from(mun),
+                RioRecord.entity_type == et,
+            )
+            for uf, mun, et in keys
         )
-        .limit(1)
     )
-    return db.scalars(stmt).first()
+    stmt = (
+        select(MarRecord, *key_cols)
+        .join(RioRecord, MarRecord.rio_id == RioRecord.id)
+        .where(key_match, MarRecord.superseded_by_id.is_(None))
+        .distinct(*key_cols)
+        .order_by(*key_cols, MarRecord.id)
+    )
+    return {(uf, mun, et): mar for mar, uf, mun, et in db.execute(stmt).all()}
 
 
 # ---------------------------------------------------------------------------
@@ -212,11 +228,14 @@ def list_dedup_pairs(
         stmt = stmt.where(RioRecord.uf == uf)
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    candidates = list(db.scalars(stmt.offset(offset).limit(limit)).all())
+    # The pairing reads only normalized — skip the 1536-float vector + breakdown.
+    page = stmt.options(defer(RioRecord.embedding), defer(RioRecord.score_breakdown))
+    candidates = list(db.scalars(page.offset(offset).limit(limit)).all())
 
+    mar_by_key = _active_mar_by_key(db, candidates)
     items: list[DedupPairItem] = []
     for cand in candidates:
-        mar = _find_active_mar_for(db, cand)
+        mar = mar_by_key.get((cand.uf, cand.municipio_id, cand.entity_type))
         if mar is None:
             continue
         normalized = cand.normalized or {}

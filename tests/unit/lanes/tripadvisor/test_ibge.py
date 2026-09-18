@@ -290,3 +290,61 @@ def test_resolve_municipio_default_max_distance_km_is_15() -> None:
         f"got {default!r}. Changing this default would break Phase-11/13 destinos "
         f"behavior. Pass max_distance_km=50.0 explicitly at the geo-enrichment call site."
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-UF bucket cache — must be invisible (same result as the uncached path)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_uncached(name, uf, records, *, lat=None, lng=None, max_distance_km=15.0):
+    """The pre-cache resolve_municipio body, kept here as the reference."""
+    from rapidfuzz import fuzz, process
+    from rapidfuzz import utils as rfuzz_utils
+
+    from brave.domains.tripadvisor.ibge import _fold_accents, _nearest_within
+
+    if not isinstance(name, str) or not name.strip():
+        return None
+    uf_records = [r for r in records if r.uf == uf]
+    if not uf_records:
+        return None
+    result = process.extractOne(
+        _fold_accents(name),
+        [_fold_accents(r.nome) for r in uf_records],
+        scorer=fuzz.token_sort_ratio,
+        score_cutoff=88,
+        processor=rfuzz_utils.default_process,
+    )
+    if result is not None:
+        return uf_records[result[2]]
+    if lat is not None and lng is not None:
+        return _nearest_within(lat, lng, uf_records, max_distance_km)
+    return None
+
+
+def test_resolve_municipio_cached_matches_uncached() -> None:
+    """Cached buckets return the same record as re-filtering every call, across
+    repeated calls, UF switches, a second records list, and an in-place append."""
+    csv_path = Path(__file__).resolve().parents[4] / "data" / "ibge" / "ibge_municipios.csv"
+    full = load_ibge_csv(csv_path)
+    cases = [
+        ("Maringa", "PR", None, None),
+        ("Sao Paulo", "SP", None, None),
+        ("Cristo Redentor", "RJ", -22.9519, -43.2105),  # haversine fallback → nearest
+        ("Praia do Espelho", "BA", -16.75, -39.12),
+        ("Lugar Nenhum", "AC", None, None),
+        ("Salvador", "XX", None, None),  # unknown UF
+        (None, "SP", None, None),
+    ]
+    for records in (full, _make_records(), full):
+        for _ in range(2):
+            for name, uf, lat, lng in cases:
+                got = resolve_municipio(name, uf, records, candidate_lat=lat, candidate_lng=lng)
+                assert got is _resolve_uncached(name, uf, records, lat=lat, lng=lng), (name, uf)
+
+    # Appending to the SAME list invalidates the cache (len guard).
+    small = _make_records()
+    assert resolve_municipio("Campinas", "SP", small) is None
+    small.append(IbgeMunicipio("3509502", "Campinas", "SP", -22.9056, -47.0608))
+    assert resolve_municipio("Campinas", "SP", small) is small[-1]

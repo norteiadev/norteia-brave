@@ -2,7 +2,8 @@
 
 Verifies the helper mirrors ``write_audit``:
   - inserts one correctly-populated ``RecordEvent`` row on the caller's session
-    (session.add + session.flush, never a separate session), and
+    (session.add, never a separate session — and NO flush: the caller's next
+    flush/commit writes the card's events in one batch), and
   - emits a single ``record_event`` structlog entry carrying ONLY the
     public-geo/engineering correlation fields (stage/status/source_ref) — never
     the message, the ``data`` payload, or any PII.
@@ -26,8 +27,8 @@ from brave.observability.record_events import record_event
 class TestRecordEventRowWrite:
     """record_event inserts the row on the caller's session and returns it."""
 
-    def test_inserts_row_with_all_fields_and_flushes(self) -> None:
-        """The created RecordEvent carries every argument verbatim; add+flush called once."""
+    def test_inserts_row_with_all_fields_without_flushing(self) -> None:
+        """The created RecordEvent carries every argument verbatim; add once, never flush."""
         session = MagicMock()
         nascente_id = uuid.uuid4()
         rio_id = uuid.uuid4()
@@ -60,9 +61,9 @@ class TestRecordEventRowWrite:
         assert event.data == {"municipio": "Conceição do Mato Dentro", "version": 1}
         assert event.id is not None  # helper assigns a uuid PK
 
-        # Written to the caller's session (add), then flushed on that same session.
+        # Written to the caller's session (add); the flush is the caller's (one per card).
         session.add.assert_called_once_with(event)
-        session.flush.assert_called_once_with()
+        session.flush.assert_not_called()
 
     def test_optional_fields_default_to_none(self) -> None:
         """Omitted optional args land as None (row is still valid for a pre-DB stage)."""
