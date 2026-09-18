@@ -1323,3 +1323,37 @@ class TestAtrativosProduceReturnsRioIds:
             returned = await ingest.produce("MG", run_rio=False)
 
         assert returned == []
+
+
+# ---------------------------------------------------------------------------
+# Skip already-synced atrativos
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_produce_skips_already_synced_before_any_ta_call() -> None:
+    """A card already in Rio is skipped before fetch_recent_review, and does not eat the cap."""
+    from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+    known = _make_card(locationId=1)
+    new = _make_card(locationId=2)
+    fake_client = FakeTripAdvisorClient(gql_pages=[(0, [known, new])], geo_ids={"MG": _GEO_ID_MG})
+    mock_session = MagicMock()
+    mock_session.scalars.return_value = ["tripadvisor:attraction:1"]
+
+    with (
+        patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+        patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+    ):
+        ingest = TripAdvisorAtrativosIngest(
+            ta_client=fake_client,
+            session=mock_session,
+            config=_make_config(),
+            ibge_records=_IBGE_RECORDS,
+            destino_rio_map=_DESTINO_RIO_MAP,
+        )
+        await ingest.produce("MG", run_rio=True, enrich_reviews=True, max_per_uf=1)
+
+    assert fake_client.recent_review_calls == [2]
+    assert mock_store_raw.call_count == 1
+    assert mock_store_raw.call_args.kwargs["source_ref"] == "tripadvisor:attraction:2"

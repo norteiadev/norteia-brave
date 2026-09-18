@@ -40,11 +40,12 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig, TripAdvisorConfig
 from brave.core import engine as collection_engine
-from brave.core.models import whatsapp_candidate_from_phone
+from brave.core.models import NascenteRecord, RioRecord, whatsapp_candidate_from_phone
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
 from brave.core.rio.routing import process_nascente_record
@@ -80,6 +81,11 @@ logger = structlog.get_logger(__name__)
 # Logging discipline (T-15-06-02 / T-12-04-01): the bulk methods log ONLY
 # offset / counts / locationId / error-class — never name, address, cookies,
 # user_agent, session_id, or proxy values.
+
+
+def _source_ref(entity: dict[str, Any]) -> str:
+    """Nascente source_ref / Rio canonical_key of a TA card (same key _ingest_one writes)."""
+    return f"tripadvisor:attraction:{entity.get('locationId', '')}"
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +193,7 @@ class TripAdvisorAtrativosIngest:
         # Operator test-run throttle: count attractions PROCESSED (success + poison)
         # and stop once the cap is hit. None = uncapped (full sweep).
         processed = 0
+        skipped = 0
         # Rio ids of atrativos ingested this sweep — returned for description enrichment.
         ingested_ids: list[str] = []
 
@@ -200,7 +207,14 @@ class TripAdvisorAtrativosIngest:
                 logger.info("ta_atrativos_producer_halt", uf=uf, offset=_offset)
                 break
             reached_cap = False
+            synced = self._already_synced(cards, run_rio=run_rio)
             for entity in cards:
+                # Already in Brave: the TA signals were consumed by the score on the first
+                # sync — skip before any per-card TA call. Not counted toward max_per_uf,
+                # so the cap measures NEW atrativos.
+                if _source_ref(entity) in synced:
+                    skipped += 1
+                    continue
                 # Snapshot the destino cache keys BEFORE the attempt so that, on the
                 # enrich path, a rollback can evict any destino cached by _ensure_destino
                 # during THIS (now discarded) iteration — otherwise the map would point
@@ -279,7 +293,21 @@ class TripAdvisorAtrativosIngest:
                 )
                 break
 
+        logger.info("ta_atrativos_producer_done", uf=uf, processed=processed, skipped=skipped)
         return ingested_ids
+
+    def _already_synced(self, cards: list[dict[str, Any]], *, run_rio: bool) -> set[str]:
+        """source_refs of this page's cards already in Brave — one query per page.
+
+        With run_rio the record must be in Rio (canonical_key == Nascente source_ref);
+        a Nascente-only record (earlier nascente-depth sweep) is re-ingested so it
+        reaches Rio. Quarantined cards never got a row, so they are retried.
+        """
+        refs = [_source_ref(c) for c in cards if c.get("locationId")]
+        if not refs:
+            return set()
+        col = RioRecord.canonical_key if run_rio else NascenteRecord.source_ref
+        return set(self._session.scalars(select(col).where(col.in_(refs))))
 
     def _ensure_destino(self, ibge_match: IbgeMunicipio) -> tuple[uuid.UUID, str]:
         """Create the parent destino for an IBGE município on demand (destino-first).
@@ -930,7 +958,10 @@ class TripAdvisorAtrativosIngest:
                 break
             ingested = 0
             errors = 0
+            synced = self._already_synced(cards, run_rio=run_rio)
             for card in cards:
+                if _source_ref(card) in synced:
+                    continue  # already in Brave — skip the geocode/ingest (see produce)
                 try:
                     wrote_row = await self._ingest_one_bulk(card, run_rio=run_rio)
                 except Exception as exc:  # noqa: BLE001

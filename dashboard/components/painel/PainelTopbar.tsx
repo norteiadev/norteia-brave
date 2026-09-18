@@ -149,20 +149,35 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   // operator picks one from the depth menu, which is threaded into startEngine.
   // source is already in scope from line below (data?.source ?? "tripadvisor")
   // and is passed so the selected origem lane actually reaches the sweep orchestrator.
+  // action "describe" (Gerar descrições) needs no depth/source — the backend
+  // runs the per-UF description lane instead of a sweep.
   const start = useMutation({
-    mutationFn: (vars: {
-      depth: EngineDepth;
-      ufs?: string[];
-      maxPerUf?: number;
-    }) =>
-      startEngine({
-        depth: vars.depth,
-        source,
-        ufs: vars.ufs,
-        max_atrativos_per_uf: vars.maxPerUf,
-      }),
+    mutationFn: (
+      vars:
+        | { action: "sweep"; depth: EngineDepth; ufs?: string[]; maxPerUf?: number }
+        | { action: "describe"; ufs?: string[]; maxPerUf?: number },
+    ) =>
+      startEngine(
+        vars.action === "describe"
+          ? {
+              action: "describe",
+              ufs: vars.ufs,
+              max_atrativos_per_uf: vars.maxPerUf,
+            }
+          : {
+              depth: vars.depth,
+              source,
+              ufs: vars.ufs,
+              max_atrativos_per_uf: vars.maxPerUf,
+            },
+      ),
     onError: (err) => toast.error(explainError(err)),
-    onSuccess: () => toast.success("Motor ligado — varredura iniciada"),
+    onSuccess: (_res, vars) =>
+      toast.success(
+        vars.action === "describe"
+          ? "Motor ligado — gerando descrições"
+          : "Motor ligado — varredura iniciada",
+      ),
     onSettled: invalidate,
   });
 
@@ -194,7 +209,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     data?.sync_phase ?? (motorOn ? "syncing" : "idle");
 
   // R2 client gate: when source is tripadvisor, require a valid session before
-  // enabling the depth menu. Reuses the sessionStatus query (present && expires_in > 0).
+  // enabling the Varredura depth buttons. Reuses the sessionStatus query (present && expires_in > 0).
   const taBlocked =
     source === "tripadvisor" &&
     (!sessionStatus?.present || (sessionStatus?.expires_in ?? 0) <= 0);
@@ -216,17 +231,19 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   }, [sessionStatus]);
 
   // Auto-off toast: when engine transitions from enabled→disabled mid-run
-  // (R1: session expired during sweep, engine latched off by the worker).
+  // (R1: session expired during sweep, engine latched off by the worker). Only
+  // when the session really is gone — a run that simply finished (e.g. Gerar
+  // descrições, which never uses the TA session) also flips enabled→false.
   const prevEnabledRef = useRef<boolean | undefined>(undefined);
   useEffect(() => {
     const enabled = data?.enabled;
-    if (prevEnabledRef.current === true && enabled === false) {
+    if (prevEnabledRef.current === true && enabled === false && taBlocked) {
       toast.warning(
         "Motor TripAdvisor desligado — sessão expirada. Injete um cURL para reiniciar.",
       );
     }
     prevEnabledRef.current = enabled;
-  }, [data?.enabled]);
+  }, [data?.enabled, taBlocked]);
 
   // Close the depth menu on any click outside its wrapper (Ligar included, so the
   // Ligar toggle keeps working) or on Escape. Mirrors PainelFilters' popover pattern.
@@ -261,12 +278,8 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
       setMode.mutate("LIGADO");
       return;
     }
-    // Cold start: R2 gate — block if source=tripadvisor and no valid session.
-    if (taBlocked) {
-      toast.error("Injete uma sessão TripAdvisor válida antes de ligar o motor.");
-      return;
-    }
-    // Engine is off — open the depth picker to start a sweep.
+    // Engine is off — open the start popover. The R2 TA-session gate (taBlocked)
+    // only disables the Varredura section; Descrição needs no TA session.
     setDepthMenuOpen((v) => !v);
   };
 
@@ -280,19 +293,26 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     setMode.mutate("DESLIGADO");
   };
 
+  // Shared popover scope: the picked UF (or omit ufs for Todo o Brasil) + the
+  // optional per-UF cap, forwarded only as a positive integer (empty / invalid ⇒
+  // no cap). Number("") is 0, so the >= 1 guard covers it.
+  const startScope = () => {
+    const parsedMax = Number(maxPerUf);
+    return {
+      ufs: startUf ? [startUf] : undefined,
+      maxPerUf:
+        Number.isInteger(parsedMax) && parsedMax >= 1 ? parsedMax : undefined,
+    };
+  };
+
   const onPickDepth = (depth: EngineDepth) => {
     setDepthMenuOpen(false);
-    // Bug 2: scope the sweep to the picked UF, or omit ufs for Todo o Brasil.
-    // Parse the optional per-UF cap: only forward a positive integer, else omit
-    // (empty / invalid ⇒ full sweep). Number("") is 0, so the >= 1 guard covers it.
-    const parsedMax = Number(maxPerUf);
-    const maxPerUfValue =
-      Number.isInteger(parsedMax) && parsedMax >= 1 ? parsedMax : undefined;
-    start.mutate({
-      depth,
-      ufs: startUf ? [startUf] : undefined,
-      maxPerUf: maxPerUfValue,
-    });
+    start.mutate({ action: "sweep", depth, ...startScope() });
+  };
+
+  const onDescribe = () => {
+    setDepthMenuOpen(false);
+    start.mutate({ action: "describe", ...startScope() });
   };
 
   return (
@@ -503,8 +523,9 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
               })}
             </div>
 
-            {/* Depth picker — a COLD Ligar (engine off) requires a depth (backend
-                422s without one). Only shown when the engine is off (motorOn=false). */}
+            {/* Start popover — a COLD Ligar (engine off). Shared UF + cap on top,
+                then Varredura (needs a depth; backend 422s without one) and Descrição
+                (action "describe"). Only shown when the engine is off (motorOn=false). */}
             {depthMenuOpen && !motorOn && (
               <div
                 role="menu"
@@ -547,21 +568,43 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
                   style={{ borderColor: "var(--painel-border-outer)" }}
                 />
                 <div className="px-[8px] py-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
-                  Profundidade da varredura
+                  Varredura
                 </div>
+                {/* R2 gate: the sweep needs a valid TA session; Descrição does not. */}
+                {taBlocked && (
+                  <div
+                    data-testid="painel-sweep-blocked"
+                    className="px-[8px] pb-[4px] text-[11px] text-[var(--painel-muted)]"
+                  >
+                    Injete uma sessão TripAdvisor válida para varrer.
+                  </div>
+                )}
                 {DEPTH_ORDER.map((depth) => (
                   <button
                     key={depth}
                     type="button"
                     role="menuitem"
                     data-testid={`painel-depth-${depth}`}
-                    disabled={pending}
+                    disabled={pending || taBlocked}
                     onClick={() => onPickDepth(depth)}
                     className="block w-full rounded-[7px] px-[8px] py-[7px] text-left text-[12.5px] font-medium text-[var(--painel-text)] hover:bg-[var(--painel-chip)] disabled:opacity-50"
                   >
                     {DEPTH_LABELS[depth]}
                   </button>
                 ))}
+                <div className="px-[8px] py-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
+                  Descrição
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="painel-describe"
+                  disabled={pending}
+                  onClick={onDescribe}
+                  className="block w-full rounded-[7px] px-[8px] py-[7px] text-left text-[12.5px] font-medium text-[var(--painel-text)] hover:bg-[var(--painel-chip)] disabled:opacity-50"
+                >
+                  Gerar descrições
+                </button>
               </div>
             )}
           </div>

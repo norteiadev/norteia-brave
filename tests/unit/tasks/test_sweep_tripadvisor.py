@@ -911,17 +911,17 @@ class TestSweepTripAdvisorInlineEnrichment:
 
 
 # ---------------------------------------------------------------------------
-# Cascade writer on Gemini direct: a missing key fails the BUILD, not every generate()
+# Hard split: the sweep never writes descriptions (brave.describe_uf owns them)
 # ---------------------------------------------------------------------------
 
 
-class TestSweepCascadeGeminiBuild:
-    """With the cascade on and a gemini-* writer, an empty BRAVE_LLM_GEMINI_API_KEY must stop
-    the inline agent from being built (inline_enrichment_build_failed). If it were built, every
-    generate() would fail as a plain copywriter failure and burn one descricao_attempt per
-    atrativo — no agent means no attempt is ever touched."""
+class TestSweepNeverDescribes:
+    """Even with every description flag ON (real externals, description on, batch off,
+    cascade on) the sweep builds its inline agent with description_enabled=False and a
+    Null LLM — no copywriter client, no cascade build, no spend. An empty Gemini key
+    therefore no longer matters to the sweep (the guard moved to _enrich_one)."""
 
-    def _run(self, monkeypatch, *, gemini_key: str, model: str = "gemini-2.5-flash"):
+    def _run(self, monkeypatch, *, gemini_key: str = "", model: str = "gemini-2.5-flash"):
         import contextlib
 
         from structlog.testing import capture_logs
@@ -992,24 +992,17 @@ class TestSweepCascadeGeminiBuild:
             sweep_tripadvisor.__wrapped__.__func__(mock_self, uf="ES", depth="nascente_rio")
         return captured, [e["event"] for e in logs]
 
-    def test_empty_gemini_key_disables_inline_enrichment(self, monkeypatch):
-        captured, events = self._run(monkeypatch, gemini_key="")
-        assert "places_agent" in captured, "the sweep must still reach the ingest"
-        assert captured["places_agent"] is None
-        assert "inline_enrichment_build_failed" in events
+    def test_sweep_never_builds_the_copywriter(self, monkeypatch):
+        from brave.clients.null_llm import NullLLMClient
 
-    def test_unpriced_gemini_model_disables_inline_enrichment(self, monkeypatch):
-        captured, events = self._run(monkeypatch, gemini_key="g", model="gemini-2.5-flsh")
-        assert captured["places_agent"] is None
-        assert "inline_enrichment_build_failed" in events
+        def _boom(*a, **kw):
+            raise AssertionError("the sweep must not build a real copywriter client")
 
-    def test_gemini_key_set_builds_the_cascade_writer(self, monkeypatch):
-        captured, events = self._run(monkeypatch, gemini_key="g")
+        monkeypatch.setattr("brave.clients.llm.RealLLMClient", _boom)
+        monkeypatch.setattr("brave.tasks.pipeline._cascade_search_client", _boom)
+
+        captured, events = self._run(monkeypatch)
         agent = captured["places_agent"]
         assert agent is not None and "inline_enrichment_build_failed" not in events
-        assert agent._copywriter.cascade and agent._copywriter._model == "gemini-2.5-flash"
-
-    def test_openrouter_rollback_needs_no_gemini_key(self, monkeypatch):
-        captured, _ = self._run(monkeypatch, gemini_key="", model="google/gemini-2.5-flash")
-        agent = captured["places_agent"]
-        assert agent is not None and agent._copywriter._model == "google/gemini-2.5-flash"
+        assert agent._description_enabled is False
+        assert isinstance(agent._llm_client, NullLLMClient)

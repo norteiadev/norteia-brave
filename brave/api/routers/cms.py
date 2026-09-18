@@ -808,6 +808,13 @@ def list_atrativos(
             ),
             "validation_pending": rio.sub_state == "aguardando_consulta_whatsapp",
             "whatsapp_eligible": _is_whatsapp_eligible(rio.normalized),
+            # Kanban "Sem descrição" badge — derived, so it clears the moment the
+            # description lane writes descricao_editorial (no extra column to sync).
+            "description_pending": (
+                rio.entity_type == "attraction"
+                and rio.routing != "descarte"
+                and not (rio.normalized or {}).get("descricao_editorial")
+            ),
             "mar_id": None,  # atrativos don't have direct mar_id in normalized
             # Público-geo município (nome) resolved at ingest — NOT PII (same class as uf).
             "municipio": (rio.normalized or {}).get("municipio"),

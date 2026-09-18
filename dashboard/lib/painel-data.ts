@@ -112,6 +112,8 @@ export interface PainelCard {
    * authoritative atomic gate). Non-atrativo cards leave this true (unused).
    */
   whatsappEligible?: boolean;
+  /** Atrativo still waiting for its descricao_editorial → "Sem descrição" pill. */
+  descriptionPending?: boolean;
 }
 
 // --- Constants ---
@@ -213,6 +215,7 @@ export function toPainelCards(
     // Phase H DLQ→WhatsApp gate: absent from the list ⇒ eligible (the batch 422
     // is authoritative); false ⇒ already has horário/preço → checkbox disabled.
     whatsappEligible: a.whatsapp_eligible ?? true,
+    descriptionPending: a.description_pending ?? false,
   }));
 
   const falhaCards = failures.map(failureToCard);

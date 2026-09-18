@@ -122,3 +122,19 @@ Ou seja: atualidade torna o score **mais fiel** (atrativo popular recém-avaliad
 3. Reusar cookie/proxy/UA + write-back + 403/429 do client atual. throttle entre calls.
 
 Arquivos do probe: `$CLAUDE_JOB_DIR/tmp/ta_poc_reviews2_*.json` (efêmeros; sem PII persistida além da resposta crua local).
+
+## Tamanho de página é fixo em 30 (probe 2026-09-18)
+
+Probe ao vivo (geoId 294280, `pagee="0"`, sessão real) tentando aumentar a página na qid `79aaeeb847e55e58`:
+
+| variante | resultado |
+|---|---|
+| baseline | 30 cards |
+| `request.routeParameters.limit = 100` | erro `Variable "$request" got invalid value.` — 0 cards |
+| `request.routeParameters.pageSize = 100` | mesmo erro — 0 cards |
+| `request.limit = 100` | mesmo erro — 0 cards |
+| `variables.limit = 100` (fora de `request`) | ignorado — 30 cards |
+
+O input `$request` tem schema fechado (qualquer campo extra invalida a query; o erro não lista os campos aceitos) e
+variáveis desconhecidas fora dele são descartadas. **30 por chamada é o máximo**; o único eixo de paginação é `pagee`.
+Filtro "todos os atrativos" no Brasil nesta data: `count = 10432` (continua paginável só até 10000).

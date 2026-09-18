@@ -39,6 +39,7 @@ export const sampleAtrativos: AtrativoListItem[] = [
     name: "Mercado Modelo",
     source: "tripadvisor",
     validation_pending: false,
+    description_pending: true,
     mar_id: null,
     parent_mar_id: "11111111-1111-1111-1111-111111111111",
     contacts_summary: {
@@ -56,6 +57,7 @@ export const sampleAtrativos: AtrativoListItem[] = [
     name: "Elevador Lacerda",
     source: "tripadvisor",
     validation_pending: true,
+    description_pending: false,
     mar_id: null,
     parent_mar_id: "11111111-1111-1111-1111-111111111111",
     contacts_summary: {

@@ -203,6 +203,30 @@ describe("toPainelCards", () => {
     expect(cards.find((c) => c.id === "a-absent")!.whatsappEligible).toBe(true);
   });
 
+  it("projects description_pending onto descriptionPending (absent ⇒ false)", () => {
+    const base: Omit<AtrativoListItem, "id" | "description_pending"> = {
+      entity_type: "attraction",
+      uf: "BA",
+      routing: "dlq",
+      sub_state: null,
+      score: 40,
+      name: "Atrativo DLQ",
+      source: "tripadvisor",
+      validation_pending: false,
+      mar_id: null,
+      parent_mar_id: null,
+      contacts_summary: null,
+    };
+    const cards = toPainelCards([], [
+      { ...base, id: "a-pend", description_pending: true },
+      { ...base, id: "a-done", description_pending: false },
+      { ...base, id: "a-absent" },
+    ]);
+    expect(cards.find((c) => c.id === "a-pend")!.descriptionPending).toBe(true);
+    expect(cards.find((c) => c.id === "a-done")!.descriptionPending).toBe(false);
+    expect(cards.find((c) => c.id === "a-absent")!.descriptionPending).toBe(false);
+  });
+
   it("projects FailureItem[] into real, draggable falha cards (column=falha, error=reason)", () => {
     const failures: FailureItem[] = [
       {

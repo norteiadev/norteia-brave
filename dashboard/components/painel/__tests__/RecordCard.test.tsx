@@ -85,6 +85,40 @@ describe("RecordCard", () => {
     expect(screen.getByText("Possível duplicado")).toBeInTheDocument();
   });
 
+  it("renders the 'Sem descrição' pill on an atrativo with descriptionPending", () => {
+    render(
+      <RecordCard
+        card={makeCard({ type: "atrativo", descriptionPending: true })}
+        onDragStart={noop}
+        onRetry={noop}
+      />,
+    );
+    expect(screen.getByText("Sem descrição")).toBeInTheDocument();
+  });
+
+  it("does NOT render 'Sem descrição' when descriptionPending is false/absent or on a destino", () => {
+    const { rerender } = render(
+      <RecordCard
+        card={makeCard({ type: "atrativo", descriptionPending: false })}
+        onDragStart={noop}
+        onRetry={noop}
+      />,
+    );
+    expect(screen.queryByText("Sem descrição")).not.toBeInTheDocument();
+    rerender(
+      <RecordCard card={makeCard({ type: "atrativo" })} onDragStart={noop} onRetry={noop} />,
+    );
+    expect(screen.queryByText("Sem descrição")).not.toBeInTheDocument();
+    rerender(
+      <RecordCard
+        card={makeCard({ type: "destino", descriptionPending: true })}
+        onDragStart={noop}
+        onRetry={noop}
+      />,
+    );
+    expect(screen.queryByText("Sem descrição")).not.toBeInTheDocument();
+  });
+
   it("does NOT render a '—' placeholder when source is null (L-2)", () => {
     render(
       <RecordCard

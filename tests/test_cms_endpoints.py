@@ -418,6 +418,24 @@ def test_list_atrativos_with_bearer(client, db_session: Session):
 
 
 @pytest.mark.integration
+def test_list_atrativos_description_pending(client, db_session: Session):
+    """description_pending: true without descricao_editorial, false once written or in descarte."""
+    pending = _make_atrativo(db_session, uf="AP")
+    described = _make_atrativo(
+        db_session, uf="AP", normalized={"name": "Forte", "descricao_editorial": "Texto."}
+    )
+    discarded = _make_atrativo(db_session, uf="AP", routing="descarte")
+    db_session.commit()
+
+    r = client.get("/api/v1/atrativos?uf=AP&limit=500", headers=BEARER_HEADERS)
+    assert r.status_code == 200, r.text
+    flags = {i["id"]: i["description_pending"] for i in r.json()["items"]}
+    assert flags[str(pending.id)] is True
+    assert flags[str(described.id)] is False
+    assert flags[str(discarded.id)] is False
+
+
+@pytest.mark.integration
 def test_list_atrativos_pii_masked(client, db_session: Session):
     """GET /api/v1/atrativos/{id} → phone_e164 NOT in response; phone_masked present (T-08-04)."""
     normalized = {
