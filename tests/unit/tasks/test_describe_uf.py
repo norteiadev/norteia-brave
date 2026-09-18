@@ -216,7 +216,8 @@ def test_record_failure_is_logged_and_the_chunk_continues(harness, monkeypatch):
     harness.run("SP")
 
     assert harness.enriched == ids[1:]
-    harness.session.rollback.assert_called_once()
+    # one to end the read transaction before the gather, one for the failed record
+    assert harness.session.rollback.call_count == 2
     harness.lifecycle.assert_called_once()
 
 
@@ -252,6 +253,34 @@ def test_soft_time_limit_during_io_still_chains(harness):
 
     harness.agent.on_fetch = slow
     harness.run("SP")
+
+    harness.chain.delay.assert_called_once_with("SP", None, after_id=str(ids[-1]))
+    harness.lifecycle.assert_not_called()
+
+
+def test_soft_time_limit_in_the_idle_event_loop_still_chains(harness, monkeypatch):
+    """Celery raises the soft limit from a signal handler: with the loop idle in select()
+    it surfaces in asyncio.run, past every handler inside _describe_chunk."""
+    import signal
+
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    ids = harness.ids(pipeline._DESCRIBE_CHUNK)
+
+    async def hang(nome, municipio, uf, details):
+        await asyncio.sleep(30)
+
+    def _raise(*_a):
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(harness.agent, "write_description", hang)
+    old = signal.signal(signal.SIGALRM, _raise)
+    signal.setitimer(signal.ITIMER_REAL, 0.2)
+    try:
+        harness.run("SP")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
 
     harness.chain.delay.assert_called_once_with("SP", None, after_id=str(ids[-1]))
     harness.lifecycle.assert_not_called()

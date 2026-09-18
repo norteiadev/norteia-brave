@@ -1801,6 +1801,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
     by _DESCRIBE_CONCURRENCY; Session reads before it and writes after it, serial.
     """
     import redis as _redis_lib  # noqa: PLC0415
+    from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
     from brave.core import engine as collection_engine
     from brave.lanes.atrativos.copy_batch import description_candidates_filter
@@ -1871,7 +1872,26 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
                         rio_id,
                         (norm.get("name") or "", norm.get("municipio") or "", rio.uf or norm.get("uf") or ""),
                     ))
-            cut = asyncio.run(_describe_chunk(session, agent, search, rows, jobs, _stop, uf))
+            # End the read transaction: no connection sits idle-in-transaction through the
+            # gather, and phase 2's session.get reloads every record (expired), not a copy
+            # as old as the gather.
+            session.rollback()
+            try:
+                cut = asyncio.run(_describe_chunk(session, agent, search, rows, jobs, _stop, uf))
+            except SoftTimeLimitExceeded:
+                # The signal handler raises wherever the main thread is — almost always the
+                # idle event loop (select), not a coroutine — so it escapes asyncio.run past
+                # every handler in _describe_chunk. Still hand the UF on, and keep the spend
+                # rows of the calls that finished. Their prose is lost (no attempt burned).
+                cut = True
+                logger.warning("describe_uf_soft_time_limit", uf=uf, in_event_loop=True)
+                try:
+                    session.rollback()
+                    session.add_all(rows.rows)
+                    session.commit()
+                except Exception:  # noqa: BLE001
+                    session.rollback()
+                    logger.warning("describe_uf_llm_generations_failed", uf=uf, exc_info=True)
 
         # ponytail: the cursor moves past the whole chunk even when cut — records the soft
         # limit dropped burn no attempt and the next describe run picks them up. Resume from
