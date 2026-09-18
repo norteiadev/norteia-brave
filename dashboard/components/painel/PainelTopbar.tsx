@@ -116,6 +116,13 @@ function sessionColor(s: TASessionStatus): string {
   return "var(--status-descarte)";
 }
 
+/** PT-BR pause-reason banner text (quick-260918-ohm) — reason + which provider tripped it. */
+function pauseReasonLabel(reason: { reason: string; provider: string | null }): string {
+  if (reason.reason === "daily_budget") return "Motor pausado: orçamento diário atingido";
+  if (reason.provider) return `Motor pausado: sem saldo (${reason.provider})`;
+  return "Motor pausado: sem saldo";
+}
+
 export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   const qc = useQueryClient();
   const [origemOpen, setOrigemOpen] = useState(false);
@@ -315,6 +322,20 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     start.mutate({ action: "describe", ...startScope() });
   };
 
+  // Continuar (quick-260918-ohm): resume the paused action after a manual confirm
+  // that the provider's balance/quota was recharged. Rebuilds the start body from
+  // the server-polled pause_reason.action — never trusts client-held depth state.
+  const pauseReason = data?.pause_reason ?? null;
+  const onContinuar = () => {
+    if (!pauseReason) return;
+    if (!window.confirm("Saldo recarregado?")) return;
+    if (pauseReason.action === "describe") {
+      start.mutate({ action: "describe" });
+    } else {
+      start.mutate({ action: "sweep", depth: data?.depth ?? "nascente_rio" });
+    }
+  };
+
   return (
     <div
       className="z-[5] flex h-[58px] flex-shrink-0 items-center justify-between gap-[16px] border-b bg-[var(--card)] px-[22px]"
@@ -330,6 +351,30 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
           {subtitle}
         </span>
       </div>
+
+      {/* Reasoned-pause banner (quick-260918-ohm) — provider balance wall / daily budget */}
+      {pauseReason && (
+        <div
+          data-testid="painel-pause-banner"
+          className="flex h-[34px] flex-shrink-0 items-center gap-[10px] rounded-[8px] border px-[12px] text-[12px] font-medium"
+          style={{
+            borderColor: "var(--status-dlq)",
+            background: "var(--status-dlq)",
+            color: "white",
+          }}
+        >
+          <span>{pauseReasonLabel(pauseReason)}</span>
+          <button
+            type="button"
+            data-testid="painel-pause-continuar"
+            disabled={start.isPending}
+            onClick={onContinuar}
+            className="rounded-[6px] bg-white/20 px-[8px] py-[3px] text-[11.5px] font-semibold hover:bg-white/30 disabled:opacity-60"
+          >
+            Continuar
+          </button>
+        </div>
+      )}
 
       {/* Right controls */}
       <div className="flex flex-shrink-0 items-center gap-[10px]">
