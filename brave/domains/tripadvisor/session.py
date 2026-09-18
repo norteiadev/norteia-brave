@@ -79,14 +79,20 @@ def persist_rotated_cookies(
             stored_cookies = {c["name"]: c["value"] for c in stored_cookies}
 
         # Step 4: merge — response wins on collision
+        before = json.dumps(session)
         session["cookies"] = {**stored_cookies, **response_cookies}
 
         # Step 5: re-derive session_id from TASID when present
         if "TASID" in response_cookies:
             session["session_id"] = response_cookies["TASID"]
 
-        # Step 6: write back with sliding TTL
-        redis.setex(BRAVE_TA_SESSION_KEY, ta_config.session_ttl, json.dumps(session))
+        # Step 6: write back with sliding TTL. Nothing rotated → skip the payload
+        # rewrite, but still slide the TTL (same value) so the window keeps resetting.
+        after = json.dumps(session)
+        if after == before:
+            redis.expire(BRAVE_TA_SESSION_KEY, ta_config.session_ttl)
+        else:
+            redis.setex(BRAVE_TA_SESSION_KEY, ta_config.session_ttl, after)
 
         # Step 7: log count only — T-p2v-01: never log cookie names or values
         logger.debug(

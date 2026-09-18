@@ -26,6 +26,7 @@ push_mar provenance flattening (D-15, D-16):
 """
 
 import asyncio
+import contextlib
 import os
 import uuid
 from typing import Any
@@ -327,6 +328,19 @@ def _cascade_search_client(app_config: AppConfig, effective: AppConfig, redis_cl
         redis_client=redis_client,
         llm_config=app_config.llm,
     )
+
+
+async def _with_http_clients(coro: Any, *clients: Any) -> Any:
+    """Await ``coro`` with each client's persistent HTTP connection held open.
+
+    One connection per client for the whole sweep instead of a TLS/proxy handshake
+    per request; closed when the sweep ends. Null clients have nothing to hold.
+    """
+    async with contextlib.AsyncExitStack() as stack:
+        for client in clients:
+            if hasattr(client, "__aenter__"):
+                await stack.enter_async_context(client)
+        return await coro
 
 
 # ---------------------------------------------------------------------------
@@ -1031,12 +1045,16 @@ def sweep_tripadvisor(
                 geocoder=geocoder,
             )
             asyncio.run(
-                bulk_ingest.produce_paginated(
-                    geo_id,
-                    _effective_start_page,
-                    max_pages or 334,
-                    rc,
-                    run_rio=run_rio,
+                _with_http_clients(
+                    bulk_ingest.produce_paginated(
+                        geo_id,
+                        _effective_start_page,
+                        max_pages or 334,
+                        rc,
+                        run_rio=run_rio,
+                    ),
+                    ta_client,
+                    geocoder,
                 )
             )
             sweep_progress.mark_done(rc)
@@ -1160,12 +1178,16 @@ def sweep_tripadvisor(
             os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         )
         ingested_rio_ids = _asyncio.run(
-            atrativos_ingest.produce(
-                uf,
-                run_rio=run_rio,
-                enrich_reviews=True,
-                redis=_prod_rc,
-                max_per_uf=max_per_uf,
+            _with_http_clients(
+                atrativos_ingest.produce(
+                    uf,
+                    run_rio=run_rio,
+                    enrich_reviews=True,
+                    redis=_prod_rc,
+                    max_per_uf=max_per_uf,
+                ),
+                ta_client,
+                geocoder,
             )
         )
 
