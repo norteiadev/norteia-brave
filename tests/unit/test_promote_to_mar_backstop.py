@@ -15,6 +15,8 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import brave.core.mar.service as ms
 from brave.core.mar.service import _attraction_review_recent, promote_to_mar
 
@@ -39,6 +41,25 @@ def test_review_exactly_90d_is_recent_inclusive() -> None:
 def test_review_over_90d_is_stale() -> None:
     norm = {"most_recent_review_at": (_NOW - timedelta(days=91)).isoformat()}
     assert _attraction_review_recent(norm, now=_NOW) is False
+
+
+@pytest.mark.parametrize(
+    ("review_count", "age_days", "expected"),
+    [
+        (20, 91, True),  # established: the one-year window applies
+        (20, 365, True),  # inclusive boundary
+        (20, 366, False),  # established but silent for over a year
+        (19, 91, False),  # not enough volume → plain 90-day rule
+        (None, 91, False),
+        ("muitas", 91, False),  # junk count never opens the window
+    ],
+)
+def test_established_attraction_gets_a_one_year_window(review_count, age_days, expected) -> None:
+    norm = {
+        "most_recent_review_at": (_NOW - timedelta(days=age_days)).isoformat(),
+        "review_count": review_count,
+    }
+    assert _attraction_review_recent(norm, now=_NOW) is expected
 
 
 def test_missing_review_date_is_not_recent() -> None:

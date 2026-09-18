@@ -28,6 +28,13 @@ _rio_repo = SqlAlchemyRioRepository()
 # Attraction recency backstop window (Phase F). Mirrors the SignalAgent
 # no-recent-reviews rule: a review older than this (or missing) blocks promotion.
 _REVIEW_MAX_AGE_DAYS = 90
+# ...unless the attraction is ESTABLISHED: the 90-day rule was written for business
+# liveness (a restaurant that shut), and measured on the TA base it held back 189 of 275
+# blocked atrativos that have 20+ reviews — a beach or a church whose last review is four
+# months old is not a dead place. Enough review volume buys a one-year window instead.
+# A closed place is still dropped upstream by Google's CLOSED_* business_status.
+_ESTABLISHED_MIN_REVIEWS = 20
+_ESTABLISHED_MAX_AGE_DAYS = 365
 
 
 def _attraction_review_recent(
@@ -36,7 +43,9 @@ def _attraction_review_recent(
     now: datetime | None = None,
     max_age_days: int = _REVIEW_MAX_AGE_DAYS,
 ) -> bool:
-    """Return True iff normalized carries a most-recent review within max_age_days.
+    """Return True iff normalized carries a most-recent review within max_age_days —
+    or within _ESTABLISHED_MAX_AGE_DAYS when normalized["review_count"] reaches
+    _ESTABLISHED_MIN_REVIEWS.
 
     Reads normalized["most_recent_review_at"] (ISO-8601 str, written by SignalAgent).
     Missing / None / unparseable → False (route to DLQ). Deterministic + offline:
@@ -51,8 +60,14 @@ def _attraction_review_recent(
         return False
     if review_dt.tzinfo is None:
         review_dt = review_dt.replace(tzinfo=timezone.utc)
-    reference = now or datetime.now(timezone.utc)
-    return (reference - review_dt) <= timedelta(days=max_age_days)
+    age = (now or datetime.now(timezone.utc)) - review_dt
+    if age <= timedelta(days=max_age_days):
+        return True
+    try:
+        established = int(normalized.get("review_count") or 0) >= _ESTABLISHED_MIN_REVIEWS
+    except (TypeError, ValueError):
+        established = False
+    return established and age <= timedelta(days=_ESTABLISHED_MAX_AGE_DAYS)
 
 
 def _split_phone_for_push(phone_raw: str | None) -> tuple[str | None, str | None]:
@@ -167,7 +182,7 @@ def promote_to_mar(
         k: v for k, v in normalized.items()
         if k not in ("origem_value", "completude_value", "corroboracao_value",
                      "atualidade_value", "validacao_humana_value",
-                     "most_recent_review_at", "contact", "google_enriched",
+                     "most_recent_review_at", "review_count", "contact", "google_enriched",
                      "descricao_attempts", "descricao_gate", "descricao_rascunho",
                      "descricao_groundedness")
     }
