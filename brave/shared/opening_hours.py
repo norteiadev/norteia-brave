@@ -8,9 +8,8 @@ Chave, valor e token de status são inglês/ASCII; a tradução é do i18n do fr
 Google entrega 7 linhas humanas em ``regularOpeningHours.weekdayDescriptions``,
 guardadas no Rio/Mar como ``weekday_text``. Este módulo é o único conversor.
 
-Locale de ENTRADA: ``GetPlaceRequest`` (clients/places.py:369) não manda
-``language_code``, então em produção as strings vêm em inglês. Fixtures e um futuro
-pin de locale dão PT-BR. Os dois são aceitos — pinar o locale depois vira no-op aqui.
+Locale de ENTRADA: ``GetPlaceRequest`` pede ``language_code="pt-BR"`` desde 18/09/2026;
+registros anteriores guardam as strings em inglês. Os dois são aceitos.
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ _DAY_INDEX = {
 }
 
 _CLOSED_IN = {"closed", "fechado", "fechada"}
-_ALL_DAY_IN = {"open 24 hours", "24 hours", "aberto 24 horas", "24 horas"}
+_ALL_DAY_IN = {"open 24 hours", "24 hours", "aberto 24 horas", "atendimento 24 horas", "24 horas"}
 
 # Aceita en dash / em dash / hífen na ENTRADA (Google usa U+2013); emite sempre hífen ASCII.
 _RANGE_SPLIT = re.compile(r"\s*[–—-]\s*")

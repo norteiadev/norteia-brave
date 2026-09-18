@@ -366,8 +366,12 @@ class RealPlacesClient:
         # D-01 fix: use _GET_PLACE_FIELD_MASK (no "places." prefix for get_place)
         # The old inline field_mask had "places.id, places.displayName, ..." which is
         # WRONG for get_place — it returns a bare Place, not SearchTextResponse.places[].
+        # pt-BR like text_search: displayName, address and weekdayDescriptions come back in
+        # Portuguese (the descarte log and the description context show them as-is).
+        # opening_hours.to_hours_map parses both locales.
         request = GetPlaceRequest(
             name=f"places/{place_id}",
+            language_code="pt-BR",
         )
 
         try:

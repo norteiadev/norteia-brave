@@ -42,7 +42,7 @@ from sqlalchemy.orm import Session
 
 from brave.clients.places import _normalize_name
 from brave.config.settings import ScoreConfig
-from brave.core.models import AtrativoBusca
+from brave.core.models import AtrativoBusca, Municipio
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import route_by_score
 from brave.lanes.atrativos.copywriter import CASCADE_MODEL, CascadeResult, TourismCopywriter
@@ -106,6 +106,12 @@ _NAME_MATCH_THRESHOLD: int = 85
 # ["beach","natural_feature","establishment"] and DID return an editorialSummary — a natural
 # feature is a legitimate atrativo, only the administrative entity is not.
 _GEOGRAPHIC_TYPE_MARKER: str = "political"
+
+# Match radius around the município SEAT for a record with no coords of its own. Wide
+# because big rural municípios put real atrativos far from the seat (Chapada falls sit
+# 60+ km from São João d'Aliança's) and border parks sit in the next município (Terra
+# Ronca, ~40 km); the same-name mismatches it must reject were all 190+ km away.
+_SEAT_RADIUS_KM: float = 80.0
 
 # PT-BR wording of Places' business_status for the atrativo's Log tab.
 _CLOSED_LABELS: dict[str, str] = {
@@ -422,7 +428,17 @@ class PlacesEnrichmentAgent:
             try:
                 if not place_id and nome:
                     results = await self._places_client.text_search(nome, uf)
-                    match = _best_match(results, nome, lat, lng, self._max_distance_km)
+                    ref_lat, ref_lng, radius = lat, lng, self._max_distance_km
+                    if (lat is None or lng is None) and municipio_ibge:
+                        # No coords of its own: measure from the município seat instead,
+                        # wider (see _SEAT_RADIUS_KM) — otherwise a same-name place anywhere
+                        # in the UF wins (Luziânia's Igreja N. S. do Rosário took the one
+                        # in Flores de Goiás, ~190 km away).
+                        seat = self._session.get(Municipio, municipio_ibge)
+                        if isinstance(seat, Municipio):
+                            ref_lat, ref_lng = seat.lat, seat.lng
+                            radius = max(radius, _SEAT_RADIUS_KM)
+                    match = _best_match(results, nome, ref_lat, ref_lng, radius)
                     if match is not None:
                         place_id = match.get("place_id") or ""
                 if place_id:

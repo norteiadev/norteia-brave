@@ -810,3 +810,27 @@ async def test_coordless_record_never_matches_a_place_outside_its_uf() -> None:
 
     assert fake.place_details_calls == []
     assert "google_place_id" not in rio.normalized
+
+
+@pytest.mark.asyncio
+async def test_coordless_record_matches_only_near_its_municipio_seat() -> None:
+    """No coords: the município seat stands in for them, with a wider radius — a same-name
+    place 190 km away in the same UF is rejected, one near the seat is accepted."""
+    from brave.core.models import Municipio
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    seat = Municipio(ibge_code="5212501", nome="Luziânia", uf="GO", lat=-16.2525, lng=-47.95)
+    far = {**_search_result(lat=-14.4497, lng=-46.9469), "municipio_ibge": "5208152"}
+    near = {**_search_result(lat=-16.30, lng=-47.90, place_id="ChIJnear"), "municipio_ibge": "5212501"}
+
+    for results, expected in (([far], []), ([far, near], ["ChIJnear"])):
+        fake = FakePlacesClient(
+            fixture_results={"Igreja Matriz": results},
+            fixture_details={"ChIJnear": _details()},
+        )
+        session = _make_session()
+        session.get.return_value = seat
+        rio = _make_rio(extra_normalized={"municipio_id": "5212501"})
+        rio.normalized = {k: v for k, v in rio.normalized.items() if k not in ("lat", "lon")}
+        await _run(PlacesEnrichmentAgent(places_client=fake, session=session, now=_NOW), rio)
+        assert fake.place_details_calls == expected
