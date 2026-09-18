@@ -47,6 +47,7 @@ export function RecordCard({
   const isNascente = card.column === "nascente";
   // Edit-lock: a card is only draggable when NOT nascente AND editing is unlocked.
   const draggable = !isNascente && editingUnlocked;
+  const noDescription = card.type === "atrativo" && card.descriptionPending === true;
 
   return (
     <div
@@ -89,8 +90,8 @@ export function RecordCard({
         ) : null}
       </div>
 
-      {/* source label (hidden when null — L-2) + duplicate flag */}
-      {card.source != null || card.duplicate ? (
+      {/* source label (hidden when null — L-2) + duplicate / sem-descrição flags */}
+      {card.source != null || card.duplicate || noDescription ? (
         <div className="flex items-center justify-between gap-2">
           {card.source != null ? (
             <span className="text-[11px] text-[var(--painel-hint)]">
@@ -99,11 +100,18 @@ export function RecordCard({
           ) : (
             <span />
           )}
-          {card.duplicate ? (
-            <span className="rounded-[5px] bg-[var(--status-dlq)]/15 px-[7px] py-px text-[10px] font-semibold text-[var(--status-dlq)]">
-              Possível duplicado
-            </span>
-          ) : null}
+          <div className="flex items-center gap-1">
+            {noDescription ? (
+              <span className="rounded-[5px] bg-[var(--status-dlq)]/15 px-[7px] py-px text-[10px] font-semibold text-[var(--status-dlq)]">
+                Sem descrição
+              </span>
+            ) : null}
+            {card.duplicate ? (
+              <span className="rounded-[5px] bg-[var(--status-dlq)]/15 px-[7px] py-px text-[10px] font-semibold text-[var(--status-dlq)]">
+                Possível duplicado
+              </span>
+            ) : null}
+          </div>
         </div>
       ) : null}
 

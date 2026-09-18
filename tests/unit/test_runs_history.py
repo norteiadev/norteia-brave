@@ -212,3 +212,22 @@ def test_reprocess_unknown_run_404():
     with pytest.raises(Exception) as exc:
         runs_router.reprocess_run(run_id=uuid.uuid4(), db=db)
     assert getattr(exc.value, "status_code", None) == 404
+
+
+def test_reprocess_descricao_source_redescribes_inline(monkeypatch):
+    """reprocess for a describe run re-dispatches describe_uf, never Places discovery."""
+    from brave.tasks import pipeline
+
+    describe = _BrokerDownTask()
+    discover = _BrokerDownTask()
+    monkeypatch.setattr(pipeline, "describe_uf", describe)
+    monkeypatch.setattr(pipeline, "discover_atrativo_task", discover)
+
+    db = MagicMock()
+    run = _run(ufs=["SP"], source="descricao", depth="descricao", lane="atrativos")
+    db.get.return_value = run
+
+    result = runs_router.reprocess_run(run_id=run.id, db=db)
+    assert result["status"] == "accepted"
+    assert describe.ran == ["SP"]
+    assert discover.ran == []

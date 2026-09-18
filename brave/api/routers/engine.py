@@ -201,39 +201,72 @@ def engine_start(
 
     `depth` is the cost-checkpoint contract and is **required** — there is no
     implicit default, so the engine never silently spends.
+
+    `action: "describe"` (default "sweep") runs the description producer per UF
+    (brave.describe_uf) instead of a sweep: no depth, no source, no TA session —
+    but 409 unless the inline copywriter is actually on (real externals, description
+    flag ON, batch lane OFF), so a describe run never silently does nothing.
     """
     from brave.tasks.beat_schedule import UF_LIST
 
     ufs = body.get("ufs") or list(UF_LIST)
     lane = body.get("lane", "both")
 
-    # Validate depth BEFORE start_run (and before the already-running/409 branch):
-    # a missing/invalid depth must return 422 even mid-run, never flipping engine
-    # state nor first tripping 409 (T-10-02).
-    depth = body.get("depth")
-    if depth not in collection_engine._VALID_DEPTHS:
-        raise HTTPException(
-            status_code=422,
-            detail="depth is required: nascente|nascente_rio|nascente_rio_mar",
-        )
+    action = body.get("action", "sweep")
+    if action not in ("sweep", "describe"):
+        raise HTTPException(status_code=422, detail="action must be 'sweep' or 'describe'")
 
-    # Validate source BEFORE start_run — same order as depth (T-11-03-03).
-    # Phase D: the source must be REGISTERED (a known lane in the effective config)
-    # AND ENABLED (enabled_sources). An unknown lane is a 422 (malformed request); a
-    # known-but-disabled lane is a 409 (valid name, not currently collectable) — both
-    # raised before any engine state mutation so a rejected start never spends.
-    source = body.get("source", "tripadvisor")
-    cfg = _effective_config(db, redis)
-    if source not in cfg.sources:
-        raise HTTPException(
-            status_code=422,
-            detail=f"source must be one of {sorted(cfg.sources)}",
-        )
-    if source not in enabled_sources(cfg):
-        raise HTTPException(
-            status_code=409,
-            detail=f"source '{source}' is disabled in config — enable it before starting.",
-        )
+    if action == "describe":
+        cfg = _effective_config(db, redis)
+        if not (
+            cfg.run_real_externals
+            and cfg.description_enrichment_enabled
+            and not cfg.atrativo_description_batch_enabled
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Descrição desligada — ative description_enrichment_enabled, "
+                "desligue o lote (atrativo_description_batch_enabled) e use externals reais.",
+            )
+        from brave.tasks.pipeline import _cascade_search_client
+
+        try:
+            # The cascade's build guard (writer key/price, Parallel key): every record
+            # would fail on it before the agent, so refuse the run up front.
+            _cascade_search_client(AppConfig(), cfg, None)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=f"Cascata mal configurada: {exc}") from exc
+        # runs_history labels for the Varreduras trail; never written to the depth/source keys.
+        depth = source = "descricao"
+        lane = "atrativos"
+    else:
+        # Validate depth BEFORE start_run (and before the already-running/409 branch):
+        # a missing/invalid depth must return 422 even mid-run, never flipping engine
+        # state nor first tripping 409 (T-10-02).
+        depth = body.get("depth")
+        if depth not in collection_engine._VALID_DEPTHS:
+            raise HTTPException(
+                status_code=422,
+                detail="depth is required: nascente|nascente_rio|nascente_rio_mar",
+            )
+
+        # Validate source BEFORE start_run — same order as depth (T-11-03-03).
+        # Phase D: the source must be REGISTERED (a known lane in the effective config)
+        # AND ENABLED (enabled_sources). An unknown lane is a 422 (malformed request); a
+        # known-but-disabled lane is a 409 (valid name, not currently collectable) — both
+        # raised before any engine state mutation so a rejected start never spends.
+        source = body.get("source", "tripadvisor")
+        cfg = _effective_config(db, redis)
+        if source not in cfg.sources:
+            raise HTTPException(
+                status_code=422,
+                detail=f"source must be one of {sorted(cfg.sources)}",
+            )
+        if source not in enabled_sources(cfg):
+            raise HTTPException(
+                status_code=409,
+                detail=f"source '{source}' is disabled in config — enable it before starting.",
+            )
 
     # R2: TripAdvisor motor requires a live session — operator must inject a cURL first
     if source == "tripadvisor":
@@ -269,11 +302,12 @@ def engine_start(
             detail="Engine already running — stop it before starting a new run.",
         )
 
-    collection_engine.set_depth(redis, depth)
-    # Persist the source under the SAME registered-and-enabled contract just validated
-    # above (source ∈ cfg.sources ∧ source ∈ enabled_sources) — injected because the
-    # kernel engine module must not import the domains registry (D-18).
-    collection_engine.set_source(redis, source, valid_sources=enabled_sources(cfg))
+    if action == "sweep":
+        collection_engine.set_depth(redis, depth)
+        # Persist the source under the SAME registered-and-enabled contract just validated
+        # above (source ∈ cfg.sources ∧ source ∈ enabled_sources) — injected because the
+        # kernel engine module must not import the domains registry (D-18).
+        collection_engine.set_source(redis, source, valid_sources=enabled_sources(cfg))
 
     # A cold /start IS the LIGADO transition — the operator is turning collection ON.
     # Without this the operator-mode axis stays at whatever it was (e.g. DESLIGADO
@@ -313,17 +347,24 @@ def engine_start(
     try:
         from brave.tasks.pipeline import engine_sweep_run
 
-        engine_sweep_run.delay(
-            ufs=ufs,
-            lane=lane,
-            depth=depth,
-            source=source,
-            run_id=run_id,
-            max_per_uf=max_atrativos_per_uf,
-        )
+        if action == "describe":
+            engine_sweep_run.delay(
+                ufs=ufs,
+                lane=lane,
+                run_id=run_id,
+                max_per_uf=max_atrativos_per_uf,
+                action="describe",
+            )
+        else:
+            engine_sweep_run.delay(
+                ufs=ufs,
+                lane=lane,
+                depth=depth,
+                source=source,
+                run_id=run_id,
+                max_per_uf=max_atrativos_per_uf,
+            )
     except Exception as exc:  # broker-down
-        from brave.config.settings import AppConfig
-
         if AppConfig().run_real_externals:
             collection_engine.mark_idle(redis)  # revert — the run never launched
             logger.error("engine_start_dispatch_failed", error=str(exc))
@@ -335,6 +376,7 @@ def engine_start(
 
     logger.info(
         "engine_started",
+        action=action,
         ufs=len(ufs),
         lane=lane,
         depth=depth,
@@ -343,6 +385,7 @@ def engine_start(
     )
     return {
         "status": "started",
+        "action": action,
         "ufs_total": len(ufs),
         "lane": lane,
         "depth": depth,

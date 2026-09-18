@@ -200,31 +200,38 @@ def build_request(rio: RioRecord, model: str = "claude-sonnet-4-5") -> dict[str,
     }
 
 
-def candidates_select(limit: int = DESCRIPTION_BATCH_SIZE) -> Select:
-    """The eligibility query: atrativos that still want a description and have none in flight.
+def description_candidates_filter() -> tuple[Any, ...]:
+    """WHERE clauses for atrativos that still want a description and have none in flight.
 
     Mirrors PlacesEnrichmentAgent's ``wants_description`` predicate (routing + attempt
     budget included), plus the ``descricao_batch_id IS NULL`` guard — the column, not a
     JSONB key, is what makes resubmission (and therefore double spend) impossible.
+    Shared by the batch submit below and the per-UF describe_uf producer.
+    """
+    attempts = RioRecord.normalized["descricao_attempts"].as_integer()
+    expiries = RioRecord.normalized[_EXPIRIES_KEY].as_integer()
+    return (
+        RioRecord.entity_type == "attraction",
+        RioRecord.routing != "descarte",
+        RioRecord.descricao_batch_id.is_(None),
+        RioRecord.normalized["name"].as_string().isnot(None),
+        RioRecord.normalized["descricao_editorial"].as_string().is_(None),
+        # absent counter reads as SQL NULL, and NULL < 3 is NULL (row silently dropped)
+        or_(attempts.is_(None), func.coalesce(attempts, 0) < _MAX_DESCRIPTION_ATTEMPTS),
+        or_(expiries.is_(None), func.coalesce(expiries, 0) < _MAX_BATCH_EXPIRIES),
+    )
+
+
+def candidates_select(limit: int = DESCRIPTION_BATCH_SIZE) -> Select:
+    """The eligibility query (``description_candidates_filter``) for one batch.
 
     FOR UPDATE SKIP LOCKED: two submit ticks running concurrently must not both select the
     same rows. The loser skips them and builds a smaller batch instead of billing a
     duplicate.
     """
-    attempts = RioRecord.normalized["descricao_attempts"].as_integer()
-    expiries = RioRecord.normalized[_EXPIRIES_KEY].as_integer()
     return (
         select(RioRecord)
-        .where(
-            RioRecord.entity_type == "attraction",
-            RioRecord.routing != "descarte",
-            RioRecord.descricao_batch_id.is_(None),
-            RioRecord.normalized["name"].as_string().isnot(None),
-            RioRecord.normalized["descricao_editorial"].as_string().is_(None),
-            # absent counter reads as SQL NULL, and NULL < 3 is NULL (row silently dropped)
-            or_(attempts.is_(None), func.coalesce(attempts, 0) < _MAX_DESCRIPTION_ATTEMPTS),
-            or_(expiries.is_(None), func.coalesce(expiries, 0) < _MAX_BATCH_EXPIRIES),
-        )
+        .where(*description_candidates_filter())
         .limit(limit)
         .with_for_update(skip_locked=True)
     )

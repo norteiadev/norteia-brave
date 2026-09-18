@@ -46,6 +46,12 @@ export interface AtrativoListItem {
    * the batch endpoint's atomic 422 remains the authoritative gate.
    */
   whatsapp_eligible?: boolean;
+  /**
+   * True while the atrativo still has no `descricao_editorial` (non-descarte).
+   * Drives the "Sem descrição" card pill; clears itself once the description
+   * lane writes it. OPTIONAL: absent ⇒ no pill.
+   */
+  description_pending?: boolean;
 }
 
 /** A single audit log row from the AuditLog table. */

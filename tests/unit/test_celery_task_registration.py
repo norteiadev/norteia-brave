@@ -20,6 +20,7 @@ EXPECTED_TASKS = [
     "brave.discover_atrativo",
     "brave.process_nascente",
     "brave.push_mar",
+    "brave.describe_uf",
 ]
 
 

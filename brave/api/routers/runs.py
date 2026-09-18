@@ -233,6 +233,13 @@ def reprocess_run(run_id: uuid.UUID, db: Session = Depends(get_db)) -> dict:
 
         for uf in ufs:
             _dispatch(sweep_tripadvisor, uf, task_label="sweep_tripadvisor")
+    elif run.source == "descricao":
+        from brave.tasks.pipeline import describe_uf
+
+        # A describe run (engine action "describe") re-describes — never the Places
+        # discovery lane below, which bills Places and writes no description.
+        for uf in ufs:
+            _dispatch(describe_uf, uf, task_label="describe_uf")
     else:
         from brave.tasks.pipeline import discover_atrativo_task
 

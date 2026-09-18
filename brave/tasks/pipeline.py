@@ -284,9 +284,9 @@ def _cascade_search_client(app_config: AppConfig, effective: AppConfig, redis_cl
 
     Also refuses to build when the cascade writer is a Gemini-direct slug that generate()
     cannot serve (empty BRAVE_LLM_GEMINI_API_KEY, or a model with no price). Failing HERE
-    disables inline enrichment for the sweep; failing inside generate() would read as a plain
-    copywriter failure and burn one descricao_attempt per atrativo — 3 sweeps and the whole
-    backlog is excluded from descriptions.
+    aborts _enrich_one before the agent exists; failing inside generate() would read as a
+    plain copywriter failure and burn one descricao_attempt per atrativo — 3 runs and the
+    whole backlog is excluded from descriptions.
     """
     if not effective.atrativo_description_cascade_enabled:
         return None
@@ -862,9 +862,10 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
     name="brave.sweep_tripadvisor",
     acks_late=True,
     reject_on_worker_lost=True,
-    # 1h: enrichment now runs INLINE per record (place_details + copywriter web_search,
-    # ~3-10s/record), so a whole-UF sweep serializes far more work than the old 600s.
-    # Per-record commit inside produce() keeps progress durable if this limit is ever hit.
+    # 1h: Places enrichment runs INLINE per record (place_details + TA review fetch), so a
+    # whole-UF sweep serializes far more work than the old 600s. The copywriter no longer
+    # runs here (brave.describe_uf owns descriptions). Per-record commit inside produce()
+    # keeps progress durable if this limit is ever hit.
     time_limit=3600,
     soft_time_limit=3540,
 )
@@ -1074,10 +1075,10 @@ def sweep_tripadvisor(
             if row.municipio_id
         }
 
-        # Build the INLINE Places enrichment agent (description + distrito + hours/contact/
-        # price + liveness), run per-record inside produce() after Rio routing — like the
-        # other completude steps. Constructed once per sweep behind run_real_externals + the
-        # operator flags; the Null clients keep the TA floor + advance the record offline
+        # Build the INLINE Places enrichment agent (distrito + hours/contact/price +
+        # liveness — never the description, see below), run per-record inside produce()
+        # after Rio routing — like the other completude steps. Constructed once per sweep
+        # behind run_real_externals + the operator flags; the Null clients keep the TA floor + advance the record offline
         # (ZERO external spend). Replaces the old post-produce enrich_description/_places
         # dispatch, which the 600s time_limit could kill before it ran.
         effective = load_effective_config(session)
@@ -1102,48 +1103,22 @@ def sweep_tripadvisor(
                 from brave.clients.null_places import NullPlacesClient
                 _places_client = NullPlacesClient()
 
-            # Copywriter LLM: real Anthropic (web_search) only under run_real_externals +
-            # description_enrichment_enabled; else Null. description_enabled is gated on
-            # run_real_externals so an offline/CI sweep never writes the Null canned string.
-            # ...and OFF entirely under batch mode: the description is then produced later
-            # by submit/collect_description_batch (50% off tokens), and description_enabled
+            # The sweep NEVER writes descriptions, whatever the flags: description_enabled
             # =False makes PlacesEnrichmentAgent skip the whole description block cleanly.
-            _desc_on = (
-                app_config.run_real_externals
-                and effective.description_enrichment_enabled
-                and not effective.atrativo_description_batch_enabled
-            )
-            if _desc_on:
-                import redis as _copy_redis_lib  # noqa: PLC0415
-
-                from brave.clients.llm import RealLLMClient
-                _copy_redis = _copy_redis_lib.from_url(
-                    os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-                )
-                _copy_llm = RealLLMClient(
-                    config=app_config.llm,
-                    redis_client=_copy_redis,
-                    session=session,
-                    lane="atrativo_copywriter",
-                )
-                _copy_search = _cascade_search_client(app_config, effective, _copy_redis)
-            else:
-                from brave.clients.null_llm import NullLLMClient
-                _copy_llm = NullLLMClient()
-                _copy_search = None
+            # Descriptions come later, per UF, from brave.describe_uf (engine action
+            # "describe") or the batch lane (submit/collect_description_batch).
+            from brave.clients.null_llm import NullLLMClient
 
             places_agent = PlacesEnrichmentAgent(
                 places_client=_places_client,
                 session=session,
                 config=config,
-                llm_client=_copy_llm,
+                llm_client=NullLLMClient(),
                 distritos=_distritos,
                 voice_model_slug=app_config.atrativo_voice_model_slug,
-                description_enabled=_desc_on,
+                description_enabled=False,
                 enable_web_search=app_config.run_real_externals,
                 max_distance_km=app_config.places_match_max_distance_km,
-                search_client=_copy_search,
-                cascade_model=app_config.atrativo_cascade_model,
             )
         except Exception:  # noqa: BLE001 — enrichment build must not crash the sweep
             logger.warning("inline_enrichment_build_failed", uf=uf)
@@ -1474,6 +1449,94 @@ def gather_signals_task(self, rio_id: str) -> None:
         engine.dispose()
 
 
+def _description_on(app_config: AppConfig, effective: AppConfig) -> bool:
+    """The inline copywriter gate: real externals + description flag ON + batch lane OFF.
+
+    description_enabled is gated on run_real_externals so an offline/CI run never writes
+    the Null canned string; under batch mode the description is produced later by
+    submit/collect_description_batch (50% off tokens) instead.
+    """
+    return bool(
+        app_config.run_real_externals
+        and effective.description_enrichment_enabled
+        and not effective.atrativo_description_batch_enabled
+    )
+
+
+def _enrich_one(session: Session, rio: RioRecord) -> None:
+    """Run PlacesEnrichmentAgent on one RioRecord (no commit — the caller owns it).
+
+    The body of enrich_places_task, shared with brave.describe_uf so the per-UF
+    description producer walks exactly the same client selection + agent path.
+    """
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.shared.ibge_distritos import load_distritos
+
+    rio_id = str(rio.id)
+    app_config = AppConfig()
+    effective = load_effective_config(session)
+    config = effective.score
+
+    # Real Places client requires BOTH run_real_externals AND the operator-toggleable
+    # places_enrichment_enabled flag (config_settings overlay, /painel). When off, the
+    # Null client keeps the TA floor and the agent still advances sub_state + re-scores
+    # — a real local sweep runs with ZERO Google Places spend on enrichment.
+    if app_config.run_real_externals and effective.places_enrichment_enabled:
+        places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
+        from brave.clients.places import (
+            RealPlacesClient,
+            load_municipio_name_ibge_lookup,
+        )
+        places_client = RealPlacesClient(
+            api_key=places_api_key,
+            ibge_lookup=load_municipio_name_ibge_lookup(session),
+        )
+    else:
+        if app_config.run_real_externals and not effective.places_enrichment_enabled:
+            logger.info("places_enrichment_disabled", rio_id=rio_id)
+        from brave.clients.null_places import NullPlacesClient
+        places_client = NullPlacesClient()
+
+    # Copywriter LLM (description sub-step): real Anthropic (web_search) only under
+    # run_real_externals + description_enrichment_enabled; else Null (skipped).
+    # Batch mode moves the description off this path to submit/collect_description_batch.
+    _desc_on = _description_on(app_config, effective)
+    if _desc_on:
+        import redis as _copy_redis_lib  # noqa: PLC0415
+
+        from brave.clients.llm import RealLLMClient
+        copy_redis = _copy_redis_lib.from_url(
+            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        )
+        copy_llm = RealLLMClient(
+            config=app_config.llm,
+            redis_client=copy_redis,
+            session=session,
+            lane="atrativo_copywriter",
+        )
+        copy_search = _cascade_search_client(app_config, effective, copy_redis)
+    else:
+        from brave.clients.null_llm import NullLLMClient
+        copy_llm = NullLLMClient()
+        copy_search = None
+
+    agent = PlacesEnrichmentAgent(
+        places_client=places_client,
+        session=session,
+        config=config,
+        llm_client=copy_llm,
+        distritos=load_distritos(session),
+        voice_model_slug=app_config.atrativo_voice_model_slug,
+        description_enabled=_desc_on,
+        enable_web_search=app_config.run_real_externals,
+        max_distance_km=app_config.places_match_max_distance_km,
+        search_client=copy_search,
+        cascade_model=app_config.atrativo_cascade_model,
+    )
+
+    asyncio.run(agent.run(rio))
+
+
 @shared_task(
     bind=True,
     max_retries=3,
@@ -1501,8 +1564,6 @@ def enrich_places_task(self, rio_id: str) -> None:
         rio_id: UUID string of the RioRecord to enrich.
     """
     from brave.core.quarantine import quarantine_poison as _quarantine
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
-    from brave.shared.ibge_distritos import load_distritos
 
     session, engine = _get_session()
     try:
@@ -1511,72 +1572,7 @@ def enrich_places_task(self, rio_id: str) -> None:
         if rio is None:
             raise PermanentError(f"RioRecord {rio_id} not found")
 
-        app_config = AppConfig()
-        effective = load_effective_config(session)
-        config = effective.score
-
-        # Real Places client requires BOTH run_real_externals AND the operator-toggleable
-        # places_enrichment_enabled flag (config_settings overlay, /painel). When off, the
-        # Null client keeps the TA floor and the agent still advances sub_state + re-scores
-        # — a real local sweep runs with ZERO Google Places spend on enrichment.
-        if app_config.run_real_externals and effective.places_enrichment_enabled:
-            places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
-            from brave.clients.places import (
-                RealPlacesClient,
-                load_municipio_name_ibge_lookup,
-            )
-            places_client = RealPlacesClient(
-                api_key=places_api_key,
-                ibge_lookup=load_municipio_name_ibge_lookup(session),
-            )
-        else:
-            if app_config.run_real_externals and not effective.places_enrichment_enabled:
-                logger.info("places_enrichment_disabled", rio_id=rio_id)
-            from brave.clients.null_places import NullPlacesClient
-            places_client = NullPlacesClient()
-
-        # Copywriter LLM (description sub-step): real Anthropic (web_search) only under
-        # run_real_externals + description_enrichment_enabled; else Null (skipped).
-        # Batch mode moves the description off this path — see the sweep-side gate above.
-        _desc_on = (
-            app_config.run_real_externals
-            and effective.description_enrichment_enabled
-            and not effective.atrativo_description_batch_enabled
-        )
-        if _desc_on:
-            import redis as _copy_redis_lib  # noqa: PLC0415
-
-            from brave.clients.llm import RealLLMClient
-            copy_redis = _copy_redis_lib.from_url(
-                os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-            )
-            copy_llm = RealLLMClient(
-                config=app_config.llm,
-                redis_client=copy_redis,
-                session=session,
-                lane="atrativo_copywriter",
-            )
-            copy_search = _cascade_search_client(app_config, effective, copy_redis)
-        else:
-            from brave.clients.null_llm import NullLLMClient
-            copy_llm = NullLLMClient()
-            copy_search = None
-
-        agent = PlacesEnrichmentAgent(
-            places_client=places_client,
-            session=session,
-            config=config,
-            llm_client=copy_llm,
-            distritos=load_distritos(session),
-            voice_model_slug=app_config.atrativo_voice_model_slug,
-            description_enabled=_desc_on,
-            enable_web_search=app_config.run_real_externals,
-            max_distance_km=app_config.places_match_max_distance_km,
-            search_client=copy_search,
-            cascade_model=app_config.atrativo_cascade_model,
-        )
-
-        asyncio.run(agent.run(rio))
+        _enrich_one(session, rio)
         session.commit()
 
     except PermanentError as exc:
@@ -1619,11 +1615,130 @@ def enrich_places_task(self, rio_id: str) -> None:
         engine.dispose()
 
 
+# Records per describe_uf run. Each one can take up to enrich_places' 300s budget, so a
+# chunk fits the hour time_limit; a full chunk self-chains the next one by id cursor.
+_DESCRIBE_CHUNK = 25
+
+
+@shared_task(
+    name="brave.describe_uf",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=3600,
+    soft_time_limit=3540,
+)
+def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) -> None:
+    """Write descricao_editorial for one UF's atrativos (engine action "describe").
+
+    The TA sweep never writes descriptions; this producer backfills them afterwards,
+    per UF, through the SAME path as enrich_places_task (_enrich_one). Only google_enriched
+    records are selected, so the agent skips the paid Places sub-step and only runs the
+    copywriter. Selection shares copy_batch's eligibility predicate (no FOR UPDATE — the
+    agent's own descricao_batch_id guard covers a batch that claims the row meanwhile).
+
+    Chunked + keyset cursor: up to _DESCRIBE_CHUNK ids > after_id, ordered by id. A full
+    chunk (or one cut short by the soft time limit) with no halt and max_n budget left
+    re-dispatches itself from the last id consumed and hands its inflight token over (no
+    decrement); a Stop/pause or a tripped cost guard halts. Any other exit is terminal and runs
+    _producer_finally_lifecycle exactly once. The cursor always advances, so a record whose
+    description keeps failing cannot loop the chain. A per-record failure is logged and
+    rolled back — it never aborts the chunk.
+    """
+    import redis as _redis_lib  # noqa: PLC0415
+    from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
+
+    from brave.core import engine as collection_engine
+    from brave.lanes.atrativos.copy_batch import description_candidates_filter
+    from brave.observability.cost_guard import pre_dispatch_check
+    from brave.shared.exceptions import CostGuardError
+
+    rc = _redis_lib.from_url(
+        os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+    )
+    session, engine = _get_session()
+    chained = False
+    try:
+        app_config = AppConfig()
+        effective = load_effective_config(session)
+        if not _description_on(app_config, effective):
+            logger.warning("describe_uf_description_disabled", uf=uf)
+            return
+        try:
+            # The same build guard _enrich_one hits per record: fail the UF once here
+            # instead of walking the whole backlog failing every record before the agent.
+            _cascade_search_client(app_config, effective, rc)
+        except (RuntimeError, ValueError):
+            logger.warning("describe_uf_cascade_misconfigured", uf=uf, exc_info=True)
+            return
+
+        limit = _DESCRIBE_CHUNK if max_n is None else min(_DESCRIBE_CHUNK, max_n)
+        stmt = select(RioRecord.id).where(
+            RioRecord.uf == uf,
+            *description_candidates_filter(),
+            # Only records whose PAID Places sub-step already ran: the agent then skips
+            # Places and only writes the description. A Places-FSM record still before
+            # signals_gathered is enrich_places_task's, not ours (no double Details SKU).
+            RioRecord.normalized["google_enriched"].as_boolean().is_(True),
+        )
+        if after_id:
+            stmt = stmt.where(RioRecord.id > uuid.UUID(after_id))
+        ids = list(session.scalars(stmt.order_by(RioRecord.id).limit(limit)).all())
+
+        halted = cut = False
+        n = 0  # ids consumed — the cursor resumes after ids[n - 1]
+        for rio_id in ids:
+            if collection_engine.should_halt_producer(rc):
+                halted = True
+                logger.info("describe_uf_halted", uf=uf, at_rio_id=str(rio_id))
+                break
+            try:
+                pre_dispatch_check(rc, app_config.llm)
+            except CostGuardError:
+                # The agent swallows a tripped budget as "no attempt" and would still
+                # re-score + audit every remaining record, chunk after chunk, writing
+                # nothing. The budget resets at midnight; the chain ends here.
+                halted = True
+                logger.warning("describe_uf_cost_guard", uf=uf, at_rio_id=str(rio_id))
+                break
+            n += 1
+            try:
+                rio = session.get(RioRecord, rio_id)
+                if rio is not None:
+                    _enrich_one(session, rio)
+                session.commit()
+            except SoftTimeLimitExceeded:
+                # ~60s before the hard kill, which would skip the finally and leak the
+                # inflight token: drop this record and hand the rest of the UF on.
+                session.rollback()
+                cut = True
+                logger.warning("describe_uf_soft_time_limit", uf=uf, rio_id=str(rio_id))
+                break
+            except Exception:  # noqa: BLE001 — one bad record must not abort the chunk
+                session.rollback()
+                logger.warning("describe_uf_record_failed", uf=uf, rio_id=str(rio_id), exc_info=True)
+
+        remaining = None if max_n is None else max_n - n
+        if (
+            not halted
+            and (cut or len(ids) == _DESCRIBE_CHUNK)
+            and (remaining is None or remaining > 0)
+        ):
+            describe_uf.delay(uf, remaining, after_id=str(ids[n - 1]))
+            chained = True
+    finally:
+        # Only the terminal run of the chain decrements: a self-chained successor carries
+        # the inflight token engine_sweep_run counted for this UF.
+        if not chained:
+            _producer_finally_lifecycle()
+        session.close()
+        engine.dispose()
+
+
 # ---------------------------------------------------------------------------
 # Batched atrativo descriptions (Message Batches API, 50% off tokens).
 #
-# When atrativo_description_batch_enabled is on, both PlacesEnrichmentAgent construction
-# sites above run with description_enabled=False — the copywriter never fires inline. These
+# When atrativo_description_batch_enabled is on, _enrich_one runs with description_enabled
+# =False (the TA sweep always does) — the copywriter never fires inline. These
 # two beat-driven tasks own the description instead: submit hourly, collect every 15 min.
 # All the logic lives in brave/lanes/atrativos/copy_batch.py; these are transport.
 # ---------------------------------------------------------------------------
@@ -2440,6 +2555,7 @@ def engine_sweep_run(
     source: str = "default",
     run_id: str | None = None,
     max_per_uf: int | None = None,
+    action: str = "sweep",
 ) -> dict:
     """Operator-started full sweep orchestrator (engine ON).
 
@@ -2466,6 +2582,10 @@ def engine_sweep_run(
 
     Never auto-validates, never reaches the WhatsApp send path — it only kicks the
     same producer/chain tasks the beat and /sweep endpoint already use.
+
+    action="describe" swaps the per-UF producer for describe_uf (descriptions for the
+    UF's already-swept atrativos, capped by max_per_uf); depth/source are unused then.
+    The state/mode gates and the inflight lifecycle are identical.
     """
     import time as _time
 
@@ -2478,7 +2598,7 @@ def engine_sweep_run(
     # Resolve the domain ONCE per run — single-source-per-run (brave:engine:source is
     # read once at /start and threaded in as ``source``). The domain owns its
     # lane→producer routing; this loop never names a source.
-    domain = get_domain(source)
+    domain = get_domain(source) if action == "sweep" else None
 
     redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
     rc = redis_lib.from_url(redis_url)
@@ -2507,19 +2627,23 @@ def engine_sweep_run(
             # fan out for this UF+depth+lane (the former ``if source == ...`` ladder now
             # lives in each domain's ``sweep_plan``). Each producer still ``.delay()``s
             # onto the single 'celery' queue; behavior is byte-identical per source.
-            for _spec in domain.sweep_plan(
-                uf,
-                depth=effective_depth,
-                lane=lane,
-                nascente_only=nascente_only,
-                max_per_uf=max_per_uf,
-            ):
-                _producer = globals()[_PRODUCER_ATTR_BY_TASK_NAME[_spec.task_name]]
-                # Producer-completes lifecycle: count this producer BEFORE dispatch so
-                # the run stays RUNNING/syncing until its finally decrements. The
-                # matching decrement lives in each producer's OUTERMOST finally.
+            if action == "describe":
                 collection_engine.incr_inflight(rc)
-                _producer.delay(*_spec.args, **_spec.kwargs)
+                describe_uf.delay(uf, max_per_uf)
+            else:
+                for _spec in domain.sweep_plan(
+                    uf,
+                    depth=effective_depth,
+                    lane=lane,
+                    nascente_only=nascente_only,
+                    max_per_uf=max_per_uf,
+                ):
+                    _producer = globals()[_PRODUCER_ATTR_BY_TASK_NAME[_spec.task_name]]
+                    # Producer-completes lifecycle: count this producer BEFORE dispatch
+                    # so the run stays RUNNING/syncing until its finally decrements. The
+                    # matching decrement lives in each producer's OUTERMOST finally.
+                    collection_engine.incr_inflight(rc)
+                    _producer.delay(*_spec.args, **_spec.kwargs)
             collection_engine.mark_uf_dispatched(rc, uf)
             dispatched += 1
             logger.info(

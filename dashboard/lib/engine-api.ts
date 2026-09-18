@@ -162,6 +162,9 @@ export function transition(
 
 export function startEngine(
   body?: {
+    // "sweep" (default) runs the ingest sweep and needs a depth; "describe" runs
+    // the per-UF description lane (no depth, no TA session).
+    action?: "sweep" | "describe";
     ufs?: string[];
     lane?: "destinos" | "atrativos" | "both";
     depth?: EngineDepth;

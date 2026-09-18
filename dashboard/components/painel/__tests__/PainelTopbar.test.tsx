@@ -385,7 +385,7 @@ describe("PainelTopbar", () => {
   // R2 client gate — cold Ligar honors the TripAdvisor session gate
   // ---------------------------------------------------------------------------
 
-  it("source=tripadvisor + no valid session blocks the depth menu on cold Ligar", async () => {
+  it("source=tripadvisor + no valid session still opens the popover, with Varredura disabled", async () => {
     server.use(
       engineStatus({ source: "tripadvisor", enabled: false, state: "idle", mode: "DESLIGADO" }),
       taSessionStatus({ present: false, reason: null }),
@@ -394,9 +394,45 @@ describe("PainelTopbar", () => {
     renderWithClient(<PainelTopbar title="P" subtitle="s" />);
     const ligar = await screen.findByTestId("painel-motor-ligar");
     await user.click(ligar);
-    await new Promise((r) => setTimeout(r, 50));
-    // taBlocked → depth menu must NOT open
-    expect(screen.queryByTestId("painel-depth-menu")).toBeNull();
+    // taBlocked only gates the sweep: the popover opens, depth buttons disabled,
+    // Gerar descrições stays enabled (it needs no TA session).
+    await screen.findByTestId("painel-depth-menu");
+    await waitFor(() =>
+      expect(screen.getByTestId("painel-depth-nascente")).toBeDisabled(),
+    );
+    expect(screen.getByTestId("painel-depth-nascente_rio")).toBeDisabled();
+    expect(screen.getByTestId("painel-depth-nascente_rio_mar")).toBeDisabled();
+    expect(screen.getByTestId("painel-sweep-blocked")).toBeInTheDocument();
+    expect(screen.getByTestId("painel-describe")).toBeEnabled();
+  });
+
+  it("Gerar descrições with UF=SP fires POST /start {action: 'describe', ufs: ['SP']} without depth", async () => {
+    let startBody: Record<string, unknown> | null = null;
+    const spy = vi.spyOn(toast, "success");
+    server.use(
+      engineStatus({ source: "tripadvisor", enabled: false, state: "idle", mode: "DESLIGADO" }),
+      taSessionStatus({ present: false, reason: null }),
+      http.post(START_URL, async ({ request }) => {
+        startBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ status: "started", ufs_total: 1 }, { status: 202 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+    await user.click(await screen.findByTestId("painel-motor-ligar"));
+    await screen.findByTestId("painel-depth-menu");
+    await user.selectOptions(screen.getByTestId("painel-uf-select"), "SP");
+    await user.type(screen.getByTestId("painel-max-per-uf"), "3");
+    await user.click(screen.getByTestId("painel-describe"));
+    await waitFor(() => expect(startBody).not.toBeNull());
+    expect(startBody).toEqual({
+      action: "describe",
+      ufs: ["SP"],
+      max_atrativos_per_uf: 3,
+    });
+    await waitFor(() =>
+      expect(spy).toHaveBeenCalledWith("Motor ligado — gerando descrições"),
+    );
   });
 
   it("source=tripadvisor + valid session → cold Ligar opens the depth menu", async () => {
@@ -587,6 +623,42 @@ describe("PainelTopbar", () => {
         expect(label).toHaveTextContent("Sincronizado");
         expect(label).toHaveStyle({ color: "var(--status-mar)" });
       });
+    });
+  });
+  describe("auto-off toast", () => {
+    const SESSION_TOAST =
+      "Motor TripAdvisor desligado — sessão expirada. Injete um cURL para reiniciar.";
+
+    async function turnOff(session: Parameters<typeof taSessionStatus>[0]) {
+      const warn = vi.spyOn(toast, "warning");
+      server.use(
+        engineStatus({ mode: "LIGADO", editing_unlocked: false, enabled: true, state: "running" }),
+        taSessionStatus(session),
+        http.post(MODE_URL, () =>
+          HttpResponse.json({ mode: "DESLIGADO", editing_unlocked: true }),
+        ),
+      );
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+      const ligar = await screen.findByTestId("painel-motor-ligar");
+      await waitFor(() => expect(ligar).toHaveAttribute("aria-pressed", "true"));
+      // The run ends: the next status refetch reports the motor off.
+      server.use(engineStatus({ mode: "DESLIGADO", editing_unlocked: true, enabled: false }));
+      await user.click(screen.getByTestId("painel-motor-desligar"));
+      await waitFor(() =>
+        expect(screen.getByTestId("painel-motor-ligar")).toHaveAttribute("aria-pressed", "false"),
+      );
+      return warn;
+    }
+
+    it("a run that ends with a live TA session (e.g. Gerar descrições) raises no session-expired toast", async () => {
+      const warn = await turnOff({});
+      expect(warn).not.toHaveBeenCalledWith(SESSION_TOAST);
+    });
+
+    it("an auto-off with the TA session gone still warns", async () => {
+      const warn = await turnOff({ present: false, expires_in: 0 });
+      await waitFor(() => expect(warn).toHaveBeenCalledWith(SESSION_TOAST));
     });
   });
 });
