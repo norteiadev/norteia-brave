@@ -9,6 +9,8 @@ which now only accepts a place inside the UF when the record has no coords.
 Usage (inside the worker container, which has the keys and RUN_REAL_EXTERNALS):
     python scripts/reenrich_wrong_places.py <rio_id> [<rio_id> ...]            # dry run
     python scripts/reenrich_wrong_places.py --apply <rio_id> [<rio_id> ...]
+    python scripts/reenrich_wrong_places.py --apply --recheck <rio_id> ...  # re-evaluate a
+        Places descarte (e.g. closed_place from before CLOSED_TEMPORARILY went to the DLQ)
 """
 
 from __future__ import annotations
@@ -53,7 +55,8 @@ def _reverted(normalized: dict, payload: dict) -> dict:
 
 def main(argv: list[str]) -> None:
     apply = "--apply" in argv
-    ids = [a for a in argv if a != "--apply"]
+    recheck = "--recheck" in argv
+    ids = [a for a in argv if a not in ("--apply", "--recheck")]
     session, _ = _get_session()
     try:
         for rid in ids:
@@ -70,16 +73,24 @@ def main(argv: list[str]) -> None:
 
             rio.normalized = new
             flag_modified(rio, "normalized")
+            if recheck and rio.routing == "descarte":
+                rio.routing, rio.dlq_reason = "dlq", None  # the enrichment decides again
             write_audit(
                 session=session, action="places_match_reverted", entity_type="attraction",
                 record_id=rio.id, actor="reenrich_wrong_places",
                 before_state={k: old.get(k) for k in sorted(set(old) - set(new))},
-                after_state={"reason": "place_outside_uf_or_geographic_feature"},
+                after_state={
+                    "reason": "recheck" if recheck else "place_outside_uf_or_geographic_feature"
+                },
             )
             record_event(
                 session=session, source="tripadvisor", source_ref=rio.canonical_key or "",
                 stage="places_match_reverted", status="fail",
-                message=f"Match do Google Places desfeito — lugar errado: {old.get('address')}",
+                message=(
+                    "Reavaliação no Google Places (descarte anterior por fechamento)"
+                    if recheck
+                    else f"Match do Google Places desfeito — lugar errado: {old.get('address')}"
+                ),
                 entity_type="attraction", uf=rio.uf, rio_id=rio.id,
                 data={"wrong_place_id": old.get("google_place_id"),
                       "wrong_address": old.get("address")},
