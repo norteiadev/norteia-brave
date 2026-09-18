@@ -86,6 +86,13 @@ export interface EngineStatus {
    */
   mode: EngineMode;
   /**
+   * Reasoned pause payload (quick-260918-ohm) — set when a paid provider hits a
+   * billing wall (`provider_balance`) or the internal daily cost guard trips
+   * (`daily_budget`). null while mode !== PAUSADO-with-reason. Cleared server-side
+   * only on `set_mode(LIGADO)` (POST /engine/start or POST /engine/mode LIGADO).
+   */
+  pause_reason: { reason: string; provider: string | null; action: string | null; at: string } | null;
+  /**
    * True iff Kanban card mutations (drag transitions, DLQ→WhatsApp batch) are
    * allowed — i.e. mode ∈ {PAUSADO, DESLIGADO}. The server backstops every card
    * mutation with a 423 when this is false; the dashboard mirrors it to gate the

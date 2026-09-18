@@ -27,6 +27,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt
 
 from brave.clients.tavily import _MAX_ATTEMPTS, _is_retryable, _wait
 from brave.observability.cost_guard import pre_dispatch_check, record_spend
+from brave.shared.exceptions import raise_if_balance_wall
 
 if TYPE_CHECKING:
     from brave.config.settings import LLMConfig
@@ -114,7 +115,11 @@ class RealParallelClient:
     )
     async def _post(self, body: dict[str, Any]) -> dict[str, Any]:
         r = await self._http.post(PARALLEL_SEARCH_URL, headers={"x-api-key": self._api_key}, json=body)
-        r.raise_for_status()
+        try:
+            r.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise_if_balance_wall("parallel", status_code=exc.response.status_code)
+            raise
         return r.json()
 
     async def aclose(self) -> None:

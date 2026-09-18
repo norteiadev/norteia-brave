@@ -29,9 +29,11 @@ from typing import Any
 import httpx
 import instructor
 import structlog
+from anthropic import APIStatusError as AnthropicAPIStatusError
 from anthropic import AsyncAnthropic
 from openai import (
     APIConnectionError,
+    APIStatusError,
     APITimeoutError,
     AsyncOpenAI,
     BadRequestError,
@@ -47,7 +49,7 @@ from brave.clients.tavily import _wait as _httpx_wait
 from brave.config.settings import LLMConfig
 from brave.core.models import LLMGeneration
 from brave.observability.cost_guard import pre_dispatch_check, record_spend
-from brave.shared.exceptions import PermanentError
+from brave.shared.exceptions import PermanentError, raise_if_balance_wall
 
 logger = structlog.get_logger(__name__)
 
@@ -313,8 +315,14 @@ class RealLLMClient:
                 last_exc = exc
                 logger.warning("llm_slug_unavailable", slug=slug, error=str(exc))
                 continue
-            except (BadRequestError, PermissionDeniedError):
+            except (BadRequestError, PermissionDeniedError) as exc:
+                raise_if_balance_wall(
+                    "openrouter", status_code=getattr(exc, "status_code", None), message=str(exc)
+                )
                 raise  # permanent — do not try next slug
+            except APIStatusError as exc:
+                raise_if_balance_wall("openrouter", status_code=getattr(exc, "status_code", None))
+                raise
         else:
             # All slugs exhausted
             raise last_exc  # type: ignore[misc]
@@ -354,6 +362,17 @@ class RealLLMClient:
             self._session.flush()
 
         return result
+
+    async def _anthropic_create(self, **kwargs: Any) -> Any:
+        """messages.create wrapper — classifies a billing-wall response (e.g. "Your credit
+        balance is too low", a 400) into ProviderBalanceError before it reaches the caller."""
+        try:
+            return await self._anthropic_client.messages.create(**kwargs)  # type: ignore[arg-type]
+        except AnthropicAPIStatusError as exc:
+            raise_if_balance_wall(
+                "anthropic", status_code=getattr(exc, "status_code", None), message=str(exc)
+            )
+            raise
 
     async def generate(
         self,
@@ -409,7 +428,7 @@ class RealLLMClient:
         if tools:
             create_kwargs["tools"] = tools
 
-        response = await self._anthropic_client.messages.create(**create_kwargs)  # type: ignore[arg-type]
+        response = await self._anthropic_create(**create_kwargs)
 
         # Server-side tools (web_search) can pause the turn at the 10-iteration cap; resume
         # by re-sending the assistant content until it ends naturally (bounded — never loop).
@@ -426,7 +445,7 @@ class RealLLMClient:
             _turns += 1
             messages = list(messages) + [{"role": "assistant", "content": response.content}]
             create_kwargs["messages"] = messages
-            response = await self._anthropic_client.messages.create(**create_kwargs)  # type: ignore[arg-type]
+            response = await self._anthropic_create(**create_kwargs)
             prompt_tokens += response.usage.input_tokens
             completion_tokens += response.usage.output_tokens
             cache_read_tokens += _usage_int(response.usage, "cache_read_input_tokens")
@@ -514,15 +533,19 @@ class RealLLMClient:
         full = ([{"role": "system", "content": system}] if system is not None else []) + list(
             messages
         )
-        response = await self._openrouter_completion(
-            model=model,
-            max_tokens=2048,
-            messages=full,
-            extra_body={
-                "provider": {"data_collection": self._config.provider_data_collection},
-                "usage": {"include": True},
-            },
-        )
+        try:
+            response = await self._openrouter_completion(
+                model=model,
+                max_tokens=2048,
+                messages=full,
+                extra_body={
+                    "provider": {"data_collection": self._config.provider_data_collection},
+                    "usage": {"include": True},
+                },
+            )
+        except APIStatusError as exc:
+            raise_if_balance_wall("openrouter", status_code=getattr(exc, "status_code", None))
+            raise
         choice = response.choices[0]
         usage = response.usage
         prompt_tokens: int = usage.prompt_tokens if usage else 0
@@ -642,7 +665,13 @@ class RealLLMClient:
                 logger.warning("gemini_flex_fallback", model=model, reason=reason)
                 tier = "standard"
         if data is None:
-            data = await self._gemini_post_standard(url, body)
+            try:
+                data = await self._gemini_post_standard(url, body)
+            except httpx.HTTPStatusError as exc:
+                raise_if_balance_wall(
+                    "gemini", status_code=exc.response.status_code, message=str(exc)
+                )
+                raise
 
         usage = data.get("usageMetadata") or {}
         billed = str(usage.get("serviceTier") or tier).lower()

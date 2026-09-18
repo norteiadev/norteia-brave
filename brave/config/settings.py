@@ -71,7 +71,7 @@ class LLMConfig(BaseSettings):
     provider_data_collection: str = "deny"
 
     # Enforcing daily cost ceiling (CostGuardError on breach, not advisory)
-    usd_daily_budget: float = 10.0
+    usd_daily_budget: float = 50.0
 
     # Anthropic (Claude Sonnet — Phase 3 WhatsApp; stubbed in Phase 1)
     # No alias (CR-02): resolves ONLY from BRAVE_LLM_ANTHROPIC_API_KEY.

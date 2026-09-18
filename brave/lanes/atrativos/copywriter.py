@@ -33,7 +33,7 @@ from brave.lanes.atrativos.grounding import (
     menciona,
     menciona_municipio,
 )
-from brave.shared.exceptions import CostGuardError
+from brave.shared.exceptions import CostGuardError, ProviderBalanceError
 
 if TYPE_CHECKING:
     from brave.clients.base import LLMClientProtocol
@@ -270,6 +270,8 @@ class TourismCopywriter:
         except CostGuardError:
             logger.warning("copywriter_cost_guard_blocked", nome=nome, uf=uf)
             raise
+        except ProviderBalanceError:
+            raise
         except Exception:  # noqa: BLE001 — search failure keeps the TA floor
             logger.warning("copywriter_search_failed_kept_floor", nome=nome, uf=uf)
             return CascadeResult(None)
@@ -298,6 +300,8 @@ class TourismCopywriter:
             )
         except CostGuardError:
             logger.warning("copywriter_cost_guard_blocked", nome=nome, uf=uf)
+            raise
+        except ProviderBalanceError:
             raise
         except Exception:  # noqa: BLE001 — copywriter failure keeps the TA floor
             logger.warning("copywriter_failed_kept_floor", nome=nome, uf=uf)
@@ -344,6 +348,8 @@ class TourismCopywriter:
             )
         except CostGuardError:  # no spend happened — never swallow into a "failed" None
             logger.warning("copywriter_cost_guard_blocked", nome=nome, uf=uf)
+            raise
+        except ProviderBalanceError:
             raise
         except Exception:  # noqa: BLE001 — copywriter failure keeps the TA floor
             logger.warning("copywriter_failed_kept_floor", nome=nome, uf=uf)

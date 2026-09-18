@@ -57,7 +57,7 @@ from brave.lanes.atrativos.signal_agent import (
 )
 from brave.observability.audit import write_audit
 from brave.observability.record_events import record_event
-from brave.shared.exceptions import CostGuardError
+from brave.shared.exceptions import CostGuardError, ProviderBalanceError
 from brave.shared.ibge_distritos import resolve_distrito
 
 if TYPE_CHECKING:
@@ -287,6 +287,8 @@ class PlacesEnrichmentAgent:
         """
         try:
             results = await self._places_client.text_search(nome, uf)
+        except ProviderBalanceError:
+            raise
         except Exception:  # noqa: BLE001 — a Places defect never breaks the ingest
             logger.warning("places_locate_failed", uf=uf)
             return None
@@ -341,6 +343,10 @@ class PlacesEnrichmentAgent:
                 return cascade.prose, cascade, False
             prose = await self._copywriter.write(nome, municipio, uf, places_context=details)
             return prose, None, False
+        except ProviderBalanceError:
+            # Must propagate — a balance wall halts the caller; it is not read as
+            # "no attempt, keep going" like the CostGuardError no-spend tuple below.
+            raise
         except CostGuardError:
             # The daily budget tripped BEFORE dispatch: no token spent, so no attempt
             # happened. Burning the budget here would let one budget trip per sweep
@@ -444,6 +450,8 @@ class PlacesEnrichmentAgent:
                         place_id = match.get("place_id") or ""
                 if place_id:
                     details = await self._places_client.place_details(place_id)
+            except ProviderBalanceError:
+                raise
             except Exception:  # noqa: BLE001 — Places failure keeps the TA floor
                 logger.warning("places_enrich_failed_kept_floor", rio_id=str(rio.id))
                 details = {}

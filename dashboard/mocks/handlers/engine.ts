@@ -37,6 +37,7 @@ export function engineStatus(overrides: Partial<EngineStatus> = {}) {
     // (so board drag/select tests interact freely). Edit-lock suites override
     // with { mode: "LIGADO", editing_unlocked: false }.
     mode: "DESLIGADO",
+    pause_reason: null,
     editing_unlocked: true,
     ...overrides,
   };
