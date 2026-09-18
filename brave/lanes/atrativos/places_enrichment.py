@@ -172,6 +172,13 @@ def _best_match(
         score = fuzz.token_set_ratio(folded_target, _normalize_name(name))
         if score < _NAME_MATCH_THRESHOLD:
             continue
+        # No target coords → no distance guard, and a name alone matched a church in Vitória
+        # for one in Pirenópolis, and the river "Rio Preto" for "Cachoeira Saltos do Rio
+        # Preto" (token_set_ratio scores a contained name 100). Then only a candidate Places
+        # puts in a município of the target's UF qualifies (the client resolves
+        # municipio_ibge within the UF, "" otherwise).
+        if not have_target_coords and r.get("municipio_ibge") == "":
+            continue
         loc = r.get("location") or {}
         rlat, rlng = loc.get("lat"), loc.get("lng")
         if (

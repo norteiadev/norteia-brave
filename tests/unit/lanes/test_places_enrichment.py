@@ -790,3 +790,23 @@ async def test_locate_falls_back_to_the_municipio_every_in_uf_result_agrees_on()
         session=_make_session(),
     )
     assert await agent.locate("Cachoeira do Vale do Rio Macaco", "GO") is None
+
+
+@pytest.mark.asyncio
+async def test_coordless_record_never_matches_a_place_outside_its_uf() -> None:
+    """Without coords there is no distance guard: a same-name church in another state
+    (municipio_ibge "" — the client resolves it within the UF only) must not match."""
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    elsewhere = {**_search_result(), "municipio_ibge": ""}
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [elsewhere]},
+        fixture_details={"ChIJmatriz001": _details()},
+    )
+    rio = _make_rio()
+    rio.normalized = {k: v for k, v in rio.normalized.items() if k not in ("lat", "lon")}
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    await _run(agent, rio)
+
+    assert fake.place_details_calls == []
+    assert "google_place_id" not in rio.normalized
