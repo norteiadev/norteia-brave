@@ -62,7 +62,7 @@ def harness(monkeypatch):
         def wants_description(self, rio):
             return True
 
-        async def write_description(self, nome, municipio, uf, details):
+        async def write_description(self, nome, municipio, uf, details, local=""):
             self.inflight += 1
             self.peak = max(self.peak, self.inflight)
             try:

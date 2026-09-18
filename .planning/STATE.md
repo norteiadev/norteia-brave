@@ -221,3 +221,4 @@ Last session: 2026-06-30T20:55:44.362Z
 Stopped at: Completed 17.1-07-PLAN.md (Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher — all 6 views reachable; Painel Brave shell finished). Phase 17.1 all 7 plans complete.
 Resume file: None
 | 2026-09-18 | fast | Sweep never writes descriptions; only describe_uf builds the copywriter (_enrich_agent describe=True) | ✅ |
+| 2026-09-18 | fast | Describe search query carries distrito/bairro (local_hint); editorialSummary dropped from the Places mask | ✅ |

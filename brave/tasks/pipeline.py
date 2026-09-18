@@ -1762,7 +1762,7 @@ async def _describe_chunk(
     agent: Any,
     search: Any,
     rows: _RowBuffer,
-    jobs: list[tuple[uuid.UUID, tuple[str, str, str]]],
+    jobs: list[tuple[uuid.UUID, tuple[str, str, str, str]]],
     stop: Any,
     uf: str,
 ) -> bool:
@@ -1784,7 +1784,7 @@ async def _describe_chunk(
                 return
             try:
                 # details={}: every record here is google_enriched (no Places context).
-                fetched[rio_id] = await agent.write_description(*args, {})
+                fetched[rio_id] = await agent.write_description(*args[:3], {}, args[3])
             except SoftTimeLimitExceeded:
                 raise
             except ProviderBalanceError:
@@ -1870,6 +1870,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
 
     from brave.core import engine as collection_engine
     from brave.lanes.atrativos.copy_batch import description_candidates_filter
+    from brave.lanes.atrativos.copywriter import local_hint
     from brave.observability.cost_guard import pre_dispatch_check
     from brave.shared.exceptions import CostGuardError
 
@@ -1938,7 +1939,12 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
                     norm = rio.normalized or {}
                     jobs.append((
                         rio_id,
-                        (norm.get("name") or "", norm.get("municipio") or "", rio.uf or norm.get("uf") or ""),
+                        (
+                            norm.get("name") or "",
+                            norm.get("municipio") or "",
+                            rio.uf or norm.get("uf") or "",
+                            local_hint(norm),  # distrito/bairro → sharper search query
+                        ),
                     ))
             # End the read transaction: no connection sits idle-in-transaction through the
             # gather, and phase 2's session.get reloads every record (expired), not a copy

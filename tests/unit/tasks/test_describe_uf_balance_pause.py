@@ -44,7 +44,7 @@ def test_describe_uf_halts_and_pauses_on_provider_balance_error(monkeypatch):
         def wants_description(self, rio):
             return True
 
-        async def write_description(self, nome, municipio, uf, details):
+        async def write_description(self, nome, municipio, uf, details, local=""):
             raise ProviderBalanceError("tavily")
 
         async def run(self, rio, description=None):
