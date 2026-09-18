@@ -221,6 +221,13 @@ def test_attraction_carries_most_recent_review_at_into_normalized():
     assert rio.normalized["most_recent_review_at"] == "2026-07-20T12:00:00+00:00"
 
 
+def test_attraction_carries_review_count_into_normalized():
+    """The backstop's "established attraction" window reads normalized["review_count"]."""
+    assert _run_rio("attraction", _payload(review_count=42)).normalized["review_count"] == 42
+    assert "review_count" not in _run_rio("attraction", _payload(review_count=0)).normalized
+    assert "review_count" not in _run_rio("destination", _payload(review_count=42)).normalized
+
+
 @pytest.mark.parametrize("payload", [_payload(), _payload(most_recent_review_at=None)])
 def test_attraction_without_review_date_leaves_key_unset(payload):
     """Absent or None → key not set, so the backstop stays fail-closed."""

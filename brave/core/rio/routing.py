@@ -225,6 +225,9 @@ def process_nascente_record(
         _review_at = payload.get("most_recent_review_at")
         if _review_at:
             normalized["most_recent_review_at"] = _review_at
+        # Review volume for the backstop's "established attraction" window (same reader).
+        if payload.get("review_count"):
+            normalized["review_count"] = payload["review_count"]
 
     if nascente.entity_type == "attraction" and "place_id_cache" in payload:
         normalized["place_id_cache"] = payload["place_id_cache"]
