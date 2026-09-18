@@ -762,3 +762,31 @@ async def test_locate_only_accepts_a_confident_match_placed_in_the_uf() -> None:
         session=_make_session(),
     )
     assert await agent.locate("Cachoeira do Macaquinho", "GO") is None
+
+
+@pytest.mark.asyncio
+async def test_locate_falls_back_to_the_municipio_every_in_uf_result_agrees_on() -> None:
+    """No name match, but all in-UF results cluster in one município → município only,
+    never a place_id (none of them is provably the atrativo). Disagreement → None."""
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    def res(name, ibge):
+        return {**_search_result(name=name), "municipio_ibge": ibge}
+
+    agree = [res("Mirante Jardim de Maytrea", "5200605"), res("Rio Preto", ""),
+             res("Gota Sat Som", "5200605")]
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Jardim de Maytreia": agree}),
+        session=_make_session(),
+    )
+    assert await agent.locate("Jardim de Maytreia", "GO") == {
+        "municipio_ibge": "5200605",
+        "consensus": True,
+    }
+
+    split = [res("Cachoeira do Macacão", "5200605"), res("Cachoeira dos Macacos", "5220207")]
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Cachoeira do Vale do Rio Macaco": split}),
+        session=_make_session(),
+    )
+    assert await agent.locate("Cachoeira do Vale do Rio Macaco", "GO") is None

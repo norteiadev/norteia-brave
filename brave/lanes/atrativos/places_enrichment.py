@@ -263,14 +263,31 @@ class PlacesEnrichmentAgent:
         of THIS UF (``municipio_ibge`` resolves within the UF only). Returns the matched
         result — place_id, location, municipio_ibge — or None. Never raises: a Places
         failure just means the card stays unmatched.
+
+        No confident match, but every in-UF result sits in the SAME município → returns
+        only ``{"municipio_ibge", "consensus": True}``: the card is placed in the município
+        the search clusters in, WITHOUT a place_id (none of the results is provably this
+        atrativo, so run() keeps its own strict match). Measured on the 7 Chapada cards
+        the name guard rejected: all 7 clustered correctly (e.g. "Jardim de Maytreia" vs
+        "Mirante Jardim de Maytrea", score 83.7). Disagreeing results → None.
         """
         try:
             results = await self._places_client.text_search(nome, uf)
         except Exception:  # noqa: BLE001 — a Places defect never breaks the ingest
             logger.warning("places_locate_failed", uf=uf)
             return None
-        in_uf = [r for r in results if r.get("municipio_ibge")]
-        return _best_match(in_uf, nome, None, None, self._max_distance_km)
+        in_uf = [
+            r
+            for r in results
+            if r.get("municipio_ibge") and _GEOGRAPHIC_TYPE_MARKER not in (r.get("types") or [])
+        ]
+        match = _best_match(in_uf, nome, None, None, self._max_distance_km)
+        if match is not None:
+            return match
+        municipios = {r["municipio_ibge"] for r in in_uf}
+        if len(municipios) == 1:
+            return {"municipio_ibge": municipios.pop(), "consensus": True}
+        return None
 
     def wants_description(self, rio: RioRecord) -> bool:
         """The description sub-step's gate. Reads ``rio`` only — no I/O, no writes."""

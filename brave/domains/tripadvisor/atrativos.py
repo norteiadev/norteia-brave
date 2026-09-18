@@ -89,7 +89,8 @@ TA_ATRATIVO_ORIGEM_VALUE = 65.0
 # would only fail again and eat a max_per_uf slot); one quarantined under an older chain
 # is retried once. Bump it whenever the chain learns a new way to place a card.
 # 2 = + distrito by TA cityName + Google Places Text Search.
-IBGE_RESOLVER_VERSION = 2
+# 3 = + Places município consensus when no result matches the name.
+IBGE_RESOLVER_VERSION = 3
 _IBGE_UNMATCHED_TASK = "brave.ta.atrativos.ibge_unmatched"
 
 logger = structlog.get_logger(__name__)
@@ -603,7 +604,12 @@ class TripAdvisorAtrativosIngest:
                             "message": f"{name} → {place.get('name') or ''}".strip(" →"),
                             "entity_type": "attraction",
                             "uf": uf,
-                            "data": {"via": "places_text_search", "place_id": located_place_id},
+                            "data": {
+                                "via": "places_consensus"
+                                if place.get("consensus")
+                                else "places_text_search",
+                                "place_id": located_place_id,
+                            },
                         }
                     )
 
