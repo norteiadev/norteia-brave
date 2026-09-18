@@ -60,6 +60,7 @@ const STAGE_LABELS: Record<string, string> = {
   description_enriched: "Descrição editorial gerada",
   places_enriched: "Enriquecido (Google Places)",
   places_descarte: "Descartado pelo Google Places",
+  places_match_reverted: "Match do Google Places desfeito",
   quarantined: "Quarentena (falha)",
 };
 
