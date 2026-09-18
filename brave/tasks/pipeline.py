@@ -29,7 +29,7 @@ import asyncio
 import contextlib
 import os
 import uuid
-from typing import Any
+from typing import Any, NamedTuple
 
 import structlog
 from celery import shared_task
@@ -1488,18 +1488,52 @@ def _description_on(app_config: AppConfig, effective: AppConfig) -> bool:
     )
 
 
-def _enrich_one(session: Session, rio: RioRecord) -> None:
+class _EnrichCtx(NamedTuple):
+    """The per-record-invariant inputs of _enrich_one, built once per chunk/task."""
+
+    app_config: AppConfig
+    effective: AppConfig
+    distritos: Any
+    ibge_lookup: Any  # None unless the real Places client is on
+    redis: Any  # None unless the inline copywriter is on
+
+
+def _enrich_ctx(session: Session, redis_client: Any = None) -> _EnrichCtx:
+    """Load config + the IBGE reference tables (~16k rows) once, not once per atrativo.
+
+    Only DB/Redis-backed state lives here. The async HTTP clients stay per record: each
+    record runs in its own asyncio.run, and a pooled connection must not outlive its loop.
+    """
+    from brave.shared.ibge_distritos import load_distritos
+
+    app_config = AppConfig()
+    effective = _load_config(session)
+    ibge_lookup = None
+    if app_config.run_real_externals and effective.places_enrichment_enabled:
+        from brave.clients.places import load_municipio_name_ibge_lookup
+        ibge_lookup = load_municipio_name_ibge_lookup(session)
+    if redis_client is None and _description_on(app_config, effective):
+        import redis as _copy_redis_lib  # noqa: PLC0415
+
+        redis_client = _copy_redis_lib.from_url(
+            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        )
+    return _EnrichCtx(app_config, effective, load_distritos(session), ibge_lookup, redis_client)
+
+
+def _enrich_one(session: Session, rio: RioRecord, ctx: _EnrichCtx | None = None) -> None:
     """Run PlacesEnrichmentAgent on one RioRecord (no commit — the caller owns it).
 
     The body of enrich_places_task, shared with brave.describe_uf so the per-UF
     description producer walks exactly the same client selection + agent path.
+    ``ctx`` is the hoisted invariant state; describe_uf builds it once per chunk.
     """
     from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
-    from brave.shared.ibge_distritos import load_distritos
 
     rio_id = str(rio.id)
-    app_config = AppConfig()
-    effective = _load_config(session)
+    if ctx is None:
+        ctx = _enrich_ctx(session)
+    app_config, effective = ctx.app_config, ctx.effective
     config = effective.score
 
     # Real Places client requires BOTH run_real_externals AND the operator-toggleable
@@ -1508,13 +1542,10 @@ def _enrich_one(session: Session, rio: RioRecord) -> None:
     # — a real local sweep runs with ZERO Google Places spend on enrichment.
     if app_config.run_real_externals and effective.places_enrichment_enabled:
         places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
-        from brave.clients.places import (
-            RealPlacesClient,
-            load_municipio_name_ibge_lookup,
-        )
+        from brave.clients.places import RealPlacesClient
         places_client = RealPlacesClient(
             api_key=places_api_key,
-            ibge_lookup=load_municipio_name_ibge_lookup(session),
+            ibge_lookup=ctx.ibge_lookup,
         )
     else:
         if app_config.run_real_externals and not effective.places_enrichment_enabled:
@@ -1527,12 +1558,8 @@ def _enrich_one(session: Session, rio: RioRecord) -> None:
     # Batch mode moves the description off this path to submit/collect_description_batch.
     _desc_on = _description_on(app_config, effective)
     if _desc_on:
-        import redis as _copy_redis_lib  # noqa: PLC0415
-
         from brave.clients.llm import RealLLMClient
-        copy_redis = _copy_redis_lib.from_url(
-            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-        )
+        copy_redis = ctx.redis
         copy_llm = RealLLMClient(
             config=app_config.llm,
             redis_client=copy_redis,
@@ -1550,7 +1577,7 @@ def _enrich_one(session: Session, rio: RioRecord) -> None:
         session=session,
         config=config,
         llm_client=copy_llm,
-        distritos=load_distritos(session),
+        distritos=ctx.distritos,
         voice_model_slug=app_config.atrativo_voice_model_slug,
         description_enabled=_desc_on,
         enable_web_search=app_config.run_real_externals,
@@ -1705,6 +1732,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
         if after_id:
             stmt = stmt.where(RioRecord.id > uuid.UUID(after_id))
         ids = list(session.scalars(stmt.order_by(RioRecord.id).limit(limit)).all())
+        ctx = _enrich_ctx(session, rc) if ids else None
 
         halted = cut = False
         n = 0  # ids consumed — the cursor resumes after ids[n - 1]
@@ -1726,7 +1754,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
             try:
                 rio = session.get(RioRecord, rio_id)
                 if rio is not None:
-                    _enrich_one(session, rio)
+                    _enrich_one(session, rio, ctx)
                 session.commit()
             except SoftTimeLimitExceeded:
                 # ~60s before the hard kill, which would skip the finally and leak the

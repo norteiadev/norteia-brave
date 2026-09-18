@@ -46,7 +46,15 @@ def harness(monkeypatch):
     monkeypatch.setattr(pipeline, "load_effective_config", lambda s, r=None: _ON)
 
     enriched: list = []
-    monkeypatch.setattr(pipeline, "_enrich_one", lambda s, rio: enriched.append(rio.id))
+    ctxs: list = []
+    ctx_builds = MagicMock(side_effect=lambda s, r=None: object())
+    monkeypatch.setattr(pipeline, "_enrich_ctx", ctx_builds)
+
+    def _spy(s, rio, ctx=None):
+        enriched.append(rio.id)
+        ctxs.append(ctx)
+
+    monkeypatch.setattr(pipeline, "_enrich_one", _spy)
     lifecycle = MagicMock()
     monkeypatch.setattr(pipeline, "_producer_finally_lifecycle", lifecycle)
 
@@ -58,6 +66,7 @@ def harness(monkeypatch):
         pass
 
     h = H()
+    h.ctxs, h.ctx_builds = ctxs, ctx_builds
     h.redis, h.session, h.enriched, h.lifecycle, h.chain, h.run = (
         fake, session, enriched, lifecycle, chain, run
     )
@@ -74,6 +83,16 @@ def harness(monkeypatch):
 def _stmt(h):
     stmt = h.session.scalars.call_args.args[0]
     return stmt, stmt.compile(dialect=postgresql.dialect())
+
+
+def test_enrich_ctx_built_once_per_chunk_and_shared(harness):
+    """The reference tables + config are loaded once for the chunk, not per atrativo."""
+    harness.ids(3)
+    harness.run("ES")
+    assert harness.ctx_builds.call_count == 1
+    assert len(harness.ctxs) == 3
+    assert harness.ctxs[0] is not None
+    assert all(c is harness.ctxs[0] for c in harness.ctxs)
 
 
 def test_selects_by_uf_with_cursor_and_chunk_limit(harness):
@@ -147,7 +166,7 @@ def test_record_failure_is_logged_and_the_chunk_continues(harness, monkeypatch):
     ids = harness.ids(3)
     done: list = []
 
-    def flaky(session, rio):
+    def flaky(session, rio, ctx=None):
         if rio.id == ids[0]:
             raise RuntimeError("copywriter blew up")
         done.append(rio.id)
@@ -168,7 +187,7 @@ def test_soft_time_limit_hands_the_rest_of_the_uf_on(harness, monkeypatch):
     ids = harness.ids(pipeline._DESCRIBE_CHUNK)
     done: list = []
 
-    def slow(session, rio):
+    def slow(session, rio, ctx=None):
         if rio.id == ids[2]:
             raise SoftTimeLimitExceeded()
         done.append(rio.id)
