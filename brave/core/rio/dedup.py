@@ -73,7 +73,10 @@ def find_duplicate(
 
     # Stage 2: Territorial-key-blocked pgvector fuzzy search
     # Skip if no municipio_id (no territorial block) or no embedding
-    if municipio_id is None or embedding is None:
+    # ponytail: compute_embedding is a zero-vector stub, whose cosine similarity is
+    # always 0.0 — the pgvector query can never match. The `not any(...)` guard
+    # stops skipping by itself once compute_embedding returns real vectors.
+    if municipio_id is None or embedding is None or not any(embedding):
         return None
 
     # Query RioRecord with territorial-key block (UF + municipio_id + entity_type)
