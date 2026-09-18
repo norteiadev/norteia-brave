@@ -533,6 +533,10 @@ Index(
     "ix_record_events_rio_id",
     RecordEvent.rio_id,
 )
+# Retention purge (created_at < cutoff) and the by-source_ref timelines that do not filter
+# on `source` (cms / workers drawers) — migration 0016.
+Index("ix_record_events_created_at", RecordEvent.created_at)
+Index("ix_record_events_ref_created", RecordEvent.source_ref, RecordEvent.created_at)
 
 
 # ---------------------------------------------------------------------------
@@ -543,6 +547,23 @@ Index(
     RioRecord.uf,
     RioRecord.municipio_id,
     RioRecord.entity_type,
+)
+
+# Migration 0016 (built CONCURRENTLY there; keep names/columns in step).
+Index("ix_rio_records_sub_state", RioRecord.sub_state)
+Index("ix_mar_records_rio_id", MarRecord.rio_id)
+Index("ix_audit_log_record_id", AuditLog.record_id)
+# describe_uf / batch-submit worklist. The CAST is how SQLAlchemy renders
+# normalized["descricao_editorial"].as_string() in description_candidates_filter(); without
+# it the planner cannot match the predicate (tests/integration/test_migration_0016.py).
+Index(
+    "ix_rio_description_candidates",
+    RioRecord.uf,
+    RioRecord.id,
+    postgresql_where=text(
+        "entity_type = 'attraction' AND descricao_batch_id IS NULL "
+        "AND CAST((normalized ->> 'descricao_editorial') AS VARCHAR) IS NULL"
+    ),
 )
 
 
