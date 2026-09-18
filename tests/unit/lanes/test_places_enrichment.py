@@ -834,3 +834,34 @@ async def test_coordless_record_matches_only_near_its_municipio_seat() -> None:
         rio.normalized = {k: v for k, v in rio.normalized.items() if k not in ("lat", "lon")}
         await _run(PlacesEnrichmentAgent(places_client=fake, session=session, now=_NOW), rio)
         assert fake.place_details_calls == expected
+
+
+@pytest.mark.asyncio
+async def test_temporarily_closed_is_enriched_but_parked_in_dlq() -> None:
+    """CLOSED_TEMPORARILY: no descarte — hours/coords are kept, the record goes to the DLQ
+    with dlq_reason "closed_temporarily" even when the re-score would promote it."""
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": _details(business_status="CLOSED_TEMPORARILY")},
+    )
+    rio = _make_rio()
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+
+    def promote(_session, r, _config):
+        r.routing = "mar"
+
+    with patch("brave.lanes.atrativos.places_enrichment.write_audit"), \
+         patch("brave.lanes.atrativos.places_enrichment.record_event") as event, \
+         patch("brave.lanes.atrativos.places_enrichment.route_by_score", side_effect=promote):
+        await agent.run(rio)
+
+    assert rio.routing == "dlq"
+    assert rio.dlq_reason == "closed_temporarily"
+    assert rio.normalized["weekday_text"]  # enriched, not discarded
+    assert rio.normalized["signal"]["business_status"] == "CLOSED_TEMPORARILY"
+    ev = event.call_args.kwargs
+    assert ev["stage"] == "places_enriched"
+    assert ev["data"]["business_status"] == "CLOSED_TEMPORARILY"
+    assert "fechado temporariamente" in ev["message"]

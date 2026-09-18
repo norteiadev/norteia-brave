@@ -114,6 +114,8 @@ export interface PainelCard {
   whatsappEligible?: boolean;
   /** Atrativo still waiting for its descricao_editorial → "Sem descrição" pill. */
   descriptionPending?: boolean;
+  /** Google Places: closed for now → "Fechado Temporariamente" pill (kept in the DLQ). */
+  temporarilyClosed?: boolean;
 }
 
 // --- Constants ---
@@ -216,6 +218,7 @@ export function toPainelCards(
     // is authoritative); false ⇒ already has horário/preço → checkbox disabled.
     whatsappEligible: a.whatsapp_eligible ?? true,
     descriptionPending: a.description_pending ?? false,
+    temporarilyClosed: a.temporarily_closed ?? false,
   }));
 
   const falhaCards = failures.map(failureToCard);

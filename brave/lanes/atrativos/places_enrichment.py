@@ -49,6 +49,8 @@ from brave.lanes.atrativos.copywriter import CASCADE_MODEL, CascadeResult, Touri
 from brave.lanes.atrativos.schemas import SignalResult
 from brave.lanes.atrativos.signal_agent import (
     CLOSED_STATUSES,
+    TEMPORARILY_CLOSED,
+    TEMPORARILY_CLOSED_REASON,
     _compute_atualidade,
     _is_recent_review,
     _newest_review_dt,
@@ -116,7 +118,6 @@ _SEAT_RADIUS_KM: float = 80.0
 # PT-BR wording of Places' business_status for the atrativo's Log tab.
 _CLOSED_LABELS: dict[str, str] = {
     "CLOSED_PERMANENTLY": "fechado permanentemente",
-    "CLOSED_TEMPORARILY": "fechado temporariamente",
 }
 
 
@@ -674,6 +675,13 @@ class PlacesEnrichmentAgent:
         if cascade is not None and cascade.motivo == "municipio_nao_confirmado":
             rio.routing = "dlq"
             rio.dlq_reason = "municipio_nao_confirmado"
+        # Temporarily closed (Places, confident match): enriched like any other record, but
+        # never promoted — a steward decides. Wins over the other DLQ reasons: it is the one
+        # the steward must see first (the Painel badges it "Fechado Temporariamente").
+        temporarily_closed = details.get("business_status") == TEMPORARILY_CLOSED
+        if temporarily_closed:
+            rio.routing = "dlq"
+            rio.dlq_reason = TEMPORARILY_CLOSED_REASON
         self._session.flush()
 
         # Append-only Log-tab timeline event (keyed by canonical_key — the drawer key).
@@ -685,10 +693,16 @@ class PlacesEnrichmentAgent:
             source_ref=canonical_key,
             stage="places_enriched",
             status="ok" if (hours_written or description_written) else "skip",
+            message=(
+                "Google Places marca como fechado temporariamente — mantido no DLQ"
+                if temporarily_closed
+                else None
+            ),
             entity_type="attraction",
             uf=rio.uf,
             rio_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
             data={
+                "business_status": details.get("business_status"),
                 "hours_written": hours_written,
                 "description_written": description_written,
                 "descricao_gate": cascade.motivo if cascade is not None else None,

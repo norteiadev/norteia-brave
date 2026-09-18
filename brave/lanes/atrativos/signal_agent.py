@@ -3,9 +3,13 @@
 Sub-state transition: contacts_found → signals_gathered.
 
 D-05: Hard descarte path fires FIRST, before any reliability scoring:
-  - business_status CLOSED_PERMANENTLY or CLOSED_TEMPORARILY:
+  - business_status CLOSED_PERMANENTLY:
     → rio.routing = "descarte", rio.sub_state = None, rio.dlq_reason = "closed_place"
     → write audit row, flush, return (no scoring)
+  - business_status CLOSED_TEMPORARILY (operator decision 2026-09-18: the place still
+    exists, a steward decides): → rio.routing = "dlq", rio.sub_state = None,
+    rio.dlq_reason = "closed_temporarily" — the Painel shows a "Fechado Temporariamente"
+    badge. Audit row, flush, return (no scoring).
 
 Score inputs set on normalized:
   - atualidade_value: 100 if review ≤ 30 days, 50 if 1–6 months, 0 if no recent reviews
@@ -54,7 +58,10 @@ logger = structlog.get_logger(__name__)
 # Business status constants (D-05)
 # ---------------------------------------------------------------------------
 
-CLOSED_STATUSES = frozenset({"CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY"})
+# Hard descarte. CLOSED_TEMPORARILY is NOT here: it parks in the DLQ (see below).
+CLOSED_STATUSES = frozenset({"CLOSED_PERMANENTLY"})
+TEMPORARILY_CLOSED = "CLOSED_TEMPORARILY"
+TEMPORARILY_CLOSED_REASON = "closed_temporarily"
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +135,8 @@ class SignalAgent:
     Idempotency guard: returns immediately if sub_state != "contacts_found".
 
     Hard descarte check (D-05): fires BEFORE any scoring.
-    business_status CLOSED_PERMANENTLY or CLOSED_TEMPORARILY → descarte + return.
+    business_status CLOSED_PERMANENTLY → descarte + return; CLOSED_TEMPORARILY → DLQ
+    (dlq_reason "closed_temporarily") + return.
 
     Corroboração (Phase E): the social-signal (Apify IG) source was retired, so
     corroboracao_value is written as a deterministic 0.0 (no Places field feeds it
@@ -217,6 +225,28 @@ class SignalAgent:
                 rio_id=str(rio.id),
                 business_status=business_status,
             )
+            return
+
+        # Step 2b: temporarily closed → steward's call, not a descarte (no scoring).
+        if business_status == TEMPORARILY_CLOSED:
+            rio.routing = "dlq"
+            rio.dlq_reason = TEMPORARILY_CLOSED_REASON
+            rio.sub_state = None
+            write_audit(
+                session=self._session,
+                action="temporarily_closed",
+                entity_type="attraction",
+                record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
+                before_state={"sub_state": "contacts_found"},
+                after_state={
+                    "routing": "dlq",
+                    "sub_state": None,
+                    "reason": TEMPORARILY_CLOSED_REASON,
+                },
+                actor="signal_agent",
+            )
+            self._session.flush()
+            logger.info("atrativo_temporarily_closed", rio_id=str(rio.id))
             return
 
         # Reference clock (Phase F): resolve ONCE so the atualidade buckets, the

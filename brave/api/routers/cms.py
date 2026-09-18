@@ -41,6 +41,10 @@ from brave.core.models import (
     RioRecord,
     mask_phone,
 )
+from brave.lanes.atrativos.signal_agent import (
+    TEMPORARILY_CLOSED,
+    TEMPORARILY_CLOSED_REASON,
+)
 from brave.observability.audit import write_audit
 
 logger = structlog.get_logger(__name__)
@@ -115,6 +119,19 @@ _ROUTING_TO_COLUMN: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _temporarily_closed(rio: RioRecord) -> bool:
+    """Google Places says the atrativo is closed for now → "Fechado Temporariamente" badge.
+
+    Either signal counts: the DLQ reason both lanes set, or the business_status the TA
+    enrichment keeps in normalized["signal"] — which survives a steward moving the record
+    on, so the badge keeps warning after it leaves the DLQ.
+    """
+    if rio.dlq_reason == TEMPORARILY_CLOSED_REASON:
+        return True
+    signal = (rio.normalized or {}).get("signal") or {}
+    return signal.get("business_status") == TEMPORARILY_CLOSED
 
 
 def _safe_contacts(contacts: dict | None) -> dict | None:
@@ -816,6 +833,7 @@ def list_atrativos(
             ),
             "validation_pending": rio.sub_state == "aguardando_consulta_whatsapp",
             "whatsapp_eligible": _is_whatsapp_eligible(rio.normalized),
+            "temporarily_closed": _temporarily_closed(rio),
             # Kanban "Sem descrição" badge — derived, so it clears the moment the
             # description lane writes descricao_editorial (no extra column to sync).
             "description_pending": (
@@ -893,6 +911,7 @@ def get_atrativo_detail(
         "normalized": _safe_normalized(rio.normalized),
         "source": nascente.source if nascente else None,
         "dlq_reason": rio.dlq_reason,
+        "temporarily_closed": _temporarily_closed(rio),
         "processed_at": rio.processed_at.isoformat() if rio.processed_at else None,
         "score_version": rio.score_version,
         "events": _record_events_for(db, rio.canonical_key),
