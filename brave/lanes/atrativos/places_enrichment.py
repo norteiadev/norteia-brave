@@ -45,7 +45,12 @@ from brave.config.settings import ScoreConfig
 from brave.core.models import AtrativoBusca, Municipio
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import route_by_score
-from brave.lanes.atrativos.copywriter import CASCADE_MODEL, CascadeResult, TourismCopywriter
+from brave.lanes.atrativos.copywriter import (
+    CASCADE_MODEL,
+    CascadeResult,
+    TourismCopywriter,
+    local_hint,
+)
 from brave.lanes.atrativos.schemas import SignalResult
 from brave.lanes.atrativos.signal_agent import (
     CLOSED_STATUSES,
@@ -57,7 +62,7 @@ from brave.lanes.atrativos.signal_agent import (
 )
 from brave.observability.audit import write_audit
 from brave.observability.record_events import record_event
-from brave.shared.exceptions import CostGuardError
+from brave.shared.exceptions import CostGuardError, ProviderBalanceError
 from brave.shared.ibge_distritos import resolve_distrito
 
 if TYPE_CHECKING:
@@ -212,7 +217,7 @@ class PlacesEnrichmentAgent:
     Places sub-step is skipped, but the description sub-step still runs (this agent is the
     ONLY writer of descricao_editorial, so that lane would otherwise never get one).
 
-    Description: written by TourismCopywriter (Places editorialSummary + web_search, Norteia
+    Description: written by TourismCopywriter (Places context + web search, Norteia
     voice) when ``description_enabled`` and the record has no descricao_editorial yet. Gated
     separately from the Places call so an operator can disable the LLM/web-search spend while
     still getting hours/distrito/liveness. Distrito comes from Places addressComponents
@@ -287,6 +292,8 @@ class PlacesEnrichmentAgent:
         """
         try:
             results = await self._places_client.text_search(nome, uf)
+        except ProviderBalanceError:
+            raise
         except Exception:  # noqa: BLE001 — a Places defect never breaks the ingest
             logger.warning("places_locate_failed", uf=uf)
             return None
@@ -325,7 +332,7 @@ class PlacesEnrichmentAgent:
         )
 
     async def write_description(
-        self, nome: str, municipio: str, uf: str, details: dict[str, Any]
+        self, nome: str, municipio: str, uf: str, details: dict[str, Any], local: str = ""
     ) -> tuple[str | None, CascadeResult | None, bool]:
         """The copywriter's network I/O: (prose, cascade, no_spend). Never touches the Session.
 
@@ -336,11 +343,15 @@ class PlacesEnrichmentAgent:
         try:
             if self._copywriter.cascade:
                 cascade = await self._copywriter.write_cascade(
-                    nome, municipio, uf, places_context=details
+                    nome, municipio, uf, places_context=details, local=local
                 )
                 return cascade.prose, cascade, False
             prose = await self._copywriter.write(nome, municipio, uf, places_context=details)
             return prose, None, False
+        except ProviderBalanceError:
+            # Must propagate — a balance wall halts the caller; it is not read as
+            # "no attempt, keep going" like the CostGuardError no-spend tuple below.
+            raise
         except CostGuardError:
             # The daily budget tripped BEFORE dispatch: no token spent, so no attempt
             # happened. Burning the budget here would let one budget trip per sweep
@@ -444,6 +455,8 @@ class PlacesEnrichmentAgent:
                         place_id = match.get("place_id") or ""
                 if place_id:
                     details = await self._places_client.place_details(place_id)
+            except ProviderBalanceError:
+                raise
             except Exception:  # noqa: BLE001 — Places failure keeps the TA floor
                 logger.warning("places_enrich_failed_kept_floor", rio_id=str(rio.id))
                 details = {}
@@ -587,7 +600,9 @@ class PlacesEnrichmentAgent:
         cascade: CascadeResult | None = None
         if wants_description and self._copywriter is not None:
             if description is None:
-                description = await self.write_description(nome, municipio, uf, details)
+                description = await self.write_description(
+                    nome, municipio, uf, details, local_hint(new_normalized)
+                )
             prose, cascade, no_spend = description
             if no_spend:
                 logger.warning(

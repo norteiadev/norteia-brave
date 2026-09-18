@@ -22,6 +22,7 @@ Hierarchy::
     ├── PermanentError      — quarantine, do not retry (malformed payload)
     ├── ComplianceError     — D-11 compliance gate failure (LGPD/BSP)
     ├── CostGuardError      — daily USD budget exceeded (operational halt)
+    ├── ProviderBalanceError — paid provider billing wall (no credit/quota left)
     └── SourceError         — external-source failure (fetch/scrape/session)
         └── SourceSessionError  — source session missing or expired
 
@@ -63,6 +64,38 @@ class CostGuardError(BraveError):
     This is an operational halt, not a bug. The Celery task should catch this,
     log appropriately (without leaking budget details), and abort the LLM call.
     """
+
+
+class ProviderBalanceError(BraveError):
+    """Raised when a paid external provider reports a billing wall (no credit/quota left).
+
+    Distinct from CostGuardError: CostGuardError is OUR internal daily-budget ceiling,
+    checked before dispatch. ProviderBalanceError is the PROVIDER telling us it has no
+    money/quota left, discovered only after a real call. Callers must let this propagate
+    uncaught (never degrade to a "no attempt" floor) — the motor pauses on it instead.
+    """
+
+    def __init__(self, provider: str, message: str = "") -> None:
+        self.provider = provider
+        super().__init__(message or f"{provider}: sem saldo/quota")
+
+
+# Status codes that mean "billing wall" across the paid providers this plan covers
+# (OpenRouter 402, Tavily 432/433 plan/credit limit).
+_BALANCE_STATUS_CODES = frozenset({402, 432, 433})
+_BALANCE_MESSAGE_MARKERS = ("credit balance is too low", "insufficient_quota", "billing")
+
+
+def raise_if_balance_wall(provider: str, *, status_code: int | None = None, message: str = "") -> None:
+    """Raise ProviderBalanceError(provider) if status_code/message signal a billing wall.
+
+    No-op (returns) otherwise — the caller's normal error handling continues unchanged.
+    """
+    if status_code in _BALANCE_STATUS_CODES:
+        raise ProviderBalanceError(provider, message)
+    lowered = message.lower()
+    if any(marker in lowered for marker in _BALANCE_MESSAGE_MARKERS):
+        raise ProviderBalanceError(provider, message)
 
 
 class SourceError(BraveError):

@@ -205,6 +205,7 @@ None yet.
 | 260827-rp1 | Copywriter pela assinatura Claude Max avaliado: permitido por ToS mas reprovado — carga inicial custa $37-177 pela cascata contra $100/mês, e não cabe na cota por ~10x; subagente criado e mantido como oráculo de qualidade | 2026-08-27 | c1ca496 | complete | [260827-copywriter-via-assinatura](./quick/260827-copywriter-via-assinatura/) |
 | 260915-gdf | Copywriter da cascata no Gemini 2.5 Flash direto (AI Studio) com tier Flex e queda para standard em 503/429/timeout; modelo da cascata virou env (ATRATIVO_CASCADE_MODEL, rollback para o OpenRouter sem deploy) e o build recusa um redator gemini-* sem chave. Piloto de 246 atrativos (DF+GO): 96,6% aprovados, 85,9% em Flex, US$ 0,00281/atrativo → ~US$ 26 nos 10 mil | 2026-09-16 | a503f3c | | [260915-gemini-direto-flex](./quick/260915-gemini-direto-flex/) |
 | 260917-tkd | O beat ta_keepalive passou a pingar pelo transporte GraphQL do sweep, desliza o TTL da sessão em todo ping bom e NUNCA desliga o engine: falha vira contador consecutivo e só marca needs_bootstrap na terceira. Antes ele pingava a página HTML, tomava 403 do DataDome com a sessão boa e chamava set_mode(DESLIGADO), cortando o piloto em 59 atrativos | 2026-09-17 | 8556b75 | | [260917-ta-keepalive-nao-desliga](./quick/260917-ta-keepalive-nao-desliga/) |
+| 260918-ohm | Pause motor with reason on provider balance wall / daily budget + Painel Continuar; usd_daily_budget 10→50 | 2026-09-18 | ff066e2 | | [260918-ohm-pause-on-no-balance](./quick/260918-ohm-pause-on-no-balance/) |
 
 ## Deferred Items
 
@@ -220,3 +221,5 @@ Last session: 2026-06-30T20:55:44.362Z
 Stopped at: Completed 17.1-07-PLAN.md (Origem modal + TA cURL inject + Motor depth toggle + two-group nav + view-switcher — all 6 views reachable; Painel Brave shell finished). Phase 17.1 all 7 plans complete.
 Resume file: None
 | 2026-09-18 | fast | Mar recency backstop: established attractions (20+ reviews) get a one-year window; review_count carried into Rio | ✅ |
+| 2026-09-18 | fast | Sweep never writes descriptions; only describe_uf builds the copywriter (_enrich_agent describe=True) | ✅ |
+| 2026-09-18 | fast | Describe search query carries distrito/bairro (local_hint); editorialSummary dropped from the Places mask | ✅ |

@@ -62,7 +62,7 @@ def harness(monkeypatch):
         def wants_description(self, rio):
             return True
 
-        async def write_description(self, nome, municipio, uf, details):
+        async def write_description(self, nome, municipio, uf, details, local=""):
             self.inflight += 1
             self.peak = max(self.peak, self.inflight)
             try:
@@ -345,9 +345,10 @@ def test_engine_describe_dispatches_describe_uf_per_uf(monkeypatch):
     sweep.delay.assert_not_called()
 
 
-def test_enrich_one_fails_before_the_agent_on_empty_gemini_key(monkeypatch):
-    """The cascade build guard now lives in _enrich_one: a gemini-* writer with no key
-    raises BEFORE PlacesEnrichmentAgent exists, so no descricao_attempt is burned."""
+def test_describe_agent_fails_before_the_agent_on_empty_gemini_key(monkeypatch):
+    """The cascade build guard lives in _enrich_agent's describe path (the only one that
+    writes descriptions): a gemini-* writer with no key raises BEFORE
+    PlacesEnrichmentAgent exists, so no descricao_attempt is burned."""
     from brave.config.settings import LLMConfig
 
     app = MagicMock(
@@ -371,5 +372,6 @@ def test_enrich_one_fails_before_the_agent_on_empty_gemini_key(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="BRAVE_LLM_GEMINI_API_KEY"):
-        pipeline._enrich_one(MagicMock(), MagicMock(id=uuid.uuid4()))
+        session = MagicMock()
+        pipeline._enrich_agent(session, pipeline._enrich_ctx(session), describe=True)
     built.assert_not_called()

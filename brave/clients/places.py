@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 import structlog
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from brave.shared.exceptions import ProviderBalanceError
+
 logger = structlog.get_logger(__name__)
 
 
@@ -63,7 +65,6 @@ _GET_PLACE_FIELD_MASK = (
     "reviews,"
     "internationalPhoneNumber,"
     "websiteUri,"
-    "editorialSummary,"
     "priceLevel"
 )
 
@@ -210,6 +211,23 @@ def _is_retryable(exc: BaseException) -> bool:
     return False
 
 
+def _raise_if_places_balance_wall(exc: Exception) -> None:
+    """Classify a final (post-retry) Places SDK exception as a billing wall.
+
+    ResourceExhausted covers BOTH a per-minute rate burst and the daily quota/billing wall —
+    the two are not distinguishable by exception type. It stays retryable in ``_is_retryable``
+    (tenacity backoff absorbs a minute burst); only once retries are exhausted and this is the
+    exception still leaving text_search/place_details do we treat it as a balance wall.
+    A 403 PermissionDenied whose message mentions billing is an immediate balance wall — no
+    retry would ever fix it.
+    """
+    exc_name = type(exc).__name__
+    if "ResourceExhausted" in exc_name:
+        raise ProviderBalanceError("google_places", str(exc))
+    if "PermissionDenied" in exc_name and "billing" in str(exc).lower():
+        raise ProviderBalanceError("google_places", str(exc))
+
+
 # ---------------------------------------------------------------------------
 # RealPlacesClient
 # ---------------------------------------------------------------------------
@@ -307,6 +325,7 @@ class RealPlacesClient:
             )
         except Exception as exc:
             logger.error("places_text_search_error", query=query, uf=uf, error=str(exc))
+            _raise_if_places_balance_wall(exc)
             raise
 
         results: list[dict[str, Any]] = []
@@ -381,6 +400,7 @@ class RealPlacesClient:
             )
         except Exception as exc:
             logger.error("places_place_details_error", place_id=place_id, error=str(exc))
+            _raise_if_places_balance_wall(exc)
             raise
 
         # Normalize reviews to the shape SignalAgent expects
@@ -419,12 +439,6 @@ class RealPlacesClient:
         if place.location:
             location = {"lat": place.location.latitude, "lng": place.location.longitude}
 
-        # editorialSummary: Google's own short blurb (thin coverage in BR — best-effort
-        # grounding material for the copywriter, never the final descricao text).
-        editorial_summary: str = ""
-        if getattr(place, "editorial_summary", None) and place.editorial_summary.text:
-            editorial_summary = place.editorial_summary.text
-
         # priceLevel: enum PRICE_LEVEL_* → persisted as a structured field (never in prose).
         price_level: str | None = None
         if getattr(place, "price_level", None):
@@ -444,7 +458,6 @@ class RealPlacesClient:
             "reviews": reviews,
             "location": location,
             "distrito_hint": distrito_hint,
-            "editorial_summary": editorial_summary,
             "price_level": price_level,
         }
 

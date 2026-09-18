@@ -661,4 +661,125 @@ describe("PainelTopbar", () => {
       await waitFor(() => expect(warn).toHaveBeenCalledWith(SESSION_TOAST));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Reasoned-pause banner + Continuar (quick-260918-ohm)
+  // ---------------------------------------------------------------------------
+
+  describe("pause_reason banner", () => {
+    it("renders no banner when pause_reason is null", async () => {
+      server.use(engineStatus({ pause_reason: null }), taSessionStatus());
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      await screen.findByTestId("painel-topbar");
+      expect(screen.queryByTestId("painel-pause-banner")).not.toBeInTheDocument();
+    });
+
+    it("shows a provider_balance banner with the provider name", async () => {
+      server.use(
+        engineStatus({
+          mode: "PAUSADO",
+          pause_reason: { reason: "provider_balance", provider: "tavily", action: "sweep", at: "2026-09-18T00:00:00Z" },
+        }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      expect(await screen.findByTestId("painel-pause-banner")).toHaveTextContent(
+        "Motor pausado: sem saldo (tavily)",
+      );
+    });
+
+    it("shows a daily_budget banner", async () => {
+      server.use(
+        engineStatus({
+          mode: "PAUSADO",
+          pause_reason: { reason: "daily_budget", provider: null, action: "describe", at: "2026-09-18T00:00:00Z" },
+        }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      expect(await screen.findByTestId("painel-pause-banner")).toHaveTextContent(
+        "Motor pausado: orçamento diário atingido",
+      );
+    });
+
+    it("Continuar confirms then resumes the paused describe action", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      let startBody: unknown = null;
+      server.use(
+        engineStatus({
+          mode: "PAUSADO",
+          pause_reason: { reason: "provider_balance", provider: "anthropic", action: "describe", at: "2026-09-18T00:00:00Z" },
+        }),
+        taSessionStatus(),
+        http.post(START_URL, async ({ request }) => {
+          startBody = await request.json();
+          return HttpResponse.json(
+            { status: "started", lane: "atrativos" },
+            { status: 202 },
+          );
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      await user.click(await screen.findByTestId("painel-pause-continuar"));
+
+      await waitFor(() =>
+        expect(startBody).toMatchObject({ action: "describe" }),
+      );
+    });
+
+    it("Continuar resumes a paused sweep with the last-known depth", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      let startBody: unknown = null;
+      server.use(
+        engineStatus({
+          mode: "PAUSADO",
+          depth: "nascente_rio_mar",
+          pause_reason: { reason: "provider_balance", provider: "tavily", action: "sweep", at: "2026-09-18T00:00:00Z" },
+        }),
+        taSessionStatus(),
+        http.post(START_URL, async ({ request }) => {
+          startBody = await request.json();
+          return HttpResponse.json(
+            { status: "started", ufs_total: 27, lane: "both", depth: "nascente_rio_mar", source: "tripadvisor" },
+            { status: 202 },
+          );
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      await user.click(await screen.findByTestId("painel-pause-continuar"));
+
+      await waitFor(() =>
+        expect(startBody).toMatchObject({ depth: "nascente_rio_mar" }),
+      );
+    });
+
+    it("Continuar does nothing when the confirm dialog is cancelled", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(false);
+      const startSpy = vi.fn();
+      server.use(
+        engineStatus({
+          mode: "PAUSADO",
+          pause_reason: { reason: "daily_budget", provider: null, action: "describe", at: "2026-09-18T00:00:00Z" },
+        }),
+        taSessionStatus(),
+        http.post(START_URL, () => {
+          startSpy();
+          return HttpResponse.json({ status: "started" }, { status: 202 });
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      await user.click(await screen.findByTestId("painel-pause-continuar"));
+
+      expect(startSpy).not.toHaveBeenCalled();
+    });
+  });
 });

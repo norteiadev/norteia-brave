@@ -28,6 +28,7 @@ import structlog
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from brave.observability.cost_guard import pre_dispatch_check, record_spend
+from brave.shared.exceptions import raise_if_balance_wall
 
 if TYPE_CHECKING:
     from brave.config.settings import LLMConfig
@@ -123,7 +124,11 @@ class RealTavilyClient:
             headers={"Authorization": f"Bearer {self._api_key}"},
             json={"query": query, "search_depth": "basic", "max_results": _MAX_RESULTS},
         )
-        r.raise_for_status()
+        try:
+            r.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise_if_balance_wall("tavily", status_code=exc.response.status_code)
+            raise
         return r.json().get("results") or []
 
     async def search(self, query: str) -> str:
