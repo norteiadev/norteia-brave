@@ -19,13 +19,22 @@ pytest-socket enforcement (PITFALLS §5, TEST-01):
 
 import os
 
+# Every un-mocked .delay() in the suite published to the dev stack's Redis (db 0), where
+# the running worker executed it against the DEV database with rio ids that only exist in
+# the test DB → "RioRecord ... not found" quarantines (brave.outreach /
+# brave.resume_conversation) after every suite run. A dedicated Redis db that no worker
+# consumes keeps the suite's broker traffic and Redis state away from the dev stack. Set
+# before any brave import: celery_app reads it at import time.
+os.environ["BRAVE_DB_REDIS_URL"] = os.environ.get(
+    "BRAVE_TEST_REDIS_URL", "redis://localhost:6379/15"
+)
+
 import fakeredis
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from brave.config.settings import AppConfig, DBConfig, ScoreConfig
-
 
 # ---------------------------------------------------------------------------
 # Marker gating: skip opt-in real-browser tests unless RUN_REAL_EXTERNALS=1
