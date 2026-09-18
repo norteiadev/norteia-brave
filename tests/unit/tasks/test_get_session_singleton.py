@@ -17,3 +17,15 @@ def test_engine_is_lazy_singleton_keyed_by_db_url(monkeypatch):
     _, e3 = pipeline._get_session()
     assert e3 is not e1  # a changed URL never serves the old engine
 
+
+
+def test_config_snapshot_expires():
+    """A snapshot re-written around a concurrent config write must not live forever."""
+    import fakeredis
+
+    from brave.config.runtime import SNAPSHOT_KEY, _write_snapshot
+    from brave.config.settings import AppConfig
+
+    rc = fakeredis.FakeRedis()
+    _write_snapshot(rc, AppConfig())
+    assert 0 < rc.ttl(SNAPSHOT_KEY) <= 60
