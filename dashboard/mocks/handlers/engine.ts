@@ -70,6 +70,13 @@ export function engineStartSuccess(
   );
 }
 
+/** POST /mar/repush — echoes how many pushes were re-dispatched. */
+export function marRepushSuccess(dispatched = 3) {
+  return http.post("http://localhost:3000/api/api/v1/mar/repush", () =>
+    HttpResponse.json({ dispatched }),
+  );
+}
+
 export function engineStopSuccess() {
   return http.post(`${BASE}/stop`, () =>
     HttpResponse.json({ status: "stopping" }, { status: 202 }),

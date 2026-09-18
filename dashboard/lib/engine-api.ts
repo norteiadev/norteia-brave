@@ -101,6 +101,12 @@ export interface EngineStatus {
   editing_unlocked: boolean;
   /** Tri-state sync phase for the topbar indicator: idle (gray) | syncing (yellow) | synced (green). */
   sync_phase?: "idle" | "syncing" | "synced";
+  /**
+   * Mar → norteia-api sync. `up` is the cached health ping (null while real
+   * externals are off — nothing to ping); `pending` counts Mar rows the API never
+   * accepted. Optional: older fixtures/servers omit it.
+   */
+  norteia_api?: { up: boolean | null; pending: number };
 }
 
 export interface EngineActionResult {
@@ -185,6 +191,13 @@ export function startEngine(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body ?? {}),
+  });
+}
+
+/** POST /api/v1/mar/repush — re-dispatch the push of every pending Mar row. 503 while norteia-api is down. */
+export function repushPendingMar(): Promise<{ dispatched: number }> {
+  return apiFetch<{ dispatched: number }>("api/v1/mar/repush", {
+    method: "POST",
   });
 }
 

@@ -9,6 +9,10 @@ export interface PainelFiltersProps {
   onUfChange: (uf: string | null) => void;
   onPromoverLote: () => void;
   promoverLoteDisabled?: boolean;
+  /** Mar → norteia-api sync (engine status). Absent = nothing to show. */
+  apiSync?: { up: boolean | null; pending: number };
+  onReenviar?: () => void;
+  reenviarDisabled?: boolean;
 }
 
 /**
@@ -25,6 +29,9 @@ export function PainelFilters({
   onUfChange,
   onPromoverLote,
   promoverLoteDisabled,
+  apiSync,
+  onReenviar,
+  reenviarDisabled,
 }: PainelFiltersProps) {
   const [open, setOpen] = useState(false);
   const ufLabel = uf ?? "Todas";
@@ -108,6 +115,35 @@ export function PainelFilters({
       >
         Promover em lote
       </button>
+      {apiSync && apiSync.up !== null ? (
+        <div
+          data-testid="api-sync"
+          className="ml-auto flex items-center gap-2 text-[12px] text-[var(--painel-muted)]"
+        >
+          <span
+            aria-hidden
+            className={`inline-block h-2 w-2 rounded-full ${apiSync.up ? "bg-[var(--status-mar)]" : "bg-[var(--status-descarte)]"}`}
+          />
+          <span data-testid="api-sync-label">
+            norteia-api {apiSync.up ? "online" : "fora do ar"}
+            {apiSync.pending > 0
+              ? ` · ${apiSync.pending} ${apiSync.pending === 1 ? "pendente" : "pendentes"} de envio`
+              : ""}
+          </span>
+          {apiSync.pending > 0 ? (
+            <button
+              type="button"
+              data-testid="reenviar-btn"
+              disabled={reenviarDisabled || !apiSync.up}
+              title={apiSync.up ? undefined : "norteia-api fora do ar — reenvio automático quando voltar"}
+              onClick={onReenviar}
+              className="h-8 rounded-lg border border-[var(--painel-border-outer)] bg-[var(--card)] px-3 text-[12.5px] font-medium text-[var(--painel-text)] disabled:opacity-50"
+            >
+              Reenviar
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

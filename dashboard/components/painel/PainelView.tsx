@@ -28,6 +28,7 @@ import {
   ENGINE_REFETCH_INTERVAL_MS,
   engineKeys,
   fetchEngineStatus,
+  repushPendingMar,
 } from "@/lib/engine-api";
 import { usePainelMutations } from "@/lib/painel-actions";
 import {
@@ -125,6 +126,21 @@ export function PainelView() {
       setBulkInFlight(false);
     }
   };
+  // Reenviar: re-dispatch the norteia-api push of every Mar row it never accepted.
+  const [repushInFlight, setRepushInFlight] = useState(false);
+  const onReenviar = async () => {
+    if (repushInFlight) return;
+    setRepushInFlight(true);
+    try {
+      const { dispatched } = await repushPendingMar();
+      toast.success(`${dispatched} reenviados para a norteia-api.`);
+      void qc.invalidateQueries({ queryKey: ["engine", "status"] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Falha no reenvio.");
+    } finally {
+      setRepushInFlight(false);
+    }
+  };
   const onConfirmarLote = async () => {
     setBulkDry(null);
     setBulkInFlight(true);
@@ -166,6 +182,9 @@ export function PainelView() {
           onUfChange={setUf}
           onPromoverLote={() => void onPromoverLote()}
           promoverLoteDisabled={bulkInFlight}
+          apiSync={engine?.norteia_api}
+          onReenviar={() => void onReenviar()}
+          reenviarDisabled={repushInFlight}
         />
         <input
           data-testid="painel-search"
@@ -216,6 +235,9 @@ export function PainelView() {
               {bulkDry?.excluded.no_description} sem descrição,{" "}
               {bulkDry?.excluded.recency} sem review recente. Cada promoção fica
               registrada como validação humana e é publicada na norteia-api.
+              {engine?.norteia_api?.up === false
+                ? " A norteia-api está fora do ar: os registros entram no Mar agora e são enviados quando ela voltar."
+                : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
