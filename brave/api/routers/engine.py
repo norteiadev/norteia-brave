@@ -27,6 +27,7 @@ from brave.api.deps import get_db, get_redis, require_bearer, require_steward_or
 from brave.config.runtime import enabled_sources, load_effective_config
 from brave.config.settings import AppConfig
 from brave.core import engine as collection_engine
+from brave.core.mar.sync import count_pending_pushes, norteia_api_up
 from brave.core.models import MarRecord, NascenteRecord, RioRecord
 
 logger = structlog.get_logger(__name__)
@@ -129,7 +130,36 @@ def engine_status(
     """
     status = collection_engine.get_status(redis, session=db)
     status["counts"] = _pipeline_counts(db)
+    # Mar → norteia-api sync: up is None while externals are off (nothing to ping).
+    status["norteia_api"] = {
+        "up": norteia_api_up(redis),
+        "pending": count_pending_pushes(db),
+    }
     return status
+
+
+@router.post(
+    "/api/v1/mar/repush",
+    status_code=200,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def repush_pending_mar(
+    db: Session = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+) -> dict:
+    """Painel "Reenviar": re-dispatch the push for Mar rows norteia-api never accepted.
+
+    Not a card edit, so no edit-lock. 503 while norteia-api is down — dispatching then
+    would only burn the health gate in every push task.
+    """
+    if norteia_api_up(redis) is False:
+        raise HTTPException(
+            status_code=503,
+            detail="norteia-api fora do ar — o reenvio roda sozinho quando ela voltar.",
+        )
+    from brave.tasks.pipeline import dispatch_pending_pushes  # noqa: PLC0415
+
+    return {"dispatched": dispatch_pending_pushes(db)}
 
 
 @router.get("/api/v1/nascente", dependencies=[Depends(require_bearer)])

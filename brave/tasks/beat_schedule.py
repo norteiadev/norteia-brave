@@ -133,6 +133,9 @@ def maintenance_beat_entries() -> dict:
         alone: a stamp carrying a real batch id is kept until retrieve() 404s (freeing a
         live batch would re-bill work already paid for), and while run_real_externals is
         off there is no client to probe with, so those stay stamped. See reap_stale_claims.
+      - ``repush-pending-mar-15min`` → re-dispatches the norteia-api push for Mar rows
+        with pushed_at NULL (API/broker was down, retries exhausted). No-op while
+        externals are off or norteia-api's health ping fails.
     """
     from celery.schedules import crontab  # noqa: PLC0415
 
@@ -145,6 +148,12 @@ def maintenance_beat_entries() -> dict:
         },
         "collect-description-batches-15min": {
             "task": "brave.collect_description_batches",
+            "schedule": crontab(minute="*/15"),
+            "args": (),
+            "kwargs": {},
+        },
+        "repush-pending-mar-15min": {
+            "task": "brave.repush_pending_mar",
             "schedule": crontab(minute="*/15"),
             "args": (),
             "kwargs": {},
