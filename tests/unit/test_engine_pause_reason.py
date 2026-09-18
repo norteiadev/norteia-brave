@@ -35,16 +35,20 @@ def test_set_mode_ligado_clears_pause_reason(redis):
     assert engine.get_mode(redis) == engine.LIGADO
 
 
-def test_maybe_complete_returns_false_while_pause_reason_set(redis):
+def test_maybe_complete_ends_run_but_keeps_reasoned_pause(redis):
     engine.start_run(redis, ufs_total=1)
     engine.set_dispatch_done(redis, True)
     # inflight already 0 (start_run resets it) and dispatch is done — without a
     # pause_reason this would complete the run.
     engine.pause_with_reason(redis, "provider_balance", "openrouter", action="sweep")
 
-    assert engine.maybe_complete(redis) is False
-    # No DESLIGADO side effect must have fired — mode stays PAUSADO, not DESLIGADO.
+    # The run ends (idle, so Continuar's /engine/start does not 409) but the motor stays
+    # PAUSADO with its reason — never DESLIGADO/"synced".
+    assert engine.maybe_complete(redis) is True
+    assert engine.get_state(redis) == engine.IDLE
     assert engine.get_mode(redis) == engine.PAUSADO
+    assert engine.get_status(redis)["pause_reason"]["provider"] == "openrouter"
+    assert engine.start_run(redis, ufs_total=1) is True
 
 
 if __name__ == "__main__":  # pragma: no cover — ponytail runnable check

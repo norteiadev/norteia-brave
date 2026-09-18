@@ -269,16 +269,16 @@ def maybe_complete(redis: Any) -> bool:
     """
     if get_inflight(redis) > 0 or not is_dispatch_done(redis):
         return False
-    # A reasoned pause (provider balance wall / daily budget) is not a completed run —
-    # the DESLIGADO/"synced" side effects below must never fire while a reason is set.
-    if redis.get(_PAUSE_REASON_KEY) is not None:
-        return False
     # Atomically CLAIM completion: set last_run_ended="1" and read the prior value.
     if _decode(redis.getset(_LAST_RUN_ENDED_KEY, "1")) == "1":
         return False  # another caller already completed this run
+    # The run still ENDS on a reasoned pause (state must go idle, or the Painel's Continuar
+    # → /engine/start would 409 on "already running"); only the mode flip is skipped, so
+    # the motor reads PAUSADO + reason instead of a finished, switched-off run.
     mark_idle(redis)
     set_enabled(redis, False)
-    redis.set(_MODE_KEY, DESLIGADO)  # redis-only DESLIGADO (no session side effects)
+    if redis.get(_PAUSE_REASON_KEY) is None:
+        redis.set(_MODE_KEY, DESLIGADO)  # redis-only DESLIGADO (no session side effects)
     return True
 
 
