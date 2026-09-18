@@ -396,7 +396,7 @@ def test_batch_is_downsized_to_the_remaining_budget_instead_of_blocking() -> Non
         session,
         _fake_client(batches),
         redis_client=_redis(9.80),
-        llm_config=LLMConfig(),
+        llm_config=LLMConfig(usd_daily_budget=10.0),
     )
 
     assert batch_id == "msgbatch_01"
@@ -410,7 +410,7 @@ def test_submit_skips_the_tick_when_the_budget_cannot_pay_for_one_description() 
             _FakeSession([_make_rio()]),
             _fake_client(batches),
             redis_client=_redis(9.99),
-            llm_config=LLMConfig(),
+            llm_config=LLMConfig(usd_daily_budget=10.0),
         )
         is None
     )

@@ -14,7 +14,6 @@ import respx
 
 from brave.shared.exceptions import ProviderBalanceError, raise_if_balance_wall
 
-
 # ---------------------------------------------------------------------------
 # raise_if_balance_wall — pure classifier
 # ---------------------------------------------------------------------------

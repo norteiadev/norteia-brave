@@ -9,7 +9,6 @@ import uuid
 from unittest.mock import MagicMock
 
 import fakeredis
-import pytest
 
 from brave.config.settings import LLMConfig
 from brave.core import engine as collection_engine
