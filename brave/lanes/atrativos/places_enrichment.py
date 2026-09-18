@@ -45,7 +45,12 @@ from brave.config.settings import ScoreConfig
 from brave.core.models import AtrativoBusca, Municipio
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import route_by_score
-from brave.lanes.atrativos.copywriter import CASCADE_MODEL, CascadeResult, TourismCopywriter
+from brave.lanes.atrativos.copywriter import (
+    CASCADE_MODEL,
+    CascadeResult,
+    TourismCopywriter,
+    local_hint,
+)
 from brave.lanes.atrativos.schemas import SignalResult
 from brave.lanes.atrativos.signal_agent import (
     CLOSED_STATUSES,
@@ -212,7 +217,7 @@ class PlacesEnrichmentAgent:
     Places sub-step is skipped, but the description sub-step still runs (this agent is the
     ONLY writer of descricao_editorial, so that lane would otherwise never get one).
 
-    Description: written by TourismCopywriter (Places editorialSummary + web_search, Norteia
+    Description: written by TourismCopywriter (Places context + web search, Norteia
     voice) when ``description_enabled`` and the record has no descricao_editorial yet. Gated
     separately from the Places call so an operator can disable the LLM/web-search spend while
     still getting hours/distrito/liveness. Distrito comes from Places addressComponents
@@ -327,7 +332,7 @@ class PlacesEnrichmentAgent:
         )
 
     async def write_description(
-        self, nome: str, municipio: str, uf: str, details: dict[str, Any]
+        self, nome: str, municipio: str, uf: str, details: dict[str, Any], local: str = ""
     ) -> tuple[str | None, CascadeResult | None, bool]:
         """The copywriter's network I/O: (prose, cascade, no_spend). Never touches the Session.
 
@@ -338,7 +343,7 @@ class PlacesEnrichmentAgent:
         try:
             if self._copywriter.cascade:
                 cascade = await self._copywriter.write_cascade(
-                    nome, municipio, uf, places_context=details
+                    nome, municipio, uf, places_context=details, local=local
                 )
                 return cascade.prose, cascade, False
             prose = await self._copywriter.write(nome, municipio, uf, places_context=details)
@@ -595,7 +600,9 @@ class PlacesEnrichmentAgent:
         cascade: CascadeResult | None = None
         if wants_description and self._copywriter is not None:
             if description is None:
-                description = await self.write_description(nome, municipio, uf, details)
+                description = await self.write_description(
+                    nome, municipio, uf, details, local_hint(new_normalized)
+                )
             prose, cascade, no_spend = description
             if no_spend:
                 logger.warning(

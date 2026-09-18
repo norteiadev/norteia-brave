@@ -65,7 +65,6 @@ _GET_PLACE_FIELD_MASK = (
     "reviews,"
     "internationalPhoneNumber,"
     "websiteUri,"
-    "editorialSummary,"
     "priceLevel"
 )
 
@@ -440,12 +439,6 @@ class RealPlacesClient:
         if place.location:
             location = {"lat": place.location.latitude, "lng": place.location.longitude}
 
-        # editorialSummary: Google's own short blurb (thin coverage in BR — best-effort
-        # grounding material for the copywriter, never the final descricao text).
-        editorial_summary: str = ""
-        if getattr(place, "editorial_summary", None) and place.editorial_summary.text:
-            editorial_summary = place.editorial_summary.text
-
         # priceLevel: enum PRICE_LEVEL_* → persisted as a structured field (never in prose).
         price_level: str | None = None
         if getattr(place, "price_level", None):
@@ -465,7 +458,6 @@ class RealPlacesClient:
             "reviews": reviews,
             "location": location,
             "distrito_hint": distrito_hint,
-            "editorial_summary": editorial_summary,
             "price_level": price_level,
         }
 

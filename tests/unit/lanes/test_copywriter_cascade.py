@@ -471,3 +471,36 @@ def test_tavily_wait_honours_retry_after_capped() -> None:
     assert _wait(state({"retry-after": "60"})) == 60.0
     assert _wait(state({"retry-after": "900"})) == _MAX_RETRY_AFTER_S
     assert _wait(state({})) == 2  # no header → exponential floor
+
+
+# --- local_hint: distrito/bairro sharpen the search, never the quoted fallback query ---
+
+
+def test_local_hint_prefers_distrito_then_bairro_and_drops_the_municipio_echo() -> None:
+    from brave.lanes.atrativos.copywriter import local_hint
+
+    addr = "Praça Brg. Eduardo Gomes, 50 - Centro, Porto Seguro - BA, 45816-000, Brazil"
+    assert local_hint({"municipio": "Porto Seguro", "address": addr}) == "Centro"
+    assert (
+        local_hint({"municipio": "Porto Seguro", "address": addr, "distrito_name": "Trancoso"})
+        == "Trancoso"
+    )
+    # A seat distrito repeats the town's name: fall through to the bairro.
+    assert (
+        local_hint({"municipio": "Porto Seguro", "address": addr, "distrito_name": "porto seguro"})
+        == "Centro"
+    )
+    assert local_hint({"municipio": "Cavalcante", "address": ""}) == ""
+    assert local_hint({}) == ""
+
+
+def test_local_goes_into_the_first_query_and_the_objective_only() -> None:
+    plain = cascade_queries("Igreja Matriz", "Porto Seguro", "BA")
+    assert cascade_queries("Igreja Matriz", "Porto Seguro", "BA", "") == plain
+
+    first, quoted = cascade_queries("Igreja Matriz", "Porto Seguro", "BA", "Trancoso")
+    assert first == "Igreja Matriz Trancoso Porto Seguro BA história"
+    assert quoted == plain[1]  # the wide, verbatim-name query is untouched
+    assert "em Trancoso, Porto Seguro/BA" in cascade_objective(
+        "Igreja Matriz", "Porto Seguro", "BA", "Trancoso"
+    )

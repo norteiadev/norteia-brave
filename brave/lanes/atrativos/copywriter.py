@@ -4,7 +4,7 @@ The TripAdvisor lane has no rich description source (Melhores Destinos, the old 
 dropped — it could match only distinctively-named capital attractions). This copywriter is
 the replacement: a strong tourism-copywriter system prompt driving a single tool-using
 ``llm_client.generate()`` call with Anthropic's server-side ``web_search`` tool. Google
-Places ``editorialSummary`` + top reviews are passed as grounding context so the model
+Places types, address + top reviews are passed as grounding context so the model
 searches only when it needs more.
 
 Guards (system prompt + a deterministic post-generation pass):
@@ -22,6 +22,7 @@ D-18 boundary: no imports from brave.lanes.destinos or brave.tasks.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -137,7 +138,6 @@ def _build_context(
     ``fontes`` (cascade mode) is the pre-fetched search context; it replaces the "search the
     web" closing line with the sources block. Without it the message is the web_search one.
     """
-    editorial = (places_context.get("editorial_summary") or "").strip()
     types = places_context.get("types") or []
     address = (places_context.get("formatted_address") or "").strip()
     review_texts = [
@@ -151,8 +151,6 @@ def _build_context(
         lines.append(f"Tipos (Google Places): {', '.join(str(t) for t in types)}.")
     if address:
         lines.append(f"Endereço: {address}.")
-    if editorial:
-        lines.append(f"Resumo do Google Places: {editorial}")
     if review_texts:
         lines.append("Trechos de avaliações de visitantes:")
         lines.extend(f"- {t}" for t in review_texts)
@@ -163,8 +161,32 @@ def _build_context(
     return "\n".join(lines)
 
 
-def cascade_queries(nome: str, municipio: str, uf: str) -> list[str]:
+# "<logradouro>, <nº> - <bairro>, <cidade> - <UF>, <CEP>, Brazil" (Google formattedAddress).
+_BAIRRO_RE = re.compile(r" - ([^,\-]+), [^,]+ - [A-Z]{2},")
+
+
+def local_hint(normalized: dict[str, Any]) -> str:
+    """The sub-municipal place name that disambiguates a search: distrito, else bairro.
+
+    The distrito comes from the MD-breadcrumb enrichment (``distrito_name``); the bairro is
+    parsed out of the stored address. Empty when neither exists or it only repeats the
+    município (a seat distrito carries the town's own name).
+    """
+    municipio = (normalized.get("municipio") or "").strip().casefold()
+    match = _BAIRRO_RE.search(normalized.get("address") or "")
+    for hint in (normalized.get("distrito_name"), match.group(1) if match else None):
+        hint = (hint or "").strip()
+        if hint and hint.casefold() != municipio:
+            return hint
+    return ""
+
+
+def cascade_queries(nome: str, municipio: str, uf: str, local: str = "") -> list[str]:
     """The two searches the cascade runs per atrativo — deterministic, no model involved.
+
+    ``local`` (distrito/bairro, see local_hint) goes into the FIRST query only: it pulls a
+    homonym ("Igreja Matriz") toward the right corner of the town, while the quoted query
+    stays as wide as before so a source that never names the bairro is still found.
 
     The first mirrors the query shape the production model emitted most (name + place +
     "história", §24 sample); the second quotes the name so the engine must match it verbatim,
@@ -172,16 +194,21 @@ def cascade_queries(nome: str, municipio: str, uf: str) -> list[str]:
     carried a fact it already "knew" ("areia monazítica", "1558") — a deterministic lane
     cannot, and must not, inject memory into the search.
     """
-    local = " ".join(x for x in (municipio, uf) if x)
-    return [f"{nome} {local} história".strip(), f'"{nome}" {local} atrativo turístico'.strip()]
+    onde = " ".join(x for x in (municipio, uf) if x)
+    return [
+        " ".join(x for x in (nome, local, onde, "história") if x),
+        f'"{nome}" {onde} atrativo turístico'.strip(),
+    ]
 
 
-def cascade_objective(nome: str, municipio: str, uf: str) -> str:
+def cascade_objective(nome: str, municipio: str, uf: str, local: str = "") -> str:
     """The natural-language objective Parallel ranks the excerpts against (§29 wording)."""
-    local = "/".join(x for x in (municipio, uf) if x)
+    onde = "/".join(x for x in (municipio, uf) if x)
+    if local and onde:
+        onde = f"{local}, {onde}"
     return (
         f"Fatos verificáveis sobre o atrativo turístico {nome}"
-        + (f" em {local}" if local else "")
+        + (f" em {onde}" if onde else "")
         + ": história, características, o que ver."
     )
 
@@ -251,6 +278,7 @@ class TourismCopywriter:
         municipio: str,
         uf: str,
         places_context: dict[str, Any] | None = None,
+        local: str = "",
     ) -> CascadeResult:
         """Search → mention gate → município gate → write (no tool) → groundedness gate.
 
@@ -265,7 +293,8 @@ class TourismCopywriter:
         try:
             # Both queries in ONE request — billed once (§29).
             busca = await self._search_client.search(
-                cascade_queries(nome, municipio, uf), cascade_objective(nome, municipio, uf)
+                cascade_queries(nome, municipio, uf, local),
+                cascade_objective(nome, municipio, uf, local),
             )
         except CostGuardError:
             logger.warning("copywriter_cost_guard_blocked", nome=nome, uf=uf)
@@ -366,7 +395,7 @@ if __name__ == "__main__":  # pragma: no cover — ponytail runnable check
         "Praia de Camburi",
         "Vitória",
         "ES",
-        {"editorial_summary": "Orla urbana.", "reviews": [{"text": "Linda ao pôr do sol"}]},
+        {"types": ["beach"], "reviews": [{"text": "Linda ao pôr do sol"}]},
     )
-    assert "Camburi" in ctx and "Orla urbana" in ctx and "pôr do sol" in ctx
+    assert "Camburi" in ctx and "beach" in ctx and "pôr do sol" in ctx
     print("copywriter self-check ok")
