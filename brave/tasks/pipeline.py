@@ -263,17 +263,38 @@ def _log_conversation_messages(
 # ---------------------------------------------------------------------------
 
 
+_ENGINES: dict[str, tuple[Any, Any]] = {}  # db_url -> (engine, sessionmaker)
+
+
 def _get_session() -> tuple[Session, Any]:
     """Create a synchronous SQLAlchemy session from environment config.
 
-    Returns (session, engine) pair; caller must close both.
+    The engine + sessionmaker are a per-process singleton keyed by db_url, built on the
+    FIRST call inside a task — i.e. after the prefork worker forked, never at import, so
+    no pooled connection is shared across processes. Returns (session, engine); the
+    caller closes the session (returning the connection to the pool) and must NOT
+    dispose the shared engine.
     """
     db_url = os.environ.get("BRAVE_DB_URL")
     if not db_url:
         raise PermanentError("BRAVE_DB_URL not set — cannot create DB session")
-    engine = create_engine(db_url, echo=False)
-    SessionFactory = sessionmaker(bind=engine)
-    return SessionFactory(), engine
+    if db_url not in _ENGINES:
+        engine = create_engine(db_url, echo=False, pool_pre_ping=True)
+        _ENGINES[db_url] = (engine, sessionmaker(bind=engine))
+    engine, factory = _ENGINES[db_url]
+    return factory(), engine
+
+
+def _load_config(session: Session) -> AppConfig:
+    """Effective config for a task, served from the Redis snapshot when present.
+
+    The snapshot is busted by every config_settings writer (config router, engine mode);
+    a Redis outage degrades to the plain DB read inside load_effective_config.
+    """
+    import redis as _redis_lib  # noqa: PLC0415
+
+    rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+    return load_effective_config(session, rc)
 
 
 def _cascade_search_client(app_config: AppConfig, effective: AppConfig, redis_client: Any) -> Any:
@@ -350,7 +371,7 @@ def process_nascente(self, nascente_id: str) -> None:
     session, engine = _get_session()
     try:
         nascente_uuid = uuid.UUID(nascente_id)
-        config = load_effective_config(session).score
+        config = _load_config(session).score
 
         nascente = get_nascente(session, nascente_uuid)
         if nascente is None:
@@ -381,7 +402,6 @@ def process_nascente(self, nascente_id: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -401,11 +421,9 @@ def process_nascente(self, nascente_id: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 def _http_error_body(exc: BaseException) -> str | None:
@@ -544,7 +562,6 @@ def push_mar(self, rio_id: str) -> None:
 
     finally:
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -564,7 +581,7 @@ def reprocess_record_task(self, rio_id: str) -> None:
     """
     session, engine = _get_session()
     try:
-        config = load_effective_config(session).score
+        config = _load_config(session).score
         reprocess_record(session, uuid.UUID(rio_id), config)
         session.commit()
     except Exception as exc:
@@ -580,7 +597,6 @@ def reprocess_record_task(self, rio_id: str) -> None:
             )
     finally:
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -686,7 +702,6 @@ def push_destination_task(self, rio_id: str) -> None:
 
     finally:
         session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -733,7 +748,7 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
     session, engine = _get_session()
     try:
         app_config = AppConfig()
-        config = load_effective_config(session).score
+        config = _load_config(session).score
 
         # Select Places client based on run_real_externals flag
         if app_config.run_real_externals:
@@ -825,7 +840,6 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -844,7 +858,6 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         # Producer-completes lifecycle: dispatched by engine_sweep_run
@@ -852,7 +865,6 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
         # run. Best-effort, never breaks the task (single outermost finally).
         _producer_finally_lifecycle()
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -933,7 +945,8 @@ def sweep_tripadvisor(
     # (T-15-07-04). Only the bulk_national branch assigns rc.
     rc = None
     try:
-        config = load_effective_config(session).score
+        effective = _load_config(session)
+        config = effective.score
         app_config = AppConfig()
 
         # T1 (pfr-01): ta_config must be defined before the branch so it is always
@@ -1081,7 +1094,6 @@ def sweep_tripadvisor(
         # behind run_real_externals + the operator flags; the Null clients keep the TA floor + advance the record offline
         # (ZERO external spend). Replaces the old post-produce enrich_description/_places
         # dispatch, which the 600s time_limit could kill before it ran.
-        effective = load_effective_config(session)
         # Build resiliently: a client-construction failure (e.g. a missing key) disables
         # inline enrichment for this sweep and logs — it must never crash the ingest.
         places_agent = None
@@ -1210,7 +1222,6 @@ def sweep_tripadvisor(
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -1229,7 +1240,6 @@ def sweep_tripadvisor(
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         # Producer-completes lifecycle: the per-UF TA producer is dispatched by
@@ -1240,7 +1250,6 @@ def sweep_tripadvisor(
         # completed the run (idempotent: the GETSET claim makes this a no-op).
         _producer_finally_lifecycle()
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -1319,7 +1328,6 @@ def find_contacts_task(self, rio_id: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -1338,11 +1346,9 @@ def find_contacts_task(self, rio_id: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -1378,7 +1384,7 @@ def gather_signals_task(self, rio_id: str) -> None:
             raise PermanentError(f"RioRecord {rio_id} not found")
 
         app_config = AppConfig()
-        config = load_effective_config(session).score
+        config = _load_config(session).score
 
         if app_config.run_real_externals:
             places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
@@ -1423,7 +1429,6 @@ def gather_signals_task(self, rio_id: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -1442,11 +1447,9 @@ def gather_signals_task(self, rio_id: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 def _description_on(app_config: AppConfig, effective: AppConfig) -> bool:
@@ -1474,7 +1477,7 @@ def _enrich_one(session: Session, rio: RioRecord) -> None:
 
     rio_id = str(rio.id)
     app_config = AppConfig()
-    effective = load_effective_config(session)
+    effective = _load_config(session)
     config = effective.score
 
     # Real Places client requires BOTH run_real_externals AND the operator-toggleable
@@ -1589,7 +1592,6 @@ def enrich_places_task(self, rio_id: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -1608,11 +1610,9 @@ def enrich_places_task(self, rio_id: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 # Records per describe_uf run. Each one can take up to enrich_places' 300s budget, so a
@@ -1659,7 +1659,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
     chained = False
     try:
         app_config = AppConfig()
-        effective = load_effective_config(session)
+        effective = _load_config(session)
         if not _description_on(app_config, effective):
             logger.warning("describe_uf_description_disabled", uf=uf)
             return
@@ -1731,7 +1731,6 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
         if not chained:
             _producer_finally_lifecycle()
         session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -1777,7 +1776,7 @@ def submit_description_batch_task(self) -> None:
     session, engine = _get_session()
     try:
         app_config = AppConfig()
-        effective = load_effective_config(session)
+        effective = _load_config(session)
         if not (
             app_config.run_real_externals
             and effective.description_enrichment_enabled
@@ -1797,7 +1796,6 @@ def submit_description_batch_task(self) -> None:
         logger.warning("copy_batch_submit_failed", error=str(exc))
     finally:
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -1834,7 +1832,7 @@ def collect_description_batches_task(self) -> None:
         if not app_config.run_real_externals:
             reap_stale_claims(session, None)
             return
-        effective = load_effective_config(session)
+        effective = _load_config(session)
         client, redis_client = _batch_deps(app_config)
         collect_batches(
             session,
@@ -1848,7 +1846,6 @@ def collect_description_batches_task(self) -> None:
         logger.warning("copy_batch_collect_failed", error=str(exc))
     finally:
         session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -1971,7 +1968,6 @@ def push_attraction_task(self, rio_id: str) -> None:
 
     finally:
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -2027,7 +2023,7 @@ def outreach_task(self, rio_id: str) -> None:
             return  # Already advanced past this step — idempotent no-op
 
         app_config = AppConfig()
-        config = load_effective_config(session).score
+        config = _load_config(session).score
 
         # Select WhatsApp client (production: Twilio or Null; never Fake, T-03-04-07)
         if app_config.run_real_externals:
@@ -2145,7 +2141,6 @@ def outreach_task(self, rio_id: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -2164,11 +2159,9 @@ def outreach_task(self, rio_id: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 @shared_task(
@@ -2220,7 +2213,7 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
             return  # Conversation already completed or never started — no-op
 
         app_config = AppConfig()
-        config = load_effective_config(session).score
+        config = _load_config(session).score
 
         # Select WhatsApp client (production: Twilio or Null; never Fake, T-03-04-07)
         if app_config.run_real_externals:
@@ -2315,7 +2308,6 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -2334,11 +2326,9 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -2499,7 +2489,6 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
             q_session.commit()
         finally:
             q_session.close()
-            q_engine.dispose()
 
     except Exception as exc:
         session.rollback()
@@ -2518,11 +2507,9 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
                 q_session.commit()
             finally:
                 q_session.close()
-                q_engine.dispose()
 
     finally:
         session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -2716,7 +2703,6 @@ def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> Non
                 session.commit()
         finally:
             session.close()
-            db_engine.dispose()
     except Exception as exc:  # best-effort — never abort the sweep
         logger.warning(
             "engine_run_history_finalize_failed", run_id=run_id, error=str(exc)
@@ -2946,5 +2932,4 @@ def prune_record_events_task(self, retention_days: int = 90) -> int:
         return 0
     finally:
         session.close()
-        engine.dispose()
 

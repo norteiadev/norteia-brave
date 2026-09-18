@@ -34,6 +34,9 @@ app.conf.update(
     # Broker and result backend
     broker_url=REDIS_URL,
     result_backend=REDIS_URL,
+    # No caller reads a task result (no AsyncResult/.get anywhere) — skip the per-task
+    # result write + its 24h Redis key. Opt back in per task with ignore_result=False.
+    task_ignore_result=True,
     # celery-redbeat (D-05): single-source-of-truth schedule in Redis
     redbeat_redis_url=REDIS_URL,
     redbeat_key_prefix="brave",

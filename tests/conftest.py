@@ -86,6 +86,20 @@ def db_config() -> DBConfig | None:
     return DBConfig(url=url)
 
 
+@pytest.fixture(autouse=True)
+def _task_config_from_db_only(monkeypatch):
+    """Tasks read config from the test DB, never from a Redis snapshot.
+
+    pipeline._load_config serves brave:config:snapshot from BRAVE_DB_REDIS_URL, which on
+    a dev machine is the running stack's Redis — its overlay must not leak into tests.
+    """
+    from brave.tasks import pipeline
+
+    monkeypatch.setattr(
+        pipeline, "_load_config", lambda session: pipeline.load_effective_config(session)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Database fixtures (require docker-compose postgres)
 # ---------------------------------------------------------------------------
