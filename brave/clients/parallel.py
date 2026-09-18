@@ -117,6 +117,9 @@ class RealParallelClient:
         r.raise_for_status()
         return r.json()
 
+    async def aclose(self) -> None:
+        await self._http.aclose()
+
     async def search(self, queries: list[str], objective: str) -> ParallelSearch:
         """Run one search carrying every query. Raises CostGuardError before dispatch."""
         if self._redis_client is not None:

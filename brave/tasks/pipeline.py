@@ -1501,8 +1501,8 @@ class _EnrichCtx(NamedTuple):
 def _enrich_ctx(session: Session, redis_client: Any = None) -> _EnrichCtx:
     """Load config + the IBGE reference tables (~16k rows) once, not once per atrativo.
 
-    Only DB/Redis-backed state lives here. The async HTTP clients stay per record: each
-    record runs in its own asyncio.run, and a pooled connection must not outlive its loop.
+    Only DB/Redis-backed state lives here. The async HTTP clients are built per
+    asyncio.run (_enrich_agent): a pooled connection must not outlive its loop.
     """
     from brave.shared.ibge_distritos import load_distritos
 
@@ -1521,18 +1521,19 @@ def _enrich_ctx(session: Session, redis_client: Any = None) -> _EnrichCtx:
     return _EnrichCtx(app_config, effective, load_distritos(session), ibge_lookup, redis_client)
 
 
-def _enrich_one(session: Session, rio: RioRecord, ctx: _EnrichCtx | None = None) -> None:
-    """Run PlacesEnrichmentAgent on one RioRecord (no commit — the caller owns it).
+def _enrich_agent(
+    session: Session, ctx: _EnrichCtx, rio_id: str | None = None, llm_session: Any = None
+) -> tuple[Any, Any]:
+    """Build (PlacesEnrichmentAgent, its Parallel search client or None).
 
-    The body of enrich_places_task, shared with brave.describe_uf so the per-UF
-    description producer walks exactly the same client selection + agent path.
-    ``ctx`` is the hoisted invariant state; describe_uf builds it once per chunk.
+    The client selection of enrich_places_task, shared with brave.describe_uf so the
+    per-UF description producer walks exactly the same path. ``llm_session`` is where the
+    copywriter writes its llm_generations rows (default: ``session``); describe_uf passes
+    a _RowBuffer so its gathered coroutines never touch the Session. The async clients
+    are bound to the event loop that first uses them: one agent per asyncio.run.
     """
     from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
 
-    rio_id = str(rio.id)
-    if ctx is None:
-        ctx = _enrich_ctx(session)
     app_config, effective = ctx.app_config, ctx.effective
     config = effective.score
 
@@ -1563,7 +1564,7 @@ def _enrich_one(session: Session, rio: RioRecord, ctx: _EnrichCtx | None = None)
         copy_llm = RealLLMClient(
             config=app_config.llm,
             redis_client=copy_redis,
-            session=session,
+            session=session if llm_session is None else llm_session,
             lane="atrativo_copywriter",
         )
         copy_search = _cascade_search_client(app_config, effective, copy_redis)
@@ -1585,7 +1586,14 @@ def _enrich_one(session: Session, rio: RioRecord, ctx: _EnrichCtx | None = None)
         search_client=copy_search,
         cascade_model=app_config.atrativo_cascade_model,
     )
+    return agent, copy_search
 
+
+def _enrich_one(session: Session, rio: RioRecord, ctx: _EnrichCtx | None = None) -> None:
+    """Run PlacesEnrichmentAgent on one RioRecord (no commit — the caller owns it)."""
+    if ctx is None:
+        ctx = _enrich_ctx(session)
+    agent, _search = _enrich_agent(session, ctx, str(rio.id))
     asyncio.run(agent.run(rio))
 
 
@@ -1667,6 +1675,102 @@ def enrich_places_task(self, rio_id: str) -> None:
 # Records per describe_uf run. Each one can take up to enrich_places' 300s budget, so a
 # chunk fits the hour time_limit; a full chunk self-chains the next one by id cursor.
 _DESCRIBE_CHUNK = 25
+# Copywriter calls (search + LLM) in flight at once inside one chunk. Network I/O only:
+# every Session access stays serial, outside the gathered coroutines.
+_DESCRIBE_CONCURRENCY = 5
+
+
+class _RowBuffer:
+    """Session stand-in for the gathered copywriter calls: holds their llm_generations
+    rows until the serial write phase adds them to the real Session."""
+
+    def __init__(self) -> None:
+        self.rows: list[Any] = []
+
+    def add(self, row: Any) -> None:
+        self.rows.append(row)
+
+    def flush(self) -> None:
+        pass
+
+
+async def _describe_chunk(
+    session: Session,
+    agent: Any,
+    search: Any,
+    rows: _RowBuffer,
+    jobs: list[tuple[uuid.UUID, tuple[str, str, str]]],
+    stop: Any,
+    uf: str,
+) -> bool:
+    """One describe_uf chunk in ONE event loop. True when the soft time limit cut it short.
+
+    Phase 1 gathers the copywriter I/O, _DESCRIBE_CONCURRENCY at a time, and never touches
+    the Session. ``stop(rio_id)`` (engine halt + cost guard) runs per record, right before
+    its I/O. Phase 2 hands each result to agent.run and commits, one record at a time — a
+    failure on either side rolls back that record only.
+    """
+    from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
+
+    sem = asyncio.Semaphore(_DESCRIBE_CONCURRENCY)
+    fetched: dict[uuid.UUID, Any] = {}
+
+    async def _fetch(rio_id: uuid.UUID, args: tuple[str, str, str]) -> None:
+        async with sem:
+            if stop(rio_id):
+                return
+            try:
+                # details={}: every record here is google_enriched (no Places context).
+                fetched[rio_id] = await agent.write_description(*args, {})
+            except SoftTimeLimitExceeded:
+                raise
+            except Exception as exc:  # noqa: BLE001 — kept per record, raised in phase 2
+                fetched[rio_id] = exc
+
+    cut = False
+    try:
+        try:
+            # _fetch keeps every per-record failure in ``fetched``; only the soft time limit
+            # escapes, and the results already in ``fetched`` are still written below.
+            await asyncio.gather(*(_fetch(rio_id, args) for rio_id, args in jobs))
+        except SoftTimeLimitExceeded:
+            cut = True
+            logger.warning("describe_uf_soft_time_limit", uf=uf, fetched=len(fetched))
+
+        for rio_id, _args in jobs:
+            result = fetched.get(rio_id)
+            if result is None:  # stopped or cut before its I/O finished
+                continue
+            try:
+                if isinstance(result, Exception):
+                    raise result
+                rio = session.get(RioRecord, rio_id)  # fresh: a batch may have claimed it
+                if rio is not None:
+                    await agent.run(rio, description=result)
+                session.commit()
+            except SoftTimeLimitExceeded:
+                # ~60s before the hard kill, which would skip the finally and leak the
+                # inflight token: drop this record and hand the rest of the UF on.
+                session.rollback()
+                cut = True
+                logger.warning("describe_uf_soft_time_limit", uf=uf, rio_id=str(rio_id))
+                break
+            except Exception:  # noqa: BLE001 — one bad record must not abort the chunk
+                session.rollback()
+                logger.warning("describe_uf_record_failed", uf=uf, rio_id=str(rio_id), exc_info=True)
+
+        # The spend happened whatever became of each record, so these rows go in their own
+        # commit instead of riding (and rolling back with) a record's transaction.
+        try:
+            session.add_all(rows.rows)
+            session.commit()
+        except Exception:  # noqa: BLE001
+            session.rollback()
+            logger.warning("describe_uf_llm_generations_failed", uf=uf, exc_info=True)
+    finally:
+        if search is not None:
+            await search.aclose()
+    return cut
 
 
 @shared_task(
@@ -1680,7 +1784,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
     """Write descricao_editorial for one UF's atrativos (engine action "describe").
 
     The TA sweep never writes descriptions; this producer backfills them afterwards,
-    per UF, through the SAME path as enrich_places_task (_enrich_one). Only google_enriched
+    per UF, through the SAME agent as enrich_places_task (_enrich_agent). Only google_enriched
     records are selected, so the agent skips the paid Places sub-step and only runs the
     copywriter. Selection shares copy_batch's eligibility predicate (no FOR UPDATE — the
     agent's own descricao_batch_id guard covers a batch that claims the row meanwhile).
@@ -1692,9 +1796,11 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
     _producer_finally_lifecycle exactly once. The cursor always advances, so a record whose
     description keeps failing cannot loop the chain. A per-record failure is logged and
     rolled back — it never aborts the chunk.
+
+    The chunk runs in one event loop (_describe_chunk): copywriter I/O concurrent, bounded
+    by _DESCRIBE_CONCURRENCY; Session reads before it and writes after it, serial.
     """
     import redis as _redis_lib  # noqa: PLC0415
-    from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
     from brave.core import engine as collection_engine
     from brave.lanes.atrativos.copy_batch import description_candidates_filter
@@ -1732,15 +1838,16 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
         if after_id:
             stmt = stmt.where(RioRecord.id > uuid.UUID(after_id))
         ids = list(session.scalars(stmt.order_by(RioRecord.id).limit(limit)).all())
-        ctx = _enrich_ctx(session, rc) if ids else None
-
         halted = cut = False
-        n = 0  # ids consumed — the cursor resumes after ids[n - 1]
-        for rio_id in ids:
+
+        def _stop(rio_id: uuid.UUID) -> bool:
+            nonlocal halted
+            if halted:
+                return True
             if collection_engine.should_halt_producer(rc):
                 halted = True
                 logger.info("describe_uf_halted", uf=uf, at_rio_id=str(rio_id))
-                break
+                return True
             try:
                 pre_dispatch_check(rc, app_config.llm)
             except CostGuardError:
@@ -1749,31 +1856,34 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
                 # nothing. The budget resets at midnight; the chain ends here.
                 halted = True
                 logger.warning("describe_uf_cost_guard", uf=uf, at_rio_id=str(rio_id))
-                break
-            n += 1
-            try:
-                rio = session.get(RioRecord, rio_id)
-                if rio is not None:
-                    _enrich_one(session, rio, ctx)
-                session.commit()
-            except SoftTimeLimitExceeded:
-                # ~60s before the hard kill, which would skip the finally and leak the
-                # inflight token: drop this record and hand the rest of the UF on.
-                session.rollback()
-                cut = True
-                logger.warning("describe_uf_soft_time_limit", uf=uf, rio_id=str(rio_id))
-                break
-            except Exception:  # noqa: BLE001 — one bad record must not abort the chunk
-                session.rollback()
-                logger.warning("describe_uf_record_failed", uf=uf, rio_id=str(rio_id), exc_info=True)
+            return halted
 
-        remaining = None if max_n is None else max_n - n
+        if ids:
+            rows = _RowBuffer()
+            agent, search = _enrich_agent(session, _enrich_ctx(session, rc), llm_session=rows)
+            # Everything a coroutine needs is read here, as plain values, before the gather.
+            jobs = []
+            for rio_id in ids:
+                rio = session.get(RioRecord, rio_id)
+                if rio is not None and agent.wants_description(rio):
+                    norm = rio.normalized or {}
+                    jobs.append((
+                        rio_id,
+                        (norm.get("name") or "", norm.get("municipio") or "", rio.uf or norm.get("uf") or ""),
+                    ))
+            cut = asyncio.run(_describe_chunk(session, agent, search, rows, jobs, _stop, uf))
+
+        # ponytail: the cursor moves past the whole chunk even when cut — records the soft
+        # limit dropped burn no attempt and the next describe run picks them up. Resume from
+        # the first unfetched id if the limit ever trips in practice (25 records, 5 at a
+        # time, is minutes against a 59-minute limit).
+        remaining = None if max_n is None else max_n - len(ids)
         if (
             not halted
             and (cut or len(ids) == _DESCRIBE_CHUNK)
             and (remaining is None or remaining > 0)
         ):
-            describe_uf.delay(uf, remaining, after_id=str(ids[n - 1]))
+            describe_uf.delay(uf, remaining, after_id=str(ids[-1]))
             chained = True
     finally:
         # Only the terminal run of the chain decrements: a self-chained successor carries

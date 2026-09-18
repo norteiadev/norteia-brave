@@ -249,8 +249,58 @@ class PlacesEnrichmentAgent:
             else None
         )
 
-    async def run(self, rio: RioRecord) -> None:
+    def wants_description(self, rio: RioRecord) -> bool:
+        """The description sub-step's gate. Reads ``rio`` only — no I/O, no writes."""
+        normalized = rio.normalized or {}
+        return bool(
+            self._description_enabled
+            and self._copywriter is not None
+            and not normalized.get("descricao_editorial")
+            and bool(normalized.get("name"))
+            and rio.routing != "descarte"
+            and int(normalized.get("descricao_attempts") or 0) < _MAX_DESCRIPTION_ATTEMPTS
+            # A live batch already holds a PAID request for this record's description.
+            # Turning atrativo_description_batch_enabled OFF (the operator action that flag
+            # exists to support) re-enables THIS inline copywriter within one sweep, and
+            # nothing else here can see the in-flight request: descricao_editorial is still
+            # absent and descricao_attempts is still 0. Without this guard the flip bills a
+            # second full-price Sonnet+web_search call for prose Anthropic is already
+            # producing, and collect overwrites the inline one an hour later. The stamp is
+            # cleared in the same transaction as the batched writes, so it un-blocks itself.
+            and not rio.descricao_batch_id
+        )
+
+    async def write_description(
+        self, nome: str, municipio: str, uf: str, details: dict[str, Any]
+    ) -> tuple[str | None, CascadeResult | None, bool]:
+        """The copywriter's network I/O: (prose, cascade, no_spend). Never touches the Session.
+
+        Split out of run() so brave.describe_uf can gather it for a whole chunk and hand
+        each result back through ``run(rio, description=...)``.
+        """
+        assert self._copywriter is not None
+        try:
+            if self._copywriter.cascade:
+                cascade = await self._copywriter.write_cascade(
+                    nome, municipio, uf, places_context=details
+                )
+                return cascade.prose, cascade, False
+            prose = await self._copywriter.write(nome, municipio, uf, places_context=details)
+            return prose, None, False
+        except CostGuardError:
+            # The daily budget tripped BEFORE dispatch: no token spent, so no attempt
+            # happened. Burning the budget here would let one budget trip per sweep
+            # exclude the WHOLE backlog from descriptions after 3 sweeps.
+            return None, None, True
+
+    async def run(
+        self,
+        rio: RioRecord,
+        description: tuple[str | None, CascadeResult | None, bool] | None = None,
+    ) -> None:
         """Enrich one atrativo with Google Places signals (hours + review liveness).
+
+        ``description`` is an already-fetched write_description() result; None → fetch here.
 
         Runs for a TA atrativo REGARDLESS of routing — a dlq'd record (TA scores
         ~55 < 80 and only reaches Mar via steward validation) still gets Google hours,
@@ -285,23 +335,7 @@ class PlacesEnrichmentAgent:
             or (normalized.get("place_id_cache") and normalized.get("weekday_text"))
         )
         attempts = int(normalized.get("descricao_attempts") or 0)
-        wants_description = (
-            self._description_enabled
-            and self._copywriter is not None
-            and not normalized.get("descricao_editorial")
-            and bool(normalized.get("name"))
-            and rio.routing != "descarte"
-            and attempts < _MAX_DESCRIPTION_ATTEMPTS
-            # A live batch already holds a PAID request for this record's description.
-            # Turning atrativo_description_batch_enabled OFF (the operator action that flag
-            # exists to support) re-enables THIS inline copywriter within one sweep, and
-            # nothing else here can see the in-flight request: descricao_editorial is still
-            # absent and descricao_attempts is still 0. Without this guard the flip bills a
-            # second full-price Sonnet+web_search call for prose Anthropic is already
-            # producing, and collect overwrites the inline one an hour later. The stamp is
-            # cleared in the same transaction as the batched writes, so it un-blocks itself.
-            and not rio.descricao_batch_id
-        )
+        wants_description = self.wants_description(rio)
         # Exhausted budget is SILENT otherwise (the record just stops getting descriptions,
         # forever, until an operator clears the counter in JSONB). Log it on every pass so
         # "descriptions stopped" is diagnosable from the logs alone.
@@ -462,47 +496,34 @@ class PlacesEnrichmentAgent:
         # conditions MUST agree, so this branch reuses it instead of restating it.
         cascade: CascadeResult | None = None
         if wants_description and self._copywriter is not None:
-            prose: str | None = None
-            no_spend = False
-            try:
-                if self._copywriter.cascade:
-                    cascade = await self._copywriter.write_cascade(
-                        nome, municipio, uf, places_context=details
-                    )
-                    prose = cascade.prose
-                    if cascade.busca is not None:
-                        # Every paid search is kept whole, whatever the verdict — descriptions
-                        # get regenerated later with another model from these rows (§29).
-                        b = cascade.busca
-                        self._session.add(
-                            AtrativoBusca(
-                                canonical_key=rio.canonical_key or "",
-                                nome=nome,
-                                municipio=municipio or None,
-                                uf=uf or None,
-                                provider="parallel",
-                                mode=b.mode,
-                                objective=b.objective,
-                                queries=b.queries,
-                                search_id=b.search_id,
-                                results=b.results,
-                                usage=b.usage,
-                                warnings=b.warnings,
-                                usd_cost=b.usd,
-                                latency_ms=b.latency_ms,
-                            )
-                        )
-                else:
-                    prose = await self._copywriter.write(
-                        nome, municipio, uf, places_context=details
-                    )
-            except CostGuardError:
-                # The daily budget tripped BEFORE dispatch: no token spent, so no attempt
-                # happened. Burning the budget here would let one budget trip per sweep
-                # exclude the WHOLE backlog from descriptions after 3 sweeps.
-                no_spend = True
+            if description is None:
+                description = await self.write_description(nome, municipio, uf, details)
+            prose, cascade, no_spend = description
+            if no_spend:
                 logger.warning(
                     "copywriter_cost_guard_no_attempt", rio_id=str(rio.id), attempts=attempts
+                )
+            if cascade is not None and cascade.busca is not None:
+                # Every paid search is kept whole, whatever the verdict — descriptions
+                # get regenerated later with another model from these rows (§29).
+                b = cascade.busca
+                self._session.add(
+                    AtrativoBusca(
+                        canonical_key=rio.canonical_key or "",
+                        nome=nome,
+                        municipio=municipio or None,
+                        uf=uf or None,
+                        provider="parallel",
+                        mode=b.mode,
+                        objective=b.objective,
+                        queries=b.queries,
+                        search_id=b.search_id,
+                        results=b.results,
+                        usage=b.usage,
+                        warnings=b.warnings,
+                        usd_cost=b.usd,
+                        latency_ms=b.latency_ms,
+                    )
                 )
             if prose:
                 new_normalized["descricao_editorial"] = prose
