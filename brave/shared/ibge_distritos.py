@@ -146,6 +146,38 @@ def _strip_apostrophes(s: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Per-município bucket cache
+# ---------------------------------------------------------------------------
+
+# (distritos list, its len, {ibge_code: (muni_distritos, folded choices)}) for the LAST
+# list seen — the ~10k-row list was re-scanned on every resolve. Keyed by identity (lists
+# are unhashable; holding the reference keeps the id from being recycled) plus len so an
+# append invalidates. The whole list is grouped in one pass, preserving list order.
+_bucket_cache: (
+    tuple[list[IbgeDistrito], int, dict[str, tuple[list[IbgeDistrito], list[str]]]] | None
+) = None
+
+
+def _municipio_bucket(
+    distritos: list[IbgeDistrito], municipio_ibge_code: str
+) -> tuple[list[IbgeDistrito], list[str]]:
+    """Return (distritos of the município in list order, their folded names), cached."""
+    global _bucket_cache
+    if (
+        _bucket_cache is None
+        or _bucket_cache[0] is not distritos
+        or _bucket_cache[1] != len(distritos)
+    ):
+        grouped: dict[str, tuple[list[IbgeDistrito], list[str]]] = {}
+        for d in distritos:
+            bucket = grouped.setdefault(d.ibge_code, ([], []))
+            bucket[0].append(d)
+            bucket[1].append(_fold_accents(_strip_apostrophes(d.nome)))
+        _bucket_cache = (distritos, len(distritos), grouped)
+    return _bucket_cache[2].get(municipio_ibge_code, ([], []))
+
+
+# ---------------------------------------------------------------------------
 # Distrito resolver (IBGE DTB — name-only, no GPS)
 # ---------------------------------------------------------------------------
 
@@ -180,7 +212,7 @@ def resolve_distrito(
     if not isinstance(name, str) or not name.strip():
         return None
     # Step 1: filter to the parent município (small, safe candidate set).
-    muni_distritos = [d for d in distritos if d.ibge_code == municipio_ibge_code]
+    muni_distritos, choices = _municipio_bucket(distritos, municipio_ibge_code)
     if not muni_distritos:
         return None
 
@@ -192,7 +224,6 @@ def resolve_distrito(
     # ~62. Collapsing the apostrophe to nothing first makes both forms tokenise
     # identically → score 100.
     folded_name = _fold_accents(_strip_apostrophes(name))
-    choices = [_fold_accents(_strip_apostrophes(d.nome)) for d in muni_distritos]
     result = process.extractOne(
         folded_name,
         choices,

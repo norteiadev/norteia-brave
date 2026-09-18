@@ -181,6 +181,32 @@ def _fold_accents(s: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Per-UF bucket cache
+# ---------------------------------------------------------------------------
+
+# (records list, its len, {uf: (uf_records, folded choices)}) for the LAST list seen.
+# A sweep calls resolve_municipio up to 3x per card with the same 5570-row list;
+# filtering + NFKD-folding it every time was the hot spot. Keyed by identity (lists are
+# unhashable) — holding the reference means the id cannot be recycled — plus len so an
+# append invalidates. Order inside a bucket is list order, so results are unchanged.
+_bucket_cache: (
+    tuple[list[IbgeMunicipio], int, dict[str, tuple[list[IbgeMunicipio], list[str]]]] | None
+) = None
+
+
+def _uf_bucket(records: list[IbgeMunicipio], uf: str) -> tuple[list[IbgeMunicipio], list[str]]:
+    """Return (records of ``uf`` in list order, their accent-folded names), cached."""
+    global _bucket_cache
+    if _bucket_cache is None or _bucket_cache[0] is not records or _bucket_cache[1] != len(records):
+        _bucket_cache = (records, len(records), {})
+    buckets = _bucket_cache[2]
+    if uf not in buckets:
+        uf_records = [r for r in records if r.uf == uf]
+        buckets[uf] = (uf_records, [_fold_accents(r.nome) for r in uf_records])
+    return buckets[uf]
+
+
+# ---------------------------------------------------------------------------
 # Municipality resolver
 # ---------------------------------------------------------------------------
 
@@ -226,8 +252,8 @@ def resolve_municipio(
     # as ibge_unmatched instead of crashing the whole produce task.
     if not isinstance(name, str) or not name.strip():
         return None
-    # Step 1: filter by UF
-    uf_records = [r for r in records if r.uf == uf]
+    # Step 1: filter by UF (bucketed once per records list, not once per card)
+    uf_records, choices = _uf_bucket(records, uf)
     if not uf_records:
         return None
 
@@ -237,7 +263,6 @@ def resolve_municipio(
     # explicitly here via _fold_accents (unicodedata NFKD + strip Mn).
     # processor=default_process then handles case normalisation and non-alnum stripping.
     folded_name = _fold_accents(name)
-    choices = [_fold_accents(r.nome) for r in uf_records]
     result = process.extractOne(
         folded_name,
         choices,

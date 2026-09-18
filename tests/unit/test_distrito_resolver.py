@@ -82,3 +82,17 @@ def test_place_empty_returns_none(distritos: list[IbgeDistrito]) -> None:
     """Empty / None <Place> yields None (never crash)."""
     assert resolve_distrito_place("", "2925303", distritos) is None
     assert resolve_distrito_place(None, "2925303", distritos) is None  # type: ignore[arg-type]
+
+
+def test_cached_bucket_matches_uncached_filter(distritos: list[IbgeDistrito]) -> None:
+    """The per-município bucket cache is invisible: same candidates, same order, as
+    re-filtering the full list — across repeated calls and a different list object."""
+    from brave.shared.ibge_distritos import _municipio_bucket
+
+    for records in (distritos, distritos[:500], distritos):
+        for code in ("2925303", "3550308", records[0].ibge_code, "0000000"):
+            for _ in range(2):
+                got, _choices = _municipio_bucket(records, code)
+                assert got == [d for d in records if d.ibge_code == code]
+    match = resolve_distrito("Arraial d'Ajuda", "2925303", distritos)
+    assert match is not None and match.distrito_code == "292530307"
