@@ -243,6 +243,12 @@ class MarRecord(Base):
     published_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # sha256 of the last payload norteia-api accepted (2xx) for this row; the push
+    # tasks skip the POST while it matches. NULL = never pushed (or force a re-push).
+    push_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pushed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Relationship helpers
     rio: Mapped["RioRecord"] = relationship("RioRecord", foreign_keys=[rio_id])

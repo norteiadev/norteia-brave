@@ -27,6 +27,8 @@ push_mar provenance flattening (D-15, D-16):
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import os
 import uuid
 from typing import Any, NamedTuple
@@ -351,7 +353,7 @@ async def _with_http_clients(coro: Any, *clients: Any) -> Any:
 # (e.g. producers under brave/lanes/) can import it from core
 # without depending on the tasks layer.  This re-export keeps existing callers
 # working without any change.
-from datetime import UTC
+from datetime import UTC, datetime
 
 from brave.core.quarantine import quarantine_poison  # noqa: F401 (re-export)
 
@@ -471,6 +473,27 @@ def _build_push_payload(mar_record: Any, rio_record: RioRecord) -> dict[str, Any
     return build_push_payload(mar_record, rio_record)
 
 
+def _push_hash(payload: dict[str, Any]) -> str:
+    """sha256 of the push payload — identity of what norteia-api last accepted."""
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+
+def _mark_pushed(session: Session, mar: Any, api_client: Any, digest: str) -> None:
+    """Stamp the Mar row after a 2xx so an identical re-push skips the POST.
+
+    Only for the real client: the Null client sends nothing, and stamping there
+    would make the first real push (externals turned on later) a silent no-op.
+    ponytail: no force flag — to re-push an unchanged record (e.g. norteia-api lost
+    it), ``UPDATE mar_records SET push_hash = NULL``; add a flag if stewards need it.
+    """
+    if isinstance(api_client, NorteiaApiClient):
+        mar.push_hash = digest
+        mar.pushed_at = datetime.now(UTC)
+        session.commit()
+
+
 @shared_task(
     bind=True,
     max_retries=3,
@@ -538,6 +561,9 @@ def push_mar(self, rio_id: str) -> None:
 
         # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
         payload = _build_push_payload(mar, rio)
+        digest = _push_hash(payload)
+        if mar.push_hash == digest:
+            return  # norteia-api already holds this exact payload — skip the POST
 
         # Step 4: Push to norteia-api
         async def _push() -> dict[str, Any]:
@@ -555,6 +581,7 @@ def push_mar(self, rio_id: str) -> None:
                     return await api_client.push_attraction(payload)
 
         asyncio.run(_push())
+        _mark_pushed(session, mar, api_client, digest)
 
     except PermanentError as exc:
         session.rollback()
@@ -683,6 +710,9 @@ def push_destination_task(self, rio_id: str) -> None:
 
         # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
         payload = _build_push_payload(mar, rio)
+        digest = _push_hash(payload)
+        if mar.push_hash == digest:
+            return  # norteia-api already holds this exact payload — skip the POST
 
         # Step 4: Push to norteia-api — always push_destination (D-09)
         async def _push() -> dict[str, Any]:
@@ -693,6 +723,7 @@ def push_destination_task(self, rio_id: str) -> None:
                 return await api_client.push_destination(payload)
 
         asyncio.run(_push())
+        _mark_pushed(session, mar, api_client, digest)
 
     except PermanentError as exc:
         session.rollback()
@@ -2115,6 +2146,9 @@ def push_attraction_task(self, rio_id: str) -> None:
 
         # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
         payload = _build_push_payload(mar, rio)
+        digest = _push_hash(payload)
+        if mar.push_hash == digest:
+            return  # norteia-api already holds this exact payload — skip the POST
 
         # Step 4: Push to norteia-api — always push_attraction (D-10)
         async def _push() -> dict[str, Any]:
@@ -2125,6 +2159,7 @@ def push_attraction_task(self, rio_id: str) -> None:
                 return await api_client.push_attraction(payload)
 
         asyncio.run(_push())
+        _mark_pushed(session, mar, api_client, digest)
 
     except PermanentError as exc:
         session.rollback()
