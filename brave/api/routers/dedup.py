@@ -32,7 +32,7 @@ from typing import Any, Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, defer
 
 from brave.api.deps import get_db, require_bearer, require_steward_or_bearer
@@ -180,10 +180,22 @@ def _active_mar_by_key(
     if not keys:
         return {}
     key_cols = (RioRecord.uf, RioRecord.municipio_id, RioRecord.entity_type)
+    # Not tuple_(...).in_(keys): a NULL municipio_id never matches inside IN, while the
+    # per-candidate query this replaced (== None → IS NULL) did pair NULL-municipio rows.
+    key_match = or_(
+        *(
+            and_(
+                RioRecord.uf == uf,
+                RioRecord.municipio_id.is_not_distinct_from(mun),
+                RioRecord.entity_type == et,
+            )
+            for uf, mun, et in keys
+        )
+    )
     stmt = (
         select(MarRecord, *key_cols)
         .join(RioRecord, MarRecord.rio_id == RioRecord.id)
-        .where(tuple_(*key_cols).in_(keys), MarRecord.superseded_by_id.is_(None))
+        .where(key_match, MarRecord.superseded_by_id.is_(None))
         .distinct(*key_cols)
         .order_by(*key_cols, MarRecord.id)
     )

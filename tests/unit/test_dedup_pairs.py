@@ -119,6 +119,18 @@ def test_active_mar_by_key_is_territorial_blocked():
     assert "BA" in sql
 
 
+def test_active_mar_by_key_matches_null_municipio():
+    """A NULL municipio_id key still pairs (IS NOT DISTINCT FROM, not tuple IN)."""
+    db = MagicMock()
+    db.execute.return_value.all.return_value = []
+
+    _active_mar_by_key(db, [_rio(uf="GO", municipio_id=None, entity_type="attraction")])
+
+    stmt = db.execute.call_args[0][0]
+    sql = str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "IS NOT DISTINCT FROM NULL" in sql
+
+
 # ---------------------------------------------------------------------------
 # Response envelope (exact shape)
 # ---------------------------------------------------------------------------
