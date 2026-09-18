@@ -107,6 +107,12 @@ _NAME_MATCH_THRESHOLD: int = 85
 # feature is a legitimate atrativo, only the administrative entity is not.
 _GEOGRAPHIC_TYPE_MARKER: str = "political"
 
+# PT-BR wording of Places' business_status for the atrativo's Log tab.
+_CLOSED_LABELS: dict[str, str] = {
+    "CLOSED_PERMANENTLY": "fechado permanentemente",
+    "CLOSED_TEMPORARILY": "fechado temporariamente",
+}
+
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in km (pure math).
@@ -248,6 +254,23 @@ class PlacesEnrichmentAgent:
             if llm_client is not None
             else None
         )
+
+    async def locate(self, nome: str, uf: str) -> dict[str, Any] | None:
+        """Find WHERE an atrativo is when no other source could place it in a município.
+
+        One Text Search, the same confident-match guards as run() (no coords to compare,
+        so name + not-a-geographic-entity), and only results Places placed in a município
+        of THIS UF (``municipio_ibge`` resolves within the UF only). Returns the matched
+        result — place_id, location, municipio_ibge — or None. Never raises: a Places
+        failure just means the card stays unmatched.
+        """
+        try:
+            results = await self._places_client.text_search(nome, uf)
+        except Exception:  # noqa: BLE001 — a Places defect never breaks the ingest
+            logger.warning("places_locate_failed", uf=uf)
+            return None
+        in_uf = [r for r in results if r.get("municipio_ibge")]
+        return _best_match(in_uf, nome, None, None, self._max_distance_km)
 
     def wants_description(self, rio: RioRecord) -> bool:
         """The description sub-step's gate. Reads ``rio`` only — no I/O, no writes."""
@@ -391,16 +414,42 @@ class PlacesEnrichmentAgent:
             if business_status in CLOSED_STATUSES:
                 new_normalized["google_enriched"] = True
                 persist_normalized(self._session, rio, normalized, new_normalized)
+                routing_before = rio.routing
                 rio.routing = "descarte"
                 rio.dlq_reason = "closed_place"
+                cause = {
+                    "reason": "closed_place",
+                    "business_status": business_status,
+                    "place_id": place_id,
+                    "place_name": details.get("name") or None,
+                    "place_address": details.get("formatted_address") or None,
+                }
                 write_audit(
                     session=self._session,
                     action="places_hard_descarte",
                     entity_type="attraction",
                     record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
-                    before_state={"routing": rio.routing},
-                    after_state={"routing": "descarte", "reason": "closed_place"},
+                    before_state={"routing": routing_before},
+                    after_state={"routing": "descarte", **cause},
                     actor="places_enrichment_agent",
+                )
+                # The atrativo's Log tab must say WHY it left the pipeline — the audit row
+                # alone is invisible there. Public business data only (Places listing).
+                canonical_key = rio.canonical_key or ""
+                record_event(
+                    session=self._session,
+                    source=canonical_key.split(":", 1)[0] if canonical_key else "unknown",
+                    source_ref=canonical_key,
+                    stage="places_descarte",
+                    status="fail",
+                    message=(
+                        f"Google Places marca como {_CLOSED_LABELS.get(business_status, business_status)}"
+                        + (f" ({cause['place_name']})" if cause["place_name"] else "")
+                    ),
+                    entity_type="attraction",
+                    uf=rio.uf,
+                    rio_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
+                    data={**cause, "routing_before": routing_before},
                 )
                 self._session.flush()
                 logger.info("places_enrich_hard_descarte", rio_id=str(rio.id))

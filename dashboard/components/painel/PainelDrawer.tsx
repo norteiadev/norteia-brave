@@ -58,6 +58,8 @@ const STAGE_LABELS: Record<string, string> = {
   scored: "Pontuado (confiabilidade)",
   routed: "Roteado",
   description_enriched: "Descrição editorial gerada",
+  places_enriched: "Enriquecido (Google Places)",
+  places_descarte: "Descartado pelo Google Places",
   quarantined: "Quarentena (falha)",
 };
 

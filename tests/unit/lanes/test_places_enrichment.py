@@ -714,3 +714,51 @@ async def test_a_description_committed_during_the_places_call_is_not_erased() ->
     assert rio.normalized["google_enriched"] is True
     # Re-read under a row lock — merging a value read without one just narrows the window.
     session.refresh.assert_called_once_with(rio, ["normalized"], with_for_update=True)
+
+
+@pytest.mark.asyncio
+async def test_hard_descarte_writes_the_cause_to_the_atrativo_log() -> None:
+    """The Log tab says why the record left the pipeline, and the audit's before_state
+    is the routing BEFORE the descarte (it used to read the already-mutated value)."""
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    details = _details(business_status="CLOSED_PERMANENTLY")
+    details["name"] = "Water Park Itumbiara"
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": details},
+    )
+    rio = _make_rio()
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    with patch("brave.lanes.atrativos.places_enrichment.write_audit") as audit, \
+         patch("brave.lanes.atrativos.places_enrichment.record_event") as event, \
+         patch("brave.lanes.atrativos.places_enrichment.route_by_score"):
+        await agent.run(rio)
+
+    ev = event.call_args.kwargs
+    assert ev["stage"] == "places_descarte"
+    assert ev["status"] == "fail"
+    assert ev["message"] == "Google Places marca como fechado permanentemente (Water Park Itumbiara)"
+    assert ev["data"]["business_status"] == "CLOSED_PERMANENTLY"
+    assert ev["data"]["place_id"] == "ChIJmatriz001"
+    assert ev["data"]["routing_before"] == "dlq"
+    assert audit.call_args.kwargs["before_state"] == {"routing": "dlq"}
+
+
+@pytest.mark.asyncio
+async def test_locate_only_accepts_a_confident_match_placed_in_the_uf() -> None:
+    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+
+    in_uf = {**_search_result(name="Cachoeira do Macaquinho"), "municipio_ibge": "5200605"}
+    other_uf = {**_search_result(name="Cachoeira do Macaquinho"), "municipio_ibge": ""}
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Cachoeira do Macaquinho": [in_uf]}),
+        session=_make_session(),
+    )
+    assert (await agent.locate("Cachoeira do Macaquinho", "GO"))["municipio_ibge"] == "5200605"
+
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Cachoeira do Macaquinho": [other_uf]}),
+        session=_make_session(),
+    )
+    assert await agent.locate("Cachoeira do Macaquinho", "GO") is None

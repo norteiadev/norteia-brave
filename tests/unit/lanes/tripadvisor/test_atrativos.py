@@ -1357,3 +1357,157 @@ async def test_produce_skips_already_synced_before_any_ta_call() -> None:
     assert fake_client.recent_review_calls == [2]
     assert mock_store_raw.call_count == 1
     assert mock_store_raw.call_args.kwargs["source_ref"] == "tripadvisor:attraction:2"
+
+
+# ---------------------------------------------------------------------------
+# Município fallbacks C (distrito by TA cityName) and D (Places Text Search), and
+# the resolver-version skip of cards already quarantined as ibge_unmatched.
+# ---------------------------------------------------------------------------
+
+_GEO_ID_GO = 303323
+_ALTO_PARAISO = IbgeMunicipio("5200605", "Alto Paraíso de Goiás", "GO", -14.1305, -47.51)
+_GO_DESTINO_MAP: dict[str, tuple[uuid.UUID, str]] = {
+    "5200605": (uuid.uuid4(), "ibge:destination:5200605"),
+}
+
+
+def _go_client(card: dict[str, Any], city_name: str | None) -> FakeTripAdvisorClient:
+    return FakeTripAdvisorClient(
+        gql_pages=[(0, [card])],
+        geo_ids={"GO": _GEO_ID_GO},
+        fixture_geo={312332: {
+            "location_id": 312332,
+            "city_name": city_name,
+            "state_name": "State of Goias",
+            "city_geo_id": 2159104,
+            "state_geo_id": _GEO_ID_GO,
+        }},
+    )
+
+
+class _LocatingAgent:
+    """PlacesEnrichmentAgent stand-in: locate() answers from a fixture, run() is a no-op."""
+
+    def __init__(self, place: dict[str, Any] | None) -> None:
+        self._place = place
+        self.locate_calls: list[tuple[str, str]] = []
+
+    async def locate(self, nome: str, uf: str) -> dict[str, Any] | None:
+        self.locate_calls.append((nome, uf))
+        return self._place
+
+    async def run(self, rio: Any) -> None:  # pragma: no cover — run_rio=False here
+        return None
+
+
+async def _produce_go(card, city_name, *, places_agent=None, distritos=None):
+    from brave.config.settings import TripAdvisorConfig
+    from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+    with (
+        patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+        patch("brave.lanes.tripadvisor.atrativos.quarantine_poison") as mock_q,
+    ):
+        mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
+        ingest = TripAdvisorAtrativosIngest(
+            ta_client=_go_client(card, city_name),
+            session=MagicMock(),
+            config=_make_config(),
+            ibge_records=[_ALTO_PARAISO],
+            destino_rio_map=_GO_DESTINO_MAP,
+            ta_config=TripAdvisorConfig(page_throttle_seconds=0),
+            places_agent=places_agent,
+            distritos=distritos,
+        )
+        await ingest.produce("GO", run_rio=False)
+    return mock_store_raw, mock_q
+
+
+@pytest.mark.asyncio
+async def test_fallback_c_links_card_through_the_distrito_ta_named() -> None:
+    from brave.shared.ibge_distritos import IbgeDistrito
+
+    sao_jorge = IbgeDistrito("520060525", "São Jorge", "5200605", "Alto Paraíso de Goiás", "GO")
+    agent = _LocatingAgent(None)
+    store, quarantine = await _produce_go(
+        _make_coordless_card("Cânion do Rio Preto"),
+        "Vila de Sao Jorge",
+        places_agent=agent,
+        distritos=[sao_jorge],
+    )
+
+    assert not quarantine.called
+    payload = store.call_args.kwargs["payload"]
+    assert payload["municipio_id"] == "5200605"
+    assert payload["canonical"]["distrito_code"] == "520060525"
+    assert payload["canonical"]["distrito_municipio_ibge"] == "5200605"
+    assert agent.locate_calls == []  # the free path won — no paid Places search
+
+
+@pytest.mark.asyncio
+async def test_fallback_d_places_links_card_and_hands_over_the_place_id() -> None:
+    agent = _LocatingAgent({
+        "place_id": "ChIJ-macaquinho",
+        "name": "Cachoeira do Macaquinho",
+        "municipio_ibge": "5200605",
+        "location": {"lat": -14.07, "lng": -47.63},
+    })
+    store, quarantine = await _produce_go(
+        _make_coordless_card("Cachoeira do Macaquinho"), None, places_agent=agent
+    )
+
+    assert not quarantine.called
+    assert agent.locate_calls == [("Cachoeira do Macaquinho", "GO")]
+    payload = store.call_args.kwargs["payload"]
+    assert payload["municipio_id"] == "5200605"
+    assert payload["place_id_cache"] == "ChIJ-macaquinho"
+    assert payload["lat"] == -14.07
+
+
+@pytest.mark.asyncio
+async def test_unmatched_quarantine_is_stamped_with_the_resolver_version() -> None:
+    from brave.lanes.tripadvisor.atrativos import IBGE_RESOLVER_VERSION
+
+    store, quarantine = await _produce_go(
+        _make_coordless_card("Jardim de Maytreia"), None, places_agent=_LocatingAgent(None)
+    )
+
+    assert not store.called
+    assert quarantine.call_args.kwargs["payload"]["resolver_version"] == IBGE_RESOLVER_VERSION
+
+
+@pytest.mark.asyncio
+async def test_produce_skips_card_already_unmatched_under_the_current_resolver() -> None:
+    """Neither in Rio nor retry-worthy: quarantined under THIS chain → no TA call, no cap slot."""
+    from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+    poisoned = _make_card(locationId=1)
+    new = _make_card(locationId=2)
+    fake_client = FakeTripAdvisorClient(gql_pages=[(0, [poisoned, new])], geo_ids={"MG": _GEO_ID_MG})
+    mock_session = MagicMock()
+    # 1st query: already in Rio (none); 2nd: locationIds unmatched under this resolver.
+    mock_session.scalars.side_effect = [[], ["1"]]
+
+    with (
+        patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+        patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+    ):
+        ingest = TripAdvisorAtrativosIngest(
+            ta_client=fake_client,
+            session=mock_session,
+            config=_make_config(),
+            ibge_records=_IBGE_RECORDS,
+            destino_rio_map=_DESTINO_RIO_MAP,
+        )
+        await ingest.produce("MG", run_rio=True, enrich_reviews=True, max_per_uf=1)
+
+    assert fake_client.recent_review_calls == [2]
+    assert mock_store_raw.call_args.kwargs["source_ref"] == "tripadvisor:attraction:2"
+    from sqlalchemy.dialects import postgresql
+
+    poison_sql = str(
+        mock_session.scalars.call_args_list[1].args[0].compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "resolver_version" in poison_sql

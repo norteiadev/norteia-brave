@@ -96,3 +96,16 @@ def test_cached_bucket_matches_uncached_filter(distritos: list[IbgeDistrito]) ->
                 assert got == [d for d in records if d.ibge_code == code]
     match = resolve_distrito("Arraial d'Ajuda", "2925303", distritos)
     assert match is not None and match.distrito_code == "292530307"
+
+
+def test_resolve_distrito_in_uf_strips_settlement_prefix_and_refuses_ambiguity():
+    from brave.shared.ibge_distritos import IbgeDistrito, resolve_distrito_in_uf
+
+    sao_jorge = IbgeDistrito("520060525", "São Jorge", "5200605", "Alto Paraíso de Goiás", "GO")
+    other_uf = IbgeDistrito("310000001", "São Jorge", "3100000", "Algum", "MG")
+    assert resolve_distrito_in_uf("Vila de Sao Jorge", "GO", [sao_jorge, other_uf]) is sao_jorge
+    assert resolve_distrito_in_uf("Vila de Sao Jorge", "BA", [sao_jorge]) is None
+    assert resolve_distrito_in_uf("Cachoeira do Macaquinho", "GO", [sao_jorge]) is None
+
+    twin = IbgeDistrito("520999905", "São Jorge", "5209999", "Outro", "GO")
+    assert resolve_distrito_in_uf("São Jorge", "GO", [sao_jorge, twin]) is None

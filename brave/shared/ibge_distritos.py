@@ -181,6 +181,50 @@ def _municipio_bucket(
 # Distrito resolver (IBGE DTB — name-only, no GPS)
 # ---------------------------------------------------------------------------
 
+# Settlement-type words a source prefixes to the official DTB name ("Vila de São Jorge"
+# for the distrito "São Jorge"). Stripped from the HINT only, never from the DTB names.
+_SETTLEMENT_PREFIXES = ("vila de ", "vila do ", "vila da ", "distrito de ", "povoado de ")
+
+
+def resolve_distrito_in_uf(
+    name: str,
+    uf: str,
+    distritos: list[IbgeDistrito],
+    *,
+    threshold: int = 88,
+) -> IbgeDistrito | None:
+    """Resolve a place NAME to a distrito anywhere in the UF — the parent município is
+    then the distrito's ``ibge_code``.
+
+    For sources that name a distrito where a município was expected (TripAdvisor's
+    cityName "Vila de Sao Jorge" is the distrito São Jorge of Alto Paraíso de Goiás).
+    Wider than ``resolve_distrito`` (whole UF, not one município), so it refuses to guess:
+    when the best score is shared by distritos of DIFFERENT municípios it returns None.
+    """
+    if not isinstance(name, str) or not name.strip():
+        return None
+    in_uf = [d for d in distritos if d.uf == uf]
+    if not in_uf:
+        return None
+    hint = rfuzz_utils.default_process(_fold_accents(_strip_apostrophes(name)))
+    for prefix in _SETTLEMENT_PREFIXES:
+        if hint.startswith(prefix):
+            hint = hint[len(prefix):]
+            break
+    choices = [
+        rfuzz_utils.default_process(_fold_accents(_strip_apostrophes(d.nome))) for d in in_uf
+    ]
+    hits = process.extract(
+        hint, choices, scorer=fuzz.token_sort_ratio, score_cutoff=threshold, limit=None
+    )
+    if not hits:
+        return None
+    best = max(score for _, score, _ in hits)
+    top = [in_uf[i] for _, score, i in hits if score == best]
+    if len({d.ibge_code for d in top}) > 1:
+        return None  # same name in two municípios of the UF — ambiguous, never guess
+    return top[0]
+
 
 def resolve_distrito(
     name: str,

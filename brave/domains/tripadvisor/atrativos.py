@@ -45,7 +45,12 @@ from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig, TripAdvisorConfig
 from brave.core import engine as collection_engine
-from brave.core.models import NascenteRecord, RioRecord, whatsapp_candidate_from_phone
+from brave.core.models import (
+    NascenteRecord,
+    PoisonQuarantine,
+    RioRecord,
+    whatsapp_candidate_from_phone,
+)
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
 from brave.core.rio.routing import process_nascente_record
@@ -64,9 +69,11 @@ from brave.domains.tripadvisor.scoring import (
 from brave.domains.tripadvisor.uf_names import state_name_to_uf
 from brave.observability.record_events import record_event_once
 from brave.shared.destino import ensure_destino
+from brave.shared.ibge_distritos import resolve_distrito_in_uf
 
 if TYPE_CHECKING:
     from brave.clients.base import GeocoderClientProtocol, TripAdvisorClientProtocol
+    from brave.shared.ibge_distritos import IbgeDistrito
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +83,14 @@ if TYPE_CHECKING:
 TA_ATRATIVO_ORIGEM_VALUE = 65.0
 # origem=65 (>Places 60, <gov 100 — firewall: TA never crosses 85 on origem alone).
 # Source: CONTEXT.md TA-04.
+
+# Version of the município-resolution chain, stamped on every ibge_unmatched quarantine.
+# A card quarantined under THIS version is skipped by later sweeps (its per-card TA calls
+# would only fail again and eat a max_per_uf slot); one quarantined under an older chain
+# is retried once. Bump it whenever the chain learns a new way to place a card.
+# 2 = + distrito by TA cityName + Google Places Text Search.
+IBGE_RESOLVER_VERSION = 2
+_IBGE_UNMATCHED_TASK = "brave.ta.atrativos.ibge_unmatched"
 
 logger = structlog.get_logger(__name__)
 # Logging discipline (T-15-06-02 / T-12-04-01): the bulk methods log ONLY
@@ -127,8 +142,10 @@ class TripAdvisorAtrativosIngest:
         geocoder: GeocoderClientProtocol | None = None,
         ta_config: TripAdvisorConfig | None = None,
         places_agent: Any | None = None,
+        distritos: list[IbgeDistrito] | None = None,
     ) -> None:
         self._client = ta_client
+        self._distritos = distritos or []
         self._session = session
         self._config = config
         self._ibge_records = ibge_records
@@ -301,13 +318,25 @@ class TripAdvisorAtrativosIngest:
 
         With run_rio the record must be in Rio (canonical_key == Nascente source_ref);
         a Nascente-only record (earlier nascente-depth sweep) is re-ingested so it
-        reaches Rio. Quarantined cards never got a row, so they are retried.
+        reaches Rio. A card quarantined as ibge_unmatched under the CURRENT resolver chain
+        is skipped too (it would fail the same way); older quarantines are retried.
         """
-        refs = [_source_ref(c) for c in cards if c.get("locationId")]
-        if not refs:
+        ids = [str(c["locationId"]) for c in cards if c.get("locationId")]
+        if not ids:
             return set()
+        refs = [f"tripadvisor:attraction:{i}" for i in ids]
         col = RioRecord.canonical_key if run_rio else NascenteRecord.source_ref
-        return set(self._session.scalars(select(col).where(col.in_(refs))))
+        synced = set(self._session.scalars(select(col).where(col.in_(refs))))
+        loc = PoisonQuarantine.payload["locationId"].as_string()
+        unmatched = self._session.scalars(
+            select(loc).where(
+                PoisonQuarantine.task_name == _IBGE_UNMATCHED_TASK,
+                loc.in_(ids),
+                PoisonQuarantine.payload["resolver_version"].as_integer()
+                == IBGE_RESOLVER_VERSION,
+            )
+        )
+        return synced | {f"tripadvisor:attraction:{i}" for i in unmatched}
 
     def _ensure_destino(self, ibge_match: IbgeMunicipio) -> tuple[uuid.UUID, str]:
         """Create the parent destino for an IBGE município on demand (destino-first).
@@ -487,6 +516,7 @@ class TripAdvisorAtrativosIngest:
         # path (rmz-04) where that field is absent from live TA data.
         # Validated: 5 attractions / 2 cities (SPIKE-2 2026-06-30).
         # ToS/LGPD: aggregate geo only (cityName/stateName/geoIds), no PII.
+        ta_city: str | None = None
         if ibge_match is None and self._ta_config is not None:
             try:
                 loc_id_int = int(location_id) if location_id else None
@@ -498,6 +528,8 @@ class TripAdvisorAtrativosIngest:
                 geo = await self._client.fetch_attraction_geo(loc_id_int)
                 if geo is not None:
                     derived_uf = state_name_to_uf(geo["state_name"])
+                    if derived_uf == uf:
+                        ta_city = geo.get("city_name")
                     if derived_uf and geo.get("city_name"):
                         ibge_match = resolve_municipio(
                             geo["city_name"],
@@ -519,6 +551,62 @@ class TripAdvisorAtrativosIngest:
                                 }
                             )
 
+        # Fallback C (free): TA's cityName is often a DISTRITO, not a município ("Vila de
+        # Sao Jorge" = distrito São Jorge of Alto Paraíso de Goiás). Resolve it against
+        # the IBGE DTB within the UF and take the distrito's parent município.
+        distrito = None
+        if ibge_match is None and ta_city and self._distritos:
+            distrito = resolve_distrito_in_uf(ta_city, uf, self._distritos)
+            if distrito is not None:
+                ibge_match = next(
+                    (r for r in self._ibge_records if r.ibge_code == distrito.ibge_code), None
+                )
+                if ibge_match is None:
+                    distrito = None
+                else:
+                    timeline.append(
+                        {
+                            "source": "tripadvisor",
+                            "source_ref": source_ref,
+                            "stage": "geo_enriched",
+                            "status": "ok",
+                            "message": f"{name} → distrito {distrito.nome}",
+                            "entity_type": "attraction",
+                            "uf": uf,
+                            "data": {"via": "ibge_distrito", "distrito_code": distrito.distrito_code},
+                        }
+                    )
+
+        # Fallback D (one Places Text Search, only for cards every free path missed —
+        # TA mostly returns no cityName, just a region geoId). The place_id rides into the
+        # payload as place_id_cache, so the inline enrichment reuses it instead of paying
+        # for a second search.
+        located_place_id: str | None = None
+        if ibge_match is None and self._places_agent is not None:
+            place = await self._places_agent.locate(name, uf)
+            if place is not None:
+                ibge_match = next(
+                    (r for r in self._ibge_records if r.ibge_code == place["municipio_ibge"]),
+                    None,
+                )
+                if ibge_match is not None:
+                    located_place_id = place.get("place_id") or None
+                    ploc = place.get("location") or {}
+                    if lat is None and ploc.get("lat") is not None:
+                        lat, lng = ploc["lat"], ploc.get("lng")
+                    timeline.append(
+                        {
+                            "source": "tripadvisor",
+                            "source_ref": source_ref,
+                            "stage": "geo_enriched",
+                            "status": "ok",
+                            "message": f"{name} → {place.get('name') or ''}".strip(" →"),
+                            "entity_type": "attraction",
+                            "uf": uf,
+                            "data": {"via": "places_text_search", "place_id": located_place_id},
+                        }
+                    )
+
         # WR-01: the normalized AttractionsFusion card uses camelCase `locationId`
         # and carries no `uf`/`location_id`/`lat`/`lng`, so feeding the raw card to
         # completude_from_fields (which checks snake_case keys) would only ever match
@@ -538,9 +626,14 @@ class TripAdvisorAtrativosIngest:
             quarantine_poison(
                 session=self._session,
                 nascente_id=None,
-                task_name="brave.ta.atrativos.ibge_unmatched",
+                task_name=_IBGE_UNMATCHED_TASK,
                 error=f"ibge_unmatched: could not resolve '{name}' in UF={uf}",
-                payload={"uf": uf, "locationId": location_id, "name": name},
+                payload={
+                    "uf": uf,
+                    "locationId": location_id,
+                    "name": name,
+                    "resolver_version": IBGE_RESOLVER_VERSION,
+                },
             )
             # TERMINAL Log-tab event alongside the poison chip (kept). Idempotent
             # (record_event_once) so a persistently-unmatched card does not re-emit its
@@ -674,6 +767,17 @@ class TripAdvisorAtrativosIngest:
                 "subdistrito_code": None,
             },
         }
+
+        # Where fallback C/D placed the card: the distrito it named, and the Places id the
+        # inline enrichment reuses (routing copies place_id_cache + canonical distrito_*).
+        if distrito is not None:
+            payload["canonical"].update(
+                distrito_name=distrito.nome,
+                distrito_code=distrito.distrito_code,
+                distrito_municipio_ibge=distrito.ibge_code,
+            )
+        if located_place_id:
+            payload["place_id_cache"] = located_place_id
 
         # Phase F: MASKED WhatsApp-candidate seam. TripAdvisor AttractionsFusion cards
         # carry NO phone (LGPD-aggregate-only lane, "NO WHATSAPP OUTREACH") so this is a

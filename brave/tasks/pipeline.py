@@ -1146,6 +1146,7 @@ def sweep_tripadvisor(
         # Build resiliently: a client-construction failure (e.g. a missing key) disables
         # inline enrichment for this sweep and logs — it must never crash the ingest.
         places_agent = None
+        _distritos: list = []
         try:
             from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
             from brave.shared.ibge_distritos import load_distritos
@@ -1197,6 +1198,7 @@ def sweep_tripadvisor(
             geocoder=geocoder,
             ta_config=ta_config,
             places_agent=places_agent,
+            distritos=_distritos,
         )
         # Per-UF path enriches review recency (fetch_recent_review per card) so
         # atualidade lifts the reliability score. The bulk_national branch above leaves
