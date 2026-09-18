@@ -26,6 +26,8 @@ fan-out (graceful drain) while releasing the card edit-lock.
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from typing import Any
 
 IDLE = "idle"
@@ -68,6 +70,10 @@ _RUN_ID_KEY = "brave:engine:run_id"
 #                      only complete AFTER dispatch is done AND inflight has drained.
 _INFLIGHT_KEY = "brave:engine:producers_inflight"
 _DISPATCH_DONE_KEY = "brave:engine:dispatch_done"
+# A reasoned pause (provider_balance | daily_budget) — set by pause_with_reason, read by
+# get_status for the Painel banner, cleared only by set_mode(LIGADO) (both resume paths:
+# POST /engine/start and POST /engine/mode LIGADO already call set_mode).
+_PAUSE_REASON_KEY = "brave:engine:pause_reason"
 
 # Source selects which ingest lane the orchestrator dispatches:
 #   default      — Google Places attraction lane (discover_atrativo_task; dormant by
@@ -263,6 +269,10 @@ def maybe_complete(redis: Any) -> bool:
     """
     if get_inflight(redis) > 0 or not is_dispatch_done(redis):
         return False
+    # A reasoned pause (provider balance wall / daily budget) is not a completed run —
+    # the DESLIGADO/"synced" side effects below must never fire while a reason is set.
+    if redis.get(_PAUSE_REASON_KEY) is not None:
+        return False
     # Atomically CLAIM completion: set last_run_ended="1" and read the prior value.
     if _decode(redis.getset(_LAST_RUN_ENDED_KEY, "1")) == "1":
         return False  # another caller already completed this run
@@ -270,6 +280,41 @@ def maybe_complete(redis: Any) -> bool:
     set_enabled(redis, False)
     redis.set(_MODE_KEY, DESLIGADO)  # redis-only DESLIGADO (no session side effects)
     return True
+
+
+def pause_with_reason(
+    redis: Any, reason: str, provider: str | None = None, *, action: str | None = None
+) -> None:
+    """Pause the motor (mode=PAUSADO) with a human-visible reason for the Painel.
+
+    Distinct from a plain ``set_mode(redis, PAUSADO)``: this ALSO writes the reason
+    (``provider_balance`` | ``daily_budget``), which provider tripped it (if any), and
+    which action (``sweep`` | ``describe``) was interrupted — so the Painel can render a
+    banner and rebuild the Continuar resume call. Cleared only by ``set_mode(LIGADO)``.
+    """
+    redis.set(
+        _PAUSE_REASON_KEY,
+        json.dumps(
+            {
+                "reason": reason,
+                "provider": provider,
+                "action": action,
+                "at": datetime.now(UTC).isoformat(),
+            }
+        ),
+    )
+    set_mode(redis, PAUSADO)
+
+
+def get_pause_reason(redis: Any) -> dict[str, Any] | None:
+    """The current reasoned-pause payload, or None when absent/corrupt."""
+    raw = _decode(redis.get(_PAUSE_REASON_KEY))
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def set_depth(redis: Any, depth: str) -> None:
@@ -361,6 +406,11 @@ def set_mode(redis: Any, mode: str, *, session: Any = None) -> None:
         # +1 by never reaching its finally, permanently. decr_inflight clamps at 0, so a
         # still-draining producer that finishes after OFF cannot underflow this reset.
         redis.set(_INFLIGHT_KEY, "0")
+    if mode == LIGADO:
+        # Both resume paths (POST /engine/start and POST /engine/mode LIGADO) call
+        # set_mode(LIGADO) directly or via start_run — clearing the reason here covers
+        # every resume without separate clear-on-resume code anywhere else.
+        redis.delete(_PAUSE_REASON_KEY)
     if session is not None:
         # Lazy import keeps brave.core.engine importable without brave.config.runtime
         # at module load (mirrors brave.core.dlq.service, which already depends on it).
@@ -461,4 +511,5 @@ def get_status(redis: Any, *, session: Any = None) -> dict[str, Any]:
         "mode": get_mode(redis, session=session),
         "editing_unlocked": is_editing_unlocked(redis, session=session),
         "sync_phase": sync_phase,
+        "pause_reason": get_pause_reason(redis),
     }

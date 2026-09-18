@@ -44,7 +44,11 @@ from brave.config.settings import AppConfig
 from brave.core.models import RioRecord
 from brave.core.nascente.service import get_nascente
 from brave.core.rio.routing import process_nascente_record, reprocess_record
-from brave.shared.exceptions import PermanentError, TransientError  # noqa: F401 (re-export)
+from brave.shared.exceptions import (  # noqa: F401 (PermanentError/TransientError re-export)
+    PermanentError,
+    ProviderBalanceError,
+    TransientError,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -1263,6 +1267,15 @@ def sweep_tripadvisor(
         )
         return  # No retry, no quarantine — operator must re-inject session
 
+    except ProviderBalanceError as exc:
+        # A paid provider (search/LLM/Places) reported a billing wall mid-produce.
+        # Pause the motor with a reason — NOT a hard off (R1's DESLIGADO above is for
+        # an operator error); no retry, no quarantine, the run just halts here.
+        session.rollback()
+        collection_engine.pause_with_reason(_prod_rc, "provider_balance", exc.provider, action="sweep")
+        logger.warning("sweep_tripadvisor_provider_balance", uf=uf, provider=exc.provider)
+        return
+
     except PermanentError as exc:
         session.rollback()
         q_session, q_engine = _get_session()
@@ -1683,6 +1696,21 @@ def enrich_places_task(self, rio_id: str) -> None:
         finally:
             q_session.close()
 
+    except ProviderBalanceError as exc:
+        # A paid provider reported a billing wall — pause the motor with a reason.
+        # No retry, no quarantine: the record is untouched, next pass tries again.
+        session.rollback()
+        import redis as _redis_lib  # noqa: PLC0415
+
+        from brave.core import engine as collection_engine  # noqa: PLC0415
+
+        rc = _redis_lib.from_url(
+            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        )
+        collection_engine.pause_with_reason(rc, "provider_balance", exc.provider, action="describe")
+        logger.warning("enrich_places_provider_balance", rio_id=rio_id, provider=exc.provider)
+        return
+
     except Exception as exc:
         session.rollback()
         try:
@@ -1756,6 +1784,8 @@ async def _describe_chunk(
                 # details={}: every record here is google_enriched (no Places context).
                 fetched[rio_id] = await agent.write_description(*args, {})
             except SoftTimeLimitExceeded:
+                raise
+            except ProviderBalanceError:
                 raise
             except Exception as exc:  # noqa: BLE001 — kept per record, raised in phase 2
                 fetched[rio_id] = exc
@@ -1889,6 +1919,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
                 # re-score + audit every remaining record, chunk after chunk, writing
                 # nothing. The budget resets at midnight; the chain ends here.
                 halted = True
+                collection_engine.pause_with_reason(rc, "daily_budget", action="describe")
                 logger.warning("describe_uf_cost_guard", uf=uf, at_rio_id=str(rio_id))
             return halted
 
@@ -1911,6 +1942,14 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
             session.rollback()
             try:
                 cut = asyncio.run(_describe_chunk(session, agent, search, rows, jobs, _stop, uf))
+            except ProviderBalanceError as exc:
+                # A paid provider reported a billing wall mid-chunk — pause the motor with a
+                # reason and halt the chunk/chain. No retry, no self-chain (chained stays
+                # False, so the finally still runs _producer_finally_lifecycle exactly once).
+                session.rollback()
+                collection_engine.pause_with_reason(rc, "provider_balance", exc.provider, action="describe")
+                logger.warning("describe_uf_provider_balance", uf=uf, provider=exc.provider)
+                return
             except SoftTimeLimitExceeded:
                 # The signal handler raises wherever the main thread is — almost always the
                 # idle event loop (select), not a coroutine — so it escapes asyncio.run past

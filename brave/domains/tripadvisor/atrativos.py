@@ -69,6 +69,7 @@ from brave.domains.tripadvisor.scoring import (
 from brave.domains.tripadvisor.uf_names import state_name_to_uf
 from brave.observability.record_events import record_event_once
 from brave.shared.destino import ensure_destino
+from brave.shared.exceptions import ProviderBalanceError
 from brave.shared.ibge_distritos import resolve_distrito_in_uf
 
 if TYPE_CHECKING:
@@ -248,6 +249,10 @@ class TripAdvisorAtrativosIngest:
                     if enrich_reviews:
                         # Per-atrativo durability: persist this atrativo's rows now.
                         self._session.commit()
+                except ProviderBalanceError:
+                    # A balance wall must escape produce() entirely — not be quarantined
+                    # as a bad record. Caught by the R1-sibling block in pipeline.py.
+                    raise
                 except Exception as exc:  # noqa: BLE001
                     if enrich_reviews:
                         # Isolate the failed atrativo: discard its partial writes and
