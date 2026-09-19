@@ -498,6 +498,55 @@ def _mark_pushed(session: Session, mar: Any, api_client: Any, digest: str) -> No
         session.commit()
 
 
+def _norteia_api_down() -> bool:
+    """True only when norteia-api is confirmed down (cached ping, see mar/sync.py).
+
+    Skipping the POST then costs nothing: no Celery retries against a dead host, and
+    the row keeps pushed_at NULL for brave.repush_pending_mar to pick up.
+    """
+    import redis as _redis_lib  # noqa: PLC0415
+
+    from brave.core.mar.sync import norteia_api_up  # noqa: PLC0415
+
+    rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+    return norteia_api_up(rc) is False
+
+
+def dispatch_pending_pushes(session: Session) -> int:
+    """Re-dispatch the push task of every pending Mar row (capped per call).
+
+    Safe to repeat: the push tasks are idempotent by source_ref and norteia-api is an
+    upsert. A row norteia-api rejects for good (4xx) stays pending and is retried
+    every tick — visible as the Painel's pending count rather than silently dropped.
+    """
+    from brave.core.mar.sync import pending_push_rows  # noqa: PLC0415
+
+    rows = pending_push_rows(session)
+    for rio_id, entity_type in rows:
+        task = push_destination_task if entity_type == "destination" else push_attraction_task
+        task.delay(str(rio_id))
+    return len(rows)
+
+
+@shared_task(name="brave.repush_pending_mar", time_limit=300)
+def repush_pending_mar() -> int:
+    """Beat (15 min): re-dispatch the push for Mar rows norteia-api never accepted.
+
+    No-op while externals are off (the Null client never stamps pushed_at, so every
+    row would look pending) and while norteia-api is down.
+    """
+    if not AppConfig().run_real_externals or _norteia_api_down():
+        return 0
+    session, _ = _get_session()
+    try:
+        dispatched = dispatch_pending_pushes(session)
+        if dispatched:
+            logger.info("repush_pending_mar_dispatched", count=dispatched)
+        return dispatched
+    finally:
+        session.close()
+
+
 @shared_task(
     bind=True,
     max_retries=3,
@@ -568,6 +617,8 @@ def push_mar(self, rio_id: str) -> None:
         digest = _push_hash(payload)
         if mar.push_hash == digest:
             return  # norteia-api already holds this exact payload — skip the POST
+        if _norteia_api_down():
+            return  # stays pushed_at NULL — brave.repush_pending_mar re-dispatches it
 
         # Step 4: Push to norteia-api
         async def _push() -> dict[str, Any]:
@@ -717,6 +768,8 @@ def push_destination_task(self, rio_id: str) -> None:
         digest = _push_hash(payload)
         if mar.push_hash == digest:
             return  # norteia-api already holds this exact payload — skip the POST
+        if _norteia_api_down():
+            return  # stays pushed_at NULL — brave.repush_pending_mar re-dispatches it
 
         # Step 4: Push to norteia-api — always push_destination (D-09)
         async def _push() -> dict[str, Any]:
@@ -2200,6 +2253,8 @@ def push_attraction_task(self, rio_id: str) -> None:
         digest = _push_hash(payload)
         if mar.push_hash == digest:
             return  # norteia-api already holds this exact payload — skip the POST
+        if _norteia_api_down():
+            return  # stays pushed_at NULL — brave.repush_pending_mar re-dispatches it
 
         # Step 4: Push to norteia-api — always push_attraction (D-10)
         async def _push() -> dict[str, Any]:

@@ -8,7 +8,13 @@ function setup(overrides: {
   onUfChange?: (uf: string | null) => void;
 } = {}) {
   const onUfChange = overrides.onUfChange ?? vi.fn();
-  render(<PainelFilters uf={overrides.uf ?? null} onUfChange={onUfChange} />);
+  render(
+    <PainelFilters
+      uf={overrides.uf ?? null}
+      onUfChange={onUfChange}
+      onPromoverLote={vi.fn()}
+    />,
+  );
   return { onUfChange };
 }
 

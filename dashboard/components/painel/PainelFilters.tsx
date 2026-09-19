@@ -7,6 +7,12 @@ import { BR_UFS } from "@/lib/painel-data";
 export interface PainelFiltersProps {
   uf: string | null;
   onUfChange: (uf: string | null) => void;
+  onPromoverLote: () => void;
+  promoverLoteDisabled?: boolean;
+  /** Mar → norteia-api sync (engine status). Absent = nothing to show. */
+  apiSync?: { up: boolean | null; reason?: string | null; pending: number };
+  onReenviar?: () => void;
+  reenviarDisabled?: boolean;
 }
 
 /**
@@ -18,7 +24,24 @@ export interface PainelFiltersProps {
  * State and data live in the container (plan 17-05); only the popover open/close
  * is local. Tokens are the scoped painel CSS vars only — no hardcoded hex.
  */
-export function PainelFilters({ uf, onUfChange }: PainelFiltersProps) {
+/** Human copy for the probe's failure reason (see brave/core/mar/sync.py::_probe). */
+function apiDownLabel(reason?: string | null): string {
+  if (reason === "ingest:401" || reason === "ingest:403")
+    return "recusou o token de ingestão (expirado?)";
+  if (reason === "ingest:404") return "sem a rota de ingestão (branch errada?)";
+  if (reason?.startsWith("unhealthy")) return "com dependência fora (health 503)";
+  return "fora do ar";
+}
+
+export function PainelFilters({
+  uf,
+  onUfChange,
+  onPromoverLote,
+  promoverLoteDisabled,
+  apiSync,
+  onReenviar,
+  reenviarDisabled,
+}: PainelFiltersProps) {
   const [open, setOpen] = useState(false);
   const ufLabel = uf ?? "Todas";
   const ufRef = useRef<HTMLDivElement>(null);
@@ -92,6 +115,44 @@ export function PainelFilters({ uf, onUfChange }: PainelFiltersProps) {
           </div>
         ) : null}
       </div>
+      <button
+        type="button"
+        data-testid="promover-lote-btn"
+        disabled={promoverLoteDisabled}
+        onClick={onPromoverLote}
+        className="h-8 rounded-lg border border-[var(--painel-border-outer)] bg-[var(--card)] px-3 text-[12.5px] font-medium text-[var(--painel-text)] disabled:opacity-50"
+      >
+        Promover em lote
+      </button>
+      {apiSync && apiSync.up !== null ? (
+        <div
+          data-testid="api-sync"
+          className="ml-auto flex items-center gap-2 text-[12px] text-[var(--painel-muted)]"
+        >
+          <span
+            aria-hidden
+            className={`inline-block h-2 w-2 rounded-full ${apiSync.up ? "bg-[var(--status-mar)]" : "bg-[var(--status-descarte)]"}`}
+          />
+          <span data-testid="api-sync-label">
+            norteia-api {apiSync.up ? "online" : apiDownLabel(apiSync.reason)}
+            {apiSync.pending > 0
+              ? ` · ${apiSync.pending} ${apiSync.pending === 1 ? "pendente" : "pendentes"} de envio`
+              : ""}
+          </span>
+          {apiSync.pending > 0 ? (
+            <button
+              type="button"
+              data-testid="reenviar-btn"
+              disabled={reenviarDisabled || !apiSync.up}
+              title={apiSync.up ? undefined : "norteia-api indisponível — reenvio automático quando voltar"}
+              onClick={onReenviar}
+              className="h-8 rounded-lg border border-[var(--painel-border-outer)] bg-[var(--card)] px-3 text-[12.5px] font-medium text-[var(--painel-text)] disabled:opacity-50"
+            >
+              Reenviar
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

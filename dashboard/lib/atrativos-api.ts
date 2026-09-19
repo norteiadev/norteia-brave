@@ -11,6 +11,7 @@
  *   PATCH /api/v1/atrativos/{id}/advance            — advance sub_state FSM
  *   PATCH /api/v1/atrativos/{id}/descarte           — reject → descarte
  *   PATCH /api/v1/atrativos/{id}/edit               — edit canonical fields (200)
+ *   POST  /api/v1/atrativos/promote-bulk            — dry-run + batch promote DLQ → Mar
  *
  * PII contract: contacts_summary exposes phone_masked ONLY (never phone_e164).
  * The backend applies _safe_normalized before responding; this client never
@@ -233,5 +234,41 @@ export function editAtrativo(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ fields }),
+  });
+}
+
+export interface PromoteBulkRequest {
+  uf?: string | null;
+  min_score?: number;
+  require_description?: boolean;
+  limit?: number;
+  dry_run: boolean;
+}
+
+export interface PromoteBulkDryRunResult {
+  candidates: number;
+  excluded: { below_score: number; no_description: number; recency: number };
+  would_promote: number;
+}
+
+export interface PromoteBulkRunResult {
+  batch_id: string;
+  promoted: number;
+  held: { id: string; reason: string | null }[];
+  failed: { id: string; error: string }[];
+  push_failed: string[];
+  remaining: number;
+}
+
+/** Batch-promote DLQ atrativos to Mar. `dry_run: true` only counts (never
+ *  mutates); `dry_run: false` promotes up to `limit` (server cap 200). 423 while
+ *  the engine is LIGADO, same edit-lock as the single-card transition. */
+export function promoteBulkAtrativos(
+  body: PromoteBulkRequest,
+): Promise<PromoteBulkDryRunResult | PromoteBulkRunResult> {
+  return apiFetch("api/v1/atrativos/promote-bulk", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 }

@@ -135,10 +135,27 @@ def _rc():
 def test_require_editing_unlocked_raises_423_when_ligado():
     from brave.api import deps
 
-    rc = fakeredis.FakeRedis()  # absent mode key → LIGADO default
+    rc = fakeredis.FakeRedis()  # absent mode key + no durable row → LIGADO default
     with pytest.raises(HTTPException) as exc:
-        deps.require_editing_unlocked(rc)
+        deps.require_editing_unlocked(rc, _StubSession())
     assert exc.value.status_code == 423
+
+
+def test_redis_miss_falls_back_to_the_durable_mode_not_ligado():
+    """A flushed/wrong Redis must not lock a DESLIGADO engine's cards (2026-09-18: the
+    api resolved `redis` to another project's empty Redis and reported LIGADO)."""
+    from types import SimpleNamespace
+
+    from brave.api import deps
+    from brave.core import engine as collection_engine
+
+    class _PersistedDesligado(_StubSession):
+        def get(self, *a, **k):
+            return SimpleNamespace(value={"v": "DESLIGADO"})
+
+    rc = fakeredis.FakeRedis()  # mode key absent
+    assert deps.require_editing_unlocked(rc, _PersistedDesligado()) is None
+    assert collection_engine.get_mode(rc) == "DESLIGADO"  # fast path re-seeded
 
 
 @pytest.mark.parametrize("mode", ["PAUSADO", "DESLIGADO"])
@@ -148,7 +165,7 @@ def test_require_editing_unlocked_noop_when_unlocked(mode):
 
     rc = fakeredis.FakeRedis()
     collection_engine.set_mode(rc, mode)
-    assert deps.require_editing_unlocked(rc) is None
+    assert deps.require_editing_unlocked(rc, _StubSession()) is None
 
 
 # ---------------------------------------------------------------------------

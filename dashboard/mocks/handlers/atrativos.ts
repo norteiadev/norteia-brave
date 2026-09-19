@@ -5,6 +5,8 @@ import type {
   AtrativoListItem,
   FailureCard,
   FailureCardLog,
+  PromoteBulkDryRunResult,
+  PromoteBulkRunResult,
 } from "@/lib/atrativos-api";
 
 /**
@@ -255,6 +257,47 @@ export function atrativoTransitionSuccess() {
   return http.patch(`${BASE}/:id/transition`, () =>
     HttpResponse.json({ status: "ok", routing: "dlq" }),
   );
+}
+
+/** POST promote-bulk — dry-run counts. Same URL as the real run: tests swap
+ *  handlers with `server.use()` between the two requests. */
+export function promoteBulkDryRunSuccess(
+  overrides?: Partial<PromoteBulkDryRunResult>,
+) {
+  return http.post(`${BASE}/promote-bulk`, () =>
+    HttpResponse.json({
+      candidates: 12,
+      excluded: { below_score: 3, no_description: 2, recency: 1 },
+      would_promote: 12,
+      ...overrides,
+    } satisfies PromoteBulkDryRunResult),
+  );
+}
+
+/** POST promote-bulk — real run result. */
+export function promoteBulkRunSuccess(
+  overrides?: Partial<PromoteBulkRunResult>,
+) {
+  return http.post(`${BASE}/promote-bulk`, () =>
+    HttpResponse.json({
+      batch_id: "batch-1",
+      promoted: 10,
+      held: [],
+      failed: [],
+      push_failed: [],
+      remaining: 0,
+      ...overrides,
+    } satisfies PromoteBulkRunResult),
+  );
+}
+
+/** POST promote-bulk — dry-run with nothing eligible. */
+export function promoteBulkZeroCandidates() {
+  return promoteBulkDryRunSuccess({
+    candidates: 0,
+    excluded: { below_score: 0, no_description: 0, recency: 0 },
+    would_promote: 0,
+  });
 }
 
 /**

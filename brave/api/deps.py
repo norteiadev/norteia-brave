@@ -212,7 +212,7 @@ def get_redis() -> Redis:
 # ---------------------------------------------------------------------------
 
 
-def require_editing_unlocked(rc: Redis = Depends(get_redis)) -> None:
+def require_editing_unlocked(rc: Redis = Depends(get_redis), db: Session = Depends(get_db)) -> None:
     """Gate card mutations behind the operator edit-lock (Motor Pausado, phase C).
 
     The Kanban card edit-lock is RELEASED only when the operator has paused or shut
@@ -230,7 +230,10 @@ def require_editing_unlocked(rc: Redis = Depends(get_redis)) -> None:
     get_redis is fail-closed (CR-02): a Redis outage surfaces as a ping error (500),
     not a silent unlock — editing stays gated when the mode cannot be read.
     """
-    if collection_engine.get_mode(rc) == collection_engine.LIGADO:
+    # session=db: on a Redis MISS (flush, restart without persistence, a wrong Redis) the
+    # durable config_settings mode wins over get_mode's LIGADO default — same read as
+    # GET /engine/status, so the lock and the Painel can never disagree.
+    if collection_engine.get_mode(rc, session=db) == collection_engine.LIGADO:
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
             detail=(
