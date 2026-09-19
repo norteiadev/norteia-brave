@@ -2,7 +2,7 @@
 
 A Mar row with ``pushed_at IS NULL`` never reached norteia-api (API down, broker
 down, retries exhausted). The push tasks consult ``norteia_api_up`` before the POST
-so a down API costs one cached ping instead of 3 Celery retries per record, and
+so a down API (or an expired token) costs one cached probe instead of 3 Celery retries per record, and
 ``pending_push_rows`` feeds the re-dispatch (beat + Painel "Reenviar"), which lives
 in brave.tasks.pipeline — the kernel never imports tasks.
 """
@@ -23,19 +23,40 @@ from brave.core.models import MarRecord
 
 logger = structlog.get_logger(__name__)
 
-_HEALTH_KEY = "brave:norteia_api:up"
+_HEALTH_KEY = "brave:norteia_api:health"
 _HEALTH_TTL_S = 30
 _HEALTH_PATH = "/api/v1/health"  # norteia-api: 200 when its DB + Redis answer, else 503
+# An empty ingest POST proves what /health cannot: the route is deployed and the
+# Sanctum token is still valid (it expires). 422 = reached validation, nothing written.
+_INGEST_PROBE_PATH = "/api/internal/territorial/attractions"
 # ponytail: one tick re-dispatches at most this many; a bigger backlog drains over
 # the next ticks (or further "Reenviar" clicks). Raise if backlogs outgrow it.
 PENDING_DISPATCH_LIMIT = 500
 
 
-def norteia_api_up(redis: Any | None = None) -> bool | None:
-    """True/False = norteia-api health; None = not applicable (externals off / no URL).
+def _probe(base_url: str) -> str:
+    """Return "ok", or why a push would fail: unreachable | unhealthy:<st> | ingest:<st>."""
+    token = os.environ.get("BRAVE_NORTEIA_API_SERVICE_TOKEN", "")
+    try:
+        health = httpx.get(f"{base_url}{_HEALTH_PATH}", timeout=3.0).status_code
+        if health != 200:
+            return f"unhealthy:{health}"
+        ingest = httpx.post(
+            f"{base_url}{_INGEST_PROBE_PATH}",
+            json={},
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=3.0,
+        ).status_code
+    except httpx.HTTPError:
+        return "unreachable"
+    return "ok" if ingest == 422 else f"ingest:{ingest}"
 
-    The answer is cached in Redis for 30s so a burst of push tasks (or the dashboard
-    status poll) shares one ping. A Redis failure degrades to an uncached ping.
+
+def norteia_api_health(redis: Any | None = None) -> str | None:
+    """Return "ok" or a failure reason (see ``_probe``); None = externals off / no URL.
+
+    Cached in Redis for 30s so a burst of push tasks (or the dashboard status poll)
+    shares one probe. A Redis failure degrades to an uncached probe.
     """
     base_url = os.environ.get("BRAVE_NORTEIA_API_URL", "").rstrip("/")
     if not AppConfig().run_real_externals or not base_url:
@@ -45,21 +66,24 @@ def norteia_api_up(redis: Any | None = None) -> bool | None:
         try:
             cached = redis.get(_HEALTH_KEY)
             if cached is not None:
-                return cached in (b"1", "1")
+                return cached.decode() if isinstance(cached, bytes) else str(cached)
         except Exception:  # noqa: BLE001 — cache is best-effort
             redis = None
 
-    try:
-        up = httpx.get(f"{base_url}{_HEALTH_PATH}", timeout=3.0).status_code == 200
-    except httpx.HTTPError:
-        up = False
-    if not up:
-        logger.warning("norteia_api_down", url=base_url)
+    result = _probe(base_url)
+    if result != "ok":
+        logger.warning("norteia_api_down", url=base_url, reason=result)
 
     if redis is not None:
         with contextlib.suppress(Exception):  # cache is best-effort
-            redis.set(_HEALTH_KEY, "1" if up else "0", ex=_HEALTH_TTL_S)
-    return up
+            redis.set(_HEALTH_KEY, result, ex=_HEALTH_TTL_S)
+    return result
+
+
+def norteia_api_up(redis: Any | None = None) -> bool | None:
+    """True/False = a push would go through; None = not applicable."""
+    health = norteia_api_health(redis)
+    return None if health is None else health == "ok"
 
 
 def _pending_filter() -> Any:

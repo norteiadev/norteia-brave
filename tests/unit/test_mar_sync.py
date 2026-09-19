@@ -39,31 +39,54 @@ def test_not_applicable_while_externals_off(monkeypatch, redis):
         assert not route.called
 
 
+INGEST = f"{API}/api/internal/territorial/attractions"
+
+
 @respx.mock
-def test_up_is_cached_so_a_burst_shares_one_ping(real, redis):
-    route = respx.get(HEALTH).mock(return_value=httpx.Response(200))
+def test_up_needs_health_200_and_ingest_422_and_is_cached(real, redis, monkeypatch):
+    monkeypatch.setenv("BRAVE_NORTEIA_API_SERVICE_TOKEN", "9|secret")
+    health = respx.get(HEALTH).mock(return_value=httpx.Response(200))
+    ingest = respx.post(INGEST).mock(return_value=httpx.Response(422))
     assert sync.norteia_api_up(redis) is True
     assert sync.norteia_api_up(redis) is True
-    assert route.call_count == 1
+    assert health.call_count == 1 and ingest.call_count == 1
+    sent = ingest.calls[0].request
+    assert sent.headers["authorization"] == "Bearer 9|secret"
+    assert sent.content == b"{}"
 
 
 @respx.mock
 @pytest.mark.parametrize(
-    "side_effect",
-    [httpx.Response(503), httpx.ConnectError("refused"), httpx.ReadTimeout("slow")],
+    ("ingest_status", "reason"),
+    [(401, "ingest:401"), (403, "ingest:403"), (404, "ingest:404"), (500, "ingest:500")],
 )
-def test_down_on_503_or_transport_error(real, redis, side_effect):
-    if isinstance(side_effect, httpx.Response):
-        respx.get(HEALTH).mock(return_value=side_effect)
-    else:
-        respx.get(HEALTH).mock(side_effect=side_effect)
+def test_expired_token_or_missing_route_counts_as_down(real, redis, ingest_status, reason):
+    respx.get(HEALTH).mock(return_value=httpx.Response(200))
+    respx.post(INGEST).mock(return_value=httpx.Response(ingest_status))
+    assert sync.norteia_api_health(redis) == reason
     assert sync.norteia_api_up(redis) is False
-    assert redis.get("brave:norteia_api:up") == b"0"
 
 
 @respx.mock
-def test_redis_outage_degrades_to_uncached_ping(real):
+def test_unhealthy_api_skips_the_ingest_probe(real, redis):
+    respx.get(HEALTH).mock(return_value=httpx.Response(503))
+    ingest = respx.post(INGEST).mock(return_value=httpx.Response(422))
+    assert sync.norteia_api_health(redis) == "unhealthy:503"
+    assert not ingest.called
+
+
+@respx.mock
+@pytest.mark.parametrize("exc", [httpx.ConnectError("refused"), httpx.ReadTimeout("slow")])
+def test_transport_error_is_unreachable(real, redis, exc):
+    respx.get(HEALTH).mock(side_effect=exc)
+    assert sync.norteia_api_health(redis) == "unreachable"
+    assert redis.get("brave:norteia_api:health") == b"unreachable"
+
+
+@respx.mock
+def test_redis_outage_degrades_to_uncached_probe(real):
     respx.get(HEALTH).mock(return_value=httpx.Response(200))
+    respx.post(INGEST).mock(return_value=httpx.Response(422))
     broken = MagicMock()
     broken.get.side_effect = ConnectionError("redis down")
     assert sync.norteia_api_up(broken) is True

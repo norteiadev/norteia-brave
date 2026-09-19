@@ -43,6 +43,11 @@ def _patch(monkeypatch, *, up, pending=0, dispatched=0):
 
     calls = MagicMock(return_value=dispatched)
     monkeypatch.setattr(engine_router, "norteia_api_up", lambda _redis: up)
+    monkeypatch.setattr(
+        engine_router,
+        "norteia_api_health",
+        lambda _redis: None if up is None else ("ok" if up else "ingest:401"),
+    )
     monkeypatch.setattr(engine_router, "count_pending_pushes", lambda _db: pending)
     monkeypatch.setattr(pipeline, "dispatch_pending_pushes", calls)
     return calls
@@ -51,7 +56,13 @@ def _patch(monkeypatch, *, up, pending=0, dispatched=0):
 def test_status_carries_norteia_api_block(client, monkeypatch):
     _patch(monkeypatch, up=False, pending=7)
     body = client.get("/api/v1/engine/status", headers=BEARER_HEADERS).json()
-    assert body["norteia_api"] == {"up": False, "pending": 7}
+    assert body["norteia_api"] == {"up": False, "reason": "ingest:401", "pending": 7}
+
+
+def test_status_has_no_reason_when_up(client, monkeypatch):
+    _patch(monkeypatch, up=True)
+    body = client.get("/api/v1/engine/status", headers=BEARER_HEADERS).json()
+    assert body["norteia_api"] == {"up": True, "reason": None, "pending": 0}
 
 
 def test_repush_dispatches_when_api_up(client, monkeypatch):
@@ -66,7 +77,7 @@ def test_repush_503_and_no_dispatch_when_api_down(client, monkeypatch):
     dispatch = _patch(monkeypatch, up=False)
     resp = client.post("/api/v1/mar/repush", headers=BEARER_HEADERS)
     assert resp.status_code == 503
-    assert "fora do ar" in resp.json()["detail"]
+    assert "indisponível" in resp.json()["detail"]
     dispatch.assert_not_called()
 
 

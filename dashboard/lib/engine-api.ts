@@ -102,11 +102,16 @@ export interface EngineStatus {
   /** Tri-state sync phase for the topbar indicator: idle (gray) | syncing (yellow) | synced (green). */
   sync_phase?: "idle" | "syncing" | "synced";
   /**
-   * Mar → norteia-api sync. `up` is the cached health ping (null while real
+   * Mar → norteia-api sync. `up` is the cached probe (health + empty ingest POST) (null while real
    * externals are off — nothing to ping); `pending` counts Mar rows the API never
    * accepted. Optional: older fixtures/servers omit it.
    */
-  norteia_api?: { up: boolean | null; pending: number };
+  norteia_api?: {
+    up: boolean | null;
+    /** Why a push would fail: "unreachable" | "unhealthy:<status>" | "ingest:<status>". */
+    reason?: string | null;
+    pending: number;
+  };
 }
 
 export interface EngineActionResult {

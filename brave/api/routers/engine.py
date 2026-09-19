@@ -27,7 +27,7 @@ from brave.api.deps import get_db, get_redis, require_bearer, require_steward_or
 from brave.config.runtime import enabled_sources, load_effective_config
 from brave.config.settings import AppConfig
 from brave.core import engine as collection_engine
-from brave.core.mar.sync import count_pending_pushes, norteia_api_up
+from brave.core.mar.sync import count_pending_pushes, norteia_api_health, norteia_api_up
 from brave.core.models import MarRecord, NascenteRecord, RioRecord
 
 logger = structlog.get_logger(__name__)
@@ -131,8 +131,10 @@ def engine_status(
     status = collection_engine.get_status(redis, session=db)
     status["counts"] = _pipeline_counts(db)
     # Mar → norteia-api sync: up is None while externals are off (nothing to ping).
+    health = norteia_api_health(redis)
     status["norteia_api"] = {
-        "up": norteia_api_up(redis),
+        "up": None if health is None else health == "ok",
+        "reason": None if health in (None, "ok") else health,
         "pending": count_pending_pushes(db),
     }
     return status
@@ -155,7 +157,7 @@ def repush_pending_mar(
     if norteia_api_up(redis) is False:
         raise HTTPException(
             status_code=503,
-            detail="norteia-api fora do ar — o reenvio roda sozinho quando ela voltar.",
+            detail="norteia-api indisponível — o reenvio roda sozinho quando ela voltar.",
         )
     from brave.tasks.pipeline import dispatch_pending_pushes  # noqa: PLC0415
 

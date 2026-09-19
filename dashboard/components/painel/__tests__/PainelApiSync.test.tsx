@@ -25,7 +25,11 @@ import { toast } from "sonner";
 const REPUSH_URL = "http://localhost:3000/api/api/v1/mar/repush";
 let repushPosts = 0;
 
-function mount(norteia_api?: { up: boolean | null; pending: number }) {
+function mount(norteia_api?: {
+  up: boolean | null;
+  reason?: string | null;
+  pending: number;
+}) {
   server.use(
     destinosListSuccess([]),
     atrativosListSuccess([]),
@@ -74,6 +78,14 @@ describe("Painel — sync com a norteia-api", () => {
       "norteia-api fora do ar · 1 pendente de envio",
     );
     expect(getByTestId("reenviar-btn")).toBeDisabled();
+  });
+
+  it("expired ingest token → says so instead of a generic 'fora do ar'", async () => {
+    const { findByTestId } = mount({ up: false, reason: "ingest:401", pending: 0 });
+
+    expect((await findByTestId("api-sync-label")).textContent).toBe(
+      "norteia-api recusou o token de ingestão (expirado?)",
+    );
   });
 
   it("online with nothing pending shows no Reenviar button", async () => {

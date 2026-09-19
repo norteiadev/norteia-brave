@@ -10,7 +10,7 @@ export interface PainelFiltersProps {
   onPromoverLote: () => void;
   promoverLoteDisabled?: boolean;
   /** Mar → norteia-api sync (engine status). Absent = nothing to show. */
-  apiSync?: { up: boolean | null; pending: number };
+  apiSync?: { up: boolean | null; reason?: string | null; pending: number };
   onReenviar?: () => void;
   reenviarDisabled?: boolean;
 }
@@ -24,6 +24,15 @@ export interface PainelFiltersProps {
  * State and data live in the container (plan 17-05); only the popover open/close
  * is local. Tokens are the scoped painel CSS vars only — no hardcoded hex.
  */
+/** Human copy for the probe's failure reason (see brave/core/mar/sync.py::_probe). */
+function apiDownLabel(reason?: string | null): string {
+  if (reason === "ingest:401" || reason === "ingest:403")
+    return "recusou o token de ingestão (expirado?)";
+  if (reason === "ingest:404") return "sem a rota de ingestão (branch errada?)";
+  if (reason?.startsWith("unhealthy")) return "com dependência fora (health 503)";
+  return "fora do ar";
+}
+
 export function PainelFilters({
   uf,
   onUfChange,
@@ -125,7 +134,7 @@ export function PainelFilters({
             className={`inline-block h-2 w-2 rounded-full ${apiSync.up ? "bg-[var(--status-mar)]" : "bg-[var(--status-descarte)]"}`}
           />
           <span data-testid="api-sync-label">
-            norteia-api {apiSync.up ? "online" : "fora do ar"}
+            norteia-api {apiSync.up ? "online" : apiDownLabel(apiSync.reason)}
             {apiSync.pending > 0
               ? ` · ${apiSync.pending} ${apiSync.pending === 1 ? "pendente" : "pendentes"} de envio`
               : ""}
@@ -135,7 +144,7 @@ export function PainelFilters({
               type="button"
               data-testid="reenviar-btn"
               disabled={reenviarDisabled || !apiSync.up}
-              title={apiSync.up ? undefined : "norteia-api fora do ar — reenvio automático quando voltar"}
+              title={apiSync.up ? undefined : "norteia-api indisponível — reenvio automático quando voltar"}
               onClick={onReenviar}
               className="h-8 rounded-lg border border-[var(--painel-border-outer)] bg-[var(--card)] px-3 text-[12.5px] font-medium text-[var(--painel-text)] disabled:opacity-50"
             >

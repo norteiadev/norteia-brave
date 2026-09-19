@@ -236,7 +236,7 @@ export function PainelView() {
               {bulkDry?.excluded.recency} sem review recente. Cada promoção fica
               registrada como validação humana e é publicada na norteia-api.
               {engine?.norteia_api?.up === false
-                ? " A norteia-api está fora do ar: os registros entram no Mar agora e são enviados quando ela voltar."
+                ? " A norteia-api está indisponível: os registros entram no Mar agora e são enviados quando ela voltar."
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
