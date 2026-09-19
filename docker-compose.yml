@@ -37,6 +37,12 @@ x-backend: &backend
   # LLM/Places keys (e.g. description enrichment failed with "openrouter_api_key is empty").
   env_file:
     - .env
+  # Local norteia-api (ddev) is reached through the HOST's ddev-router, by name:
+  # BRAVE_NORTEIA_API_URL=http://norteia-api.ddev.site. Do NOT `docker network connect`
+  # these services to the ddev network instead: ddev's own `redis` service then shadows
+  # ours on the shared DNS and the engine silently reads/writes the wrong Redis.
+  extra_hosts:
+    - "norteia-api.ddev.site:host-gateway"
   volumes:
     - ./:/app
     - venv:/app/.venv          # container's linux venv (seeded from the image build)
