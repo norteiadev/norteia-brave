@@ -22,7 +22,7 @@ def client(monkeypatch):
     monkeypatch.setenv("BRAVE_STEWARD_SECRET", "test-steward-secret-mar-repush")
     monkeypatch.setenv("BRAVE_USE_FAKEREDIS", "1")
 
-    from brave.api.deps import get_db, get_redis
+    from brave.api.deps import get_db, get_publish_enqueue, get_redis
 
     get_redis().flushall()
 
@@ -31,15 +31,16 @@ def client(monkeypatch):
     from brave.api.main import app
 
     app.dependency_overrides[get_db] = lambda: MagicMock()
+    app.dependency_overrides[get_publish_enqueue] = lambda: (lambda _rid: None)
     try:
         yield TestClient(app, raise_server_exceptions=False)
     finally:
         app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(get_publish_enqueue, None)
 
 
 def _patch(monkeypatch, *, up, pending=0, dispatched=0):
     import brave.api.routers.engine as engine_router
-    import brave.tasks.pipeline as pipeline
 
     calls = MagicMock(return_value=dispatched)
     monkeypatch.setattr(engine_router, "norteia_api_up", lambda _redis: up)
@@ -49,7 +50,7 @@ def _patch(monkeypatch, *, up, pending=0, dispatched=0):
         lambda _redis: None if up is None else ("ok" if up else "ingest:401"),
     )
     monkeypatch.setattr(engine_router, "count_pending_pushes", lambda _db: pending)
-    monkeypatch.setattr(pipeline, "dispatch_pending_pushes", calls)
+    monkeypatch.setattr(engine_router, "republish_pending", calls)
     return calls
 
 

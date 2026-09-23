@@ -5,7 +5,6 @@ Offline: the health ping is mocked with respx, Redis is fakeredis, the DB a Magi
 
 from __future__ import annotations
 
-import uuid
 from unittest.mock import MagicMock
 
 import fakeredis
@@ -90,24 +89,6 @@ def test_redis_outage_degrades_to_uncached_probe(real):
     broken = MagicMock()
     broken.get.side_effect = ConnectionError("redis down")
     assert sync.norteia_api_up(broken) is True
-
-
-def test_dispatch_routes_each_row_to_its_entity_task(monkeypatch):
-    import brave.tasks.pipeline as pipeline
-
-    sent: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        pipeline.push_attraction_task, "delay", lambda rid: sent.append(("attraction", rid))
-    )
-    monkeypatch.setattr(
-        pipeline.push_destination_task, "delay", lambda rid: sent.append(("destination", rid))
-    )
-    a, d = uuid.uuid4(), uuid.uuid4()
-    session = MagicMock()
-    session.execute.return_value.all.return_value = [(a, "attraction"), (d, "destination")]
-
-    assert pipeline.dispatch_pending_pushes(session) == 2
-    assert sent == [("attraction", str(a)), ("destination", str(d))]
 
 
 def test_beat_task_noops_when_api_down(real, monkeypatch):

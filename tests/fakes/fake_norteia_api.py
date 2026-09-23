@@ -76,6 +76,15 @@ class FakeNorteiaApiClient:
         }
 
 
+    async def push(self, entity_type: str, payload: dict[str, Any]) -> bool:
+        """Route to the per-entity recorder and report the push as accepted."""
+        if entity_type == "destination":
+            await self.push_destination(payload)
+        else:
+            await self.push_attraction(payload)
+        return True
+
+
 # Structural type check: FakeNorteiaApiClient must satisfy NorteiaApiClientProtocol
 def _check_protocol_compliance() -> None:
     """Compile-time structural typing assertion (not called at runtime)."""

@@ -16,7 +16,7 @@ Per the D-18 import rule, ``brave.shared`` MUST NOT import ``brave.domains``
 
 KNOWN DEVIATION (tracked follow-up): ``agent._finalize_node`` still imports
 ``brave.core.models`` / ``brave.core.rio.routing`` and reaches ``brave.core`` via
-``brave.compliance`` at call time. The tasks-layer coupling (``push_attraction_task``)
+``brave.compliance`` at call time. The tasks-layer coupling (``brave.publish_mar``)
 has been inverted to an injected ``push_confirmed_fn`` callback so no ``brave.tasks``
 import remains here. Fully severing the residual ``brave.core`` / ``brave.compliance``
 edges requires lifting the finalize (re-score → promote → push) body into the calling

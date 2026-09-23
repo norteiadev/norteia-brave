@@ -14,7 +14,7 @@ which producers fan out and how far the pipeline flows.
 
 The recurring sweep auto-promotes to Mar under NO depth — Mar push stays on the
 unchanged human DLQ gate + WhatsApp finalize path. We assert promote_to_mar /
-push_mar are never invoked by the sweep under any of the three depths.
+publish_mar are never invoked by the sweep under any of the three depths.
 
 All tests are 100% offline: fakeredis, monkeypatched dispatch, fake/mocked clients
 and sessions, no broker, RUN_REAL_EXTERNALS unset.
@@ -182,7 +182,7 @@ def test_discover_nascente_rio_mar_kicks_contacts_chain():
     ],
 )
 def test_sweep_never_auto_promotes_to_mar(running_engine, dispatch_spy, depth, monkeypatch):
-    """Under EVERY depth, the orchestrator invokes no promote_to_mar / push_mar.
+    """Under EVERY depth, the orchestrator invokes no promote_to_mar / publish_mar.
 
     Mar push stays on the unchanged human DLQ gate + WhatsApp finalize path; the
     recurring sweep must never auto-promote. Locks ENG-05.
@@ -190,7 +190,7 @@ def test_sweep_never_auto_promotes_to_mar(running_engine, dispatch_spy, depth, m
     promote_spy = MagicMock()
     monkeypatch.setattr("brave.core.mar.service.promote_to_mar", promote_spy)
     push_calls = []
-    monkeypatch.setattr(pipeline, "push_mar", _FakeTask(push_calls))
+    monkeypatch.setattr(pipeline, "publish_mar", _FakeTask(push_calls))
 
     pipeline.engine_sweep_run.run(ufs=["BA"], lane="both", depth=depth)
 

@@ -20,6 +20,8 @@ qualifies.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,10 +29,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brave.api.deps import get_db, require_editing_unlocked, require_steward_or_bearer
+from brave.api.deps import (
+    get_db,
+    get_publish_enqueue,
+    require_editing_unlocked,
+    require_steward_or_bearer,
+)
 from brave.api.routers.cms import _ROUTING_TO_COLUMN, TransitionBody
 from brave.config.runtime import load_effective_config
-from brave.core.dlq.service import validate_and_promote_rio
+from brave.core.mar.publication import promote
 from brave.core.mar.service import _attraction_review_recent
 from brave.core.models import RioRecord
 from brave.observability.audit import write_audit
@@ -70,6 +77,7 @@ def transition_atrativo(
     rio_id: uuid.UUID,
     body: TransitionBody,
     db: Session = Depends(get_db),
+    enqueue: Callable[[str], Any] = Depends(get_publish_enqueue),
 ) -> dict:
     """Generic, audited stage transition for an atrativo (UI-PAINEL-2).
 
@@ -117,36 +125,24 @@ def transition_atrativo(
     before_state = {"column": body.expected, "routing": rio.routing, "sub_state": rio.sub_state}
 
     if edge == "promote":
-        # Borderline promotion flows through the standard reliability gate: inject
-        # validacao_humana=100 → re-score → promote only if score ≥ threshold_mar.
-        # Returns None when the record does not cross the gate; it then stays put.
-        validate_and_promote_rio(db, rio)
-        db.refresh(rio)
-        if rio.routing != "mar":
-            # D1: the reliability/liveness gate held the record in the Rio (e.g.
-            # dlq_reason=no_recent_reviews). Audit the REAL outcome (not a phantom
-            # transition_mar) and 409 with the reason so the UI shows "segurado no
-            # Rio" instead of a ghost Mar move that reverts on the next poll.
-            write_audit(
-                session=db,
-                action="promote_held",
-                entity_type=rio.entity_type,
-                record_id=rio.id,
-                before_state=before_state,
-                after_state={
-                    "column": _ROUTING_TO_COLUMN.get(rio.routing, rio.routing),
-                    "routing": rio.routing,
-                },
-                actor="steward",
-            )
-            db.commit()
+        # Borderline promotion flows through the standard reliability gate via the
+        # publication module, which audits (transition_mar / promote_held), commits
+        # and enqueues the publish — do not fall through to the generic audit.
+        p = promote(
+            db, rio, actor="steward", enqueue=enqueue,
+            action="transition_mar", held_action="promote_held",
+        )
+        if p.routing != "mar":
+            # D1: the reliability/liveness gate held the record in the Rio — 409 with
+            # the reason so the UI shows "segurado no Rio" instead of a ghost Mar move.
             raise HTTPException(
                 status_code=409,
                 detail=(
                     "registro não cruzou o gate de confiabilidade e permanece no "
-                    f"Rio (motivo: {rio.dlq_reason or 'reprovado'})"
+                    f"Rio (motivo: {p.held_reason or 'reprovado'})"
                 ),
             )
+        return {"status": "ok", "to": body.to}
     elif edge == "descarte":
         rio.routing = "descarte"
         rio.dlq_reason = "steward_rejected"
@@ -173,28 +169,6 @@ def transition_atrativo(
         actor="steward",
     )
     db.commit()
-
-    # D2: a steward promote that reached Mar must publish to norteia-api, same
-    # contract as the pipeline. Commit already happened above (WR-01); the push
-    # task early-returns if routing != "mar" and is idempotent by source_ref.
-    if edge == "promote" and rio.routing == "mar":
-        try:
-            from brave.tasks.pipeline import push_attraction_task
-
-            push_attraction_task.delay(str(rio_id))
-        except Exception as exc:  # noqa: BLE001 — narrow via run_real_externals below
-            from brave.config.settings import AppConfig
-
-            if AppConfig().run_real_externals:
-                logger.error("atrativo_push_dispatch_failed", rio_id=str(rio_id), error=str(exc))
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        "Atrativo promovido ao Mar, mas a publicação para a "
-                        "norteia-api falhou (broker indisponível). Refaça a "
-                        "promoção quando o broker voltar para redisparar o push."
-                    ),
-                ) from exc
 
     return {"status": "ok", "to": body.to}
 
@@ -247,13 +221,17 @@ def _bucket_promote_bulk_candidates(
     status_code=200,
     dependencies=[Depends(require_steward_or_bearer), Depends(require_editing_unlocked)],
 )
-def promote_bulk_atrativos(body: PromoteBulkBody, db: Session = Depends(get_db)) -> dict:
+def promote_bulk_atrativos(
+    body: PromoteBulkBody,
+    db: Session = Depends(get_db),
+    enqueue: Callable[[str], Any] = Depends(get_publish_enqueue),
+) -> dict:
     """Batch twin of the single-card promote: same reliability gate, per-record.
 
     dry_run=True only counts (no commit, no audit, no push). dry_run=False promotes
     up to `limit` candidates, each in its own commit — a raise rolls back that one
-    record and the loop goes on. Push dispatch never fails the request: the record
-    is already in Mar and push_attraction_task is idempotent by source_ref.
+    record and the loop goes on. Publish dispatch never fails the request: ids whose
+    enqueue failed are listed in push_failed and stay pending for the outbox.
     """
     rows = _query_promote_bulk_candidates(db, body.uf)
     candidates, excluded = _bucket_promote_bulk_candidates(
@@ -270,54 +248,35 @@ def promote_bulk_atrativos(body: PromoteBulkBody, db: Session = Depends(get_db))
     batch_id = str(uuid.uuid4())
     # Ids up front: a rollback expires ORM instances, so re-fetch inside the loop.
     ids = [r.id for r in candidates[: body.limit]]
-    promoted_ids: list[str] = []
+    promoted = 0
     held: list[dict] = []
     failed: list[dict] = []
+    push_failed: list[str] = []
     for rid in ids:
         try:
             rio = db.get(RioRecord, rid)
             if rio is None:
                 failed.append({"id": str(rid), "error": "not found"})
                 continue
-            before_state = {"routing": rio.routing}
-            validate_and_promote_rio(db, rio, config=config)
-            db.refresh(rio)
-            is_mar = rio.routing == "mar"
-            after_state = {"routing": rio.routing, "batch_id": batch_id}
-            if not is_mar:
-                after_state["reason"] = rio.dlq_reason
-            write_audit(
-                session=db,
-                action="transition_mar" if is_mar else "promote_held",
-                entity_type=rio.entity_type,
-                record_id=rio.id,
-                before_state=before_state,
-                after_state=after_state,
-                actor="steward",
+            p = promote(
+                db, rio, actor="steward", enqueue=enqueue,
+                action="transition_mar", held_action="promote_held",
+                extra={"batch_id": batch_id}, config=config,
             )
-            db.commit()
-            if is_mar:
-                promoted_ids.append(str(rio.id))
+            if p.routing == "mar":
+                promoted += 1
+                if not p.push_queued:
+                    push_failed.append(str(rid))
             else:
-                held.append({"id": str(rio.id), "reason": rio.dlq_reason})
+                held.append({"id": str(rid), "reason": p.held_reason})
         except Exception as exc:  # noqa: BLE001 — one bad record never aborts the batch
             db.rollback()
             logger.warning("atrativo_promote_bulk_record_failed", rio_id=str(rid), error=str(exc))
             failed.append({"id": str(rid), "error": str(exc)})
 
-    push_failed: list[str] = []
-    for pid in promoted_ids:
-        try:
-            from brave.tasks.pipeline import push_attraction_task
-
-            push_attraction_task.delay(pid)
-        except Exception as exc:  # noqa: BLE001 — already committed to Mar; never raise
-            logger.error("atrativo_push_dispatch_failed", rio_id=pid, error=str(exc))
-            push_failed.append(pid)
-
     return {
         "batch_id": batch_id,
-        "promoted": len(promoted_ids),
+        "promoted": promoted,
         "held": held,
         "failed": failed,
         "push_failed": push_failed,

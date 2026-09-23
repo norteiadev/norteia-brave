@@ -3,7 +3,7 @@
 Components:
   - celery_app     — Celery() instance with redbeat config; queue definitions
   - beat_schedule  — RedBeatScheduler entries (per-UF, source-gated)
-  - pipeline       — process_nascente, push_mar, reprocess_record tasks
+  - pipeline       — process_nascente, publish_mar, reprocess_record tasks
 
 Phase 1: module stubs (Celery app wiring filled in Plan 1-02/1-03).
 """

@@ -17,6 +17,7 @@ Security (T-08-01..05):
 """
 
 import uuid
+from collections.abc import Callable
 from typing import Any, Literal
 
 import structlog
@@ -28,11 +29,13 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from brave.api.deps import (
     get_db,
+    get_publish_enqueue,
     require_bearer,
     require_editing_unlocked,
     require_steward_or_bearer,
 )
 from brave.api.routers.workers import _scrub_event_data, _scrub_event_text
+from brave.core.mar.publication import promote
 from brave.core.models import (
     AuditLog,
     MarRecord,
@@ -422,72 +425,25 @@ def get_destino_detail(
 def promote_destino(
     rio_id: uuid.UUID,
     db: Session = Depends(get_db),
+    enqueue: Callable[[str], Any] = Depends(get_publish_enqueue),
 ) -> dict:
-    """Steward promotes a destino: validate_and_promote_rio → Mar + push (D-03, T-08-02).
+    """Steward promotes a destino into Mar via the publication module (D-03, T-08-02).
 
-    Delegates to validate_and_promote_rio (sets human validation score, re-scores,
-    promotes if Mar-eligible). Dispatches push_destination_task on Celery if routing
-    reaches 'mar'. Returns 202 Accepted.
+    promote() re-scores with validacao_humana=100, audits, commits, then enqueues
+    brave.publish_mar. A broker outage leaves the row pending (push_queued=False).
+    Returns 202 Accepted.
     """
     rio = db.get(RioRecord, rio_id)
     if rio is None:
         raise HTTPException(status_code=404, detail="RioRecord not found")
 
-    before_state = {"routing": rio.routing, "score": float(rio.score or 0)}
-
-    # Lazy import: avoids circular at module load, matches dlq.py pattern
-    from brave.core.dlq.service import validate_and_promote_rio
-
-    validate_and_promote_rio(db, rio)
-    db.refresh(rio)
-
-    write_audit(
-        session=db,
-        action="dlq_validated",
-        entity_type=rio.entity_type,
-        record_id=rio.id,
-        before_state=before_state,
-        after_state={"routing": rio.routing, "score": float(rio.score or 0)},
-        actor="steward",
-    )
-
-    # WR-01: commit + refresh BEFORE dispatching the Celery push. The worker
-    # opens its own session and early-returns when routing != "mar"; dispatching
-    # while the request transaction is still open is a read-before-commit race
-    # that silently drops the push to norteia-api in production. Guard on the
-    # committed routing == "mar".
-    db.commit()
-    db.refresh(rio)
-
-    if rio.routing == "mar":
-        try:
-            from brave.tasks.pipeline import push_destination_task
-
-            push_destination_task.delay(str(rio_id))
-        except Exception as exc:
-            # The promotion is already committed (WR-01 above), so a broker-down
-            # push cannot roll back — the record IS in Mar but unpublished. Under
-            # run_real_externals, surface it (log + 503) so the steward knows the
-            # downstream publish failed and can retry the promotion to re-dispatch.
-            # Offline (tests/dev), no broker is expected and the push is a no-op.
-            from brave.config.settings import AppConfig
-
-            if AppConfig().run_real_externals:
-                logger.error(
-                    "cms_push_dispatch_failed",
-                    rio_id=str(rio_id),
-                    error=str(exc),
-                )
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        "Destino promoted to Mar but downstream publish failed "
-                        "(broker unavailable). Retry the promotion once the broker "
-                        "is reachable to re-dispatch the push."
-                    ),
-                ) from exc
-
-    return {"status": "accepted", "rio_id": str(rio_id), "routing": rio.routing}
+    p = promote(db, rio, actor="steward", enqueue=enqueue)
+    return {
+        "status": "accepted",
+        "rio_id": str(rio_id),
+        "routing": p.routing,
+        "push_queued": p.push_queued,
+    }
 
 
 @router.patch(
@@ -553,6 +509,7 @@ def transition_destino(
     rio_id: uuid.UUID,
     body: TransitionBody,
     db: Session = Depends(get_db),
+    enqueue: Callable[[str], Any] = Depends(get_publish_enqueue),
 ) -> dict:
     """Generic, audited stage transition for a destino (UI-PAINEL-2).
 
@@ -583,37 +540,23 @@ def transition_destino(
     before_state = {"column": body.expected, "routing": rio.routing}
 
     if edge == "promote":
-        # Reuse the DLQ validate-and-promote helper (validacao_humana=100 →
-        # re-score → promote_to_mar). No new depublish/retract path is added.
-        from brave.core.dlq.service import validate_and_promote_rio
-
-        validate_and_promote_rio(db, rio)
-        db.refresh(rio)
-        if rio.routing != "mar":
-            # D1: the reliability/liveness gate held the record in the Rio (e.g.
-            # dlq_reason=no_recent_reviews). Audit the REAL outcome (not a phantom
-            # transition_mar) and 409 with the reason so the UI shows "segurado no
-            # Rio" instead of a ghost Mar move that reverts on the next poll.
-            write_audit(
-                session=db,
-                action="promote_held",
-                entity_type=rio.entity_type,
-                record_id=rio.id,
-                before_state=before_state,
-                after_state={
-                    "column": _ROUTING_TO_COLUMN.get(rio.routing, rio.routing),
-                    "routing": rio.routing,
-                },
-                actor="steward",
-            )
-            db.commit()
+        # The publication module audits (transition_mar / promote_held), commits and
+        # enqueues the publish — do not fall through to the generic transition audit.
+        p = promote(
+            db, rio, actor="steward", enqueue=enqueue,
+            action="transition_mar", held_action="promote_held",
+        )
+        if p.routing != "mar":
+            # D1: the reliability/liveness gate held the record in the Rio — 409 with
+            # the reason so the UI shows "segurado no Rio" instead of a ghost Mar move.
             raise HTTPException(
                 status_code=409,
                 detail=(
                     "registro não cruzou o gate de confiabilidade e permanece no "
-                    f"Rio (motivo: {rio.dlq_reason or 'reprovado'})"
+                    f"Rio (motivo: {p.held_reason or 'reprovado'})"
                 ),
             )
+        return {"status": "ok", "to": body.to}
     elif edge == "descarte":
         rio.routing = "descarte"
         rio.dlq_reason = "steward_rejected"
@@ -639,28 +582,6 @@ def transition_destino(
         actor="steward",
     )
     db.commit()
-
-    # D2: a steward promote that reached Mar must publish to norteia-api, same
-    # contract as the pipeline. Commit already happened above (WR-01); the push
-    # task early-returns if routing != "mar" and is idempotent by source_ref.
-    if edge == "promote" and rio.routing == "mar":
-        try:
-            from brave.tasks.pipeline import push_destination_task
-
-            push_destination_task.delay(str(rio_id))
-        except Exception as exc:  # noqa: BLE001 — narrow via run_real_externals below
-            from brave.config.settings import AppConfig
-
-            if AppConfig().run_real_externals:
-                logger.error("destino_push_dispatch_failed", rio_id=str(rio_id), error=str(exc))
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        "Destino promovido ao Mar, mas a publicação para a "
-                        "norteia-api falhou (broker indisponível). Refaça a "
-                        "promoção quando o broker voltar para redisparar o push."
-                    ),
-                ) from exc
 
     return {"status": "ok", "to": body.to}
 

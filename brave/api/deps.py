@@ -6,11 +6,13 @@ Provides:
   get_config()  — returns AppConfig singleton
   get_db_config() — returns DBConfig
   get_webhook_config() — returns WebhookConfig
+  get_publish_enqueue() — returns brave.publish_mar's .delay (override in tests)
 """
 
 import hmac
 import os
-from collections.abc import Generator
+from collections.abc import Callable, Generator
+from typing import Any
 
 from fastapi import Depends, Header, HTTPException, status
 from redis import Redis
@@ -28,6 +30,16 @@ from brave.core import engine as collection_engine
 def get_config() -> AppConfig:
     """Return AppConfig singleton."""
     return AppConfig()
+
+
+def get_publish_enqueue() -> Callable[[str], Any]:
+    """Enqueue for brave.publish_mar, injected into promote() by the routers.
+
+    Lazy import keeps app startup light; tests override it via dependency_overrides.
+    """
+    from brave.tasks.pipeline import publish_mar  # noqa: PLC0415
+
+    return publish_mar.delay
 
 
 def get_webhook_config() -> WebhookConfig:

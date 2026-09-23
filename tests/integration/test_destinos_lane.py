@@ -94,6 +94,31 @@ def _make_dlq_record(db_session: Session, uf: str = "BA", corroboracao: float = 
     return rio
 
 
+@pytest.fixture(autouse=True)
+def enqueued():
+    """Route brave.publish_mar enqueues into a list — no test here needs a real broker."""
+    from brave.api.deps import get_publish_enqueue
+    from brave.api.main import app
+
+    sent: list[str] = []
+    app.dependency_overrides[get_publish_enqueue] = lambda: sent.append
+    try:
+        yield sent
+    finally:
+        app.dependency_overrides.pop(get_publish_enqueue, None)
+
+
+def _broker_down():
+    """Override get_publish_enqueue with a dispatcher whose broker is unreachable."""
+    from brave.api.deps import get_publish_enqueue
+    from brave.api.main import app
+
+    def _raise(_rid: str) -> None:
+        raise RuntimeError("broker unreachable (simulated)")
+
+    app.dependency_overrides[get_publish_enqueue] = lambda: _raise
+
+
 # ---------------------------------------------------------------------------
 # PATCH /api/v1/dlq/{rio_id}/validate — single record
 # ---------------------------------------------------------------------------
@@ -270,102 +295,61 @@ def test_validate_batch_limit_bounds(client):
 
 
 @pytest.mark.integration
-def test_validate_returns_503_when_push_fails_under_real_externals(
-    client, db_session, monkeypatch
-):
-    """WR-01: a broker-down push surfaces 503 but the promotion IS committed.
+def test_validate_broker_down_returns_202_pending(client, db_session):
+    """A broker outage never fails the promote: 202, push_queued=False, row pending.
 
-    Promotion is committed (WR-01) before dispatch. A broker-down push returns 503
-    so the steward knows to retry the push, but the record IS in Mar — it is NOT
-    rolled back. This is the correct semantics: the dispatch failure is retryable
-    (idempotent re-validate), and the record stays promoted to avoid re-scoring.
+    WR-01: the promotion + audit are committed before the enqueue, so the record IS
+    in Mar with pushed_at NULL — the outbox (beat + Painel Reenviar) publishes it.
     """
     from sqlalchemy import select
 
-    from brave.tasks.pipeline import push_destination_task
+    from brave.core.models import MarRecord
 
     rio = _make_dlq_record(db_session, corroboracao=50.0)
     rio_id = rio.id
-
-    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
-
-    def _broker_down(*args, **kwargs):
-        raise RuntimeError("broker unreachable (simulated)")
-
-    monkeypatch.setattr(push_destination_task, "delay", _broker_down)
+    _broker_down()
 
     r = client.patch(f"/api/v1/dlq/{rio_id}/validate")
-    assert r.status_code == 503
+    assert r.status_code == 202
+    assert r.json()["push_queued"] is False
 
-    # WR-01 proof: promotion is committed BEFORE dispatch, so it survives the 503.
     db_session.expire_all()
     reloaded = db_session.get(RioRecord, rio_id)
-    assert reloaded is not None
-    assert reloaded.routing == "mar", (
-        f"WR-01: expected record to be 'mar' (promotion committed before dispatch) "
-        f"but got '{reloaded.routing}' — the 503 signals dispatch failure, not rollback"
-    )
+    assert reloaded is not None and reloaded.routing == "mar"
     audit = db_session.scalar(
         select(AuditLog).where(
             AuditLog.action == "dlq_validated", AuditLog.record_id == rio_id
         )
     )
-    assert audit is not None, (
-        "dlq_validated audit row must persist — audit is written before db.commit() (WR-01)"
+    assert audit is not None, "dlq_validated audit row must persist (WR-01)"
+    mar = db_session.scalar(
+        select(MarRecord).where(
+            MarRecord.rio_id == rio_id, MarRecord.superseded_by_id.is_(None)
+        )
     )
+    assert mar is not None and mar.pushed_at is None
 
 
 @pytest.mark.integration
-def test_validate_swallows_push_failure_offline(client, db_session, monkeypatch):
-    """Offline (run_real_externals=False), a broker-down push is an expected no-op → 202.
-
-    The local promote_to_mar already happened; no broker is expected in tests/dev,
-    so the missing push is swallowed and the steward still gets 202.
-    """
-    from brave.tasks.pipeline import push_destination_task
-
+def test_validate_enqueues_publish_after_commit(client, db_session, enqueued):
+    """A successful promote enqueues brave.publish_mar with the rio id → 202, queued."""
     rio = _make_dlq_record(db_session, corroboracao=50.0)
-    rio_id = rio.id
 
-    monkeypatch.setenv("RUN_REAL_EXTERNALS", "false")
-
-    def _broker_down(*args, **kwargs):
-        raise RuntimeError("broker unreachable (simulated)")
-
-    monkeypatch.setattr(push_destination_task, "delay", _broker_down)
-
-    r = client.patch(f"/api/v1/dlq/{rio_id}/validate")
+    r = client.patch(f"/api/v1/dlq/{rio.id}/validate")
     assert r.status_code == 202
-
-    db_session.expire_all()
-    reloaded = db_session.get(RioRecord, rio_id)
-    assert reloaded.routing == "mar", "offline promotion still commits despite no broker"
+    assert r.json()["push_queued"] is True
+    assert enqueued == [str(rio.id)]
 
 
 @pytest.mark.integration
-def test_validate_batch_returns_503_when_push_fails_under_real_externals(
-    client, db_session, monkeypatch
-):
-    """WR-01 per-row commit: first record is committed to Mar before dispatch fails.
-
-    With WR-01 per-row semantics: the first DLQ record processed is promoted and
-    committed BEFORE its dispatch fires. When dispatch raises (broker down), 503 is
-    returned and the loop exits. The first committed record stays 'mar' (it cannot be
-    rolled back — db.commit() already fired). The second record is never processed
-    and stays 'dlq'. The batch is partially promoted and retryable (idempotent).
-
-    Pre-test cleanup: marks any accumulated PE dlq rows from prior test runs as
-    'descarte' so the batch processes exactly our two new records in creation order.
-    This makes the "first row = mar" assertion deterministic.
-    """
+def test_validate_batch_broker_down_returns_202_and_validates_every_row(client, db_session):
+    """Broker down mid-batch: 202, every row is validated and committed to Mar (pending)."""
     from sqlalchemy import update
-
-    from brave.tasks.pipeline import push_destination_task
 
     test_uf = "PE"
 
-    # Clean up accumulated PE dlq rows from prior test runs that would pollute the
-    # ordering. These are test artifacts left by the old rollback-on-503 semantics.
+    # Clean up accumulated PE dlq rows from prior test runs so the batch processes
+    # exactly our two new records.
     db_session.execute(
         update(RioRecord)
         .where(
@@ -379,36 +363,15 @@ def test_validate_batch_returns_503_when_push_fails_under_real_externals(
 
     rio_a = _make_dlq_record(db_session, uf=test_uf, corroboracao=50.0)
     rio_b = _make_dlq_record(db_session, uf=test_uf, corroboracao=50.0)
-
-    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
-
-    def _broker_down(*args, **kwargs):
-        raise RuntimeError("broker unreachable (simulated)")
-
-    monkeypatch.setattr(push_destination_task, "delay", _broker_down)
+    _broker_down()
 
     r = client.post(f"/api/v1/dlq/validate-batch?uf={test_uf}&entity_type=destination")
-    assert r.status_code == 503
+    assert r.status_code == 202
+    assert r.json()["validated"] == 2
 
-    # WR-01 per-row proof: exactly one record committed to 'mar', one stays 'dlq'.
-    # The endpoint processes rows in heap order (no ORDER BY), so we can't assert
-    # WHICH record (rio_a vs rio_b) gets promoted — only that WR-01 prevented a
-    # full rollback: one row is committed to 'mar' before dispatch fails, and the
-    # other row was never reached (stays 'dlq').
     db_session.expire_all()
-    reloaded_a = db_session.get(RioRecord, rio_a.id)
-    reloaded_b = db_session.get(RioRecord, rio_b.id)
-    assert reloaded_a is not None
-    assert reloaded_b is not None
-    statuses = {reloaded_a.routing, reloaded_b.routing}
-    assert "mar" in statuses, (
-        f"WR-01: at least one batch record should be committed to 'mar' before dispatch "
-        f"fails, got routings: a={reloaded_a.routing!r}, b={reloaded_b.routing!r}"
-    )
-    assert "dlq" in statuses, (
-        f"WR-01: at least one batch record should remain 'dlq' (never reached by loop), "
-        f"got routings: a={reloaded_a.routing!r}, b={reloaded_b.routing!r}"
-    )
+    assert db_session.get(RioRecord, rio_a.id).routing == "mar"
+    assert db_session.get(RioRecord, rio_b.id).routing == "mar"
 
 
 # ---------------------------------------------------------------------------

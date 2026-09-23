@@ -16,6 +16,8 @@ caller must not be able to fan out expensive LLM/Places sweeps).
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -23,10 +25,17 @@ from redis import Redis
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from brave.api.deps import get_db, get_redis, require_bearer, require_steward_or_bearer
+from brave.api.deps import (
+    get_db,
+    get_publish_enqueue,
+    get_redis,
+    require_bearer,
+    require_steward_or_bearer,
+)
 from brave.config.runtime import enabled_sources, load_effective_config
 from brave.config.settings import AppConfig
 from brave.core import engine as collection_engine
+from brave.core.mar.publication import republish_pending
 from brave.core.mar.sync import count_pending_pushes, norteia_api_health, norteia_api_up
 from brave.core.models import MarRecord, NascenteRecord, RioRecord
 
@@ -148,6 +157,7 @@ def engine_status(
 def repush_pending_mar(
     db: Session = Depends(get_db),
     redis: Redis = Depends(get_redis),
+    enqueue: Callable[[str], Any] = Depends(get_publish_enqueue),
 ) -> dict:
     """Painel "Reenviar": re-dispatch the push for Mar rows norteia-api never accepted.
 
@@ -159,9 +169,7 @@ def repush_pending_mar(
             status_code=503,
             detail="norteia-api indisponível — o reenvio roda sozinho quando ela voltar.",
         )
-    from brave.tasks.pipeline import dispatch_pending_pushes  # noqa: PLC0415
-
-    return {"dispatched": dispatch_pending_pushes(db)}
+    return {"dispatched": republish_pending(db, enqueue)}
 
 
 @router.get("/api/v1/nascente", dependencies=[Depends(require_bearer)])

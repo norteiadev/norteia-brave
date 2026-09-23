@@ -11,6 +11,7 @@ Coverage:
   - push_destination on 5xx raises httpx.HTTPStatusError
   - Idempotent double-push: same source_ref → 200 both times (norteia-api handles upsert)
   - push_attraction routes to /api/internal/territorial/attractions
+  - push(entity_type, payload): owns its lifecycle; ApiDown when the probe says down
 """
 
 import httpx
@@ -202,16 +203,36 @@ async def test_push_attraction_routes_to_correct_endpoint(api_client):
 
 
 # ---------------------------------------------------------------------------
-# Test 6: push_mar Celery task wires to NorteiaApiClient
+# push(entity_type, payload) — owns its HTTP lifecycle, health-gated
 # ---------------------------------------------------------------------------
 
 
-def test_push_mar_imports_norteia_api_client():
-    """push_mar Celery task imports NorteiaApiClient from brave.clients.norteia_api."""
-    import brave.tasks.pipeline as pipeline_module
-    import inspect
-
-    source = inspect.getsource(pipeline_module)
-    assert "from brave.clients.norteia_api import NorteiaApiClient" in source, (
-        "push_mar must import NorteiaApiClient from brave.clients.norteia_api"
+@pytest.mark.anyio
+@pytest.mark.enable_socket
+@respx.mock
+async def test_push_returns_true_without_async_with(api_client, destination_payload):
+    """push() opens its own client — no `async with` at the call site."""
+    route = respx.post(f"{BASE_URL}/api/internal/territorial/attractions").mock(
+        return_value=httpx.Response(200, json={"id": "x", "source_ref": "y"})
     )
+
+    assert await api_client.push("attraction", destination_payload) is True
+    assert route.called
+
+
+@pytest.mark.anyio
+@pytest.mark.enable_socket
+@respx.mock
+async def test_push_raises_api_down_without_post(api_client, destination_payload, monkeypatch):
+    """A confirmed-down norteia-api raises ApiDown and never POSTs."""
+    from brave.core.mar import sync
+    from brave.shared.exceptions import ApiDown
+
+    monkeypatch.setattr(sync, "norteia_api_up", lambda redis=None: False)
+    route = respx.post(f"{BASE_URL}/api/internal/territorial/destinations").mock(
+        return_value=httpx.Response(200, json={})
+    )
+
+    with pytest.raises(ApiDown):
+        await api_client.push("destination", destination_payload)
+    assert not route.called

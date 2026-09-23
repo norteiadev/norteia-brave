@@ -227,15 +227,10 @@ class TestClientProtocols:
 
         assert hasattr(LLMClientProtocol, "extract")
 
-    def test_norteia_api_has_push_destination(self) -> None:
+    def test_norteia_api_has_push(self) -> None:
         from brave.clients.base import NorteiaApiClientProtocol
 
-        assert hasattr(NorteiaApiClientProtocol, "push_destination")
-
-    def test_norteia_api_has_push_attraction(self) -> None:
-        from brave.clients.base import NorteiaApiClientProtocol
-
-        assert hasattr(NorteiaApiClientProtocol, "push_attraction")
+        assert hasattr(NorteiaApiClientProtocol, "push")
 
     def test_places_has_text_search(self) -> None:
         from brave.clients.base import PlacesClientProtocol

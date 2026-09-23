@@ -34,7 +34,7 @@ Test → Requirement / Success Criterion mapping:
 
   test_sc7_owner_validation_reaches_mar
     Verifies: ATR-05, ATR-06
-    SC: (4) WhatsAppAgent owner-validation → re-score → Mar; push_attraction_task called
+    SC: (4) WhatsAppAgent owner-validation → re-score → Mar; brave.publish_mar publishes it
 
 All tests are marked @pytest.mark.integration so the unit suite can run separately
 with pytest -m "not integration".
@@ -1024,7 +1024,7 @@ def test_sc7_owner_validation_reaches_mar(db_session: Session) -> None:
       2. Set validacao_humana_value=100 in normalized (simulate owner confirmation)
       3. Call reprocess_record → routes to "mar"
       4. Call promote_to_mar to create MarRecord
-      5. Call push_attraction_task body with FakeNorteiaApiClient injected
+      5. Publish the Mar payload with FakeNorteiaApiClient injected
 
     Assertions:
       - rio.routing == "mar" after reprocess_record
@@ -1128,8 +1128,8 @@ def test_sc7_owner_validation_reaches_mar(db_session: Session) -> None:
     fake_norteia = FakeNorteiaApiClient()
 
     async def _fake_push():
-        from brave.tasks.pipeline import _build_push_payload
-        payload = _build_push_payload(mar_in_db, updated_rio)
+        from brave.core.mar.service import build_push_payload
+        payload = build_push_payload(mar_in_db, updated_rio)
         return await fake_norteia.push_attraction(payload)
 
     asyncio.run(_fake_push())
