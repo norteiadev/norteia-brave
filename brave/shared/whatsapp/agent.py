@@ -10,9 +10,9 @@ The pure conversation state / opt-out / routing primitives live in the sibling
 ``_compliant_send``, and ``build_graph``.
 
 D-18 note: ``brave.shared`` must not import ``brave.domains`` or ``brave.tasks``.
-The former ``push_attraction_task`` dispatch inside ``_finalize_node`` has been
-inverted to an injected ``push_confirmed_fn`` callback supplied by the caller, so
-no ``brave.tasks`` import remains. (``_finalize_node`` still imports
+The publish dispatch inside ``_finalize_node`` is an injected ``push_confirmed_fn``
+callback (the caller passes ``brave.publish_mar``'s ``.delay``), so no
+``brave.tasks`` import remains. (``_finalize_node`` still imports
 ``brave.core.models`` / ``brave.core.rio.routing`` and reaches ``brave.core`` via
 ``brave.compliance`` — tracked follow-up; see the package docstring.)
 
@@ -26,7 +26,8 @@ Architecture:
   - Opt-out keywords (SAIR, PARAR, etc.) detected in recv_reply_node → record_opt_out
     → state["opted_out"] = True → graph routes to finalize_node → DLQ. COMP-01/02.
   - Owner-validation success (existe=sim, funcionando=sim) triggers re-score:
-    finalize_node → reprocess_record → promote_to_mar → push_confirmed_fn (injected). D-10.
+    finalize_node → publication.promote(actor="whatsapp_owner") → push_confirmed_fn
+    (injected; enqueues brave.publish_mar). D-10.
 
 thread_id = f"atrativo:{rio_id}" (keyed by UUID, never by phone). RESEARCH Pitfall 2.
 max_turns guard prevents infinite loops (configurable, default 3). T-03-04-04.
@@ -74,6 +75,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from brave.core.mar.publication import promote
 from brave.shared.whatsapp.conversation import (
     ALL_OPT_OUT_KEYWORDS,
     OPT_OUT_KEYWORDS,
@@ -547,18 +549,18 @@ async def _finalize_node(
     """Node: apply extraction result to the record and trigger re-score.
 
     Owner-validation success (existe=sim, funcionando=sim):
-      - Raises validacao_humana_value=100 on rio.normalized
-      - Calls reprocess_record → route_by_score → promote_to_mar → push_confirmed_fn
-      D-10: owner-validation feeds existing reprocess_record (no new scoring branch).
+      - Writes owner_horarios / owner_valor into rio.normalized
+      - Calls publication.promote(actor="whatsapp_owner") — validacao_humana=100,
+        re-score, promote_to_mar, audit, commit, then push_confirmed_fn.
 
     Owner-validation failure or no-answer:
       - Sets rio.dlq_reason = "owner_no_answer" or "owner_opted_out"
       - Routes record to DLQ (routing="dlq")
 
-    push_confirmed_fn is the injected push dispatcher (D-18: keeps brave.tasks out
-    of brave.shared). When routing crosses to "mar" it is called with the rio_id;
-    the caller (tasks layer) owns the actual push_attraction_task.delay. None (the
-    default in unit build_graph) skips the push — the promotion still persists.
+    push_confirmed_fn enqueues brave.publish_mar (D-18: keeps brave.tasks out of
+    brave.shared). When routing crosses to "mar" it is called with the rio_id;
+    the caller (tasks layer) passes publish_mar.delay. None (the default in unit
+    build_graph) skips the enqueue — the Mar row stays pending for the outbox.
 
     Returns:
         Empty state update (finalize_node terminates; graph routes to END).
@@ -568,7 +570,6 @@ async def _finalize_node(
     from sqlalchemy.orm.attributes import flag_modified
 
     from brave.core.models import RioRecord
-    from brave.core.rio.routing import reprocess_record as _reprocess
 
     extraction = state.get("extraction")
     opted_out = state.get("opted_out", False)
@@ -607,45 +608,33 @@ async def _finalize_node(
         logger.info("finalize_no_answer", rio_id=state["rio_id"], extraction=extraction)
         return {}
 
-    # Owner confirmed — raise validacao_humana_value to 100 and re-score
+    # Owner confirmed — store the extracted data, then promote through the Mar
+    # publication module (it raises validacao_humana, re-scores, audits, commits
+    # and enqueues brave.publish_mar when the record lands in Mar).
     normalized = dict(record.normalized or {})
-    normalized["validacao_humana_value"] = 100.0
-
-    # Store extracted data in normalized (horarios, valor)
     if extraction.get("horarios"):
         normalized["owner_horarios"] = extraction["horarios"]
     if extraction.get("valor"):
         normalized["owner_valor"] = extraction["valor"]
-
     record.normalized = normalized
     flag_modified(record, "normalized")
     session.flush()
 
-    # Re-score via existing reprocess_record (D-10 — no new scoring branch)
-    reprocessed_rio = _reprocess(session, rio_uuid, score_config)
-    session.flush()
+    promotion = promote(
+        session,
+        record,
+        actor="whatsapp_owner",
+        action="owner_validated",
+        enqueue=push_confirmed_fn or (lambda _rid: None),
+        config=score_config,
+    )
 
     logger.info(
         "finalize_reprocessed",
         rio_id=state["rio_id"],
-        new_routing=reprocessed_rio.routing,
-        score=float(reprocessed_rio.score or 0),
+        new_routing=promotion.routing,
+        push_queued=promotion.push_queued,
     )
-
-    # If routing crossed to "mar", dispatch via the injected push callback.
-    # push_confirmed_fn is supplied by the caller (tasks layer) so this shared
-    # module never imports brave.tasks (D-18). Best-effort: a missing broker
-    # (dev/test) or a None callback (unit build_graph) is not fatal — the Mar
-    # promotion already persisted and the push can be retried.
-    if reprocessed_rio.routing == "mar" and push_confirmed_fn is not None:
-        try:
-            push_confirmed_fn(state["rio_id"])
-        except Exception as exc:
-            logger.warning(
-                "push_attraction_dispatch_failed",
-                rio_id=state["rio_id"],
-                error=str(exc),
-            )
 
     return {}
 
@@ -687,9 +676,9 @@ def build_graph(
         rio:          RioRecord being processed.
         config:       ScoreConfig for re-scoring in finalize_node.
         settings:     WhatsAppConfig with approved_templates + ramp_cap.
-        push_confirmed_fn: Injected callback invoked with rio_id when finalize
-                      promotes the record to Mar (D-18: keeps brave.tasks out of
-                      brave.shared). None skips the push (unit tests).
+        push_confirmed_fn: Injected callback that enqueues brave.publish_mar with
+                      rio_id when finalize promotes the record to Mar (D-18: keeps
+                      brave.tasks out of brave.shared). None skips the enqueue.
         checkpointer: LangGraph checkpointer (AsyncPostgresSaver or MemorySaver).
 
     Returns:

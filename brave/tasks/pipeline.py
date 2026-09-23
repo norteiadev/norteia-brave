@@ -1,11 +1,11 @@
 """Celery pipeline tasks (D-05, D-06, CORE-10).
 
-Four tasks:
+Core tasks:
   process_nascente      — ingest NascenteRecord through Rio pipeline
-  push_mar              — push scored RioRecord to Mar layer + norteia-api
   reprocess_record_task — re-score an existing RioRecord
-  push_destination_task — Phase 2 destino-specific push (D-09). Always calls
-                          push_destination — not entity-agnostic.
+  publish_mar           — Publicação: send an active Mar row to norteia-api
+                          (brave.core.mar.publication.publish; never promotes)
+  repush_pending_mar    — beat: re-enqueue publish_mar for pending Mar rows
 
 Idempotency: Every task is a no-op on re-run (D-03, D-15).
 Poison quarantine: After max_retries failures, the task goes to PoisonQuarantine,
@@ -15,20 +15,10 @@ Error classification:
   TransientError (network flap, DB timeout) → self.retry with backoff
   PermanentError (malformed payload, schema violation) → quarantine_poison
   Any exception after max_retries → quarantine_poison
-
-push_mar provenance flattening (D-15, D-16):
-  Mar push payload uses the flat per-criterion shape required by the Pact contract:
-    {"origem": float, "completude": float, "corroboracao": float,
-     "atualidade": float, "validacao_humana": float}
-  The promote_to_mar service writes provenance as:
-    {"score_breakdown": {...flat...}, "score_version": ..., "nascente_id": ..., "rio_id": ...}
-  push_mar flattens score_breakdown to top-level provenance keys for the API push.
 """
 
 import asyncio
 import contextlib
-import hashlib
-import json
 import os
 import uuid
 from typing import Any, NamedTuple
@@ -41,6 +31,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from brave.clients.norteia_api import NorteiaApiClient
 from brave.config.runtime import load_effective_config
 from brave.config.settings import AppConfig
+from brave.core.mar.publication import publish, republish_pending
 from brave.core.models import RioRecord
 from brave.core.nascente.service import get_nascente
 from brave.core.rio.routing import process_nascente_record, reprocess_record
@@ -357,7 +348,7 @@ async def _with_http_clients(coro: Any, *clients: Any) -> Any:
 # (e.g. producers under brave/lanes/) can import it from core
 # without depending on the tasks layer.  This re-export keeps existing callers
 # working without any change.
-from datetime import UTC, datetime
+from datetime import UTC
 
 from brave.core.quarantine import quarantine_poison  # noqa: F401 (re-export)
 
@@ -457,47 +448,6 @@ def _http_error_body(exc: BaseException) -> str | None:
     return response.text if response is not None else None
 
 
-def _build_push_payload(mar_record: Any, rio_record: RioRecord) -> dict[str, Any]:
-    """Build the flat-provenance Mar push payload (D-16 Pact contract shape).
-
-    Thin shim: the logic moved to
-    ``brave.core.mar.service.build_push_payload`` (returns a typed
-    MarPushPayload). This returns ``.model_dump()`` so the dict is byte-identical
-    to before and every call site stays unchanged.
-
-    Args:
-        mar_record: MarRecord returned by promote_to_mar.
-        rio_record: Source RioRecord (kept for signature compatibility).
-
-    Returns:
-        Dict matching the Pact contract Mar push shape.
-    """
-    from brave.core.mar.service import build_push_payload
-
-    return build_push_payload(mar_record, rio_record)
-
-
-def _push_hash(payload: dict[str, Any]) -> str:
-    """sha256 of the push payload — identity of what norteia-api last accepted."""
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, default=str).encode()
-    ).hexdigest()
-
-
-def _mark_pushed(session: Session, mar: Any, api_client: Any, digest: str) -> None:
-    """Stamp the Mar row after a 2xx so an identical re-push skips the POST.
-
-    Only for the real client: the Null client sends nothing, and stamping there
-    would make the first real push (externals turned on later) a silent no-op.
-    ponytail: no force flag — to re-push an unchanged record (e.g. norteia-api lost
-    it), ``UPDATE mar_records SET push_hash = NULL``; add a flag if stewards need it.
-    """
-    if isinstance(api_client, NorteiaApiClient):
-        mar.push_hash = digest
-        mar.pushed_at = datetime.now(UTC)
-        session.commit()
-
-
 def _norteia_api_down() -> bool:
     """True only when norteia-api is confirmed down (cached ping, see mar/sync.py).
 
@@ -512,22 +462,6 @@ def _norteia_api_down() -> bool:
     return norteia_api_up(rc) is False
 
 
-def dispatch_pending_pushes(session: Session) -> int:
-    """Re-dispatch the push task of every pending Mar row (capped per call).
-
-    Safe to repeat: the push tasks are idempotent by source_ref and norteia-api is an
-    upsert. A row norteia-api rejects for good (4xx) stays pending and is retried
-    every tick — visible as the Painel's pending count rather than silently dropped.
-    """
-    from brave.core.mar.sync import pending_push_rows  # noqa: PLC0415
-
-    rows = pending_push_rows(session)
-    for rio_id, entity_type in rows:
-        task = push_destination_task if entity_type == "destination" else push_attraction_task
-        task.delay(str(rio_id))
-    return len(rows)
-
-
 @shared_task(name="brave.repush_pending_mar", time_limit=300)
 def repush_pending_mar() -> int:
     """Beat (15 min): re-dispatch the push for Mar rows norteia-api never accepted.
@@ -539,7 +473,7 @@ def repush_pending_mar() -> int:
         return 0
     session, _ = _get_session()
     try:
-        dispatched = dispatch_pending_pushes(session)
+        dispatched = republish_pending(session, publish_mar.delay)
         if dispatched:
             logger.info("repush_pending_mar_dispatched", count=dispatched)
         return dispatched
@@ -547,115 +481,51 @@ def repush_pending_mar() -> int:
         session.close()
 
 
+def _norteia_api() -> Any:
+    """Real norteia-api adapter when externals are on, else the offline Null adapter."""
+    from brave.clients.null_norteia_api import NullNorteiaApiClient  # noqa: PLC0415
+
+    if not AppConfig().run_real_externals:
+        return NullNorteiaApiClient()
+    import redis as _redis_lib  # noqa: PLC0415
+
+    return NorteiaApiClient(
+        base_url=os.environ.get("BRAVE_NORTEIA_API_URL", ""),
+        service_token=os.environ.get("BRAVE_NORTEIA_API_SERVICE_TOKEN", ""),
+        redis=_redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")),
+    )
+
+
 @shared_task(
     bind=True,
     max_retries=3,
-    name="brave.push_mar",
+    name="brave.publish_mar",
     acks_late=True,
     reject_on_worker_lost=True,
     time_limit=300,
 )
-def push_mar(self, rio_id: str) -> None:
-    """Push a scored RioRecord to the Mar layer and norteia-api (D-15, D-16, CORE-05).
+def publish_mar(self, rio_id: str) -> str | None:
+    """Publicação: send the active Mar row of ``rio_id`` to norteia-api.
 
-    Pipeline:
-      1. Load RioRecord; if routing != 'mar', no-op (idempotent).
-      2. Call promote_to_mar to create/update MarRecord (idempotent by source_ref).
-      3. Build flat-provenance push payload (Pact contract shape).
-      4. POST to norteia-api via NorteiaApiClient (Bearer auth, tenacity retry).
-
-    Idempotency:
-      - promote_to_mar is idempotent by source_ref (D-15).
-      - norteia-api is an idempotent upsert by source_ref — double push is safe.
-      - If routing != 'mar', returns immediately.
-
-    Error handling:
-      TransientError (5xx from norteia-api) → tenacity retries in NorteiaApiClient.
-      PermanentError → log and return (no quarantine for push errors in Phase 1).
-      After max_retries → Celery retry; after max → pass (Phase 3 adds retry DLQ).
-
-    Args:
-        rio_id: UUID string of the RioRecord to push.
+    Never promotes (that is ``brave.core.mar.publication.promote``). The endpoint is
+    picked by entity_type; an unchanged payload skips the POST; a down API leaves the
+    row pending for brave.repush_pending_mar. HTTP errors retry 3x, then log (WR-02).
     """
-    from brave.clients.null_norteia_api import NullNorteiaApiClient
-    from brave.core.mar.service import promote_to_mar
-
-    session, engine = _get_session()
+    session, _ = _get_session()
     try:
-        rio_uuid = uuid.UUID(rio_id)
-        rio = session.get(RioRecord, rio_uuid)
-        if rio is None:
-            raise PermanentError(f"RioRecord {rio_id} not found")
-
-        # Idempotency: only process mar-routed records
-        if rio.routing != "mar":
-            return  # Not ready for Mar — idempotent no-op
-
-        # Step 1: Promote to Mar layer (idempotent by source_ref, D-15)
-        mar = promote_to_mar(session, rio)
-        # Phase F: the attraction recency backstop may route to DLQ instead of
-        # promoting (returns None). Commit the DLQ routing and no-op the push.
-        if mar is None:
-            session.commit()
-            return
-        session.commit()
-
-        # Step 2: Determine which client to use
-        app_config = AppConfig()
-        if app_config.run_real_externals:
-            norteia_api_url = os.environ.get("BRAVE_NORTEIA_API_URL", "")
-            norteia_service_token = os.environ.get("BRAVE_NORTEIA_API_SERVICE_TOKEN", "")
-            api_client = NorteiaApiClient(
-                base_url=norteia_api_url,
-                service_token=norteia_service_token,
-            )
-        else:
-            api_client = NullNorteiaApiClient()
-
-        # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
-        payload = _build_push_payload(mar, rio)
-        digest = _push_hash(payload)
-        if mar.push_hash == digest:
-            return  # norteia-api already holds this exact payload — skip the POST
-        if _norteia_api_down():
-            return  # stays pushed_at NULL — brave.repush_pending_mar re-dispatches it
-
-        # Step 4: Push to norteia-api
-        async def _push() -> dict[str, Any]:
-            if isinstance(api_client, NorteiaApiClient):
-                async with api_client as client:
-                    if rio.entity_type == "destination":
-                        return await client.push_destination(payload)
-                    else:
-                        return await client.push_attraction(payload)
-            else:
-                # FakeNorteiaApiClient — no context manager needed
-                if rio.entity_type == "destination":
-                    return await api_client.push_destination(payload)
-                else:
-                    return await api_client.push_attraction(payload)
-
-        asyncio.run(_push())
-        _mark_pushed(session, mar, api_client, digest)
-
-    except PermanentError as exc:
-        session.rollback()
-        # WR-02: a permanently-failed Mar push must not vanish silently.
-        logger.error("push_mar_permanent_failure", rio_id=rio_id, error=str(exc))
-
+        return publish(session, uuid.UUID(rio_id), _norteia_api()).status
     except Exception as exc:
         session.rollback()
         try:
             raise self.retry(exc=exc, max_retries=3)
         except self.MaxRetriesExceededError:
-            # WR-02: surface permanently-failed pushes (DLQ deferred) — at minimum log.
             logger.error(
-                "push_mar_max_retries_exceeded",
+                "publish_mar_max_retries_exceeded",
                 rio_id=rio_id,
                 error=str(exc),
                 response=_http_error_body(exc),
             )
-
+        return None
     finally:
         session.close()
 
@@ -691,117 +561,6 @@ def reprocess_record_task(self, rio_id: str) -> None:
                 rio_id=rio_id,
                 error=str(exc),
             )
-    finally:
-        session.close()
-
-
-@shared_task(
-    bind=True,
-    max_retries=3,
-    name="brave.push_destination",
-    acks_late=True,
-    reject_on_worker_lost=True,
-    time_limit=300,
-)
-def push_destination_task(self, rio_id: str) -> None:
-    """Promote a validated DLQ destino to Mar and push to norteia-api (D-09).
-
-    Phase 2 destino-specific push. Always calls push_destination — not
-    entity-agnostic. Called by the DLQ validate endpoint after routing
-    transitions to "mar".
-
-    Pipeline:
-      1. Load RioRecord; if routing != 'mar', no-op (idempotent).
-      2. Call promote_to_mar to create/update MarRecord (idempotent by source_ref).
-      3. Build flat-provenance push payload (Pact contract shape).
-      4. POST to norteia-api via push_destination (never push_attraction).
-
-    Idempotency:
-      - promote_to_mar is idempotent by source_ref (D-15).
-      - norteia-api is an idempotent upsert by source_ref — double push is safe.
-      - If routing != 'mar', returns immediately.
-
-    Error handling:
-      PermanentError → log and return (no quarantine for push errors).
-      After max_retries → Celery retry; after max → pass (Phase 3 adds retry DLQ).
-
-    Args:
-        rio_id: UUID string of the RioRecord to push.
-    """
-    from brave.clients.null_norteia_api import NullNorteiaApiClient
-    from brave.core.mar.service import promote_to_mar
-
-    session, engine = _get_session()
-    try:
-        rio_uuid = uuid.UUID(rio_id)
-        rio = session.get(RioRecord, rio_uuid)
-        if rio is None:
-            raise PermanentError(f"RioRecord {rio_id} not found")
-
-        # Idempotency: only process mar-routed records
-        if rio.routing != "mar":
-            return  # Not ready for Mar — idempotent no-op
-
-        # Step 1: Promote to Mar layer (idempotent by source_ref, D-15)
-        mar = promote_to_mar(session, rio)
-        # Phase F: the attraction recency backstop may route to DLQ instead of
-        # promoting (returns None). Commit the DLQ routing and no-op the push.
-        if mar is None:
-            session.commit()
-            return
-        session.commit()
-
-        # Step 2: Determine which client to use
-        app_config = AppConfig()
-        if app_config.run_real_externals:
-            norteia_api_url = os.environ.get("BRAVE_NORTEIA_API_URL", "")
-            norteia_service_token = os.environ.get("BRAVE_NORTEIA_API_SERVICE_TOKEN", "")
-            api_client = NorteiaApiClient(
-                base_url=norteia_api_url,
-                service_token=norteia_service_token,
-            )
-        else:
-            api_client = NullNorteiaApiClient()
-
-        # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
-        payload = _build_push_payload(mar, rio)
-        digest = _push_hash(payload)
-        if mar.push_hash == digest:
-            return  # norteia-api already holds this exact payload — skip the POST
-        if _norteia_api_down():
-            return  # stays pushed_at NULL — brave.repush_pending_mar re-dispatches it
-
-        # Step 4: Push to norteia-api — always push_destination (D-09)
-        async def _push() -> dict[str, Any]:
-            if isinstance(api_client, NorteiaApiClient):
-                async with api_client as client:
-                    return await client.push_destination(payload)
-            else:
-                return await api_client.push_destination(payload)
-
-        asyncio.run(_push())
-        _mark_pushed(session, mar, api_client, digest)
-
-    except PermanentError as exc:
-        session.rollback()
-        # WR-02: a permanently-failed destino push must not vanish silently.
-        logger.error(
-            "push_destination_permanent_failure", rio_id=rio_id, error=str(exc)
-        )
-
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            # WR-02: surface permanently-failed pushes (DLQ deferred) — at minimum log.
-            logger.error(
-                "push_destination_max_retries_exceeded",
-                rio_id=rio_id,
-                error=str(exc),
-                response=_http_error_body(exc),
-            )
-
     finally:
         session.close()
 
@@ -2164,13 +1923,14 @@ def collect_description_batches_task(self) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 — Atrativos WhatsApp conversation + push tasks (D-08/D-10, 03-04).
+# Phase 3 — Atrativos WhatsApp conversation tasks (D-08/D-10, 03-04).
 #
 # These tasks replace the stubs added in 03-02. The gate router
 # (/approve, inbound webhook) dispatch sites in atrativos_gate.py keep working
 # unchanged — same task names ("brave.outreach", "brave.resume_conversation").
 #
-# push_attraction_task: mirrors push_destination_task exactly (D-10).
+# An owner-confirmed atrativo is promoted in finalize_node and published by
+# brave.publish_mar (push_confirmed_fn=publish_mar.delay).
 # outreach_task:        asyncio.run(_run()) + LangGraph WhatsAppAgent (D-08).
 # resume_conversation_task: asyncio.run(_run()) + LangGraph graph resume (D-08).
 #
@@ -2178,117 +1938,6 @@ def collect_description_batches_task(self) -> None:
 # run_real_externals=False. Test fakes are NEVER imported in production tasks
 # (T-03-04-07). FakeLLMClient/FakeWhatsApp are test-only (tests/fakes/).
 # ---------------------------------------------------------------------------
-
-
-@shared_task(
-    bind=True,
-    max_retries=3,
-    name="brave.push_attraction",
-    acks_late=True,
-    reject_on_worker_lost=True,
-    time_limit=300,
-)
-def push_attraction_task(self, rio_id: str) -> None:
-    """Promote a validated atrativo to Mar and push to norteia-api (D-10).
-
-    Mirror of push_destination_task — always calls push_attraction, never
-    push_destination. Called by finalize_node in the WhatsAppAgent after
-    owner-validation confirms existe=sim / funcionando=sim.
-
-    Pipeline:
-      1. Load RioRecord; if routing != 'mar', no-op (idempotent).
-      2. Call promote_to_mar to create/update MarRecord (idempotent by source_ref).
-      3. Build flat-provenance push payload (Pact contract shape).
-      4. POST to norteia-api via push_attraction (never push_destination — D-10).
-
-    Idempotency:
-      - promote_to_mar is idempotent by source_ref (D-15).
-      - norteia-api is an idempotent upsert by source_ref — double push is safe.
-      - If routing != 'mar', returns immediately.
-
-    Error handling:
-      PermanentError → log and return (no quarantine for push errors).
-      After max_retries → Celery retry; after max → pass.
-
-    Args:
-        rio_id: UUID string of the RioRecord to push.
-    """
-    from brave.clients.null_norteia_api import NullNorteiaApiClient
-    from brave.core.mar.service import promote_to_mar
-
-    session, engine = _get_session()
-    try:
-        rio_uuid = uuid.UUID(rio_id)
-        rio = session.get(RioRecord, rio_uuid)
-        if rio is None:
-            raise PermanentError(f"RioRecord {rio_id} not found")
-
-        # Idempotency: only process mar-routed records
-        if rio.routing != "mar":
-            return  # Not ready for Mar — idempotent no-op
-
-        # Step 1: Promote to Mar layer (idempotent by source_ref, D-15)
-        mar = promote_to_mar(session, rio)
-        # Phase F: the attraction recency backstop may route to DLQ instead of
-        # promoting (returns None). Commit the DLQ routing and no-op the push.
-        if mar is None:
-            session.commit()
-            return
-        session.commit()
-
-        # Step 2: Determine which API client to use
-        app_config = AppConfig()
-        if app_config.run_real_externals:
-            norteia_api_url = os.environ.get("BRAVE_NORTEIA_API_URL", "")
-            norteia_service_token = os.environ.get("BRAVE_NORTEIA_API_SERVICE_TOKEN", "")
-            api_client = NorteiaApiClient(
-                base_url=norteia_api_url,
-                service_token=norteia_service_token,
-            )
-        else:
-            api_client = NullNorteiaApiClient()
-
-        # Step 3: Build flat-provenance payload (Pact contract shape, D-16)
-        payload = _build_push_payload(mar, rio)
-        digest = _push_hash(payload)
-        if mar.push_hash == digest:
-            return  # norteia-api already holds this exact payload — skip the POST
-        if _norteia_api_down():
-            return  # stays pushed_at NULL — brave.repush_pending_mar re-dispatches it
-
-        # Step 4: Push to norteia-api — always push_attraction (D-10)
-        async def _push() -> dict[str, Any]:
-            if isinstance(api_client, NorteiaApiClient):
-                async with api_client as client:
-                    return await client.push_attraction(payload)
-            else:
-                return await api_client.push_attraction(payload)
-
-        asyncio.run(_push())
-        _mark_pushed(session, mar, api_client, digest)
-
-    except PermanentError as exc:
-        session.rollback()
-        # WR-02: a permanently-failed attraction push must not vanish silently.
-        logger.error(
-            "push_attraction_permanent_failure", rio_id=rio_id, error=str(exc)
-        )
-
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            # WR-02: surface permanently-failed pushes (DLQ deferred) — at minimum log.
-            logger.error(
-                "push_attraction_max_retries_exceeded",
-                rio_id=rio_id,
-                error=str(exc),
-                response=_http_error_body(exc),
-            )
-
-    finally:
-        session.close()
 
 
 @shared_task(
@@ -2317,7 +1966,7 @@ def outreach_task(self, rio_id: str) -> None:
       6. thread_id = f"atrativo:{rio_id}" — keyed by UUID, never phone. Pitfall 2.
       7. await graph.ainvoke(initial_state, config={"configurable": {"thread_id": ...}}).
 
-    asyncio.run(_run()) pattern: same as push_mar (Pitfall 5 — sync Celery worker
+    asyncio.run(_run()) pattern (Pitfall 5 — sync Celery worker
     cannot directly await; each task invocation creates and tears down its own event loop).
 
     Error handling: full try/except/finally pattern matching existing tasks.
@@ -2391,7 +2040,7 @@ def outreach_task(self, rio_id: str) -> None:
                 rio=rio,
                 config=config,
                 settings=settings,
-                push_confirmed_fn=push_attraction_task.delay,
+                push_confirmed_fn=publish_mar.delay,
                 checkpointer=saver,
             )
 
@@ -2582,7 +2231,7 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
                 rio=rio,
                 config=config,
                 settings=settings,
-                push_confirmed_fn=push_attraction_task.delay,
+                push_confirmed_fn=publish_mar.delay,
                 checkpointer=saver,
             )
 

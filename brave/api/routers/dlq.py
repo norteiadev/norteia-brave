@@ -10,6 +10,8 @@ POST  /api/v1/dlq/whatsapp-batch          — manual DLQ→WhatsApp move for atr
 
 import hmac
 import uuid
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -18,13 +20,14 @@ from sqlalchemy.orm import Session
 
 from brave.api.deps import (
     get_db,
+    get_publish_enqueue,
     get_steward_config,
     require_editing_unlocked,
     require_steward_or_bearer,
 )
 from brave.config.settings import StewardConfig
 from brave.core.atrativos.state_machine import advance_sub_state
-from brave.core.dlq.service import validate_and_promote_rio
+from brave.core.mar.publication import promote
 from brave.core.models import RioRecord
 from brave.core.repositories import SqlAlchemyDlqRepository
 from brave.observability.audit import write_audit
@@ -209,79 +212,26 @@ def reprocess_dlq_record(
 def validate_dlq_record(
     rio_id: uuid.UUID,
     db: Session = Depends(get_db),
+    enqueue: Callable[[str], Any] = Depends(get_publish_enqueue),
 ) -> dict:
-    """Steward validates a DLQ record: sets validacao_humana=100 → re-score → Mar + push (D-07).
+    """Steward validates a DLQ record: validacao_humana=100 → re-score → Mar + publish (D-07).
 
-    Steps:
-    1. Load RioRecord; 404 if missing.
-    2. Delegate to validate_and_promote_rio (sets human validation score, re-scores, promotes if mar).
-    3. Write audit row with action='dlq_validated', actor='steward'.
-    4. WR-01: commit audit + promotion BEFORE dispatch — mirrors cms.py:342. Worker's
-       own session must see the committed record.
-    5. If routing becomes 'mar': dispatch push_destination_task. Broker-down → 503 (promotion
-       already committed, so the 503 tells the steward to retry the push, not re-do the promotion).
+    promote() audits (dlq_validated), commits, then enqueues brave.publish_mar. A broker
+    outage never fails the request: push_queued=False and the row stays pending.
 
-    Returns 202 with {status, rio_id, routing}.
+    Returns 202 with {status, rio_id, routing, push_queued}.
     """
     rio = db.get(RioRecord, rio_id)
     if rio is None:
         raise HTTPException(status_code=404, detail="RioRecord not found")
 
-    before_state = {"routing": rio.routing, "score": float(rio.score or 0)}
-
-    # Delegate to service: flag_modified+flush → reprocess_record → refresh → promote_to_mar if routing=='mar'
-    # Service handles Pitfall 3 (reassign+flag_modified) and Pitfall 4 (reprocess_record not process_nascente_record).
-    # Does NOT dispatch Celery tasks — that remains the router's responsibility.
-    validate_and_promote_rio(db, rio)
-    db.refresh(rio)
-
-    write_audit(
-        session=db,
-        action="dlq_validated",
-        entity_type=rio.entity_type,
-        record_id=rio.id,
-        before_state=before_state,
-        after_state={"routing": rio.routing, "score": float(rio.score or 0)},
-        actor="steward",
-    )
-
-    # WR-01: commit audit + promotion BEFORE dispatching the Celery push. The worker
-    # opens its own session and early-returns when routing != "mar"; dispatching
-    # while the request transaction is still open is a read-before-commit race that
-    # silently drops the push to norteia-api in production. Guard on the committed
-    # routing == "mar". Mirrors cms.py:342.
-    db.commit()
-    db.refresh(rio)
-
-    # Only dispatch push when routing == 'mar' (service already promoted; push publishes to norteia-api)
-    if rio.routing == "mar":
-        try:
-            from brave.tasks.pipeline import push_destination_task
-
-            push_destination_task.delay(str(rio_id))
-        except Exception as exc:
-            # The promotion is already committed (WR-01 above). A broker-down push
-            # cannot roll back the Mar record. Under run_real_externals, surface it
-            # (log + 503) so the steward knows to retry the dispatch. The retry is safe
-            # — validate_and_promote_rio is idempotent (flag_modified re-scores already
-            # Mar records). Offline (tests/dev), no broker is expected; push is a no-op.
-            from brave.config.settings import AppConfig
-
-            if AppConfig().run_real_externals:
-                logger.error(
-                    "dlq_push_dispatch_failed",
-                    rio_id=str(rio_id),
-                    error=str(exc),
-                )
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        "Mar push dispatch failed (broker unavailable). "
-                        "Promotion is committed — retry once the broker is reachable."
-                    ),
-                ) from exc
-
-    return {"status": "accepted", "rio_id": str(rio_id), "routing": rio.routing}
+    p = promote(db, rio, actor="steward", enqueue=enqueue)
+    return {
+        "status": "accepted",
+        "rio_id": str(rio_id),
+        "routing": p.routing,
+        "push_queued": p.push_queued,
+    }
 
 
 @router.post(
@@ -294,18 +244,15 @@ def validate_batch(
     entity_type: str = Query("destination"),
     limit: int = Query(100, ge=1, le=1000),
     db: Session = Depends(get_db),
+    enqueue: Callable[[str], Any] = Depends(get_publish_enqueue),
 ) -> dict:
     """Batch validate all DLQ records for a UF (D-08, T-02-06-02, T-02-06-03).
 
-    Applies the same validate logic (flag_modified + reprocess_record + push if mar)
-    to every DLQ record matching uf + entity_type, up to limit.
+    Runs promote() on every DLQ record matching uf + entity_type, up to limit — one
+    audit row + commit per record, then the publish enqueue. A broker outage leaves
+    rows pending (the outbox recovers them); the loop always finishes.
 
     Security: uf is required (no wildcard). limit is capped at 1000 (T-02-06-03).
-    Writes individual audit rows per record and one batch summary row after.
-
-    WR-01 per-row: each row's audit + promotion is committed BEFORE its push dispatch.
-    A later dispatch failure (503) cannot roll back already-committed rows. Partial
-    batch on broker-down is retryable (idempotent validate).
 
     Returns 202 with {status, uf, validated}.
     """
@@ -313,53 +260,7 @@ def validate_batch(
 
     validated = 0
     for rio in rows:
-        # Delegate to service: flag_modified+flush → reprocess_record → refresh → promote_to_mar if routing=='mar'
-        validate_and_promote_rio(db, rio)
-        db.refresh(rio)
-
-        write_audit(
-            session=db,
-            action="dlq_validated",
-            entity_type=rio.entity_type,
-            record_id=rio.id,
-            before_state={"routing": "dlq", "score": float(rio.score or 0)},
-            after_state={"routing": rio.routing, "score": float(rio.score or 0)},
-            actor="steward",
-        )
-
-        # WR-01 per-row: commit before dispatch; a later dispatch failure cannot roll
-        # back this row. Semantics: partial batch on broker-down, retryable (idempotent
-        # validate). Mirrors the single-validate WR-01 pattern above.
-        db.commit()
-        db.refresh(rio)
-
-        if rio.routing == "mar":
-            try:
-                from brave.tasks.pipeline import push_destination_task
-
-                push_destination_task.delay(str(rio.id))
-            except Exception as exc:
-                # Per-row commit is already done. Broker-down signals steward to retry
-                # this row's push; subsequent rows are left unprocessed (503 exits the
-                # loop). Offline it is an expected no-op (never raises under
-                # run_real_externals=False).
-                from brave.config.settings import AppConfig
-
-                if AppConfig().run_real_externals:
-                    logger.error(
-                        "dlq_push_dispatch_failed",
-                        rio_id=str(rio.id),
-                        error=str(exc),
-                    )
-                    raise HTTPException(
-                        status_code=503,
-                        detail=(
-                            "Mar push dispatch failed (broker unavailable). "
-                            "Committed rows stay promoted — retry once the broker "
-                            "is reachable."
-                        ),
-                    ) from exc
-
+        promote(db, rio, actor="steward", enqueue=enqueue)
         validated += 1
 
     return {"status": "accepted", "uf": uf, "validated": validated}

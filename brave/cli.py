@@ -2,8 +2,8 @@
 
 Commands:
     run-fixture    Run a synthetic fixture through the full pipeline:
-                   NascenteRecord → Rio pipeline → score → promote_to_mar → push
-                   Uses FakeNorteiaApiClient (offline). Prints routing summary.
+                   NascenteRecord → Rio pipeline → score → promote → publish
+                   Uses NullNorteiaApiClient (offline). Prints routing summary.
 
     sweep          Kick an on-demand UF sweep without waiting for the beat (ORCH-03):
                    sweep <UF> [--lane destinos|atrativos|both]
@@ -17,7 +17,6 @@ Usage:
     python -m brave.cli sweep BA [--lane destinos|atrativos|both]
 """
 
-import asyncio
 import os
 import sys
 
@@ -26,10 +25,10 @@ def _run_fixture() -> None:
     """Run a synthetic fixture through the offline pipeline.
 
     Creates a high-score fixture (score ≥85 → routing='mar'), runs the full
-    Nascente → Rio → Mar → push cycle with FakeNorteiaApiClient.
+    Nascente → Rio → Mar → publish cycle with NullNorteiaApiClient.
 
     Prints a summary line:
-        Nascente: <id> | Score: <score> | Routing: <routing> | Mar: <mar_id> | Push: recorded
+        Nascente: <id> | Score: <score> | Routing: <routing> | Mar: <mar_id> | Push: not_sent
     """
     import os
 
@@ -42,11 +41,11 @@ def _run_fixture() -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
+    from brave.clients.null_norteia_api import NullNorteiaApiClient
     from brave.config.runtime import load_effective_config
+    from brave.core.mar.publication import promote, publish
     from brave.core.nascente.service import store_raw
     from brave.core.rio.routing import process_nascente_record
-    from brave.core.mar.service import promote_to_mar
-    from brave.clients.null_norteia_api import NullNorteiaApiClient
 
     engine = create_engine(db_url, echo=False)
     SessionFactory = sessionmaker(bind=engine)
@@ -90,52 +89,21 @@ def _run_fixture() -> None:
             )
             return
 
-        # Promote to Mar
-        mar = promote_to_mar(session, rio)
-        # Phase F: the attraction recency backstop may route to DLQ instead of
-        # promoting (returns None). Persist the DLQ routing and skip the push.
-        if mar is None:
-            session.commit()
+        # Promote to Mar through the publication module (audit + commit), then
+        # publish with the offline Null adapter (never stamps pushed_at).
+        promotion = promote(session, rio, actor="cli", enqueue=lambda _rid: None)
+        if promotion.routing != "mar":
             print(
                 f"Nascente: {nascente.id} | Score: {score:.1f} | "
-                f"Routing: dlq | Mar: (backstop: no_recent_reviews) | Push: skipped"
+                f"Routing: {promotion.routing} | Mar: (backstop: {promotion.held_reason}) "
+                f"| Push: skipped"
             )
             return
-        session.commit()
 
-        # Push via the in-package offline stub (no network, production-safe)
-        fake_client = NullNorteiaApiClient()
-
-        # Build flat-provenance payload
-        provenance_raw = mar.provenance or {}
-        score_breakdown = provenance_raw.get("score_breakdown", {})
-        score_version = provenance_raw.get("score_version", "v1.0")
-
-        push_payload = {
-            "source": "mtur",
-            "source_ref": mar.source_ref,
-            "entity_type": mar.entity_type,
-            "canonical": mar.canonical,
-            "reliability_score": float(mar.reliability_score),
-            "score_version": score_version,
-            "provenance": {
-                "origem": float(score_breakdown.get("origem", 0.0)),
-                "completude": float(score_breakdown.get("completude", 0.0)),
-                "corroboracao": float(score_breakdown.get("corroboracao", 0.0)),
-                "atualidade": float(score_breakdown.get("atualidade", 0.0)),
-                "validacao_humana": float(score_breakdown.get("validacao_humana", 0.0)),
-            },
-        }
-
-        async def _push() -> dict:
-            return await fake_client.push_destination(push_payload)
-
-        push_result = asyncio.run(_push())
-        push_status = "recorded" if push_result.get("source_ref") else "skipped"
-
+        published = publish(session, rio.id, NullNorteiaApiClient())
         print(
             f"Nascente: {nascente.id} | Score: {score:.1f} | "
-            f"Routing: {routing} | Mar: {mar.id} | Push: {push_status}"
+            f"Routing: {routing} | Mar: {promotion.mar_id} | Push: {published.status}"
         )
 
 

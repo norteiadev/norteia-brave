@@ -1,10 +1,10 @@
 """Mar → norteia-api sync health: is the API reachable, and what is still unpushed.
 
 A Mar row with ``pushed_at IS NULL`` never reached norteia-api (API down, broker
-down, retries exhausted). The push tasks consult ``norteia_api_up`` before the POST
-so a down API (or an expired token) costs one cached probe instead of 3 Celery retries per record, and
-``pending_push_rows`` feeds the re-dispatch (beat + Painel "Reenviar"), which lives
-in brave.tasks.pipeline — the kernel never imports tasks.
+down, retries exhausted). brave.publish_mar (via NorteiaApiClient.push) consults
+``norteia_api_up`` before the POST so a down API (or an expired token) costs one cached
+probe instead of 3 Celery retries per record, and ``pending_push_rows`` feeds the
+re-dispatch (beat + Painel "Reenviar") in brave.core.mar.publication.republish_pending.
 """
 
 from __future__ import annotations

@@ -37,7 +37,7 @@ class MarPushPayload(BaseModel):
     """The Mar push payload POSTed to norteia-api (D-16).
 
     ``model_dump()`` returns a dict whose keys, order, and value types are
-    byte-identical to the dict produced by the original ``_build_push_payload``.
+    byte-identical to the dict produced by ``brave.core.mar.service.build_push_payload``.
     """
 
     source: str
