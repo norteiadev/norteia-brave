@@ -41,7 +41,10 @@ _ON = MagicMock(
 def harness(monkeypatch):
     """Wire describe_uf to fakes; return a namespace the test drives + inspects."""
     fake = fakeredis.FakeStrictRedis()
-    fake.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
+    collection_engine.start(
+        fake, None, action="describe", depth="descricao", source="descricao",
+        ufs=["SP"], lane="atrativos",
+    )
     monkeypatch.setattr("redis.from_url", lambda *_a, **_k: fake)
 
     session = MagicMock()
@@ -92,7 +95,7 @@ def harness(monkeypatch):
         "brave.lanes.atrativos.places_enrichment.PlacesEnrichmentAgent", agent_builds
     )
     lifecycle = MagicMock()
-    monkeypatch.setattr(pipeline, "_producer_finally_lifecycle", lifecycle)
+    monkeypatch.setattr(pipeline, "_producer_done", lifecycle)
 
     run = pipeline.describe_uf.run  # the real body, captured before the name is swapped
     chain = MagicMock()
@@ -180,14 +183,14 @@ def test_full_chunk_self_chains_from_last_id_without_decrement(harness):
     harness.run("SP", max_n=60)
 
     assert harness.enriched == ids
-    harness.chain.delay.assert_called_once_with("SP", 35, after_id=str(ids[-1]))
+    harness.chain.delay.assert_called_once_with("SP", 35, after_id=str(ids[-1]), run_id=None)
     harness.lifecycle.assert_not_called()  # the inflight token rides the chain
 
 
 def test_uncapped_full_chunk_chains_with_none(harness):
     ids = harness.ids(pipeline._DESCRIBE_CHUNK)
     harness.run("SP")
-    harness.chain.delay.assert_called_once_with("SP", None, after_id=str(ids[-1]))
+    harness.chain.delay.assert_called_once_with("SP", None, after_id=str(ids[-1]), run_id=None)
 
 
 def test_short_chunk_is_terminal(harness):
@@ -250,7 +253,7 @@ def test_soft_time_limit_hands_the_rest_of_the_uf_on(harness, monkeypatch):
     assert harness.enriched == ids[:2]
     # the cursor moves past the whole chunk: the dropped records burn no attempt and the
     # next describe run selects them again
-    harness.chain.delay.assert_called_once_with("SP", 35, after_id=str(ids[-1]))
+    harness.chain.delay.assert_called_once_with("SP", 35, after_id=str(ids[-1]), run_id=None)
     harness.lifecycle.assert_not_called()
 
 
@@ -266,7 +269,7 @@ def test_soft_time_limit_during_io_still_chains(harness):
     harness.agent.on_fetch = slow
     harness.run("SP")
 
-    harness.chain.delay.assert_called_once_with("SP", None, after_id=str(ids[-1]))
+    harness.chain.delay.assert_called_once_with("SP", None, after_id=str(ids[-1]), run_id=None)
     harness.lifecycle.assert_not_called()
 
 
@@ -294,7 +297,7 @@ def test_soft_time_limit_in_the_idle_event_loop_still_chains(harness, monkeypatc
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, old)
 
-    harness.chain.delay.assert_called_once_with("SP", None, after_id=str(ids[-1]))
+    harness.chain.delay.assert_called_once_with("SP", None, after_id=str(ids[-1]), run_id=None)
     harness.lifecycle.assert_not_called()
 
 
@@ -350,9 +353,12 @@ def test_description_off_exits_without_processing(harness, monkeypatch):
 
 
 def test_engine_describe_dispatches_describe_uf_per_uf(monkeypatch):
-    """engine_sweep_run(action="describe") fans out describe_uf, counting inflight first."""
+    """engine_sweep_run(action="describe") fans out describe_uf, claiming each first."""
     fake = fakeredis.FakeStrictRedis()
-    fake.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
+    run_id = collection_engine.start(
+        fake, None, action="describe", depth="descricao", source="descricao",
+        ufs=["SP", "RJ"], lane="atrativos",
+    )
     monkeypatch.setattr("redis.from_url", lambda *_a, **_k: fake)
     monkeypatch.setenv("BRAVE_ENGINE_UF_DELAY_SECONDS", "0")
     task = MagicMock()
@@ -363,5 +369,7 @@ def test_engine_describe_dispatches_describe_uf_per_uf(monkeypatch):
     pipeline.engine_sweep_run.run(ufs=["SP", "RJ"], max_per_uf=4, action="describe")
 
     assert [c.args for c in task.delay.call_args_list] == [("SP", 4), ("RJ", 4)]
-    assert collection_engine.get_inflight(fake) == 2
+    assert [c.kwargs for c in task.delay.call_args_list] == [{"run_id": run_id}] * 2
+    # Both producers are still in flight → the run is not complete yet.
+    assert collection_engine.get_status(fake)["state"] == collection_engine.RUNNING
     sweep.delay.assert_not_called()

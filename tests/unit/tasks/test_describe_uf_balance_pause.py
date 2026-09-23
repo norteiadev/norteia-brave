@@ -32,7 +32,10 @@ def test_describe_uf_halts_and_pauses_on_provider_balance_error(monkeypatch):
     """A ProviderBalanceError raised mid-chunk halts describe_uf: no self-chain, no
     exception escapes the task, and the motor is paused with a reason."""
     fake = fakeredis.FakeStrictRedis()
-    fake.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
+    collection_engine.start(
+        fake, None, action="describe", depth="descricao", source="descricao",
+        ufs=["SP"], lane="atrativos",
+    )
     monkeypatch.setattr("redis.from_url", lambda *_a, **_k: fake)
 
     session = MagicMock()
@@ -63,7 +66,7 @@ def test_describe_uf_halts_and_pauses_on_provider_balance_error(monkeypatch):
         "brave.lanes.atrativos.places_enrichment.PlacesEnrichmentAgent", lambda **k: Agent()
     )
     lifecycle = MagicMock()
-    monkeypatch.setattr(pipeline, "_producer_finally_lifecycle", lifecycle)
+    monkeypatch.setattr(pipeline, "_producer_done", lifecycle)
 
     run = pipeline.describe_uf.run  # the real body, captured before the name is swapped
     chain = MagicMock()

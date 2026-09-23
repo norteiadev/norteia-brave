@@ -39,9 +39,12 @@ from brave.tasks import pipeline
 
 @pytest.fixture
 def running_engine(monkeypatch):
-    """Fakeredis with the engine marked RUNNING and zero per-UF pacing delay."""
+    """Fakeredis with a started run and zero per-UF pacing delay."""
     fake = fakeredis.FakeStrictRedis()
-    fake.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
+    collection_engine.start(
+        fake, None, action="sweep", depth=collection_engine.NASCENTE_RIO,
+        source="default", ufs=["BA"], lane="both",
+    )
     monkeypatch.setattr("redis.from_url", lambda *_a, **_k: fake)
     monkeypatch.setenv("BRAVE_ENGINE_UF_DELAY_SECONDS", "0")
     return fake

@@ -6,7 +6,7 @@ C adds an ORTHOGONAL guard: it also breaks when the operator mode is no longer L
 stays intact. Mode is read per-UF from Redis, so a mid-run pause takes effect on the
 next iteration and the finally block still idles + finalizes the run.
 
-Mirrors tests/unit/api/test_engine_source.py: fakeredis with state=RUNNING, monkeypatched
+Mirrors tests/unit/api/test_engine_source.py: fakeredis with a started run, monkeypatched
 redis.from_url + producer tasks, zero per-UF delay. 100% offline.
 """
 
@@ -20,9 +20,17 @@ from brave.core import engine as collection_engine
 
 @pytest.fixture
 def running_engine(monkeypatch):
-    """Fakeredis with engine state=RUNNING (mode absent → LIGADO) and no per-UF delay."""
+    """Fakeredis with a started run (state RUNNING, mode LIGADO) and no per-UF delay."""
     fake = fakeredis.FakeStrictRedis()
-    fake.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
+    collection_engine.start(
+        fake,
+        None,
+        action="sweep",
+        depth=collection_engine.NASCENTE_RIO,
+        source="default",
+        ufs=["BA", "RJ", "SP"],
+        lane="both",
+    )
     monkeypatch.setattr("redis.from_url", lambda *_a, **_k: fake)
     monkeypatch.setenv("BRAVE_ENGINE_UF_DELAY_SECONDS", "0")
     return fake
@@ -60,14 +68,6 @@ def _run(ufs=("BA", "RJ", "SP")):
     )
 
 
-def test_sweep_dispatches_when_mode_absent_defaults_ligado(monkeypatch, running_engine):
-    """No mode key → get_mode defaults LIGADO → the sweep fans out (no regression)."""
-    uf_calls, _disc, _ta = _patch_producers(monkeypatch)
-    out = _run()
-    assert out["dispatched"] == 3
-    assert len(uf_calls) == 3
-
-
 def test_sweep_dispatches_when_mode_ligado(monkeypatch, running_engine):
     collection_engine.set_mode(running_engine, collection_engine.LIGADO)
     uf_calls, _disc, _ta = _patch_producers(monkeypatch)
@@ -101,7 +101,7 @@ def test_sweep_breaks_when_mode_desligado(monkeypatch, running_engine):
 def test_runtime_state_drain_still_breaks_independent_of_mode(monkeypatch, running_engine):
     """The pre-existing state-drain contract is intact: STOPPING breaks even with mode LIGADO."""
     collection_engine.set_mode(running_engine, collection_engine.LIGADO)
-    running_engine.set(collection_engine._STATE_KEY, collection_engine.STOPPING)
+    collection_engine.request_stop(running_engine)
     uf_calls, _disc, _ta = _patch_producers(monkeypatch)
     out = _run(ufs=("BA", "RJ"))
     assert out["dispatched"] == 0
@@ -112,18 +112,16 @@ def test_sweep_finally_stays_syncing_while_producers_inflight(monkeypatch, runni
     """Producer-completes model: the orchestrator finally does NOT turn the motor off
     while producers are still in flight.
 
-    engine_sweep_run now incr_inflight()s before every .delay. The _FakeTask producers
-    here only record the dispatch (they never run to completion), so the in-flight
-    counter stays > 0 after the loop returns. dispatch_done is latched, but maybe_complete
-    must return False → the motor stays ON: state RUNNING, mode LIGADO, sync_phase
-    "syncing". Completion is the LAST producer's job (next test).
+    engine_sweep_run claims every producer before its .delay. The _FakeTask producers
+    here only record the dispatch (they never run to completion), so the run cannot
+    complete when the loop returns → the motor stays ON: state RUNNING, mode LIGADO,
+    sync_phase "syncing". Completion is the LAST producer's job (next test).
     """
     collection_engine.set_mode(running_engine, collection_engine.LIGADO)
     uf_calls, _disc, _ta = _patch_producers(monkeypatch)
     out = _run()
     assert out["dispatched"] == 3  # the run fanned out normally under LIGADO
-    assert collection_engine.get_inflight(running_engine) > 0  # producers still running
-    assert collection_engine.is_dispatch_done(running_engine) is True  # dispatch latched
+    assert collection_engine.get_status(running_engine)["ufs_done"] == 3
     status = collection_engine.get_status(running_engine)
     assert status["mode"] == collection_engine.LIGADO  # motor NOT turned off yet
     assert status["state"] == collection_engine.RUNNING
@@ -134,23 +132,20 @@ def test_last_producer_completion_turns_motor_off_and_marks_synced(monkeypatch, 
     """Draining the in-flight counter to 0 (each producer's finally) completes the run
     EXACTLY once: mode DESLIGADO, enabled False, state IDLE, sync_phase "synced".
 
-    Simulates the producers' outermost-finally decrements after engine_sweep_run has
-    dispatched them and latched dispatch_done. maybe_complete must return True for a
-    single caller (the last decrement) and False for every other → single-winner.
+    Simulates the producers' outermost-finally producer_done after engine_sweep_run has
+    dispatched them (each with the run_id it was claimed against). Only the last one
+    completes the run → single-winner.
     """
     collection_engine.set_mode(running_engine, collection_engine.LIGADO)
-    _patch_producers(monkeypatch)
+    uf_calls, _disc, _ta = _patch_producers(monkeypatch)
     _run()
+    assert uf_calls, "precondition: producers were dispatched"
 
-    n = collection_engine.get_inflight(running_engine)
-    assert n > 0, "precondition: producers were counted in-flight"
-
-    completed = 0
-    for _ in range(n):
-        collection_engine.decr_inflight(running_engine)
-        if collection_engine.maybe_complete(running_engine):
-            completed += 1
-    assert completed == 1, "exactly one decrement (the last) may complete the run"
+    completed = [
+        collection_engine.producer_done(running_engine, None, kwargs["run_id"])
+        for _args, kwargs in uf_calls
+    ]
+    assert completed.count(True) == 1 and completed[-1] is True
 
     status = collection_engine.get_status(running_engine)
     assert status["mode"] == collection_engine.DESLIGADO
@@ -160,10 +155,9 @@ def test_last_producer_completion_turns_motor_off_and_marks_synced(monkeypatch, 
 
 
 def test_producer_lifecycle_skips_decrement_on_celery_retry(monkeypatch):
-    """A Celery Retry unwinding through a producer's finally must NOT decrement the
-    in-flight counter.
+    """A Celery Retry unwinding through a producer's finally must NOT count as done.
 
-    incr_inflight fires ONCE per logical dispatch, but self.retry() raises Retry and
+    claim_producer fires ONCE per logical dispatch, but self.retry() raises Retry and
     Celery RE-RUNS the task (its finally runs again). Decrementing on the Retry path
     would count N retries as N+1 decrements → the counter drains early → premature
     "synced" while the retried producer is still running (the network-scraper common
@@ -171,22 +165,26 @@ def test_producer_lifecycle_skips_decrement_on_celery_retry(monkeypatch):
     """
     from celery.exceptions import Retry
 
-    from brave.tasks.pipeline import _producer_finally_lifecycle
+    from brave.tasks.pipeline import _producer_done
 
     fake = fakeredis.FakeStrictRedis()
     monkeypatch.setattr("redis.from_url", lambda *_a, **_k: fake)
-    # inflight=2, dispatch NOT done → maybe_complete never fires, isolating the decrement.
-    fake.set(collection_engine._INFLIGHT_KEY, "2")
+    run_id = collection_engine.start(
+        fake, None, action="sweep", depth=collection_engine.NASCENTE_RIO,
+        source="default", ufs=["BA"], lane="both",
+    )
+    collection_engine.claim_producer(fake, run_id)
+    collection_engine.dispatch_finished(fake, None, run_id)  # only the producer is left
 
-    # Retry in flight → guard skips the decrement.
+    # Retry in flight → guard skips producer_done: the run is still running.
     try:
         raise Retry("scheduled for retry")
     except Retry:
-        _producer_finally_lifecycle()
-    assert collection_engine.get_inflight(fake) == 2, (
-        "a Celery Retry unwinding through the finally must NOT decrement inflight"
+        _producer_done(run_id)
+    assert collection_engine.get_state(fake) == collection_engine.RUNNING, (
+        "a Celery Retry unwinding through the finally must NOT count the producer done"
     )
 
-    # Terminal outcome (no exception in flight) → decrements exactly once.
-    _producer_finally_lifecycle()
-    assert collection_engine.get_inflight(fake) == 1
+    # Terminal outcome (no exception in flight) → the producer completes the run.
+    _producer_done(run_id)
+    assert collection_engine.get_state(fake) == collection_engine.IDLE
