@@ -11,6 +11,7 @@ Coverage:
   - push_destination on 5xx raises httpx.HTTPStatusError
   - Idempotent double-push: same source_ref → 200 both times (norteia-api handles upsert)
   - push_attraction routes to /api/internal/territorial/attractions
+  - push(entity_type, payload): owns its lifecycle; ApiDown when the probe says down
 """
 
 import httpx
@@ -198,22 +199,6 @@ async def test_push_attraction_routes_to_correct_endpoint(api_client):
     # Ensure destination endpoint was NOT called
     assert not respx.calls.call_count or all(
         "/attractions" in str(c.request.url) for c in respx.calls
-    )
-
-
-# ---------------------------------------------------------------------------
-# Test 6: push_mar Celery task wires to NorteiaApiClient
-# ---------------------------------------------------------------------------
-
-
-def test_push_mar_imports_norteia_api_client():
-    """push_mar Celery task imports NorteiaApiClient from brave.clients.norteia_api."""
-    import brave.tasks.pipeline as pipeline_module
-    import inspect
-
-    source = inspect.getsource(pipeline_module)
-    assert "from brave.clients.norteia_api import NorteiaApiClient" in source, (
-        "push_mar must import NorteiaApiClient from brave.clients.norteia_api"
     )
 
 

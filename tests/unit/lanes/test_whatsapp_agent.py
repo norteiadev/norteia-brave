@@ -33,6 +33,7 @@ from brave.shared.whatsapp.agent import (
     OPT_OUT_KEYWORDS,
     ConversationState,
     _extract_answers_node,
+    _finalize_node,
     _recv_reply_node,
     build_graph,
 )
@@ -406,6 +407,49 @@ async def test_build_graph_returns_compiled_graph() -> None:
     # Must be a compiled LangGraph graph
     assert hasattr(compiled, "ainvoke"), "build_graph must return a Pregel object with ainvoke"
     assert callable(compiled.ainvoke)
+
+
+# ---------------------------------------------------------------------------
+# finalize: owner confirmation goes through publication.promote
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_finalize_owner_confirmed_promotes_as_whatsapp_owner() -> None:
+    """Owner data is written first, then promote(actor="whatsapp_owner") enqueues publish."""
+    from brave.core.mar.publication import Promotion
+
+    rio = _make_rio()
+    session = _make_session()
+    session.get = MagicMock(return_value=rio)
+    state = _make_initial_state(rio_id=str(rio.id))
+    state["extraction"] = {
+        "existe": "sim",
+        "funcionando": "sim",
+        "horarios": "9h-17h",
+        "valor": "R$ 20",
+    }
+    enqueue = MagicMock()
+    seen: dict[str, Any] = {}
+
+    def _promote(_session, record, **kw):
+        seen["normalized"] = dict(record.normalized)
+        return Promotion(routing="mar", mar_id=uuid.uuid4(), held_reason=None, push_queued=True)
+
+    # flag_modified is imported inside the node; a MagicMock record has no ORM state.
+    with patch("sqlalchemy.orm.attributes.flag_modified"), patch(
+        "brave.shared.whatsapp.agent.promote", side_effect=_promote
+    ) as promote:
+        result = await _finalize_node(
+            state, session=session, rio=rio, score_config=MagicMock(), push_confirmed_fn=enqueue
+        )
+
+    assert result == {}
+    promote.assert_called_once()
+    assert promote.call_args.kwargs["actor"] == "whatsapp_owner"
+    assert promote.call_args.kwargs["enqueue"] is enqueue
+    assert seen["normalized"]["owner_horarios"] == "9h-17h"
+    assert seen["normalized"]["owner_valor"] == "R$ 20"
 
 
 # ---------------------------------------------------------------------------

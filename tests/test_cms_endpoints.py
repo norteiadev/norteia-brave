@@ -62,6 +62,19 @@ def _pin_test_secrets():
     yield
 
 
+@pytest.fixture(autouse=True)
+def enqueued(app):
+    """Route brave.publish_mar enqueues into a list — no test here needs a real broker."""
+    from brave.api.deps import get_publish_enqueue  # noqa: PLC0415
+
+    sent: list[str] = []
+    app.dependency_overrides[get_publish_enqueue] = lambda: sent.append
+    try:
+        yield sent
+    finally:
+        app.dependency_overrides.pop(get_publish_enqueue, None)
+
+
 @pytest.fixture(scope="module")
 def client(app):
     """FastAPI TestClient — bare, no default auth headers (auth tests use explicit headers)."""
@@ -685,16 +698,16 @@ _PROMOTABLE_NORMALIZED = {
 
 
 @pytest.mark.integration
-def test_promote_returns_503_when_push_fails_under_real_externals(
-    client, db_session: Session, monkeypatch
-):
-    """A broker-down push during promote surfaces 503 instead of silently dropping.
+def test_promote_broker_down_returns_202_pending(client, app, db_session: Session):
+    """A broker outage never fails the promote: 202, push_queued=False, record in Mar.
 
-    The promotion is already committed (WR-01), so the record stays in Mar — the
-    503 tells the steward the downstream publish failed and to retry the publish.
+    WR-01: promotion + audit are committed before the enqueue, so the record stays in
+    Mar with pushed_at NULL and the outbox (beat + Painel Reenviar) publishes it.
     """
-    from brave.core.models import RioRecord
-    from brave.tasks.pipeline import push_destination_task
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from brave.api.deps import get_publish_enqueue  # noqa: PLC0415
+    from brave.core.models import AuditLog, RioRecord  # noqa: PLC0415
 
     rio = _make_destino(
         db_session, uf="PE", routing="dlq", normalized=dict(_PROMOTABLE_NORMALIZED)
@@ -702,46 +715,37 @@ def test_promote_returns_503_when_push_fails_under_real_externals(
     rio_id = rio.id
     db_session.commit()
 
-    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
-
-    def _broker_down(*args, **kwargs):
+    def _broker_down(_rid: str) -> None:
         raise RuntimeError("broker unreachable (simulated)")
 
-    monkeypatch.setattr(push_destination_task, "delay", _broker_down)
+    app.dependency_overrides[get_publish_enqueue] = lambda: _broker_down
 
     r = client.patch(f"/api/v1/destinos/{rio_id}/promote", headers=STEWARD_HEADERS)
-    assert r.status_code == 503, f"Expected 503, got {r.status_code}: {r.text}"
+    assert r.status_code == 202, f"Expected 202, got {r.status_code}: {r.text}"
+    assert r.json()["push_queued"] is False
 
-    # Promotion is committed (WR-01) — the record stays in Mar, publish is retryable.
     db_session.expire_all()
     reloaded = db_session.get(RioRecord, rio_id)
-    assert reloaded is not None
-    assert reloaded.routing == "mar", (
-        f"promote commits before push (WR-01) — record must stay 'mar', got "
-        f"'{reloaded.routing}'"
+    assert reloaded is not None and reloaded.routing == "mar"
+    audit = db_session.scalar(
+        select(AuditLog).where(AuditLog.action == "dlq_validated", AuditLog.record_id == rio_id)
     )
+    assert audit is not None and audit.actor == "steward"
 
 
 @pytest.mark.integration
-def test_promote_swallows_push_failure_offline(client, db_session: Session, monkeypatch):
-    """Offline (run_real_externals=False), a broker-down push is an expected no-op → 202."""
-    from brave.tasks.pipeline import push_destination_task
-
+def test_promote_enqueues_publish(client, db_session: Session, enqueued):
+    """A successful promote enqueues brave.publish_mar with the rio id → 202, queued."""
     rio = _make_destino(
         db_session, uf="MA", routing="dlq", normalized=dict(_PROMOTABLE_NORMALIZED)
     )
     rio_id = rio.id
     db_session.commit()
 
-    monkeypatch.setenv("RUN_REAL_EXTERNALS", "false")
-
-    def _broker_down(*args, **kwargs):
-        raise RuntimeError("broker unreachable (simulated)")
-
-    monkeypatch.setattr(push_destination_task, "delay", _broker_down)
-
     r = client.patch(f"/api/v1/destinos/{rio_id}/promote", headers=STEWARD_HEADERS)
     assert r.status_code == 202, f"Expected 202, got {r.status_code}: {r.text}"
+    assert r.json()["push_queued"] is True
+    assert enqueued == [str(rio_id)]
 
 
 # ===========================================================================

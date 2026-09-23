@@ -22,6 +22,7 @@ from brave.api.routers.atrativos import (  # noqa: E402
     _bucket_promote_bulk_candidates,
     promote_bulk_atrativos,
 )
+from brave.core.mar.publication import Promotion  # noqa: E402
 from brave.core.models import RioRecord  # noqa: E402
 from tests.unit.api.test_editing_lock import (  # noqa: E402, F401
     STEWARD_HEADERS,
@@ -60,8 +61,11 @@ def _db_for(rows):
     return db
 
 
-def _promote(db, rio, config=None):
-    rio.routing = "mar"
+_IN_MAR = Promotion(routing="mar", mar_id=uuid.uuid4(), held_reason=None, push_queued=True)
+
+
+def _promote(db, rio, **kw):
+    return _IN_MAR
 
 
 # ---------------------------------------------------------------------------
@@ -120,108 +124,99 @@ def test_body_forbids_extra_and_defaults_to_dry_run():
 def test_dry_run_reports_counts_and_never_mutates():
     rows = [_atr(), _atr(), _atr(score=10.0)]
     db = _db_for(rows)
+    queued: list[str] = []
     with (
         patch(f"{MOD}._query_promote_bulk_candidates", return_value=rows),
-        patch(f"{MOD}.validate_and_promote_rio") as vp,
-        patch(f"{MOD}.write_audit") as audit,
-        patch("brave.tasks.pipeline.push_attraction_task") as push,
+        patch(f"{MOD}.promote") as promote,
     ):
-        out = promote_bulk_atrativos(PromoteBulkBody(uf="ba", limit=1), db)
+        out = promote_bulk_atrativos(PromoteBulkBody(uf="ba", limit=1), db, queued.append)
     assert out == {
         "candidates": 2,
         "excluded": {"below_score": 1, "no_description": 0, "recency": 0},
         "would_promote": 1,
     }
-    vp.assert_not_called()
-    audit.assert_not_called()
-    push.delay.assert_not_called()
+    promote.assert_not_called()
+    assert queued == []
     db.commit.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# real run
+# real run — audit/commit/enqueue are owned by publication.promote (tested there)
 # ---------------------------------------------------------------------------
 
 
-def _run(rows, body, vp_side_effect=_promote, push_side_effect=None):
+def _run(rows, body, promote_side_effect=_promote):
     db = _db_for(rows)
+    queued: list[str] = []
     with (
         patch(f"{MOD}._query_promote_bulk_candidates", return_value=rows),
         patch(f"{MOD}.load_effective_config") as cfg,
-        patch(f"{MOD}.validate_and_promote_rio", side_effect=vp_side_effect) as vp,
-        patch(f"{MOD}.write_audit") as audit,
-        patch("brave.tasks.pipeline.push_attraction_task") as push,
+        patch(f"{MOD}.promote", side_effect=promote_side_effect) as promote,
     ):
-        push.delay.side_effect = push_side_effect
-        out = promote_bulk_atrativos(body, db)
-    return out, db, vp, audit, push, cfg
+        out = promote_bulk_atrativos(body, db, queued.append)
+    return out, db, promote, cfg, queued
 
 
-def test_real_run_promotes_audits_commits_and_pushes():
+def test_real_run_promotes_each_candidate_through_publication():
     row = _atr()
-    out, db, vp, audit, push, cfg = _run([row], PromoteBulkBody(dry_run=False))
+    out, _db, promote, cfg, queued = _run([row], PromoteBulkBody(dry_run=False))
     assert out["promoted"] == 1
     assert out["held"] == out["failed"] == out["push_failed"] == []
     assert out["remaining"] == 0
     cfg.assert_called_once()
-    assert vp.call_args.kwargs["config"] is cfg.return_value.score
-    kw = audit.call_args.kwargs
-    assert kw["action"] == "transition_mar"
+    args, kw = promote.call_args
+    assert args[1] is row
     assert kw["actor"] == "steward"
-    assert kw["record_id"] == row.id
-    assert kw["before_state"] == {"routing": "dlq"}
-    assert kw["after_state"] == {"routing": "mar", "batch_id": out["batch_id"]}
-    db.commit.assert_called_once()
-    push.delay.assert_called_once_with(str(row.id))
+    assert kw["action"] == "transition_mar"
+    assert kw["held_action"] == "promote_held"
+    assert kw["extra"] == {"batch_id": out["batch_id"]}
+    assert kw["config"] is cfg.return_value.score
+    assert kw["enqueue"] == queued.append
 
 
-def test_held_record_is_audited_not_pushed():
+def test_held_record_is_reported_with_reason():
     row = _atr()
+    held = Promotion(routing="dlq", mar_id=None, held_reason="no_recent_reviews", push_queued=False)
 
-    def _hold(db, rio, config=None):
-        rio.dlq_reason = "no_recent_reviews"
-
-    out, db, _, audit, push, _ = _run([row], PromoteBulkBody(dry_run=False), _hold)
+    out, *_ = _run([row], PromoteBulkBody(dry_run=False), lambda *a, **k: held)
     assert out["promoted"] == 0
     assert out["held"] == [{"id": str(row.id), "reason": "no_recent_reviews"}]
-    assert audit.call_args.kwargs["action"] == "promote_held"
-    assert audit.call_args.kwargs["after_state"]["batch_id"] == out["batch_id"]
-    db.commit.assert_called_once()
-    push.delay.assert_not_called()
+    assert out["push_failed"] == []
 
 
 def test_one_failing_record_does_not_abort_the_batch():
     bad, good = _atr(score=72.0), _atr(score=71.0)
 
-    def _vp(db, rio, config=None):
+    def _p(db, rio, **kw):
         if rio.id == bad.id:
             raise RuntimeError("boom")
-        rio.routing = "mar"
+        return _IN_MAR
 
-    out, db, _, _, push, _ = _run([bad, good], PromoteBulkBody(dry_run=False), _vp)
+    out, db, promote, _, _ = _run([bad, good], PromoteBulkBody(dry_run=False), _p)
     assert out["promoted"] == 1
     assert out["failed"] == [{"id": str(bad.id), "error": "boom"}]
     db.rollback.assert_called_once()
-    db.commit.assert_called_once()
-    push.delay.assert_called_once_with(str(good.id))
+    assert promote.call_count == 2
 
 
 def test_limit_caps_the_run_and_reports_remaining():
     rows = [_atr() for _ in range(5)]
-    out, _, vp, _, push, _ = _run(rows, PromoteBulkBody(dry_run=False, limit=2))
+    out, _, promote, _, _ = _run(rows, PromoteBulkBody(dry_run=False, limit=2))
     assert out["promoted"] == 2
     assert out["remaining"] == 3
-    assert vp.call_count == 2
-    assert push.delay.call_count == 2
+    assert promote.call_count == 2
 
 
-def test_push_dispatch_failure_never_raises():
-    row = _atr()
-    out, *_ = _run(
-        [row], PromoteBulkBody(dry_run=False), push_side_effect=ConnectionError("broker down")
-    )
-    assert out["promoted"] == 1
-    assert out["push_failed"] == [str(row.id)]
+def test_push_failed_lists_exactly_the_unqueued_ids():
+    queued_row, unqueued_row = _atr(score=72.0), _atr(score=71.0)
+    not_queued = Promotion(routing="mar", mar_id=uuid.uuid4(), held_reason=None, push_queued=False)
+
+    def _p(db, rio, **kw):
+        return _IN_MAR if rio.id == queued_row.id else not_queued
+
+    out, *_ = _run([queued_row, unqueued_row], PromoteBulkBody(dry_run=False), _p)
+    assert out["promoted"] == 2
+    assert out["push_failed"] == [str(unqueued_row.id)]
 
 
 def test_vanished_record_is_reported_as_failed():
