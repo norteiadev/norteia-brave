@@ -87,6 +87,7 @@ def test_describe_with_misconfigured_cascade_is_409(monkeypatch):
     mock_task = _setup(monkeypatch, atrativo_description_cascade_enabled=True)
     env = AppConfig().model_copy(
         update={
+            "run_real_externals": True,
             "atrativo_cascade_model": "gemini-2.5-flash",
             "llm": LLMConfig(openrouter_api_key="or", gemini_api_key=""),
         }

@@ -1,6 +1,7 @@
 """ProviderBalanceError halts describe_uf / enrich_places_task and pauses the motor.
 
-100% offline: fakeredis, a MagicMock DB session, a fake agent. No DB, no external API.
+100% offline: fakeredis, a MagicMock DB session, fake adapters via clients_for and a stub
+agent. No DB, no external API.
 """
 
 from __future__ import annotations
@@ -10,10 +11,13 @@ from unittest.mock import MagicMock
 
 import fakeredis
 
+from brave.clients.factory import Clients
 from brave.config.settings import LLMConfig
 from brave.core import engine as collection_engine
 from brave.shared.exceptions import ProviderBalanceError
 from brave.tasks import pipeline
+from tests.fakes.fake_llm import FakeLLMClient
+from tests.fakes.fake_places import FakePlacesClient
 
 _ON = MagicMock(
     run_real_externals=True,
@@ -38,7 +42,12 @@ def test_describe_uf_halts_and_pauses_on_provider_balance_error(monkeypatch):
     monkeypatch.setattr(pipeline, "_get_session", lambda: (session, MagicMock()))
     monkeypatch.setattr(pipeline, "AppConfig", lambda: _ON)
     monkeypatch.setattr(pipeline, "load_effective_config", lambda s, r=None: _ON)
-    monkeypatch.setattr(pipeline, "_enrich_ctx", lambda s, r=None: object())
+    monkeypatch.setattr("brave.shared.ibge_distritos.load_distritos", lambda s: [])
+    monkeypatch.setattr(
+        pipeline,
+        "clients_for",
+        lambda a, e=None, **k: Clients(a, e, places=FakePlacesClient(), llm=FakeLLMClient()),
+    )
 
     class Agent:
         def wants_description(self, rio):
@@ -50,7 +59,9 @@ def test_describe_uf_halts_and_pauses_on_provider_balance_error(monkeypatch):
         async def run(self, rio, description=None):
             raise AssertionError("run() must never be reached — the search failed first")
 
-    monkeypatch.setattr(pipeline, "_enrich_agent", lambda *a, **k: (Agent(), None))
+    monkeypatch.setattr(
+        "brave.lanes.atrativos.places_enrichment.PlacesEnrichmentAgent", lambda **k: Agent()
+    )
     lifecycle = MagicMock()
     monkeypatch.setattr(pipeline, "_producer_finally_lifecycle", lifecycle)
 

@@ -18,7 +18,7 @@ Error classification:
 """
 
 import asyncio
-import contextlib
+import functools
 import os
 import uuid
 from typing import Any, NamedTuple
@@ -28,7 +28,7 @@ from celery import shared_task
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from brave.clients.norteia_api import NorteiaApiClient
+from brave.clients.factory import clients_for
 from brave.config.runtime import load_effective_config
 from brave.config.settings import AppConfig
 from brave.core.mar.publication import publish, republish_pending
@@ -295,48 +295,10 @@ def _load_config(session: Session) -> AppConfig:
     return load_effective_config(session, rc)
 
 
-def _cascade_search_client(app_config: AppConfig, effective: AppConfig, redis_client: Any) -> Any:
-    """Parallel client when atrativo_description_cascade_enabled, else None (web_search mode).
-
-    Only called on the real-copywriter branch (run_real_externals already true). The key is
-    read from the env-built app_config: the overlay snapshot never carries it.
-
-    Also refuses to build when the cascade writer is a Gemini-direct slug that generate()
-    cannot serve (empty BRAVE_LLM_GEMINI_API_KEY, or a model with no price). Failing HERE
-    aborts _enrich_one before the agent exists; failing inside generate() would read as a
-    plain copywriter failure and burn one descricao_attempt per atrativo — 3 runs and the
-    whole backlog is excluded from descriptions.
-    """
-    if not effective.atrativo_description_cascade_enabled:
-        return None
-    from brave.clients.llm import gemini_is_priced  # noqa: PLC0415
-    from brave.clients.parallel import RealParallelClient  # noqa: PLC0415
-
-    model = app_config.atrativo_cascade_model
-    if model.startswith("gemini-"):
-        if not app_config.llm.gemini_api_key:
-            raise RuntimeError(f"cascade model {model!r} needs BRAVE_LLM_GEMINI_API_KEY")
-        if not gemini_is_priced(model):
-            raise RuntimeError(f"cascade model {model!r} has no Gemini price")
-
-    return RealParallelClient(
-        app_config.parallel_api_key,
-        mode=app_config.parallel_search_mode,
-        redis_client=redis_client,
-        llm_config=app_config.llm,
-    )
-
-
-async def _with_http_clients(coro: Any, *clients: Any) -> Any:
-    """Await ``coro`` with each client's persistent HTTP connection held open.
-
-    One connection per client for the whole sweep instead of a TLS/proxy handshake
-    per request; closed when the sweep ends. Null clients have nothing to hold.
-    """
-    async with contextlib.AsyncExitStack() as stack:
-        for client in clients:
-            if hasattr(client, "__aenter__"):
-                await stack.enter_async_context(client)
+async def _using(clients: Any, coro: Any) -> Any:
+    """Await ``coro`` inside ``clients``: persistent HTTP connections held for the whole
+    event loop, everything the bag built closed when it ends (brave.clients.factory)."""
+    async with clients:
         return await coro
 
 
@@ -481,21 +443,6 @@ def repush_pending_mar() -> int:
         session.close()
 
 
-def _norteia_api() -> Any:
-    """Real norteia-api adapter when externals are on, else the offline Null adapter."""
-    from brave.clients.null_norteia_api import NullNorteiaApiClient  # noqa: PLC0415
-
-    if not AppConfig().run_real_externals:
-        return NullNorteiaApiClient()
-    import redis as _redis_lib  # noqa: PLC0415
-
-    return NorteiaApiClient(
-        base_url=os.environ.get("BRAVE_NORTEIA_API_URL", ""),
-        service_token=os.environ.get("BRAVE_NORTEIA_API_SERVICE_TOKEN", ""),
-        redis=_redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")),
-    )
-
-
 @shared_task(
     bind=True,
     max_retries=3,
@@ -513,7 +460,7 @@ def publish_mar(self, rio_id: str) -> str | None:
     """
     session, _ = _get_session()
     try:
-        return publish(session, uuid.UUID(rio_id), _norteia_api()).status
+        return publish(session, uuid.UUID(rio_id), clients_for(AppConfig()).norteia_api).status
     except Exception as exc:
         session.rollback()
         try:
@@ -594,7 +541,7 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
 
     Idempotency: store_raw is idempotent by content_hash (D-03).
     Error handling: transient → retry; permanent → quarantine_poison.
-    Client selection: real clients only when run_real_externals=True (D-18).
+    Client selection: clients_for — real clients only when run_real_externals=True (D-18).
 
     Args:
         uf: Two-letter Brazilian state code (e.g. "BA", "RJ").
@@ -611,34 +558,16 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
         app_config = AppConfig()
         config = _load_config(session).score
 
-        # Select Places client based on run_real_externals flag
-        if app_config.run_real_externals:
-            places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
-            from brave.clients.places import (
-                RealPlacesClient,
-                load_municipio_name_ibge_lookup,
-            )
-            # Places API has no IBGE field — wire the name→IBGE lookup from the
-            # municipios reference table so attractions get a resolved municipio_ibge
-            # (required for parent-destino linkage via ensure_destino).
-            places_client = RealPlacesClient(
-                api_key=places_api_key,
-                ibge_lookup=load_municipio_name_ibge_lookup(session),
-            )
-        else:
-            from brave.clients.null_places import NullPlacesClient
-            places_client = NullPlacesClient()
+        from brave.clients.places import load_municipio_name_ibge_lookup
 
-        # Select LLM client based on run_real_externals flag
-        redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-        import redis as redis_lib
-        redis_client = redis_lib.from_url(redis_url)
-        if app_config.run_real_externals:
-            from brave.clients.llm import RealLLMClient
-            llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="atrativos")
-        else:
-            from brave.clients.null_llm import NullLLMClient
-            llm_client = NullLLMClient()
+        # Places API has no IBGE field — the real client gets the name→IBGE lookup from
+        # the municipios reference table so attractions get a resolved municipio_ibge
+        # (required for parent-destino linkage via ensure_destino).
+        clients = clients_for(
+            app_config, ibge_lookup=lambda: load_municipio_name_ibge_lookup(session)
+        )
+        places_client = clients.places
+        llm_client = clients.llm("atrativos", session=session)
 
         # Load the IBGE DTB distrito reference once — threads into the discovery agent
         # for admin_area_level_3 → distrito name-match enrichment, mirroring how the
@@ -655,7 +584,7 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
             distritos=distritos,
         )
 
-        asyncio.run(agent.produce(uf))
+        asyncio.run(_using(clients, agent.produce(uf)))
         session.commit()
 
         # ORCH-02 / D-03: fan out the FSM chain. DiscoveryAgent.produce returns None,
@@ -763,7 +692,7 @@ def sweep_tripadvisor(
     Depth gate: depth=NASCENTE → run_rio=False (Nascente + reliability score only, no Rio validation).
     depth=None (legacy/direct call) defaults to the full pipeline path.
 
-    Client selection: NullTripAdvisorClient unless AppConfig().run_real_externals
+    Client selection: clients_for — NullTripAdvisorClient unless AppConfig().run_real_externals
     (RUN_REAL_EXTERNALS=True, opt-in only).
 
     Idempotency: store_raw dedups by (source, source_ref, content_hash).
@@ -817,29 +746,16 @@ def sweep_tripadvisor(
         # fetch_attraction_geo guard (ta_config is not None) dormant offline.
         ta_config = None
         if app_config.run_real_externals:
-            import redis as _redis_lib
-
             from brave.config.settings import TripAdvisorConfig
-            from brave.lanes.tripadvisor.client import TripAdvisorClient
-            _ta_redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-            ta_config = TripAdvisorConfig()
-            ta_client = TripAdvisorClient(
-                config=ta_config,
-                redis=_redis_lib.from_url(_ta_redis_url),
-            )
-        else:
-            from brave.clients.null_tripadvisor import NullTripAdvisorClient
-            ta_client = NullTripAdvisorClient()
 
-        if app_config.run_real_externals:
-            from brave.clients.nominatim import NominatimGeocoderClient
-            geocoder = NominatimGeocoderClient(
-                config=app_config.nominatim,
-                redis=_redis_lib.from_url(_ta_redis_url),
-            )
-        else:
-            from brave.clients.null_nominatim import NullGeocoderClient
-            geocoder = NullGeocoderClient()
+            ta_config = TripAdvisorConfig()
+        from brave.clients.places import load_municipio_name_ibge_lookup
+
+        clients = clients_for(
+            app_config, ibge_lookup=lambda: load_municipio_name_ibge_lookup(session)
+        )
+        ta_client = clients.tripadvisor
+        geocoder = clients.geocoder
 
         # Load IBGE records — used by both destinos + atrativos. Reads the seeded
         # municipios reference table (was a static CSV before §3).
@@ -892,7 +808,8 @@ def sweep_tripadvisor(
                 geocoder=geocoder,
             )
             asyncio.run(
-                _with_http_clients(
+                _using(
+                    clients,
                     bulk_ingest.produce_paginated(
                         geo_id,
                         _effective_start_page,
@@ -900,8 +817,6 @@ def sweep_tripadvisor(
                         rc,
                         run_rio=run_rio,
                     ),
-                    ta_client,
-                    geocoder,
                 )
             )
             sweep_progress.mark_done(rc)
@@ -968,15 +883,8 @@ def sweep_tripadvisor(
             from brave.shared.ibge_distritos import load_distritos
 
             _distritos = load_distritos(session)
-            if app_config.run_real_externals and effective.places_enrichment_enabled:
-                from brave.clients.places import (
-                    RealPlacesClient,
-                    load_municipio_name_ibge_lookup,
-                )
-                _places_client = RealPlacesClient(
-                    api_key=os.environ.get("BRAVE_PLACES_API_KEY", ""),
-                    ibge_lookup=load_municipio_name_ibge_lookup(session),
-                )
+            if effective.places_enrichment_enabled:
+                _places_client = clients.places
             else:
                 from brave.clients.null_places import NullPlacesClient
                 _places_client = NullPlacesClient()
@@ -1027,7 +935,8 @@ def sweep_tripadvisor(
             os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         )
         ingested_rio_ids = _asyncio.run(
-            _with_http_clients(
+            _using(
+                clients,
                 atrativos_ingest.produce(
                     uf,
                     run_rio=run_rio,
@@ -1035,8 +944,6 @@ def sweep_tripadvisor(
                     redis=_prod_rc,
                     max_per_uf=max_per_uf,
                 ),
-                ta_client,
-                geocoder,
             )
         )
 
@@ -1145,7 +1052,7 @@ def find_contacts_task(self, rio_id: str) -> None:
     """Advance one RioRecord from discovered → contacts_found (ContactFinderAgent).
 
     Idempotency guard: ContactFinderAgent.run() short-circuits if sub_state != "discovered".
-    Client selection: real clients only when run_real_externals=True (D-18).
+    Client selection: clients_for — real clients only when run_real_externals=True (D-18).
 
     Args:
         rio_id: UUID string of the RioRecord to advance.
@@ -1166,20 +1073,13 @@ def find_contacts_task(self, rio_id: str) -> None:
         # Idempotency: ContactFinderAgent.run() handles sub_state guard internally
         app_config = AppConfig()
 
-        if app_config.run_real_externals:
-            places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
-            from brave.clients.places import RealPlacesClient
-            places_client = RealPlacesClient(api_key=places_api_key)
-        else:
-            from brave.clients.null_places import NullPlacesClient
-            places_client = NullPlacesClient()
-
+        clients = clients_for(app_config)
         agent = ContactFinderAgent(
-            places_client=places_client,
+            places_client=clients.places,
             session=session,
         )
 
-        asyncio.run(agent.run(rio))
+        asyncio.run(_using(clients, agent.run(rio)))
         session.commit()
 
         # ORCH-02 / D-03: continue the chain only if this record actually advanced to
@@ -1266,21 +1166,14 @@ def gather_signals_task(self, rio_id: str) -> None:
         app_config = AppConfig()
         config = _load_config(session).score
 
-        if app_config.run_real_externals:
-            places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
-            from brave.clients.places import RealPlacesClient
-            places_client = RealPlacesClient(api_key=places_api_key)
-        else:
-            from brave.clients.null_places import NullPlacesClient
-            places_client = NullPlacesClient()
-
+        clients = clients_for(app_config)
         agent = SignalAgent(
-            places_client=places_client,
+            places_client=clients.places,
             session=session,
             config=config,
         )
 
-        asyncio.run(agent.run(rio))
+        asyncio.run(_using(clients, agent.run(rio)))
         session.commit()
 
         # ORCH-02 / D-03: continue the chain only if this record actually advanced to
@@ -1352,109 +1245,97 @@ class _EnrichCtx(NamedTuple):
     app_config: AppConfig
     effective: AppConfig
     distritos: Any
-    ibge_lookup: Any  # None unless the real Places client is on
-    redis: Any  # None unless the caller passed one (describe_uf does)
+    ibge_lookup: Any  # cached loader: the ~16k-row map loads once, and only for real Places
 
 
-def _enrich_ctx(session: Session, redis_client: Any = None) -> _EnrichCtx:
-    """Load config + the IBGE reference tables (~16k rows) once, not once per atrativo.
+def _enrich_ctx(session: Session) -> _EnrichCtx:
+    """Load config + the IBGE distritos table once, not once per atrativo.
 
     Only DB/Redis-backed state lives here. The async HTTP clients are built per
-    asyncio.run (_enrich_agent): a pooled connection must not outlive its loop.
+    asyncio.run (clients_for): a pooled connection must not outlive its loop.
     """
+    from brave.clients.places import load_municipio_name_ibge_lookup
     from brave.shared.ibge_distritos import load_distritos
 
-    app_config = AppConfig()
-    effective = _load_config(session)
-    ibge_lookup = None
-    if app_config.run_real_externals and effective.places_enrichment_enabled:
-        from brave.clients.places import load_municipio_name_ibge_lookup
-        ibge_lookup = load_municipio_name_ibge_lookup(session)
-    return _EnrichCtx(app_config, effective, load_distritos(session), ibge_lookup, redis_client)
+    return _EnrichCtx(
+        AppConfig(),
+        _load_config(session),
+        load_distritos(session),
+        functools.cache(functools.partial(load_municipio_name_ibge_lookup, session)),
+    )
+
+
+def _enrich_clients(ctx: _EnrichCtx) -> Any:
+    return clients_for(ctx.app_config, ctx.effective, ibge_lookup=ctx.ibge_lookup)
 
 
 def _enrich_agent(
     session: Session,
     ctx: _EnrichCtx,
+    clients: Any,
     rio_id: str | None = None,
     llm_session: Any = None,
     *,
     describe: bool = False,
-) -> tuple[Any, Any]:
-    """Build (PlacesEnrichmentAgent, its Parallel search client or None).
+) -> Any:
+    """Build the PlacesEnrichmentAgent off ``clients`` (the adapters) + the operator flags.
 
-    The client selection of enrich_places_task, shared with brave.describe_uf so the
-    per-UF description producer walks exactly the same path. ``llm_session`` is where the
-    copywriter writes its llm_generations rows (default: ``session``); describe_uf passes
-    a _RowBuffer so its gathered coroutines never touch the Session. The async clients
-    are bound to the event loop that first uses them: one agent per asyncio.run.
+    Shared by enrich_places_task and brave.describe_uf so the per-UF description producer
+    walks exactly the same path. ``llm_session`` is where the copywriter writes its
+    llm_generations rows (default: ``session``); describe_uf passes a _RowBuffer so its
+    gathered coroutines never touch the Session.
     """
+    from brave.clients.null_llm import NullLLMClient
+    from brave.clients.null_places import NullPlacesClient
     from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
 
     app_config, effective = ctx.app_config, ctx.effective
-    config = effective.score
 
-    # Real Places client requires BOTH run_real_externals AND the operator-toggleable
-    # places_enrichment_enabled flag (config_settings overlay, /painel). When off, the
-    # Null client keeps the TA floor and the agent still advances sub_state + re-scores
-    # — a real local sweep runs with ZERO Google Places spend on enrichment.
-    if app_config.run_real_externals and effective.places_enrichment_enabled:
-        places_api_key = os.environ.get("BRAVE_PLACES_API_KEY", "")
-        from brave.clients.places import RealPlacesClient
-        places_client = RealPlacesClient(
-            api_key=places_api_key,
-            ibge_lookup=ctx.ibge_lookup,
-        )
+    # The operator-toggleable places_enrichment_enabled flag (config_settings overlay,
+    # /painel) gates the Places sub-step. When off, the Null client keeps the TA floor and
+    # the agent still advances sub_state + re-scores — ZERO Google Places spend.
+    if effective.places_enrichment_enabled:
+        places_client = clients.places
     else:
-        if app_config.run_real_externals and not effective.places_enrichment_enabled:
-            logger.info("places_enrichment_disabled", rio_id=rio_id)
-        from brave.clients.null_places import NullPlacesClient
+        logger.info("places_enrichment_disabled", rio_id=rio_id)
         places_client = NullPlacesClient()
 
-    # Copywriter LLM (description sub-step): real Anthropic (web_search) only under
-    # run_real_externals + description_enrichment_enabled; else Null (skipped).
-    # Batch mode moves the description off this path to submit/collect_description_batch.
-    # ``describe`` is the hard rule on top of the flags: ONLY brave.describe_uf (the Painel's
-    # "describe" action) passes it. A sweep / enrich_places_task / repair script never writes
-    # a description, whatever the overlay says.
-    _desc_on = describe and _description_on(app_config, effective)
-    if _desc_on:
-        from brave.clients.llm import RealLLMClient
-        copy_redis = ctx.redis
-        copy_llm = RealLLMClient(
-            config=app_config.llm,
-            redis_client=copy_redis,
-            session=session if llm_session is None else llm_session,
-            lane="atrativo_copywriter",
+    # Copywriter (description sub-step) only under _description_on. ``describe`` is the hard
+    # rule on top of the flags: ONLY brave.describe_uf (the Painel's "describe" action)
+    # passes it. A sweep / enrich_places_task / repair script never writes a description,
+    # whatever the overlay says.
+    desc_on = describe and _description_on(app_config, effective)
+    if desc_on:
+        copy_llm = clients.llm(
+            "atrativo_copywriter", session=session if llm_session is None else llm_session
         )
-        copy_search = _cascade_search_client(app_config, effective, copy_redis)
+        copy_search = clients.search()
     else:
-        from brave.clients.null_llm import NullLLMClient
         copy_llm = NullLLMClient()
         copy_search = None
 
-    agent = PlacesEnrichmentAgent(
+    return PlacesEnrichmentAgent(
         places_client=places_client,
         session=session,
-        config=config,
+        config=effective.score,
         llm_client=copy_llm,
         distritos=ctx.distritos,
         voice_model_slug=app_config.atrativo_voice_model_slug,
-        description_enabled=_desc_on,
+        description_enabled=desc_on,
         enable_web_search=app_config.run_real_externals,
         max_distance_km=app_config.places_match_max_distance_km,
         search_client=copy_search,
         cascade_model=app_config.atrativo_cascade_model,
     )
-    return agent, copy_search
 
 
 def _enrich_one(session: Session, rio: RioRecord, ctx: _EnrichCtx | None = None) -> None:
     """Run PlacesEnrichmentAgent on one RioRecord (no commit — the caller owns it)."""
     if ctx is None:
         ctx = _enrich_ctx(session)
-    agent, _search = _enrich_agent(session, ctx, str(rio.id))
-    asyncio.run(agent.run(rio))
+    clients = _enrich_clients(ctx)
+    agent = _enrich_agent(session, ctx, clients, str(rio.id))
+    asyncio.run(_using(clients, agent.run(rio)))
 
 
 @shared_task(
@@ -1477,8 +1358,9 @@ def enrich_places_task(self, rio_id: str) -> None:
     confident match → descarte.
 
     Idempotency guard: PlacesEnrichmentAgent.run() short-circuits unless
-    sub_state in (None, "signals_gathered"). Client selection: real Places/LLM clients only
-    when run_real_externals=True AND the respective flag (D-18); else Null (ZERO spend).
+    sub_state in (None, "signals_gathered"). Client selection: real Places/LLM clients (via
+    clients_for) only when run_real_externals=True AND the respective flag (D-18); else Null
+    (ZERO spend).
 
     Args:
         rio_id: UUID string of the RioRecord to enrich.
@@ -1572,7 +1454,7 @@ class _RowBuffer:
 async def _describe_chunk(
     session: Session,
     agent: Any,
-    search: Any,
+    clients: Any,
     rows: _RowBuffer,
     jobs: list[tuple[uuid.UUID, tuple[str, str, str, str]]],
     stop: Any,
@@ -1605,7 +1487,7 @@ async def _describe_chunk(
                 fetched[rio_id] = exc
 
     cut = False
-    try:
+    async with clients:
         try:
             # _fetch keeps every per-record failure in ``fetched``; only the soft time limit
             # escapes, and the results already in ``fetched`` are still written below.
@@ -1644,9 +1526,6 @@ async def _describe_chunk(
         except Exception:  # noqa: BLE001
             session.rollback()
             logger.warning("describe_uf_llm_generations_failed", uf=uf, exc_info=True)
-    finally:
-        if search is not None:
-            await search.aclose()
     return cut
 
 
@@ -1697,12 +1576,13 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
         if not _description_on(app_config, effective):
             logger.warning("describe_uf_description_disabled", uf=uf)
             return
-        try:
-            # The same build guard _enrich_one hits per record: fail the UF once here
-            # instead of walking the whole backlog failing every record before the agent.
-            _cascade_search_client(app_config, effective, rc)
-        except (RuntimeError, ValueError):
-            logger.warning("describe_uf_cascade_misconfigured", uf=uf, exc_info=True)
+        ctx = _enrich_ctx(session)
+        clients = _enrich_clients(ctx)
+        # The cascade search client's build guard: fail the UF once here instead of
+        # walking the whole backlog failing every record before the agent.
+        reason = clients.check_search()
+        if reason is not None:
+            logger.warning("describe_uf_cascade_misconfigured", uf=uf, reason=reason)
             return
 
         limit = _DESCRIBE_CHUNK if max_n is None else min(_DESCRIBE_CHUNK, max_n)
@@ -1740,9 +1620,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
 
         if ids:
             rows = _RowBuffer()
-            agent, search = _enrich_agent(
-                session, _enrich_ctx(session, rc), llm_session=rows, describe=True
-            )
+            agent = _enrich_agent(session, ctx, clients, llm_session=rows, describe=True)
             # Everything a coroutine needs is read here, as plain values, before the gather.
             jobs = []
             for rio_id in ids:
@@ -1763,7 +1641,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
             # as old as the gather.
             session.rollback()
             try:
-                cut = asyncio.run(_describe_chunk(session, agent, search, rows, jobs, _stop, uf))
+                cut = asyncio.run(_describe_chunk(session, agent, clients, rows, jobs, _stop, uf))
             except ProviderBalanceError as exc:
                 # A paid provider reported a billing wall mid-chunk — pause the motor with a
                 # reason and halt the chunk/chain. No retry, no self-chain (chained stays
@@ -1817,18 +1695,6 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
 # ---------------------------------------------------------------------------
 
 
-def _batch_deps(app_config: AppConfig) -> tuple[Any, Any]:
-    """Build the (Anthropic, Redis) pair the batch tasks need. Real clients only — the
-    Message Batches API has no Null twin, so both tasks gate on run_real_externals first."""
-    import redis as _redis_lib  # noqa: PLC0415
-    from anthropic import Anthropic  # noqa: PLC0415
-
-    return (
-        Anthropic(api_key=app_config.llm.anthropic_api_key),
-        _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")),
-    )
-
-
 @shared_task(
     bind=True,
     name="brave.submit_description_batch",
@@ -1845,6 +1711,8 @@ def submit_description_batch_task(self) -> None:
     Failures are logged and swallowed: beat re-fires in an hour, and a retry storm on a task
     that COMMITS spend is the wrong shape.
     """
+    import redis as _redis_lib  # noqa: PLC0415
+
     from brave.lanes.atrativos.copy_batch import submit_batch  # noqa: PLC0415
 
     session, engine = _get_session()
@@ -1857,12 +1725,13 @@ def submit_description_batch_task(self) -> None:
             and effective.atrativo_description_batch_enabled
         ):
             return
-        client, redis_client = _batch_deps(app_config)
         submit_batch(
             session,
-            client,
+            clients_for(app_config).batch,
             model=app_config.atrativo_voice_model_slug,
-            redis_client=redis_client,
+            redis_client=_redis_lib.from_url(
+                os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+            ),
             llm_config=app_config.llm,
         )
     except Exception as exc:  # noqa: BLE001 — beat retries on the next tick
@@ -1898,6 +1767,8 @@ def collect_description_batches_task(self) -> None:
     copy_batch module docstring for the gap that leaves (a record already ACTIVE in Mar keeps
     description:null until something re-pushes it).
     """
+    import redis as _redis_lib  # noqa: PLC0415
+
     from brave.lanes.atrativos.copy_batch import collect_batches, reap_stale_claims  # noqa: PLC0415
 
     session, engine = _get_session()
@@ -1907,12 +1778,13 @@ def collect_description_batches_task(self) -> None:
             reap_stale_claims(session, None)
             return
         effective = _load_config(session)
-        client, redis_client = _batch_deps(app_config)
         collect_batches(
             session,
-            client,
+            clients_for(app_config).batch,
             effective.score,
-            redis_client=redis_client,
+            redis_client=_redis_lib.from_url(
+                os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+            ),
             model=app_config.atrativo_voice_model_slug,
         )
     except Exception as exc:  # noqa: BLE001 — beat retries on the next tick
@@ -1974,7 +1846,6 @@ def outreach_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to outreach.
     """
-    from brave.clients.null_whatsapp import NullWhatsAppClient
     from brave.shared.whatsapp.agent import build_graph
 
     session, engine = _get_session()
@@ -1995,29 +1866,13 @@ def outreach_task(self, rio_id: str) -> None:
         app_config = AppConfig()
         config = _load_config(session).score
 
-        # Select WhatsApp client (production: Twilio or Null; never Fake, T-03-04-07)
-        if app_config.run_real_externals:
-            from brave.clients.whatsapp import TwilioWhatsAppClient
-            wa_config = app_config.whatsapp
-            wa_client = TwilioWhatsAppClient(
-                account_sid=wa_config.twilio_account_sid,
-                auth_token=wa_config.twilio_auth_token,
-                from_number=wa_config.from_number,
-                messaging_service_sid=wa_config.messaging_service_sid or None,
-            )
-        else:
-            wa_client = NullWhatsAppClient()
-
-        # Select LLM client
+        # WhatsApp + LLM adapters (production: Twilio/Real or Null; never Fake, T-03-04-07)
+        clients = clients_for(app_config)
+        wa_client = clients.whatsapp
+        llm_client = clients.llm("atrativos", session=session)
         redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         import redis as redis_lib
         redis_client = redis_lib.from_url(redis_url)
-        if app_config.run_real_externals:
-            from brave.clients.llm import RealLLMClient
-            llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="atrativos")
-        else:
-            from brave.clients.null_llm import NullLLMClient
-            llm_client = NullLLMClient()
 
         settings = app_config.whatsapp
 
@@ -2081,7 +1936,7 @@ def outreach_task(self, rio_id: str) -> None:
             )
             return final_state, contact_phone
 
-        run_result = asyncio.run(_run())
+        run_result = asyncio.run(_using(clients, _run()))
         # R2 Option B (DASH-05): append the produced OUTBOUND ask message(s) read from
         # the graph's FINAL state to the append-only conversation_message log, on this
         # task's OWN session, BEFORE the single commit below (alongside the saver — the
@@ -2163,7 +2018,6 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
         rio_id:     UUID string of the RioRecord whose conversation to resume.
         reply_text: Raw inbound message body from the owner (from n8n/Twilio webhook).
     """
-    from brave.clients.null_whatsapp import NullWhatsAppClient
     from brave.shared.whatsapp.agent import build_graph
 
     session, engine = _get_session()
@@ -2185,29 +2039,13 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
         app_config = AppConfig()
         config = _load_config(session).score
 
-        # Select WhatsApp client (production: Twilio or Null; never Fake, T-03-04-07)
-        if app_config.run_real_externals:
-            from brave.clients.whatsapp import TwilioWhatsAppClient
-            wa_config = app_config.whatsapp
-            wa_client = TwilioWhatsAppClient(
-                account_sid=wa_config.twilio_account_sid,
-                auth_token=wa_config.twilio_auth_token,
-                from_number=wa_config.from_number,
-                messaging_service_sid=wa_config.messaging_service_sid or None,
-            )
-        else:
-            wa_client = NullWhatsAppClient()
-
-        # Select LLM client
+        # WhatsApp + LLM adapters (production: Twilio/Real or Null; never Fake, T-03-04-07)
+        clients = clients_for(app_config)
+        wa_client = clients.whatsapp
+        llm_client = clients.llm("atrativos", session=session)
         redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         import redis as redis_lib
         redis_client = redis_lib.from_url(redis_url)
-        if app_config.run_real_externals:
-            from brave.clients.llm import RealLLMClient
-            llm_client = RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session, lane="atrativos")
-        else:
-            from brave.clients.null_llm import NullLLMClient
-            llm_client = NullLLMClient()
 
         settings = app_config.whatsapp
 
@@ -2250,7 +2088,7 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
             )
             return final_state
 
-        final_state = asyncio.run(_run())
+        final_state = asyncio.run(_using(clients, _run()))
         # R2 Option B (DASH-05): append BOTH the INBOUND reply_text AND any follow-up
         # OUTBOUND message + extraction snapshot read from the graph's FINAL state to the
         # append-only conversation_message log, on this task's OWN session, BEFORE the
@@ -2364,29 +2202,18 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
 
         app_config = AppConfig()
 
-        # LLM client selection (D-18): Null offline (no number), Real opt-in.
-        if app_config.run_real_externals:
-            redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-            import redis as redis_lib
-            redis_client = redis_lib.from_url(redis_url)
-            from brave.clients.llm import RealLLMClient
-            llm_client = RealLLMClient(
-                config=app_config.llm,
-                redis_client=redis_client,
-                session=session,
-                lane="atrativos",
-            )
-        else:
-            from brave.clients.null_llm import NullLLMClient
-            llm_client = NullLLMClient()
-
+        # LLM adapter (D-18): Null offline (no number), Real opt-in.
+        clients = clients_for(app_config)
         normalized = rio.normalized or {}
         raw_phone = asyncio.run(
-            discover_number(
-                llm_client,
-                name=normalized.get("name") or "",
-                uf=rio.uf,
-                address=normalized.get("address"),
+            _using(
+                clients,
+                discover_number(
+                    clients.llm("atrativos", session=session),
+                    name=normalized.get("name") or "",
+                    uf=rio.uf,
+                    address=normalized.get("address"),
+                ),
             )
         )
 

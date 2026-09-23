@@ -1,29 +1,51 @@
 """Rule: a description is ONLY written by brave.describe_uf (Painel "describe" action).
 
-_enrich_agent is shared by enrich_places_task (sweeps) and describe_uf; with every flag ON
-it must still build a description-less agent unless the caller passes describe=True.
+enrich_places_task shares the agent build with describe_uf; with every description flag ON
+it must still build a description-less agent (describe_uf's side is asserted in
+test_describe_uf::test_clients_and_agent_built_once_per_chunk).
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import uuid
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
+from brave.clients.factory import Clients
+from brave.clients.null_llm import NullLLMClient
 from brave.tasks import pipeline
+from tests.fakes.fake_llm import FakeLLMClient
+from tests.fakes.fake_places import FakePlacesClient
+
+_ALL_ON = MagicMock(
+    run_real_externals=True,
+    places_enrichment_enabled=True,
+    description_enrichment_enabled=True,
+    atrativo_description_batch_enabled=False,
+    atrativo_description_cascade_enabled=False,
+)
 
 
-@pytest.mark.parametrize(("describe", "expected"), [(False, False), (True, True)])
-def test_only_describe_turns_the_copywriter_on(monkeypatch, describe, expected):
-    app_config = MagicMock(run_real_externals=False)  # Null Places client, no network
-    effective = MagicMock(places_enrichment_enabled=False)
-    monkeypatch.setattr(pipeline, "_description_on", lambda a, e: True)  # flags all ON
-    monkeypatch.setattr(pipeline, "_cascade_search_client", lambda a, e, r: None)
-    monkeypatch.setattr("brave.clients.llm.RealLLMClient", MagicMock())
-    built = MagicMock()
+def test_enrich_places_task_never_turns_the_copywriter_on(monkeypatch):
+    session = MagicMock()
+    session.get.return_value = MagicMock(id=uuid.uuid4())
+    monkeypatch.setattr(pipeline, "_get_session", lambda: (session, MagicMock()))
+    monkeypatch.setattr(pipeline, "AppConfig", lambda: _ALL_ON)
+    monkeypatch.setattr(pipeline, "load_effective_config", lambda s, r=None: _ALL_ON)
+    monkeypatch.setattr("redis.from_url", lambda *_a, **_k: MagicMock())
+    monkeypatch.setattr("brave.shared.ibge_distritos.load_distritos", lambda s: [])
+    places = FakePlacesClient()
+    monkeypatch.setattr(
+        pipeline,
+        "clients_for",
+        lambda a, e=None, **k: Clients(a, e, places=places, llm=FakeLLMClient()),
+    )
+    built = MagicMock(return_value=MagicMock(run=AsyncMock()))
     monkeypatch.setattr("brave.lanes.atrativos.places_enrichment.PlacesEnrichmentAgent", built)
 
-    ctx = pipeline._EnrichCtx(app_config, effective, None, None, None)
-    pipeline._enrich_agent(MagicMock(), ctx, describe=describe)
+    pipeline.enrich_places_task.run(str(uuid.uuid4()))
 
-    assert built.call_args.kwargs["description_enabled"] is expected
+    kwargs = built.call_args.kwargs
+    assert kwargs["description_enabled"] is False
+    assert isinstance(kwargs["llm_client"], NullLLMClient)
+    assert kwargs["search_client"] is None
+    assert kwargs["places_client"] is places  # places flag ON → the factory's adapter

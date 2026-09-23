@@ -6,8 +6,8 @@ while the chunk comes back full. Only the terminal run of a chain decrements the
 inflight counter. Inside a chunk the copywriter I/O is gathered (_DESCRIBE_CONCURRENCY at
 a time) and the Session writes stay serial.
 
-100% offline: fakeredis, a MagicMock DB session, a fake agent and the self-chain .delay
-replaced by spies. No DB, no external API.
+100% offline: fakeredis, a MagicMock DB session, fake adapters via clients_for, a stub
+PlacesEnrichmentAgent and the self-chain .delay replaced by spies. No DB, no external API.
 """
 
 from __future__ import annotations
@@ -20,10 +20,13 @@ import fakeredis
 import pytest
 from sqlalchemy.dialects import postgresql
 
+from brave.clients.factory import Clients
 from brave.config.settings import LLMConfig
 from brave.core import engine as collection_engine
 from brave.observability.cost_guard import _daily_key, record_spend
 from brave.tasks import pipeline
+from tests.fakes.fake_llm import FakeLLMClient
+from tests.fakes.fake_places import FakePlacesClient
 
 _ON = MagicMock(
     run_real_externals=True,
@@ -49,9 +52,15 @@ def harness(monkeypatch):
     monkeypatch.setattr(pipeline, "AppConfig", lambda: _ON)
     monkeypatch.setattr(pipeline, "load_effective_config", lambda s, r=None: _ON)
 
+    monkeypatch.setattr("brave.shared.ibge_distritos.load_distritos", lambda s: [])
+
     enriched: list = []
-    ctx_builds = MagicMock(side_effect=lambda s, r=None: object())
-    monkeypatch.setattr(pipeline, "_enrich_ctx", ctx_builds)
+    clients_builds = MagicMock(
+        side_effect=lambda a, e=None, **k: Clients(
+            a, e, places=FakePlacesClient(), llm=FakeLLMClient()
+        )
+    )
+    monkeypatch.setattr(pipeline, "clients_for", clients_builds)
 
     class Agent:
         """Stands in for PlacesEnrichmentAgent: I/O half + write half, both spied."""
@@ -78,8 +87,10 @@ def harness(monkeypatch):
             enriched.append(rio.id)
 
     agent = Agent()
-    agent_builds = MagicMock(side_effect=lambda *a, **k: (agent, None))
-    monkeypatch.setattr(pipeline, "_enrich_agent", agent_builds)
+    agent_builds = MagicMock(return_value=agent)
+    monkeypatch.setattr(
+        "brave.lanes.atrativos.places_enrichment.PlacesEnrichmentAgent", agent_builds
+    )
     lifecycle = MagicMock()
     monkeypatch.setattr(pipeline, "_producer_finally_lifecycle", lifecycle)
 
@@ -91,7 +102,7 @@ def harness(monkeypatch):
         pass
 
     h = H()
-    h.agent, h.agent_builds, h.ctx_builds = agent, agent_builds, ctx_builds
+    h.agent, h.agent_builds, h.clients_builds = agent, agent_builds, clients_builds
     h.redis, h.session, h.enriched, h.lifecycle, h.chain, h.run = (
         fake, session, enriched, lifecycle, chain, run
     )
@@ -110,12 +121,13 @@ def _stmt(h):
     return stmt, stmt.compile(dialect=postgresql.dialect())
 
 
-def test_ctx_and_agent_built_once_per_chunk(harness):
+def test_clients_and_agent_built_once_per_chunk(harness):
     """Reference tables, config and clients are built once for the chunk, not per atrativo."""
     ids = harness.ids(3)
     harness.run("ES")
-    assert harness.ctx_builds.call_count == 1
+    assert harness.clients_builds.call_count == 1
     assert harness.agent_builds.call_count == 1
+    assert harness.agent_builds.call_args.kwargs["description_enabled"] is True
     assert harness.enriched == ids
 
 
@@ -298,14 +310,24 @@ def test_tripped_cost_guard_ends_the_chain(harness):
 
 
 def test_misconfigured_cascade_exits_without_processing(harness, monkeypatch):
-    def boom(*_a):
-        raise RuntimeError("cascade model 'gemini-2.5-flash' needs BRAVE_LLM_GEMINI_API_KEY")
-
-    monkeypatch.setattr(pipeline, "_cascade_search_client", boom)
+    """Cascade on with a gemini writer and no key: the real factory's check refuses the UF
+    before any record is selected or any agent built (no descricao_attempt burned)."""
+    misconfigured = MagicMock(
+        run_real_externals=True,
+        description_enrichment_enabled=True,
+        atrativo_description_batch_enabled=False,
+        atrativo_description_cascade_enabled=True,
+        atrativo_cascade_model="gemini-2.5-flash",
+        llm=LLMConfig(openrouter_api_key="or", gemini_api_key=""),
+    )
+    monkeypatch.setattr(pipeline, "AppConfig", lambda: misconfigured)
+    monkeypatch.setattr(pipeline, "load_effective_config", lambda s, r=None: misconfigured)
+    monkeypatch.setattr(pipeline, "clients_for", Clients)
     harness.ids(pipeline._DESCRIBE_CHUNK)
     harness.run("SP")
 
     harness.session.scalars.assert_not_called()
+    harness.agent_builds.assert_not_called()
     assert harness.enriched == []
     harness.chain.delay.assert_not_called()
     harness.lifecycle.assert_called_once()
@@ -343,35 +365,3 @@ def test_engine_describe_dispatches_describe_uf_per_uf(monkeypatch):
     assert [c.args for c in task.delay.call_args_list] == [("SP", 4), ("RJ", 4)]
     assert collection_engine.get_inflight(fake) == 2
     sweep.delay.assert_not_called()
-
-
-def test_describe_agent_fails_before_the_agent_on_empty_gemini_key(monkeypatch):
-    """The cascade build guard lives in _enrich_agent's describe path (the only one that
-    writes descriptions): a gemini-* writer with no key raises BEFORE
-    PlacesEnrichmentAgent exists, so no descricao_attempt is burned."""
-    from brave.config.settings import LLMConfig
-
-    app = MagicMock(
-        run_real_externals=True,
-        atrativo_cascade_model="gemini-2.5-flash",
-        llm=LLMConfig(openrouter_api_key="or", gemini_api_key=""),
-    )
-    effective = MagicMock(
-        places_enrichment_enabled=False,
-        description_enrichment_enabled=True,
-        atrativo_description_batch_enabled=False,
-        atrativo_description_cascade_enabled=True,
-    )
-    monkeypatch.setattr(pipeline, "AppConfig", lambda: app)
-    monkeypatch.setattr(pipeline, "load_effective_config", lambda s, r=None: effective)
-    monkeypatch.setattr("redis.from_url", lambda *_a, **_k: fakeredis.FakeStrictRedis())
-    monkeypatch.setattr("brave.clients.llm.RealLLMClient", lambda **kw: MagicMock())
-    built = MagicMock()
-    monkeypatch.setattr(
-        "brave.lanes.atrativos.places_enrichment.PlacesEnrichmentAgent", built
-    )
-
-    with pytest.raises(RuntimeError, match="BRAVE_LLM_GEMINI_API_KEY"):
-        session = MagicMock()
-        pipeline._enrich_agent(session, pipeline._enrich_ctx(session), describe=True)
-    built.assert_not_called()
