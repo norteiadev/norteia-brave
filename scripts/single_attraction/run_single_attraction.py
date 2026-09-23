@@ -284,8 +284,8 @@ def main() -> None:
             api_key=os.environ.get("BRAVE_PLACES_API_KEY", ""),
             ibge_lookup=load_municipio_name_ibge_lookup(session),
         )
+        from brave.clients.factory import clients_for
         from brave.config.runtime import load_effective_config
-        from brave.tasks.pipeline import _cascade_search_client
 
         llm_client = RealLLMClient(
             config=app_config.llm, redis_client=redis_client,
@@ -293,9 +293,7 @@ def main() -> None:
         )
         # Same writer choice as the sweep: cascade (Parallel + atrativo_cascade_model) when the
         # overlay flag is on, else Sonnet + web_search. Raises when the cascade can't be built.
-        search_client = _cascade_search_client(
-            app_config, load_effective_config(session), redis_client
-        )
+        search_client = clients_for(app_config, load_effective_config(session)).search()
         agent = PlacesEnrichmentAgent(
             places_client=places_client, session=session, config=score_config,
             llm_client=llm_client, distritos=load_distritos(session),

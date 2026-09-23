@@ -268,14 +268,13 @@ def engine_start(
                 detail="Descrição desligada — ative description_enrichment_enabled, "
                 "desligue o lote (atrativo_description_batch_enabled) e use externals reais.",
             )
-        from brave.tasks.pipeline import _cascade_search_client
+        from brave.clients.factory import clients_for
 
-        try:
-            # The cascade's build guard (writer key/price, Parallel key): every record
-            # would fail on it before the agent, so refuse the run up front.
-            _cascade_search_client(AppConfig(), cfg, None)
-        except (RuntimeError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail=f"Cascata mal configurada: {exc}") from exc
+        # The cascade's build guard (writer key/price, Parallel key/mode): every record
+        # would fail on it before the agent, so refuse the run up front.
+        reason = clients_for(AppConfig(), cfg).check_search()
+        if reason is not None:
+            raise HTTPException(status_code=409, detail=f"Cascata mal configurada: {reason}")
         # runs_history labels for the Varreduras trail; never written to the depth/source keys.
         depth = source = "descricao"
         lane = "atrativos"
