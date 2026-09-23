@@ -35,20 +35,24 @@ def test_set_mode_ligado_clears_pause_reason(redis):
     assert engine.get_mode(redis) == engine.LIGADO
 
 
-def test_maybe_complete_ends_run_but_keeps_reasoned_pause(redis):
-    engine.start_run(redis, ufs_total=1)
-    engine.set_dispatch_done(redis, True)
-    # inflight already 0 (start_run resets it) and dispatch is done — without a
-    # pause_reason this would complete the run.
+def _start(redis):
+    return engine.start(
+        redis, None, action="sweep", depth=engine.NASCENTE_RIO, source="tripadvisor",
+        ufs=["SP"], lane="atrativos",
+    )
+
+
+def test_completion_ends_run_but_keeps_reasoned_pause(redis):
+    run_id = _start(redis)
     engine.pause_with_reason(redis, "provider_balance", "openrouter", action="sweep")
 
     # The run ends (idle, so Continuar's /engine/start does not 409) but the motor stays
     # PAUSADO with its reason — never DESLIGADO/"synced".
-    assert engine.maybe_complete(redis) is True
+    assert engine.dispatch_finished(redis, None, run_id) is True
     assert engine.get_state(redis) == engine.IDLE
     assert engine.get_mode(redis) == engine.PAUSADO
     assert engine.get_status(redis)["pause_reason"]["provider"] == "openrouter"
-    assert engine.start_run(redis, ufs_total=1) is True
+    assert _start(redis) is not None
 
 
 if __name__ == "__main__":  # pragma: no cover — ponytail runnable check

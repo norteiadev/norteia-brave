@@ -17,18 +17,38 @@ orchestrator task):
                           orthogonal to state; governs auto-dispatch + the
                           Kanban card edit-lock (Motor Pausado, phase C)
 
-This module is pure state — it performs no dispatch. The orchestrator task
+This module performs no dispatch. The orchestrator task
 (brave.tasks.pipeline.engine_sweep_run) reads `state` between UFs and breaks the
 loop when it is no longer `running`, which is what makes Stop graceful. It also
 reads `mode` and breaks when it is no longer `LIGADO`: PAUSADO/DESLIGADO stop new
 fan-out (graceful drain) while releasing the card edit-lock.
+
+Run lifecycle — callers use only these verbs; every key above is private:
+
+  start(...)            → run_id   guard + reset + depth/source + LIGADO + runs_history row
+  abort(...)                       dispatch failed: back to idle, row → "falha"
+  claim_producer(...)              before each producer .delay
+  progress(...)                    one UF (or one bulk page) dispatched
+  producer_done(...)               in each producer's terminal finally
+  dispatch_finished(...)           when the orchestrator's loop ends
+
+The run completes (motor off + runs_history finalized) inside producer_done /
+dispatch_finished once dispatch is done and no producer is in flight. ``run_id`` is a
+generation token: a producer_done/progress for a run that is no longer current is
+ignored, so a straggler from an old run can never drain a new run's counters.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
+import uuid
 from datetime import UTC, datetime
 from typing import Any
+
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 IDLE = "idle"
 RUNNING = "running"
@@ -44,7 +64,7 @@ _VALID = {IDLE, RUNNING, STOPPING}
 NASCENTE = "nascente"
 NASCENTE_RIO = "nascente_rio"
 NASCENTE_RIO_MAR = "nascente_rio_mar"
-_VALID_DEPTHS = frozenset({NASCENTE, NASCENTE_RIO, NASCENTE_RIO_MAR})
+VALID_DEPTHS = frozenset({NASCENTE, NASCENTE_RIO, NASCENTE_RIO_MAR})
 
 _STATE_KEY = "brave:engine:state"
 _CURRENT_UF_KEY = "brave:engine:current_uf"
@@ -55,12 +75,11 @@ _SOURCE_KEY = "brave:engine:source"
 _ENABLED_KEY = "brave:engine:enabled"
 _MODE_KEY = "brave:engine:mode"
 # Sync marker (BUG 6/7): "1" iff the most recent run finished draining. Cleared at
-# run START (a fresh run is not "synced" yet) and set at run END (mark_run_ended, or
-# — new producer-completes model — atomically inside maybe_complete when the LAST
-# producer finishes). Drives get_status's derived "sync_phase" for the dashboard badge.
+# run START (a fresh run is not "synced" yet) and set at run END — atomically inside
+# _maybe_complete when the LAST producer finishes. Drives get_status's derived
+# "sync_phase" for the dashboard badge.
 _LAST_RUN_ENDED_KEY = "brave:engine:last_run_ended"
-# run_id of the durable runs_history row for the CURRENT run (set at engine /start so
-# a producer's finally can finalize the row when it completes the run). Read-only here.
+# run_id of the CURRENT run — the generation token (and the runs_history row id).
 _RUN_ID_KEY = "brave:engine:run_id"
 # Producer-completes lifecycle (live-kanban fix): the run stays RUNNING while any
 # producer task is in flight and only flips to synced when the LAST producer finishes.
@@ -79,7 +98,7 @@ _PAUSE_REASON_KEY = "brave:engine:pause_reason"
 #   default      — Google Places attraction lane (discover_atrativo_task; dormant by
 #                  default — the Mtur destino seed is retired)
 #   tripadvisor  — TripAdvisor lane (sweep_tripadvisor task, plan 11-03)
-_VALID_SOURCES = frozenset({"default", "tripadvisor"})
+VALID_SOURCES = frozenset({"default", "tripadvisor"})
 
 # Operator mode (Motor Pausado, phase C) — an ORTHOGONAL operator layer, distinct
 # from the runtime state axis (idle|running|stopping). It governs two things at
@@ -97,7 +116,7 @@ _VALID_SOURCES = frozenset({"default", "tripadvisor"})
 LIGADO = "LIGADO"
 PAUSADO = "PAUSADO"
 DESLIGADO = "DESLIGADO"
-_VALID_MODES = frozenset({LIGADO, PAUSADO, DESLIGADO})
+VALID_MODES = frozenset({LIGADO, PAUSADO, DESLIGADO})
 
 
 def _decode(value: Any) -> str:
@@ -140,35 +159,87 @@ def should_halt_producer(redis: Any) -> bool:
     Keyed on MODE (get_mode defaults LIGADO even on a flushed Redis) plus a Stop
     (state == STOPPING), mirroring the orchestrator gate. It intentionally does
     NOT treat state == IDLE as halt, so a directly-dispatched standalone bulk run
-    (scripts/ta_bulk_sweep.py — never went through start_run, so state stays IDLE)
+    (scripts/ta_bulk_sweep.py — never went through start, so state stays IDLE)
     is not falsely halted; it still honors a painel PAUSADO/DESLIGADO.
     """
     return get_mode(redis) != LIGADO or get_state(redis) == STOPPING
 
 
-def start_run(redis: Any, ufs_total: int) -> bool:
-    """Mark the engine running for a fresh run.
+def start(
+    redis: Any,
+    session: Any,
+    *,
+    action: str,
+    depth: str,
+    source: str,
+    ufs: list[str],
+    lane: str,
+    valid_sources: Any = None,
+) -> str | None:
+    """Start a fresh run and return its run_id; None (no-op) if a run is already active.
 
-    Returns False (no-op) if a run is already active — Start is idempotent and
-    never stacks two orchestrators. Resets the progress counters.
+    Start never stacks two orchestrators. Resets the progress/lifecycle counters, sets
+    depth + source (sweep only — a describe run's ``depth``/``source`` are only the
+    runs_history labels), turns the motor LIGADO (a cold start IS the LIGADO transition:
+    otherwise a DESLIGADO left over from a seed/reset makes the orchestrator's mode gate
+    abort before the first UF), stores the run_id generation token and inserts the
+    runs_history row (status "running"). The row is BEST-EFFORT — a DB failure never
+    aborts an otherwise-valid start; the run just has no Varreduras trail.
+
+    Validation (depth/source/HTTP semantics) stays at the API edge; set_depth/set_source
+    still raise ValueError on an out-of-contract value. ``valid_sources`` is injected by
+    the caller (the kernel must not import the domains registry, D-18).
     """
     if get_state(redis) in (RUNNING, STOPPING):
-        return False
+        return None
+    # A previous run forced idle (DESLIGADO/R1) with producers still in flight never
+    # completed; its stragglers are now a stale generation, so close its row here.
+    previous = _decode(redis.get(_RUN_ID_KEY)) or None
+    if previous is not None and not _run_ended(redis):
+        _finalize(session, previous, "parcial", int(_decode(redis.get(_UFS_DONE_KEY)) or 0))
     redis.set(_STATE_KEY, RUNNING)
     redis.set(_ENABLED_KEY, "1")
-    redis.set(_UFS_TOTAL_KEY, int(ufs_total))
+    redis.set(_UFS_TOTAL_KEY, len(ufs))
     redis.set(_UFS_DONE_KEY, 0)
     redis.delete(_CURRENT_UF_KEY)
     redis.delete(_LAST_RUN_ENDED_KEY)  # a fresh run is not "synced" yet
-    # Producer-completes lifecycle: a fresh run starts with zero producers in flight
-    # and dispatch not yet done, so it cannot be spuriously "completed" by a stale key.
     redis.set(_INFLIGHT_KEY, "0")
     redis.delete(_DISPATCH_DONE_KEY)
-    # Clear any stale run_id so a producer that completes this run before the API edge
-    # re-writes brave:engine:run_id can never finalize a PREVIOUS run's runs_history row
-    # (the /start edge sets it again immediately after this call).
-    redis.delete(_RUN_ID_KEY)
-    return True
+    if action == "sweep":
+        set_depth(redis, depth)
+        set_source(redis, source, valid_sources=valid_sources)
+    set_mode(redis, LIGADO, session=session)
+    run_id = str(uuid.uuid4())
+    redis.set(_RUN_ID_KEY, run_id)
+    if session is not None:
+        try:
+            from brave.core.models import RunHistory  # noqa: PLC0415
+
+            session.add(
+                RunHistory(
+                    id=uuid.UUID(run_id),
+                    ufs=list(ufs),
+                    source=source,
+                    depth=depth,
+                    lane=lane,
+                    ufs_total=len(ufs),
+                    status="running",
+                )
+            )
+            session.commit()
+        except Exception as exc:  # best-effort — never abort a valid start
+            session.rollback()
+            logger.warning("engine_start_runs_history_write_failed", error=str(exc))
+    return run_id
+
+
+def abort(redis: Any, session: Any, run_id: str) -> None:
+    """Revert a start whose dispatch failed: idle, latch off, run_id cleared, row → falha."""
+    if _current(redis, run_id) is not None:
+        _mark_idle(redis)
+        set_enabled(redis, False)
+        redis.delete(_RUN_ID_KEY)
+    _finalize(session, run_id, "falha", 0)
 
 
 def request_stop(redis: Any) -> bool:
@@ -179,26 +250,9 @@ def request_stop(redis: Any) -> bool:
     return True
 
 
-def mark_idle(redis: Any) -> None:
-    """Orchestrator calls this when the loop exits (completed or drained)."""
+def _mark_idle(redis: Any) -> None:
     redis.set(_STATE_KEY, IDLE)
     redis.delete(_CURRENT_UF_KEY)
-
-
-def mark_run_ended(redis: Any) -> None:
-    """Set the sync marker: the most recent run finished draining (→ 'synced').
-
-    Called from the orchestrator's finally block (engine_sweep_run) after the motor is
-    turned OFF. Paired with start_run, which clears this marker so an in-flight run
-    never reads as synced.
-    """
-    redis.set(_LAST_RUN_ENDED_KEY, "1")
-
-
-def mark_uf_dispatched(redis: Any, uf: str) -> None:
-    """Record that one UF was fanned out (for the progress feedback)."""
-    redis.set(_CURRENT_UF_KEY, uf)
-    redis.incr(_UFS_DONE_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -206,80 +260,127 @@ def mark_uf_dispatched(redis: Any, uf: str) -> None:
 # ---------------------------------------------------------------------------
 #
 # The orchestrator (engine_sweep_run) only *dispatches* producer tasks; those tasks
-# run for minutes AFTER the dispatch loop returns. The old finally marked the run
-# "synced" the moment dispatch finished — so the badge read synced while work was
-# still landing. These primitives move completion to the LAST producer: the
-# orchestrator increments the counter before each dispatch and latches dispatch_done
-# in its finally; every producer decrements in its own finally; whoever brings the
-# counter to zero (with dispatch already done) atomically claims completion.
+# run for minutes AFTER the dispatch loop returns. Completion therefore belongs to the
+# LAST producer: the orchestrator claims each producer before its dispatch and calls
+# dispatch_finished when its loop ends; every producer calls producer_done in its own
+# terminal finally; whoever brings the counter to zero (dispatch already done)
+# atomically claims completion.
 
 
-def incr_inflight(redis: Any) -> int:
-    """Increment the in-flight producer counter (called before each producer dispatch)."""
-    return int(redis.incr(_INFLIGHT_KEY))
+def _current(redis: Any, run_id: str | None) -> str | None:
+    """The current run's id if ``run_id`` addresses it (None = "the current run").
 
-
-def decr_inflight(redis: Any) -> int:
-    """Decrement the in-flight producer counter, clamped at zero.
-
-    A best-effort producer finally may run more times than there were increments
-    (retries, direct invocations, the standalone bulk path), so a negative counter is
-    normalized back to 0 rather than allowed to underflow (which would wedge the run
-    from ever completing).
+    None when there is no current run or ``run_id`` belongs to an older generation.
     """
-    n = int(redis.decr(_INFLIGHT_KEY))
-    if n < 0:
+    current = _decode(redis.get(_RUN_ID_KEY)) or None
+    if current is None or (run_id is not None and run_id != current):
+        return None
+    return current
+
+
+def _run_ended(redis: Any) -> bool:
+    return _decode(redis.get(_LAST_RUN_ENDED_KEY)) == "1"
+
+
+def claim_producer(redis: Any, run_id: str | None = None) -> str | None:
+    """Count one producer in flight for the run; call BEFORE its dispatch.
+
+    Returns the run_id it was counted against (pass it to the producer and to its
+    producer_done), or None when there is no live run to count against (stale
+    generation / run already ended) — then the producer must not call producer_done.
+    """
+    current = _current(redis, run_id)
+    if current is None or _run_ended(redis):
+        return None
+    redis.incr(_INFLIGHT_KEY)
+    return current
+
+
+def progress(redis: Any, run_id: str | None = None, n: int = 1, *, uf: str | None = None) -> None:
+    """Record ``n`` units of the plan dispatched (a UF, or a bulk page). Stale runs are ignored."""
+    if _current(redis, run_id) is None or _run_ended(redis):
+        return
+    if uf is not None:
+        redis.set(_CURRENT_UF_KEY, uf)
+    redis.incrby(_UFS_DONE_KEY, n)
+
+
+def producer_done(redis: Any, session: Any, run_id: str | None = None) -> bool:
+    """A producer reached its terminal outcome. Returns True iff it completed the run.
+
+    A producer of an older generation is ignored — it can never drain the new run's
+    counter. The decrement is clamped at zero (DESLIGADO zeroes the counter while
+    producers are still in flight).
+    """
+    current = _current(redis, run_id)
+    if current is None:
+        return False
+    if int(redis.decr(_INFLIGHT_KEY)) < 0:
         redis.set(_INFLIGHT_KEY, "0")
-        n = 0
-    return n
+    return _maybe_complete(redis, session, current)
 
 
-def get_inflight(redis: Any) -> int:
-    """Current in-flight producer count. Absent/corrupt → 0."""
+def dispatch_finished(redis: Any, session: Any, run_id: str | None = None) -> bool:
+    """The orchestrator's dispatch loop ended. Returns True iff it completed the run."""
+    current = _current(redis, run_id)
+    if current is None:
+        return False
+    redis.set(_DISPATCH_DONE_KEY, "1")
+    return _maybe_complete(redis, session, current)
+
+
+def _inflight(redis: Any) -> int:
     return int(_decode(redis.get(_INFLIGHT_KEY)) or 0)
 
 
-def set_dispatch_done(redis: Any, done: bool) -> None:
-    """Latch (or clear) the 'orchestrator finished dispatching' flag ('1' / absent)."""
-    if done:
-        redis.set(_DISPATCH_DONE_KEY, "1")
-    else:
-        redis.delete(_DISPATCH_DONE_KEY)
-
-
-def is_dispatch_done(redis: Any) -> bool:
-    """True once the orchestrator's dispatch loop has fanned out every producer."""
-    return _decode(redis.get(_DISPATCH_DONE_KEY)) == "1"
-
-
-def maybe_complete(redis: Any) -> bool:
+def _maybe_complete(redis: Any, session: Any, run_id: str) -> bool:
     """Complete the run iff dispatch is done and no producer is still in flight.
 
-    RACE-SAFE single-winner: two producers can decrement the counter to zero and BOTH
-    observe get_inflight()==0 concurrently. The atomic ``GETSET`` on the sync marker is
-    the claim — it sets it to "1" and returns the OLD value in one round-trip, so
-    exactly one caller sees the old value != "1" and performs the (idempotent) motor-off
-    side effects + returns True. Every other racer (and every later caller) sees "1"
-    already there and returns False. This mirrors set_mode(DESLIGADO)'s effects
-    (mark_idle + enabled False + mode off) but stays REDIS-ONLY (no session=) so a DB
-    hiccup can never break run completion, and does NOT import brave.tasks (D-18): the
-    run_history finalize stays in the caller (pipeline.py).
+    RACE-SAFE single-winner: two producers can drain the counter to zero concurrently;
+    the atomic ``GETSET`` on the sync marker is the claim, so exactly one caller turns
+    the motor off (redis-only DESLIGADO — skipped on a reasoned pause, which must keep
+    reading PAUSADO + reason) and finalizes the runs_history row.
 
-    Returns True exactly once per run (the winning completion), False otherwise.
+    Status: "concluido" only when every planned unit was dispatched and nothing
+    interrupted the run; a Stop, pause, DESLIGADO or R1 (state no longer RUNNING, or
+    mode no longer LIGADO) → "parcial".
     """
-    if get_inflight(redis) > 0 or not is_dispatch_done(redis):
+    if _inflight(redis) > 0 or _decode(redis.get(_DISPATCH_DONE_KEY)) != "1":
         return False
-    # Atomically CLAIM completion: set last_run_ended="1" and read the prior value.
+    done = int(_decode(redis.get(_UFS_DONE_KEY)) or 0)
+    total = int(_decode(redis.get(_UFS_TOTAL_KEY)) or 0)
+    interrupted = (
+        get_state(redis) != RUNNING or get_mode(redis) != LIGADO or done < total
+    )
     if _decode(redis.getset(_LAST_RUN_ENDED_KEY, "1")) == "1":
         return False  # another caller already completed this run
     # The run still ENDS on a reasoned pause (state must go idle, or the Painel's Continuar
-    # → /engine/start would 409 on "already running"); only the mode flip is skipped, so
-    # the motor reads PAUSADO + reason instead of a finished, switched-off run.
-    mark_idle(redis)
+    # → /engine/start would 409 on "already running"); only the mode flip is skipped.
+    _mark_idle(redis)
     set_enabled(redis, False)
     if redis.get(_PAUSE_REASON_KEY) is None:
-        redis.set(_MODE_KEY, DESLIGADO)  # redis-only DESLIGADO (no session side effects)
+        redis.set(_MODE_KEY, DESLIGADO)
+    _finalize(session, run_id, "parcial" if interrupted else "concluido", done)
     return True
+
+
+def _finalize(session: Any, run_id: str, status: str, dispatched: int) -> None:
+    """Best-effort finalize of the runs_history row; never raises (T-17.1-02-02)."""
+    if session is None:
+        return
+    try:
+        from brave.core.models import RunHistory  # noqa: PLC0415
+
+        run = session.get(RunHistory, uuid.UUID(run_id))
+        if run is not None:
+            run.ended_at = datetime.now(UTC)
+            run.ufs_dispatched = dispatched
+            run.status = status
+            session.commit()
+    except Exception as exc:  # best-effort — never break the run
+        with contextlib.suppress(Exception):
+            session.rollback()
+        logger.warning("engine_run_history_finalize_failed", run_id=run_id, error=str(exc))
 
 
 def pause_with_reason(
@@ -322,12 +423,12 @@ def set_depth(redis: Any, depth: str) -> None:
 
     Invalid values raise ValueError and are never written — the engine must not
     silently spend on an unrecognized (possibly more expensive) reach. Kept
-    orthogonal to start_run so lane (entity family) and depth (reach) stay
-    independent; the API edge sets depth around start_run.
+    orthogonal to the run state so lane (entity family) and depth (reach) stay
+    independent; start() sets it for a sweep run.
     """
-    if depth not in _VALID_DEPTHS:
+    if depth not in VALID_DEPTHS:
         raise ValueError(
-            f"invalid depth {depth!r}; expected one of {sorted(_VALID_DEPTHS)}"
+            f"invalid depth {depth!r}; expected one of {sorted(VALID_DEPTHS)}"
         )
     redis.set(_DEPTH_KEY, depth)
 
@@ -335,7 +436,7 @@ def set_depth(redis: Any, depth: str) -> None:
 def get_depth(redis: Any) -> str | None:
     """Persisted depth, or None when absent/corrupt (unset → required at the edge)."""
     raw = _decode(redis.get(_DEPTH_KEY))
-    return raw if raw in _VALID_DEPTHS else None
+    return raw if raw in VALID_DEPTHS else None
 
 
 def set_source(
@@ -350,10 +451,10 @@ def set_source(
     import the ``brave.domains`` registry, so the caller INJECTS the allowed set via
     ``valid_sources`` — the API edge passes the REGISTERED-AND-ENABLED lanes
     (``enabled_sources(config)``) so a disabled/unknown source is rejected here too.
-    When ``valid_sources`` is ``None`` the legacy in-kernel ``_VALID_SOURCES`` literal
+    When ``valid_sources`` is ``None`` the legacy in-kernel ``VALID_SOURCES`` literal
     is used (back-compat for direct callers/tests). Mirrors set_depth otherwise.
     """
-    allowed = _VALID_SOURCES if valid_sources is None else frozenset(valid_sources)
+    allowed = VALID_SOURCES if valid_sources is None else frozenset(valid_sources)
     if source not in allowed:
         raise ValueError(
             f"invalid source {source!r}; expected one of {sorted(allowed)}"
@@ -364,7 +465,7 @@ def set_source(
 def get_source(redis: Any) -> str | None:
     """Persisted source lane, or None when absent/corrupt (defaults to 'default' at /start)."""
     raw = _decode(redis.get(_SOURCE_KEY))
-    return raw if raw in _VALID_SOURCES else None
+    return raw if raw in VALID_SOURCES else None
 
 
 def set_mode(redis: Any, mode: str, *, session: Any = None) -> None:
@@ -373,7 +474,7 @@ def set_mode(redis: Any, mode: str, *, session: Any = None) -> None:
     Mode is orthogonal to the runtime state (idle|running|stopping) and does NOT by
     itself drive state transitions — with one deliberate exception:
 
-      - DESLIGADO is a hard off, so it ALSO returns the engine to idle (mark_idle),
+      - DESLIGADO is a hard off, so it ALSO returns the engine to idle,
         clears the operator-intent enabled latch (set_enabled False), and zeroes the
         producer inflight counter so the sync badge cannot stay "syncing" after OFF.
       - PAUSADO leaves the runtime AS-IS — a running sweep drains gracefully on its
@@ -392,23 +493,23 @@ def set_mode(redis: Any, mode: str, *, session: Any = None) -> None:
     never lose the live mode. When ``session`` is None the behavior is exactly the
     Phase-C Redis-only path (unchanged).
     """
-    if mode not in _VALID_MODES:
+    if mode not in VALID_MODES:
         raise ValueError(
-            f"invalid mode {mode!r}; expected one of {sorted(_VALID_MODES)}"
+            f"invalid mode {mode!r}; expected one of {sorted(VALID_MODES)}"
         )
     redis.set(_MODE_KEY, mode)
     if mode == DESLIGADO:
-        mark_idle(redis)
+        _mark_idle(redis)
         set_enabled(redis, False)
         # Hard off must also zero the producer inflight counter. get_status derives
-        # sync_phase="syncing" while get_inflight > 0, so without this the badge stays
+        # sync_phase="syncing" while inflight > 0, so without this the badge stays
         # "Sincronizando" after OFF — either through drain lag or, if a producer leaked a
-        # +1 by never reaching its finally, permanently. decr_inflight clamps at 0, so a
+        # +1 by never reaching its finally, permanently. producer_done clamps at 0, so a
         # still-draining producer that finishes after OFF cannot underflow this reset.
         redis.set(_INFLIGHT_KEY, "0")
     if mode == LIGADO:
         # Both resume paths (POST /engine/start and POST /engine/mode LIGADO) call
-        # set_mode(LIGADO) directly or via start_run — clearing the reason here covers
+        # set_mode(LIGADO) directly or via start — clearing the reason here covers
         # every resume without separate clear-on-resume code anywhere else.
         redis.delete(_PAUSE_REASON_KEY)
     if session is not None:
@@ -435,7 +536,7 @@ def get_mode(redis: Any, *, session: Any = None) -> str:
     a Redis miss returns the LIGADO default.
     """
     raw = _decode(redis.get(_MODE_KEY))
-    if raw in _VALID_MODES:
+    if raw in VALID_MODES:
         return raw
     if session is not None:
         persisted = _read_persisted_mode(session)
@@ -462,7 +563,7 @@ def _read_persisted_mode(session: Any) -> str | None:
     if row is None or not isinstance(row.value, dict):
         return None
     value = row.value.get("v")
-    return value if value in _VALID_MODES else None
+    return value if value in VALID_MODES else None
 
 
 def is_editing_unlocked(redis: Any, *, session: Any = None) -> bool:
@@ -485,7 +586,7 @@ def get_status(redis: Any, *, session: Any = None) -> dict[str, Any]:
 
     ``sync_phase`` (BUG 6/7) is a DERIVED tri-state for the dashboard sync badge:
       - "syncing" while a run is active (state RUNNING), the operator-intent latch is
-        set (is_enabled), OR any producer task is still in flight (get_inflight > 0) —
+        set (is_enabled), OR any producer task is still in flight (inflight > 0) —
         the last keeps the badge syncing even after the orchestrator's dispatch loop
         has returned but its fanned-out producers are still landing rows (live kanban).
       - "synced"  once a run has finished draining (the last_run_ended marker == "1").
@@ -494,7 +595,7 @@ def get_status(redis: Any, *, session: Any = None) -> dict[str, Any]:
     state = get_state(redis)
     enabled = is_enabled(redis)
     run_ended = _decode(redis.get(_LAST_RUN_ENDED_KEY)) == "1"
-    if state == RUNNING or enabled or get_inflight(redis) > 0:
+    if state == RUNNING or enabled or _inflight(redis) > 0:
         sync_phase = "syncing"
     elif run_ended:
         sync_phase = "synced"
