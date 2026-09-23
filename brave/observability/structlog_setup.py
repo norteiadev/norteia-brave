@@ -4,7 +4,7 @@
 available) and a ConsoleRenderer into the global structlog chain.
 
 ## Source caching (W1 — hot-path guard)
-The Redis-buffer processor must NOT call `redis.get("brave:engine:source")` on
+The Redis-buffer processor must NOT call `engine.get_source(redis)` on
 every log event — that would add a synchronous Redis round-trip to every
 structlog call. Instead, the processor caches the resolved source in a
 mutable closure dict and refreshes it at most once every `_SOURCE_CACHE_TTL`
@@ -29,19 +29,20 @@ suite fully functional without any Redis dependency.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import Any
 
 import structlog
 
-from brave.observability.log_buffer import _decode, append_log
+from brave.core.engine import get_source
+from brave.observability.log_buffer import append_log
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_SOURCE_CACHE_TTL: float = 30.0  # seconds between redis.get("brave:engine:source") calls
-_SOURCE_KEY = "brave:engine:source"
+_SOURCE_CACHE_TTL: float = 30.0  # seconds between engine.get_source(redis) calls
 
 # ---------------------------------------------------------------------------
 # Module-level idempotency guard (W2)
@@ -58,7 +59,7 @@ _configured: bool = False
 def _make_buffer_processor(redis: Any):
     """Return a structlog processor that appends every event to the Redis log ring buffer.
 
-    Source is resolved from Redis (brave:engine:source) at most once per
+    Source is resolved from Redis (engine.get_source) at most once per
     _SOURCE_CACHE_TTL seconds — never on every log call (W1). A mutable dict
     closure holds the cached state; no module-level mutation needed.
 
@@ -72,11 +73,8 @@ def _make_buffer_processor(redis: Any):
         now = time.monotonic()
         # Refresh source cache only when TTL has elapsed
         if now - _state["ts"] > _SOURCE_CACHE_TTL:
-            try:
-                raw = redis.get(_SOURCE_KEY)
-                _state["source"] = _decode(raw) or "default"
-            except Exception:
-                pass  # Keep cached source on Redis error
+            with contextlib.suppress(Exception):  # keep cached source on Redis error
+                _state["source"] = get_source(redis) or "default"
             # Always reset the timestamp so we don't hammer Redis on every call
             # when Redis is temporarily unreachable
             _state["ts"] = now

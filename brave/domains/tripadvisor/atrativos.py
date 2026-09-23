@@ -1032,6 +1032,7 @@ class TripAdvisorAtrativosIngest:
         redis: Any,
         *,
         run_rio: bool = True,
+        run_id: str | None = None,
     ) -> None:
         """Drive the paginated GraphQL listing and bulk-ingest each page (Phase 15).
 
@@ -1060,6 +1061,7 @@ class TripAdvisorAtrativosIngest:
             max_pages:  Cap on pages to fetch this run.
             redis:      Sync Redis client for the live progress hash (fakeredis-safe).
             run_rio:    When True, trigger the Rio pipeline per ingested card.
+            run_id:     Engine run to count each completed page against (None = none).
         """
         async for offset, cards in self._client.fetch_attractions_paginated_gql(
             geo_id, start_page, max_pages
@@ -1117,6 +1119,8 @@ class TripAdvisorAtrativosIngest:
             # rolled-back data (Pitfall 3 resume integrity).
             self._session.commit()
             sweep_progress.record_page(redis, offset, ingested)
+            if run_id is not None:  # the engine run this bulk sweep was claimed against
+                collection_engine.progress(redis, run_id)
             logger.info(
                 "ta_bulk_page_ingested",
                 offset=offset,

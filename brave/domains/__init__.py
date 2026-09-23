@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from brave.config.settings import AppConfig
 
 # name -> (module, attribute). "default" is the engine source name for the Google
-# Places attraction track (brave.core.engine `_VALID_SOURCES`, brave:engine:source);
+# Places attraction track (brave.core.engine `VALID_SOURCES`, brave:engine:source);
 # the retired Mtur destino-seed no longer registers a domain.
 _LAZY: dict[str, tuple[str, str]] = {
     "default": ("brave.domains.places.controllers", "PLACES_DOMAIN"),
