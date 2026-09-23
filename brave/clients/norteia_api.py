@@ -13,8 +13,7 @@ Retry policy (T-03-05):
 
 Usage pattern:
     client = NorteiaApiClient(base_url=settings.norteia_api_url, service_token=token)
-    async with client as c:
-        result = await c.push_destination(payload)
+    await client.push("destination", payload)  # True after a 2xx; raises ApiDown when down
 
 Or inject http_client for testing:
     async with httpx.AsyncClient() as http_client:
@@ -31,6 +30,14 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+
+from brave.core.mar import sync
+from brave.shared.exceptions import ApiDown
+
+_PATHS = {
+    "destination": "/api/internal/territorial/destinations",
+    "attraction": "/api/internal/territorial/attractions",
+}
 
 
 def _is_5xx(exc: BaseException) -> bool:
@@ -60,8 +67,10 @@ class NorteiaApiClient:
         base_url: str | Any,
         service_token: str,
         http_client: httpx.AsyncClient | None = None,
+        redis: Any | None = None,
     ) -> None:
         self._base_url = str(base_url).rstrip("/")
+        self._redis = redis
         self._service_token = service_token
         self._injected_client = http_client
         self._client: httpx.AsyncClient | None = None
@@ -146,7 +155,7 @@ class NorteiaApiClient:
         Raises:
             httpx.HTTPStatusError: On 4xx (no retry) or 5xx after 3 attempts.
         """
-        return await self._post("/api/internal/territorial/destinations", payload)
+        return await self._post(_PATHS["destination"], payload)
 
     async def push_attraction(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Push a canonical attraction Mar record to norteia-api.
@@ -163,4 +172,16 @@ class NorteiaApiClient:
         Raises:
             httpx.HTTPStatusError: On 4xx (no retry) or 5xx after 3 attempts.
         """
-        return await self._post("/api/internal/territorial/attractions", payload)
+        return await self._post(_PATHS["attraction"], payload)
+
+    async def push(self, entity_type: str, payload: dict[str, Any]) -> bool:
+        """POST a Mar payload to the endpoint for entity_type; True after a 2xx.
+
+        Raises ApiDown (no POST) when the cached health probe says norteia-api is
+        down; HTTP errors propagate so the caller's retry handles them.
+        """
+        if sync.norteia_api_up(self._redis) is False:
+            raise ApiDown(f"norteia-api down; {entity_type} push stays pending")
+        async with self:
+            await self._post(_PATHS[entity_type], payload)
+        return True

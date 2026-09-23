@@ -19,6 +19,7 @@ Hierarchy::
 
     BraveError
     ├── TransientError      — retry with backoff (network flap, DB timeout)
+    │   └── ApiDown         — norteia-api down (cached probe); Mar push stays pending
     ├── PermanentError      — quarantine, do not retry (malformed payload)
     ├── ComplianceError     — D-11 compliance gate failure (LGPD/BSP)
     ├── CostGuardError      — daily USD budget exceeded (operational halt)
@@ -44,6 +45,10 @@ class TransientError(BraveError):
 
 class PermanentError(BraveError):
     """Permanent failure — quarantine, do not retry (malformed payload, etc.)."""
+
+
+class ApiDown(TransientError):  # noqa: N818 — name locked by the design (Q11)
+    """norteia-api confirmed down by the cached health probe; the push stays pending."""
 
 
 class ComplianceError(BraveError):

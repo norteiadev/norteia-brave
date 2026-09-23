@@ -215,3 +215,39 @@ def test_push_mar_imports_norteia_api_client():
     assert "from brave.clients.norteia_api import NorteiaApiClient" in source, (
         "push_mar must import NorteiaApiClient from brave.clients.norteia_api"
     )
+
+
+# ---------------------------------------------------------------------------
+# push(entity_type, payload) — owns its HTTP lifecycle, health-gated
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+@pytest.mark.enable_socket
+@respx.mock
+async def test_push_returns_true_without_async_with(api_client, destination_payload):
+    """push() opens its own client — no `async with` at the call site."""
+    route = respx.post(f"{BASE_URL}/api/internal/territorial/attractions").mock(
+        return_value=httpx.Response(200, json={"id": "x", "source_ref": "y"})
+    )
+
+    assert await api_client.push("attraction", destination_payload) is True
+    assert route.called
+
+
+@pytest.mark.anyio
+@pytest.mark.enable_socket
+@respx.mock
+async def test_push_raises_api_down_without_post(api_client, destination_payload, monkeypatch):
+    """A confirmed-down norteia-api raises ApiDown and never POSTs."""
+    from brave.core.mar import sync
+    from brave.shared.exceptions import ApiDown
+
+    monkeypatch.setattr(sync, "norteia_api_up", lambda redis=None: False)
+    route = respx.post(f"{BASE_URL}/api/internal/territorial/destinations").mock(
+        return_value=httpx.Response(200, json={})
+    )
+
+    with pytest.raises(ApiDown):
+        await api_client.push("destination", destination_payload)
+    assert not route.called

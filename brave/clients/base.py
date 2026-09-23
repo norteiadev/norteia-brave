@@ -83,25 +83,11 @@ class NorteiaApiClientProtocol(Protocol):
     Shape verified by Pact consumer test in tests/contract/.
     """
 
-    async def push_destination(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Push a canonical destination Mar record to norteia-api.
+    async def push(self, entity_type: str, payload: dict[str, Any]) -> bool:
+        """Push a canonical Mar record ("destination" | "attraction") to norteia-api.
 
-        Args:
-            payload: Mar push payload matching the Pact contract shape.
-
-        Returns:
-            Response dict from norteia-api (at minimum: {"id": ..., "source_ref": ...}).
-        """
-        ...
-
-    async def push_attraction(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Push a canonical attraction Mar record to norteia-api.
-
-        Args:
-            payload: Mar push payload matching the Pact contract shape.
-
-        Returns:
-            Response dict from norteia-api (at minimum: {"id": ..., "source_ref": ...}).
+        Returns True only when norteia-api accepted it (2xx); False when nothing was
+        sent (offline Null adapter). Raises ApiDown when the API is confirmed down.
         """
         ...
 
