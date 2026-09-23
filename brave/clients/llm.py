@@ -233,6 +233,12 @@ class RealLLMClient:
         # Gemini construct this client exactly as before.
         self._gemini_http: httpx.AsyncClient | None = None
 
+    async def aclose(self) -> None:
+        """Close the Gemini-direct HTTP client, when a gemini-* call built one."""
+        http, self._gemini_http = self._gemini_http, None
+        if http is not None:
+            await http.aclose()
+
     @retry(
         retry=retry_if_exception(_is_openai_retryable),  # WR-01: transient only
         stop=stop_after_attempt(3),
