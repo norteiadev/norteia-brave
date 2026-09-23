@@ -992,7 +992,7 @@ def test_collect_task_dispatches_no_push() -> None:
         patch("brave.tasks.pipeline._get_session", return_value=(session, MagicMock())),
         patch("brave.tasks.pipeline.AppConfig") as app_config,
         patch("brave.tasks.pipeline.load_effective_config"),
-        patch("brave.tasks.pipeline._batch_deps", return_value=(MagicMock(), MagicMock())),
+        patch("brave.tasks.pipeline.clients_for"),
         patch("brave.tasks.pipeline.publish_mar") as push,
         patch("brave.lanes.atrativos.copy_batch.collect_batches", return_value=3) as collect,
     ):

@@ -124,8 +124,10 @@ def test_the_dispatching_task_takes_the_row_lock(task_name: str) -> None:
     """
     from types import SimpleNamespace
 
+    from brave.clients.factory import Clients
     from brave.core.models import RioRecord
     from brave.tasks import pipeline
+    from tests.fakes.fake_places import FakePlacesClient
 
     raw_fn = getattr(pipeline, task_name).__wrapped__.__func__
     session = MagicMock()
@@ -133,10 +135,12 @@ def test_the_dispatching_task_takes_the_row_lock(task_name: str) -> None:
 
     with (
         patch("brave.tasks.pipeline._get_session", return_value=(session, MagicMock())),
-        patch("brave.tasks.pipeline.AppConfig") as app_config,
+        patch(
+            "brave.tasks.pipeline.clients_for",
+            return_value=Clients(places=FakePlacesClient()),  # no network
+        ),
         patch("brave.tasks.pipeline.load_effective_config"),
     ):
-        app_config.return_value.run_real_externals = False  # NullPlacesClient, no network
         raw_fn(SimpleNamespace(), rio_id)
 
     session.get.assert_called_once_with(RioRecord, uuid.UUID(rio_id), with_for_update=True)

@@ -20,9 +20,8 @@ What this suite asserts:
   - test_replay_is_noop         : re-dispatching find_contacts_task / gather_signals_task on an
                                   already-advanced record is a no-op (inline guards, D-04).
 
-100% offline + keyless (D-06): AppConfig().run_real_externals defaults to False, so the tasks
-select FakePlaces/FakeLLM. We patch those fakes at their import sites to inject the
-borderline fixtures (mirrors the score math in test_atrativos_lane_e2e.py::test_sc4).
+100% offline + keyless (D-06): the tasks get their adapters from pipeline.clients_for, which
+we patch to hand out FakePlaces/FakeLLM loaded with the borderline fixtures (mirrors the score math in test_atrativos_lane_e2e.py::test_sc4).
 
 Isolation: the chain tasks call session.commit() internally, so we use the SAVEPOINT-isolated
 session pattern established in the destinos-lane integration tests — every commit only releases a savepoint and the
@@ -194,12 +193,10 @@ def _seed_parent_destino(session) -> MarRecord:
 
 
 def _patch_fakes(monkeypatch) -> None:
-    """Inject borderline fixtures into the fakes the chain tasks build internally.
-
-    The tasks construct their own FakePlacesClient()/FakeLLMClient() with
-    no fixtures (run_real_externals=False). We patch each class at its import site so the
-    chain produces a borderline (<80%) attraction that lands at the gate.
+    """Hand the chain tasks fakes loaded with borderline fixtures via pipeline.clients_for,
+    so the chain produces a borderline (<80%) attraction that lands at the gate.
     """
+    from brave.clients.factory import Clients
     from tests.fakes.fake_llm import FakeLLMClient
     from tests.fakes.fake_places import FakePlacesClient
 
@@ -233,8 +230,10 @@ def _patch_fakes(monkeypatch) -> None:
             )
         )
 
-    monkeypatch.setattr("brave.clients.null_places.NullPlacesClient", _places_factory)
-    monkeypatch.setattr("brave.clients.null_llm.NullLLMClient", _llm_factory)
+    monkeypatch.setattr(
+        "brave.tasks.pipeline.clients_for",
+        lambda *a, **k: Clients(places=_places_factory(), llm=_llm_factory()),
+    )
 
 
 def _force_inline_fallback(monkeypatch, pipeline) -> None:

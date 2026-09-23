@@ -84,20 +84,13 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
     """Helper: patch pipeline to use a stub TripAdvisorClient + fakeredis, run sweep.
 
     Patching strategy:
-    - patch 'brave.lanes.tripadvisor.client.TripAdvisorClient' so that the lazy
-      `from brave.lanes.tripadvisor.client import TripAdvisorClient` in pipeline.py
-      gets our stub class.
-    - patch AppConfig to return run_real_externals=True so the real-client branch runs.
+    - patch pipeline.clients_for so the sweep gets the stub TA client (+ a Null geocoder).
     - patch redis.from_url to return fakeredis (for both the client and _mark_needs_bootstrap).
     - patch _get_session (SQLAlchemy factory) to return mock DB session/engine.
     - patch load_ibge_municipios to return empty list.
     - patch TripAdvisorAtrativosIngest so that its produce() raises the exception from
       the stub client directly (destinos step removed — oa3).
     """
-    # Build a mock AppConfig with run_real_externals=True
-    mock_app_config = MagicMock()
-    mock_app_config.run_real_externals = True
-
     # Build a mock ScoreConfig
     mock_score_config = MagicMock()
 
@@ -109,14 +102,15 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
     # Build stub TA client instance
     stub_client = stub_client_class()
 
-    # Patch TripAdvisorClient at the source module so the local import in pipeline.py gets it
+    from brave.clients.factory import Clients  # noqa: PLC0415
+    from brave.clients.null_nominatim import NullGeocoderClient  # noqa: PLC0415
+
     monkeypatch.setattr(
-        "brave.lanes.tripadvisor.client.TripAdvisorClient",
-        stub_client_class,
+        "brave.tasks.pipeline.clients_for",
+        lambda *a, **k: Clients(tripadvisor=stub_client, geocoder=NullGeocoderClient()),
     )
 
-    # Patch AppConfig constructor + the effective-config loader (score seam)
-    monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
+    # Patch the effective-config loader (score seam)
     monkeypatch.setattr(
         "brave.tasks.pipeline.load_effective_config",
         lambda session, redis=None: MagicMock(score=mock_score_config),
@@ -132,15 +126,6 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
     monkeypatch.setattr(
         "brave.tasks.pipeline._get_session",
         lambda: (mock_db_session, mock_db_engine),
-    )
-
-    # Patch TripAdvisorConfig
-    from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
-
-    mock_ta_config = MagicMock(spec=TripAdvisorConfig)
-    monkeypatch.setattr(
-        "brave.config.settings.TripAdvisorConfig",
-        lambda: mock_ta_config,
     )
 
     # Patch load_ibge_csv to return empty list
@@ -167,14 +152,6 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
     monkeypatch.setattr(
         "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
         lambda **kw: mock_atrativos_ingest,
-    )
-
-    # Patch NominatimGeocoderClient (TA-15 wiring) so the guard doesn't fire
-    # in unit tests where RUN_REAL_EXTERNALS is not set in the environment.
-    from brave.clients.null_nominatim import NullGeocoderClient  # noqa: PLC0415
-    monkeypatch.setattr(
-        "brave.clients.nominatim.NominatimGeocoderClient",
-        lambda config, redis: NullGeocoderClient(),
     )
 
     # Build mock Celery task self
@@ -470,22 +447,15 @@ def _run_bulk_sweep(
     process_nascente_record are patched (no DB). redis.from_url → the shared fakeredis,
     so `rc` and the progress hash are the same instance the asserts read.
     """
-    mock_app_config = MagicMock()
-    mock_app_config.run_real_externals = True
+    from brave.clients.factory import Clients  # noqa: PLC0415
 
     mock_db_session = MagicMock()
     mock_db_engine = MagicMock()
 
-    # Real-client branch picks up our fake (ignores config/redis kwargs).
     monkeypatch.setattr(
-        "brave.lanes.tripadvisor.client.TripAdvisorClient",
-        lambda **kw: fake_client,
+        "brave.tasks.pipeline.clients_for",
+        lambda *a, **k: Clients(tripadvisor=fake_client, geocoder=fake_geo),
     )
-    monkeypatch.setattr(
-        "brave.clients.nominatim.NominatimGeocoderClient",
-        lambda config, redis: fake_geo,
-    )
-    monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
     monkeypatch.setattr(
         "brave.tasks.pipeline.load_effective_config",
         lambda session, redis=None: MagicMock(score=_make_config()),
@@ -495,13 +465,6 @@ def _run_bulk_sweep(
     monkeypatch.setattr(
         "brave.tasks.pipeline._get_session",
         lambda: (mock_db_session, mock_db_engine),
-    )
-
-    from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
-
-    monkeypatch.setattr(
-        "brave.config.settings.TripAdvisorConfig",
-        lambda: MagicMock(spec=TripAdvisorConfig),
     )
     monkeypatch.setattr(
         "brave.lanes.tripadvisor.ibge.load_ibge_municipios",
@@ -775,14 +738,12 @@ class TestSweepTripAdvisorTaConfig:
                 "brave.config.settings.TripAdvisorConfig",
                 lambda: sentinel,
             )
-            monkeypatch.setattr(
-                "brave.lanes.tripadvisor.client.TripAdvisorClient",
-                lambda **kw: MagicMock(),
-            )
+            from brave.clients.factory import Clients  # noqa: PLC0415
             from brave.clients.null_nominatim import NullGeocoderClient  # noqa: PLC0415
+
             monkeypatch.setattr(
-                "brave.clients.nominatim.NominatimGeocoderClient",
-                lambda config, redis: NullGeocoderClient(),
+                "brave.tasks.pipeline.clients_for",
+                lambda *a, **k: Clients(tripadvisor=MagicMock(), geocoder=NullGeocoderClient()),
             )
 
         mock_self = MagicMock()
@@ -919,7 +880,7 @@ class TestSweepNeverDescribes:
     """Even with every description flag ON (real externals, description on, batch off,
     cascade on) the sweep builds its inline agent with description_enabled=False and a
     Null LLM — no copywriter client, no cascade build, no spend. An empty Gemini key
-    therefore no longer matters to the sweep (the guard moved to _enrich_one)."""
+    therefore no longer matters to the sweep (the guard lives in the client factory)."""
 
     def _run(self, monkeypatch, *, gemini_key: str = "", model: str = "gemini-2.5-flash"):
         import contextlib
@@ -999,7 +960,7 @@ class TestSweepNeverDescribes:
             raise AssertionError("the sweep must not build a real copywriter client")
 
         monkeypatch.setattr("brave.clients.llm.RealLLMClient", _boom)
-        monkeypatch.setattr("brave.tasks.pipeline._cascade_search_client", _boom)
+        monkeypatch.setattr("brave.clients.parallel.RealParallelClient", _boom)
 
         captured, events = self._run(monkeypatch)
         agent = captured["places_agent"]

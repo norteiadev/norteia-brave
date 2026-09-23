@@ -16,7 +16,6 @@ Tests:
 
 from __future__ import annotations
 
-import os
 import uuid
 from types import SimpleNamespace
 from typing import Any
@@ -241,41 +240,6 @@ async def test_cost_guard_invoked_and_llm_generation_written(
     assert row.model_slug is not None
     assert row.prompt_tokens == 100
     assert row.completion_tokens == 50
-
-
-# ---------------------------------------------------------------------------
-# T5 — pipeline.py outreach_task wiring assertion (structural grep)
-# ---------------------------------------------------------------------------
-
-
-def test_pipeline_outreach_task_passes_redis_and_session_to_real_llm_client():
-    """Structural assertion: pipeline.py contains the wired RealLLMClient call site.
-
-    Reads brave/tasks/pipeline.py as text and asserts the expected constructor
-    call signature is present — confirming that Task 2 has wired redis_client,
-    session, and lane into the outreach_task real path.
-
-    This is a 100% offline structural test (D-07, TEST-01): no env vars needed,
-    no imports of real clients. If this fails, Task 2 edits are incomplete.
-    """
-    pipeline_path = os.path.join(
-        os.path.dirname(__file__),
-        "..", "..", "..", "brave", "tasks", "pipeline.py",
-    )
-    pipeline_path = os.path.normpath(pipeline_path)
-
-    with open(pipeline_path, "r", encoding="utf-8") as f:
-        source = f.read()
-
-    expected_signature = (
-        "RealLLMClient(config=app_config.llm, redis_client=redis_client, session=session"
-    )
-    count = source.count(expected_signature)
-
-    assert count >= 1, (
-        f"Expected at least 1 occurrence of wired RealLLMClient call site in pipeline.py, "
-        f"found {count}. Task 2 (pipeline wiring) must be completed first."
-    )
 
 
 # ---------------------------------------------------------------------------
