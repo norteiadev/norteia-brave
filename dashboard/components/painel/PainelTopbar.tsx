@@ -325,14 +325,18 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   // Continuar (quick-260918-ohm): resume the paused action after a manual confirm
   // that the provider's balance/quota was recharged. Rebuilds the start body from
   // the server-polled pause_reason.action — never trusts client-held depth state.
+  // A null action (a chain task hit the wall, no run to resume) only lifts the
+  // pause: mode LIGADO clears pause_reason server-side and starts nothing.
   const pauseReason = data?.pause_reason ?? null;
   const onContinuar = () => {
     if (!pauseReason) return;
     if (!window.confirm("Saldo recarregado?")) return;
     if (pauseReason.action === "describe") {
       start.mutate({ action: "describe" });
-    } else {
+    } else if (pauseReason.action === "sweep") {
       start.mutate({ action: "sweep", depth: data?.depth ?? "nascente_rio" });
+    } else {
+      setMode.mutate("LIGADO");
     }
   };
 
@@ -367,7 +371,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
           <button
             type="button"
             data-testid="painel-pause-continuar"
-            disabled={start.isPending}
+            disabled={pending}
             onClick={onContinuar}
             className="rounded-[6px] bg-white/20 px-[8px] py-[3px] text-[11.5px] font-semibold hover:bg-white/30 disabled:opacity-60"
           >

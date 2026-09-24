@@ -63,3 +63,18 @@ if __name__ == "__main__":  # pragma: no cover — ponytail runnable check
     engine.set_mode(_r, engine.LIGADO)
     assert engine.get_status(_r)["pause_reason"] is None
     print("ok")
+
+
+def test_chain_pause_keeps_the_interrupted_action(redis):
+    """A producer paused a sweep; a queued chain task (action=None) hits the same wall:
+    Continuar must still resume the sweep."""
+    engine.pause_with_reason(redis, "provider_balance", "places", action="sweep")
+    engine.pause_with_reason(redis, "provider_balance", "places")
+
+    assert engine.get_pause_reason(redis)["action"] == "sweep"
+
+
+def test_chain_pause_alone_records_no_action(redis):
+    engine.pause_with_reason(redis, "provider_balance", "openrouter")
+
+    assert engine.get_pause_reason(redis)["action"] is None

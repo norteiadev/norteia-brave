@@ -28,9 +28,8 @@ _ON = MagicMock(
 )
 
 
-def test_describe_uf_halts_and_pauses_on_provider_balance_error(monkeypatch):
-    """A ProviderBalanceError raised mid-chunk halts describe_uf: no self-chain, no
-    exception escapes the task, and the motor is paused with a reason."""
+def _run_describe(monkeypatch, agent):
+    """Run describe_uf("SP") over 3 atrativos with ``agent``; returns what to assert on."""
     fake = fakeredis.FakeStrictRedis()
     collection_engine.start(
         fake, None, action="describe", depth="descricao", source="descricao",
@@ -52,18 +51,8 @@ def test_describe_uf_halts_and_pauses_on_provider_balance_error(monkeypatch):
         lambda c, **k: Clients(c, places=FakePlacesClient(), llm=FakeLLMClient()),
     )
 
-    class Agent:
-        def wants_description(self, rio):
-            return True
-
-        async def write_description(self, nome, municipio, uf, details, local=""):
-            raise ProviderBalanceError("tavily")
-
-        async def run(self, rio, description=None):
-            raise AssertionError("run() must never be reached — the search failed first")
-
     monkeypatch.setattr(
-        "brave.lanes.atrativos.places_enrichment.PlacesEnrichmentAgent", lambda **k: Agent()
+        "brave.lanes.atrativos.places_enrichment.PlacesEnrichmentAgent", lambda **k: agent
     )
     lifecycle = MagicMock()
     monkeypatch.setattr(pipeline, "_producer_done", lifecycle)
@@ -77,6 +66,38 @@ def test_describe_uf_halts_and_pauses_on_provider_balance_error(monkeypatch):
 
     run("SP")  # must not raise
 
+    return fake, session, chain, lifecycle, ids
+
+
+class _Agent:
+    def __init__(self, fail_from=0):
+        self.fail_from = fail_from  # the search hits the billing wall from this call on
+        self.calls = 0
+        self.rows = None  # the describe_uf _RowBuffer, set by the test
+        self.ran: list = []
+
+    def wants_description(self, rio):
+        return True
+
+    async def write_description(self, nome, municipio, uf, details, local=""):
+        self.calls += 1
+        if self.calls > self.fail_from:
+            raise ProviderBalanceError("tavily")
+        if self.rows is not None:
+            self.rows.add(f"spend:{nome}")
+        return f"desc:{nome}"
+
+    async def run(self, rio, description=None):
+        self.ran.append((str(rio.id), description))
+
+
+def test_describe_uf_halts_and_pauses_on_provider_balance_error(monkeypatch):
+    """A ProviderBalanceError raised mid-chunk halts describe_uf: no self-chain, no
+    exception escapes the task, and the motor is paused with a reason."""
+    agent = _Agent()
+    fake, _session, chain, lifecycle, _ids = _run_describe(monkeypatch, agent)
+
+    assert agent.ran == []  # every search failed first
     chain.delay.assert_not_called()  # no self-chain
     lifecycle.assert_called_once()  # terminal run still decrements inflight
     status = collection_engine.get_status(fake)
@@ -86,11 +107,68 @@ def test_describe_uf_halts_and_pauses_on_provider_balance_error(monkeypatch):
     assert status["pause_reason"]["action"] == "describe"
 
 
+def test_describe_uf_balance_mid_chunk_keeps_fetched_descriptions_and_spend(monkeypatch):
+    """The wall on the 3rd search: the 2 descriptions already fetched are still written,
+    their spend rows committed, and only then does the motor pause (Q6)."""
+    agent = _Agent(fail_from=2)
+
+    class _Buf(pipeline._RowBuffer):
+        def __init__(self):
+            super().__init__()
+            agent.rows = self
+
+    monkeypatch.setattr(pipeline, "_RowBuffer", _Buf)
+    fake, session, chain, lifecycle, ids = _run_describe(monkeypatch, agent)
+
+    fetched = [str(i) for i in ids[:2]]
+    assert agent.ran == [(n, f"desc:{n}") for n in fetched]
+    session.add_all.assert_called_once_with([f"spend:{n}" for n in fetched])
+    chain.delay.assert_not_called()
+    lifecycle.assert_called_once()
+    reason = collection_engine.get_status(fake)["pause_reason"]
+    assert (reason["reason"], reason["action"]) == ("provider_balance", "describe")
+
+
+class _InFlightAgent(_Agent):
+    """1st search is slow and succeeds; the 2nd hits the wall while the 1st is in flight."""
+
+    async def write_description(self, nome, municipio, uf, details, local=""):
+        import asyncio  # noqa: PLC0415
+
+        self.calls += 1
+        if self.calls > 1:
+            raise ProviderBalanceError("tavily")
+        await asyncio.sleep(0.05)
+        if self.rows is not None:
+            self.rows.add(f"spend:{nome}")
+        return f"desc:{nome}"
+
+
+def test_describe_uf_balance_waits_for_searches_already_in_flight(monkeypatch):
+    """A wall hit while another search is in flight: that paid search still finishes and
+    its description + spend row are written (not cancelled with the gather)."""
+    agent = _InFlightAgent()
+
+    class _Buf(pipeline._RowBuffer):
+        def __init__(self):
+            super().__init__()
+            agent.rows = self
+
+    monkeypatch.setattr(pipeline, "_RowBuffer", _Buf)
+    fake, session, _chain, _lifecycle, ids = _run_describe(monkeypatch, agent)
+
+    first = str(ids[0])
+    assert agent.ran == [(first, f"desc:{first}")]
+    session.add_all.assert_called_once_with([f"spend:{first}"])
+    assert collection_engine.get_status(fake)["pause_reason"]["action"] == "describe"
+
+
 def test_enrich_places_task_pauses_on_provider_balance_error_no_retry_no_quarantine(
     monkeypatch,
 ):
     """enrich_places_task calls pause_with_reason (no retry, no PoisonQuarantine row)
-    when the agent raises ProviderBalanceError."""
+    when the agent raises ProviderBalanceError. A chain task pauses with action None:
+    Continuar only lifts the pause, it starts no run."""
     fake = fakeredis.FakeStrictRedis()
     monkeypatch.setattr("redis.from_url", lambda *_a, **_k: fake)
 
@@ -113,7 +191,7 @@ def test_enrich_places_task_pauses_on_provider_balance_error_no_retry_no_quarant
     assert status["mode"] == collection_engine.PAUSADO
     assert status["pause_reason"]["reason"] == "provider_balance"
     assert status["pause_reason"]["provider"] == "google_places"
-    assert status["pause_reason"]["action"] == "describe"
+    assert status["pause_reason"]["action"] is None
 
 
 if __name__ == "__main__":  # pragma: no cover — ponytail runnable check

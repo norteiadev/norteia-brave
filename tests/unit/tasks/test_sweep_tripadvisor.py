@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis
+from celery.exceptions import Retry
 
 from brave.config.settings import ScoreConfig
 from brave.lanes.tripadvisor import sweep_progress
@@ -156,13 +157,15 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
 
     # Build mock Celery task self
     mock_self = MagicMock()
-    mock_self.MaxRetriesExceededError = type("MaxRetriesExceededError", (Exception,), {})
 
     retry_calls = []
 
     def _recording_retry(exc=None, max_retries=None):
+        # What a worker's retry() does while retries are left: raise celery's Retry.
+        # (Once exhausted it re-raises ``exc`` itself — never MaxRetriesExceededError
+        # when exc= is given; tests/unit/tasks/test_failure_policy.py covers that path.)
         retry_calls.append(exc)
-        raise mock_self.MaxRetriesExceededError("max retries exceeded")
+        raise Retry(exc=exc)
 
     mock_self.retry.side_effect = _recording_retry
 
@@ -176,7 +179,7 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
     try:
         raw_fn(mock_self, uf="BA")
     except Exception:
-        pass  # Expected for retry paths / MaxRetriesExceededError
+        pass  # Expected for retry paths (Retry)
 
     return mock_self, retry_calls
 
@@ -328,8 +331,7 @@ class TestSweepTripAdvisorPerUfDestinoBuild:
         )
 
         mock_self = MagicMock()
-        mock_self.MaxRetriesExceededError = type("MaxRetriesExceededError", (Exception,), {})
-        mock_self.retry.side_effect = lambda **kw: mock_self.MaxRetriesExceededError()
+        mock_self.retry.side_effect = lambda **kw: Retry()
 
         from brave.tasks.pipeline import sweep_tripadvisor  # noqa: PLC0415
 
@@ -337,7 +339,7 @@ class TestSweepTripAdvisorPerUfDestinoBuild:
         try:
             raw_fn(mock_self, uf="BA")
         except Exception:
-            pass  # MaxRetriesExceededError etc. are fine; we only check captured
+            pass  # Retry etc. are fine; we only check captured
 
         assert "2927408" in captured.get("map", {}), (
             f"destino_rio_map must contain Mtur ibge key '2927408'; "
@@ -474,12 +476,11 @@ def _run_bulk_sweep(
         pre_seed(fake_redis)
 
     mock_self = MagicMock()
-    mock_self.MaxRetriesExceededError = type("MaxRetriesExceededError", (Exception,), {})
     retry_calls = []
 
     def _recording_retry(exc=None, max_retries=None):
         retry_calls.append(exc)
-        raise mock_self.MaxRetriesExceededError("max retries exceeded")
+        raise Retry(exc=exc)
 
     mock_self.retry.side_effect = _recording_retry
 
@@ -807,8 +808,7 @@ class TestSweepTripAdvisorTaConfig:
             )
 
         mock_self = MagicMock()
-        mock_self.MaxRetriesExceededError = type("MaxRetriesExceededError", (Exception,), {})
-        mock_self.retry.side_effect = lambda **kw: mock_self.MaxRetriesExceededError()
+        mock_self.retry.side_effect = lambda **kw: Retry()
 
         from brave.tasks.pipeline import sweep_tripadvisor  # noqa: PLC0415
 
@@ -816,7 +816,7 @@ class TestSweepTripAdvisorTaConfig:
         try:
             raw_fn(mock_self, uf="BA")
         except Exception:
-            pass  # MaxRetriesExceededError or similar — only the captured kwargs matter
+            pass  # Retry or similar — only the captured kwargs matter
 
         self._last_captured = captured  # expose full capture for other assertions
         return captured.get("ta_config"), sentinel
@@ -906,8 +906,7 @@ class TestSweepTripAdvisorInlineEnrichment:
         )
 
         mock_self = MagicMock()
-        mock_self.MaxRetriesExceededError = type("MRE", (Exception,), {})
-        mock_self.retry.side_effect = lambda **kw: mock_self.MaxRetriesExceededError()
+        mock_self.retry.side_effect = lambda **kw: Retry()
 
         from brave.tasks.pipeline import sweep_tripadvisor  # noqa: PLC0415
 
@@ -1000,8 +999,7 @@ class TestSweepNeverDescribes:
         )
 
         mock_self = MagicMock()
-        mock_self.MaxRetriesExceededError = type("MRE", (Exception,), {})
-        mock_self.retry.side_effect = lambda **kw: mock_self.MaxRetriesExceededError()
+        mock_self.retry.side_effect = lambda **kw: Retry()
 
         from brave.tasks.pipeline import sweep_tripadvisor  # noqa: PLC0415
 
