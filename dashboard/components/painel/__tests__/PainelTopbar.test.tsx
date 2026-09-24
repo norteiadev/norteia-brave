@@ -760,6 +760,34 @@ describe("PainelTopbar", () => {
       );
     });
 
+    it("Continuar with a null action only lifts the pause (mode LIGADO, no run)", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      let modeBody: { mode?: string } | null = null;
+      const startSpy = vi.fn();
+      server.use(
+        engineStatus({
+          mode: "PAUSADO",
+          pause_reason: { reason: "provider_balance", provider: "google_places", action: null, at: "2026-09-24T00:00:00Z" },
+        }),
+        taSessionStatus(),
+        http.post(MODE_URL, async ({ request }) => {
+          modeBody = (await request.json()) as { mode?: string };
+          return HttpResponse.json({ mode: "LIGADO", editing_unlocked: false });
+        }),
+        http.post(START_URL, () => {
+          startSpy();
+          return HttpResponse.json({ status: "started" }, { status: 202 });
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      await user.click(await screen.findByTestId("painel-pause-continuar"));
+
+      await waitFor(() => expect(modeBody).toMatchObject({ mode: "LIGADO" }));
+      expect(startSpy).not.toHaveBeenCalled();
+    });
+
     it("Continuar does nothing when the confirm dialog is cancelled", async () => {
       vi.spyOn(window, "confirm").mockReturnValue(false);
       const startSpy = vi.fn();
