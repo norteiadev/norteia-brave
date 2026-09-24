@@ -133,7 +133,8 @@ def test_enrich_places_task_pauses_on_provider_balance_error_no_retry_no_quarant
     monkeypatch,
 ):
     """enrich_places_task calls pause_with_reason (no retry, no PoisonQuarantine row)
-    when the agent raises ProviderBalanceError."""
+    when the agent raises ProviderBalanceError. A chain task pauses with action None:
+    Continuar only lifts the pause, it starts no run."""
     fake = fakeredis.FakeStrictRedis()
     monkeypatch.setattr("redis.from_url", lambda *_a, **_k: fake)
 
@@ -156,7 +157,7 @@ def test_enrich_places_task_pauses_on_provider_balance_error_no_retry_no_quarant
     assert status["mode"] == collection_engine.PAUSADO
     assert status["pause_reason"]["reason"] == "provider_balance"
     assert status["pause_reason"]["provider"] == "google_places"
-    assert status["pause_reason"]["action"] == "describe"
+    assert status["pause_reason"]["action"] is None
 
 
 if __name__ == "__main__":  # pragma: no cover — ponytail runnable check

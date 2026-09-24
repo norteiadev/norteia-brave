@@ -8,13 +8,9 @@ Core tasks:
   repush_pending_mar    — beat: re-enqueue publish_mar for pending Mar rows
 
 Idempotency: Every task is a no-op on re-run (D-03, D-15).
-Poison quarantine: After max_retries failures, the task goes to PoisonQuarantine,
-                   NOT to the review DLQ (see PITFALLS §7, T-02-02).
-
-Error classification:
-  TransientError (network flap, DB timeout) → self.retry with backoff
-  PermanentError (malformed payload, schema violation) → quarantine_poison
-  Any exception after max_retries → quarantine_poison
+Failure policy: brave.tasks.failure_policy.task_failure_policy — retry, then
+PoisonQuarantine (NOT the review DLQ, see PITFALLS §7, T-02-02); a provider billing
+wall pauses the motor instead.
 """
 
 import asyncio
@@ -40,6 +36,7 @@ from brave.shared.exceptions import (  # noqa: F401 (PermanentError/TransientErr
     ProviderBalanceError,
     TransientError,
 )
+from brave.tasks.failure_policy import task_failure_policy
 
 logger = structlog.get_logger(__name__)
 
@@ -340,71 +337,32 @@ def process_nascente(self, nascente_id: str) -> None:
     """
     session, engine = _get_session()
     try:
-        nascente_uuid = uuid.UUID(nascente_id)
-        config = _load_config(session).score
+        with task_failure_policy(
+            self,
+            session,
+            "brave.process_nascente",
+            nascente_id=uuid.UUID(nascente_id) if nascente_id else None,
+        ):
+            nascente_uuid = uuid.UUID(nascente_id)
+            config = _load_config(session).score
 
-        nascente = get_nascente(session, nascente_uuid)
-        if nascente is None:
-            raise PermanentError(f"NascenteRecord {nascente_id} not found")
+            nascente = get_nascente(session, nascente_uuid)
+            if nascente is None:
+                raise PermanentError(f"NascenteRecord {nascente_id} not found")
 
-        # Idempotency check: RioRecord with matching canonical_key
-        canonical_key = nascente.source_ref
-        existing = session.scalar(
-            select(RioRecord).where(RioRecord.canonical_key == canonical_key)
-        )
-        if existing is not None:
-            return  # Already processed — idempotent no-op
-
-        process_nascente_record(session, nascente, config)
-        session.commit()
-
-    except PermanentError as exc:
-        session.rollback()
-        # Re-open session for quarantine write
-        q_session, q_engine = _get_session()
-        try:
-            quarantine_poison(
-                session=q_session,
-                nascente_id=uuid.UUID(nascente_id) if nascente_id else None,
-                task_name="brave.process_nascente",
-                error=str(exc),
+            # Idempotency check: RioRecord with matching canonical_key
+            canonical_key = nascente.source_ref
+            existing = session.scalar(
+                select(RioRecord).where(RioRecord.canonical_key == canonical_key)
             )
-            q_session.commit()
-        finally:
-            q_session.close()
+            if existing is not None:
+                return  # Already processed — idempotent no-op
 
-    except Exception as exc:
-        session.rollback()
-        try:
-            # Retry transient errors
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            # After max_retries, quarantine
-            q_session, q_engine = _get_session()
-            try:
-                quarantine_poison(
-                    session=q_session,
-                    nascente_id=uuid.UUID(nascente_id) if nascente_id else None,
-                    task_name="brave.process_nascente",
-                    error=str(exc),
-                )
-                q_session.commit()
-            finally:
-                q_session.close()
+            process_nascente_record(session, nascente, config)
+            session.commit()
 
     finally:
         session.close()
-
-
-def _http_error_body(exc: BaseException) -> str | None:
-    """Response body of a failed push, when the exception carries one.
-
-    ``str(exc)`` on an httpx.HTTPStatusError is only the status line, so a 422
-    caused by a single bad field (e.g. an enum string in an integer column) burned
-    every retry without ever naming the field. Returns None for non-HTTP errors.
-    """
-    response = getattr(exc, "response", None)
-    return response.text if response is not None else None
 
 
 def _norteia_api_down() -> bool:
@@ -453,23 +411,15 @@ def publish_mar(self, rio_id: str) -> str | None:
 
     Never promotes (that is ``brave.core.mar.publication.promote``). The endpoint is
     picked by entity_type; an unchanged payload skips the POST; a down API leaves the
-    row pending for brave.repush_pending_mar. HTTP errors retry 3x, then log (WR-02).
+    row pending for brave.repush_pending_mar. HTTP errors retry 3x, then the task ends
+    FAILURE; the row keeps pushed_at NULL, so the 15-min repush tries it again.
     """
     session, _ = _get_session()
     try:
-        return publish(session, uuid.UUID(rio_id), clients_for(AppConfig()).norteia_api).status
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            logger.error(
-                "publish_mar_max_retries_exceeded",
-                rio_id=rio_id,
-                error=str(exc),
-                response=_http_error_body(exc),
-            )
-        return None
+        with task_failure_policy(self, session, "brave.publish_mar", quarantine=False):
+            return publish(
+                session, uuid.UUID(rio_id), clients_for(AppConfig()).norteia_api
+            ).status
     finally:
         session.close()
 
@@ -491,20 +441,10 @@ def reprocess_record_task(self, rio_id: str) -> None:
     """
     session, engine = _get_session()
     try:
-        config = _load_config(session).score
-        reprocess_record(session, uuid.UUID(rio_id), config)
-        session.commit()
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            # WR-02: surface permanently-failed reprocess (no silent drop).
-            logger.error(
-                "reprocess_record_max_retries_exceeded",
-                rio_id=rio_id,
-                error=str(exc),
-            )
+        with task_failure_policy(self, session, "brave.reprocess_record", quarantine=False):
+            config = _load_config(session).score
+            reprocess_record(session, uuid.UUID(rio_id), config)
+            session.commit()
     finally:
         session.close()
 
@@ -547,106 +487,79 @@ def discover_atrativo_task(
         depth: Pipeline depth (nascente_rio | nascente_rio_mar). None → full.
     """
     from brave.core import engine as collection_engine
-    from brave.core.quarantine import quarantine_poison as _quarantine
     from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
 
     effective_depth = depth or collection_engine.NASCENTE_RIO_MAR
 
     session, engine = _get_session()
     try:
-        effective = _load_config(session)
-        config = effective.score
+        with task_failure_policy(
+            self,
+            session,
+            "brave.discover_atrativo",
+            payload={"uf": uf},
+            pause_action="sweep",
+        ):
+            effective = _load_config(session)
+            config = effective.score
 
-        from brave.clients.places import load_municipio_name_ibge_lookup
+            from brave.clients.places import load_municipio_name_ibge_lookup
 
-        # Places API has no IBGE field — the real client gets the name→IBGE lookup from
-        # the municipios reference table so attractions get a resolved municipio_ibge
-        # (required for parent-destino linkage via ensure_destino).
-        clients = clients_for(
-            effective, ibge_lookup=lambda: load_municipio_name_ibge_lookup(session)
-        )
-        places_client = clients.places
-        llm_client = clients.llm("atrativos", session=session)
-
-        # Load the IBGE DTB distrito reference once — threads into the discovery agent
-        # for admin_area_level_3 → distrito name-match enrichment, mirroring how the
-        # municipios reference is loaded and passed in the TA lane. Reads the seeded
-        # distritos reference table (was a static CSV before §3).
-        from brave.shared.ibge_distritos import load_distritos
-        distritos = load_distritos(session)
-
-        agent = DiscoveryAgent(
-            places_client=places_client,
-            llm_client=llm_client,
-            session=session,
-            config=config,
-            distritos=distritos,
-        )
-
-        asyncio.run(_using(clients, agent.produce(uf)))
-        session.commit()
-
-        # ORCH-02 / D-03: fan out the FSM chain. DiscoveryAgent.produce returns None,
-        # so chaining is keyed on sub_state queries (self-healing across restarts) —
-        # never on a producer return value. Query every attraction this sweep landed at
-        # sub_state='discovered' and dispatch find_contacts_task per row. Dispatch-then-
-        # inline-fallback (swallow-all, from dlq.py): an operator/test with no broker still
-        # advances the chain synchronously. Replay-safe: a duplicate dispatch hits the
-        # contact_finder inline precondition guard and no-ops (D-04, finding #2).
-        # Materialize the IDs up front (as strings) BEFORE dispatching. The inline
-        # fallback (.run) opens/commits a session that can expire/detach live ORM rows;
-        # holding ORM objects across a dispatch would raise DetachedInstanceError on the
-        # next loop iteration. Selecting the scalar id column avoids that entirely.
-        discovered_ids = session.scalars(
-            select(RioRecord.id).where(
-                RioRecord.entity_type == "attraction",
-                RioRecord.uf == uf,
-                RioRecord.sub_state == "discovered",
+            # Places API has no IBGE field — the real client gets the name→IBGE lookup from
+            # the municipios reference table so attractions get a resolved municipio_ibge
+            # (required for parent-destino linkage via ensure_destino).
+            clients = clients_for(
+                effective, ibge_lookup=lambda: load_municipio_name_ibge_lookup(session)
             )
-        ).all()
-        # Depth gate (plan 10-02): only NASCENTE_RIO_MAR kicks the WhatsApp-gate
-        # FSM chain. Under NASCENTE_RIO discovery/Rio still ran above, but the
-        # ENTIRE fan-out below — both the .delay dispatch AND the .run inline
-        # fallback — is suppressed so the chain never advances toward the gate.
-        if effective_depth != collection_engine.NASCENTE_RIO:
-            for rio_id in discovered_ids:
-                try:
-                    find_contacts_task.delay(str(rio_id))
-                except Exception:
-                    find_contacts_task.run(str(rio_id))
+            places_client = clients.places
+            llm_client = clients.llm("atrativos", session=session)
 
-    except PermanentError as exc:
-        session.rollback()
-        q_session, q_engine = _get_session()
-        try:
-            _quarantine(
-                session=q_session,
-                nascente_id=None,
-                task_name="brave.discover_atrativo",
-                error=str(exc),
-                payload={"uf": uf},
+            # Load the IBGE DTB distrito reference once — threads into the discovery agent
+            # for admin_area_level_3 → distrito name-match enrichment, mirroring how the
+            # municipios reference is loaded and passed in the TA lane. Reads the seeded
+            # distritos reference table (was a static CSV before §3).
+            from brave.shared.ibge_distritos import load_distritos
+            distritos = load_distritos(session)
+
+            agent = DiscoveryAgent(
+                places_client=places_client,
+                llm_client=llm_client,
+                session=session,
+                config=config,
+                distritos=distritos,
             )
-            q_session.commit()
-        finally:
-            q_session.close()
 
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            q_session, q_engine = _get_session()
-            try:
-                _quarantine(
-                    session=q_session,
-                    nascente_id=None,
-                    task_name="brave.discover_atrativo",
-                    error=str(exc),
-                    payload={"uf": uf},
+            asyncio.run(_using(clients, agent.produce(uf)))
+            session.commit()
+
+            # ORCH-02 / D-03: fan out the FSM chain. DiscoveryAgent.produce returns None,
+            # so chaining is keyed on sub_state queries (self-healing across restarts) —
+            # never on a producer return value. Query every attraction this sweep landed at
+            # sub_state='discovered' and dispatch find_contacts_task per row. Dispatch-then-
+            # inline-fallback (swallow-all, from dlq.py): an operator/test with no broker still
+            # advances the chain synchronously. Replay-safe: a duplicate dispatch hits the
+            # contact_finder inline precondition guard and no-ops (D-04, finding #2).
+            # Materialize the IDs up front (as strings) BEFORE dispatching. The inline
+            # fallback (.run) opens/commits a session that can expire/detach live ORM rows;
+            # holding ORM objects across a dispatch would raise DetachedInstanceError on the
+            # next loop iteration. Selecting the scalar id column avoids that entirely.
+            discovered_ids = session.scalars(
+                select(RioRecord.id).where(
+                    RioRecord.entity_type == "attraction",
+                    RioRecord.uf == uf,
+                    RioRecord.sub_state == "discovered",
                 )
-                q_session.commit()
-            finally:
-                q_session.close()
+            ).all()
+            # Depth gate (plan 10-02): only NASCENTE_RIO_MAR kicks the WhatsApp-gate
+            # FSM chain. Under NASCENTE_RIO discovery/Rio still ran above, but the
+            # ENTIRE fan-out below — both the .delay dispatch AND the .run inline
+            # fallback — is suppressed so the chain never advances toward the gate.
+            if effective_depth != collection_engine.NASCENTE_RIO:
+                for rio_id in discovered_ids:
+                    try:
+                        find_contacts_task.delay(str(rio_id))
+                    except Exception:
+                        find_contacts_task.run(str(rio_id))
 
     finally:
         # Producer-completes lifecycle: engine_sweep_run claimed this producer before
@@ -718,7 +631,6 @@ def sweep_tripadvisor(
         geo_id:        TripAdvisor integer geoId for the bulk run (294280 = all Brazil).
     """
     from brave.core import engine as collection_engine
-    from brave.core.quarantine import quarantine_poison as _quarantine
     from brave.lanes.tripadvisor import sweep_progress
     from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
     from brave.lanes.tripadvisor.client import SessionExpiredError, SessionMissingError
@@ -742,193 +654,201 @@ def sweep_tripadvisor(
     # None = not counted against any run, so its finally must not call producer_done.
     bulk_run_id = None
     try:
-        effective = _load_config(session)
-        config = effective.score
+        with task_failure_policy(
+            self,
+            session,
+            "brave.sweep_tripadvisor",
+            payload={"uf": uf},
+            pause_action="sweep",
+            passthrough=(SessionMissingError, SessionExpiredError),
+        ):
+            effective = _load_config(session)
+            config = effective.score
 
-        # T1 (pfr-01): ta_config must be defined before the branch so it is always
-        # in scope for the per-UF TripAdvisorAtrativosIngest constructor. Without
-        # this, ta_config is only defined inside the run_real_externals block and
-        # the offline path would raise NameError; passing None keeps the
-        # fetch_attraction_geo guard (ta_config is not None) dormant offline.
-        ta_config = None
-        if effective.run_real_externals:
-            from brave.config.settings import TripAdvisorConfig
+            # T1 (pfr-01): ta_config must be defined before the branch so it is always
+            # in scope for the per-UF TripAdvisorAtrativosIngest constructor. Without
+            # this, ta_config is only defined inside the run_real_externals block and
+            # the offline path would raise NameError; passing None keeps the
+            # fetch_attraction_geo guard (ta_config is not None) dormant offline.
+            ta_config = None
+            if effective.run_real_externals:
+                from brave.config.settings import TripAdvisorConfig
 
-            ta_config = TripAdvisorConfig()
-        from brave.clients.places import load_municipio_name_ibge_lookup
+                ta_config = TripAdvisorConfig()
+            from brave.clients.places import load_municipio_name_ibge_lookup
 
-        clients = clients_for(
-            effective, ibge_lookup=lambda: load_municipio_name_ibge_lookup(session)
-        )
-        ta_client = clients.tripadvisor
-        geocoder = clients.geocoder
-
-        # Load IBGE records — used by both destinos + atrativos. Reads the seeded
-        # municipios reference table (was a static CSV before §3).
-        ibge_records = load_ibge_municipios(session)
-
-        if bulk_national:
-            # ---- Bulk national branch (Phase 15, TA-12) -----------------------
-            # DISTINCT path: paginate geoId 294280 via produce_paginated. No destinos
-            # producer / destino_rio_map (parent-less bulk ingest). Per-page commits
-            # happen inside produce_paginated; this branch only seeds/finishes progress
-            # and reuses the SHARED fail-fast except below on a mid-run 403/429.
-            rc = engine_rc
-            # Standalone bulk runs are dispatched directly (scripts/ta_bulk_sweep.py), not
-            # via engine_sweep_run, so the task claims itself — per execution, paired with
-            # the producer_done in the finally (a Celery retry re-claims on its re-run).
-            bulk_run_id = collection_engine.claim_producer(rc, run_id)
-
-            # Resume: when a prior run recorded progress, continue from the page AFTER
-            # the last completed offset (offset//30 + 2). Otherwise start a fresh run at
-            # the operator-supplied start_page (default page 1 / offset 0).
-            _progress = sweep_progress.get_progress(rc)
-            if _progress["pages_done"] > 0:
-                _resume_offset = sweep_progress.get_resume_offset(rc)
-                _effective_start_page = (_resume_offset // 30) + 2
-            else:
-                _effective_start_page = start_page
-                _resume_offset = (start_page - 1) * 30
-
-            sweep_progress.start(
-                rc,
-                pages_total=334,
-                resume_from_offset=_resume_offset,
+            clients = clients_for(
+                effective, ibge_lookup=lambda: load_municipio_name_ibge_lookup(session)
             )
+            ta_client = clients.tripadvisor
+            geocoder = clients.geocoder
 
-            bulk_ingest = TripAdvisorAtrativosIngest(
+            # Load IBGE records — used by both destinos + atrativos. Reads the seeded
+            # municipios reference table (was a static CSV before §3).
+            ibge_records = load_ibge_municipios(session)
+
+            if bulk_national:
+                # ---- Bulk national branch (Phase 15, TA-12) -----------------------
+                # DISTINCT path: paginate geoId 294280 via produce_paginated. No destinos
+                # producer / destino_rio_map (parent-less bulk ingest). Per-page commits
+                # happen inside produce_paginated; this branch only seeds/finishes progress
+                # and reuses the SHARED fail-fast except below on a mid-run 403/429.
+                rc = engine_rc
+                # Standalone bulk runs are dispatched directly (scripts/ta_bulk_sweep.py), not
+                # via engine_sweep_run, so the task claims itself — per execution, paired with
+                # the producer_done in the finally (a Celery retry re-claims on its re-run).
+                bulk_run_id = collection_engine.claim_producer(rc, run_id)
+
+                # Resume: when a prior run recorded progress, continue from the page AFTER
+                # the last completed offset (offset//30 + 2). Otherwise start a fresh run at
+                # the operator-supplied start_page (default page 1 / offset 0).
+                _progress = sweep_progress.get_progress(rc)
+                if _progress["pages_done"] > 0:
+                    _resume_offset = sweep_progress.get_resume_offset(rc)
+                    _effective_start_page = (_resume_offset // 30) + 2
+                else:
+                    _effective_start_page = start_page
+                    _resume_offset = (start_page - 1) * 30
+
+                sweep_progress.start(
+                    rc,
+                    pages_total=334,
+                    resume_from_offset=_resume_offset,
+                )
+
+                bulk_ingest = TripAdvisorAtrativosIngest(
+                    ta_client=ta_client,
+                    session=session,
+                    config=config,
+                    ibge_records=ibge_records,
+                    destino_rio_map=None,
+                    geocoder=geocoder,
+                )
+                asyncio.run(
+                    _using(
+                        clients,
+                        bulk_ingest.produce_paginated(
+                            geo_id,
+                            _effective_start_page,
+                            max_pages or 334,
+                            rc,
+                            run_rio=run_rio,
+                            run_id=bulk_run_id,
+                        ),
+                    )
+                )
+                sweep_progress.mark_done(rc)
+                # Terminal commit (produce_paginated already commits per page).
+                session.commit()
+                return
+
+            # Build destino_rio_map: keyed by municipio_id (IBGE code) → (rio_id, source_ref)
+            # Query ALL destination RioRecords in this UF — Mtur/IBGE origin=100 are the
+            # authoritative source (oa3: TA does not produce destinos; QID not captured).
+            # Operator must run a destinos/default sweep (Mtur seed) before a TA atrativos
+            # sweep, or atrativos will quarantine with parent_destino_absent per record.
+            import asyncio as _asyncio
+
+            from sqlalchemy import select as _select
+
+            from brave.core.models import NascenteRecord as _NascenteRecord
+            from brave.core.models import RioRecord as _RioRecord
+            session.flush()
+            destino_rows = session.execute(
+                _select(_RioRecord.id, _NascenteRecord.source_ref, _RioRecord.municipio_id)
+                .join(_NascenteRecord, _RioRecord.nascente_id == _NascenteRecord.id)
+                .where(
+                    _NascenteRecord.entity_type == "destination",
+                    _RioRecord.uf == uf,
+                )
+            ).all()
+            # Map ibge_code → (rio_id, source_ref)
+            destino_rio_map: dict = {
+                row.municipio_id: (row.id, row.source_ref)
+                for row in destino_rows
+                if row.municipio_id
+            }
+
+            # Build the INLINE Places enrichment agent (distrito + hours/contact/price +
+            # liveness — never the description, see below), run per-record inside produce()
+            # after Rio routing — like the other completude steps. Constructed once per sweep
+            # behind run_real_externals + the operator flags; the Null clients keep the TA floor + advance the record offline
+            # (ZERO external spend). Replaces the old post-produce enrich_description/_places
+            # dispatch, which the 600s time_limit could kill before it ran.
+            # Build resiliently: a client-construction failure (e.g. a missing key) disables
+            # inline enrichment for this sweep and logs — it must never crash the ingest.
+            places_agent = None
+            _distritos: list = []
+            try:
+                from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+                from brave.shared.ibge_distritos import load_distritos
+
+                _distritos = load_distritos(session)
+                if effective.places_enrichment_enabled:
+                    _places_client = clients.places
+                else:
+                    from brave.clients.null_places import NullPlacesClient
+                    _places_client = NullPlacesClient()
+
+                # The sweep NEVER writes descriptions, whatever the flags: description_enabled
+                # =False makes PlacesEnrichmentAgent skip the whole description block cleanly.
+                # Descriptions come later, per UF, from brave.describe_uf (engine action
+                # "describe") or the batch lane (submit/collect_description_batch).
+                from brave.clients.null_llm import NullLLMClient
+
+                places_agent = PlacesEnrichmentAgent(
+                    places_client=_places_client,
+                    session=session,
+                    config=config,
+                    llm_client=NullLLMClient(),
+                    distritos=_distritos,
+                    voice_model_slug=effective.atrativo_voice_model_slug,
+                    description_enabled=False,
+                    enable_web_search=effective.run_real_externals,
+                    max_distance_km=effective.places_match_max_distance_km,
+                )
+            except Exception:  # noqa: BLE001 — enrichment build must not crash the sweep
+                logger.warning("inline_enrichment_build_failed", uf=uf)
+                places_agent = None
+
+            # Run atrativos producer using destino_rio_map.
+            # ta_config=ta_config wires the TripAdvisorConfig instance so the
+            # fetch_attraction_geo ftx geo-linkage guard activates under real externals.
+            atrativos_ingest = TripAdvisorAtrativosIngest(
                 ta_client=ta_client,
                 session=session,
                 config=config,
                 ibge_records=ibge_records,
-                destino_rio_map=None,
+                destino_rio_map=destino_rio_map,
                 geocoder=geocoder,
+                ta_config=ta_config,
+                places_agent=places_agent,
+                distritos=_distritos,
             )
-            asyncio.run(
+            # Per-UF path enriches review recency (fetch_recent_review per card) so
+            # atualidade lifts the reliability score. The bulk_national branch above leaves
+            # enrichment OFF (no per-card review calls at 10k scale).
+            # redis=engine_rc lets the per-UF producer honor a mid-run Motor Pausado/
+            # Desligado (engine.should_halt_producer) — otherwise the fanned-out producer
+            # keeps paginating + inserting atrativos/synthesized destinos after a pause.
+            ingested_rio_ids = _asyncio.run(
                 _using(
                     clients,
-                    bulk_ingest.produce_paginated(
-                        geo_id,
-                        _effective_start_page,
-                        max_pages or 334,
-                        rc,
+                    atrativos_ingest.produce(
+                        uf,
                         run_rio=run_rio,
-                        run_id=bulk_run_id,
+                        enrich_reviews=True,
+                        redis=engine_rc,
+                        max_per_uf=max_per_uf,
                     ),
                 )
             )
-            sweep_progress.mark_done(rc)
-            # Terminal commit (produce_paginated already commits per page).
+
             session.commit()
-            return
 
-        # Build destino_rio_map: keyed by municipio_id (IBGE code) → (rio_id, source_ref)
-        # Query ALL destination RioRecords in this UF — Mtur/IBGE origin=100 are the
-        # authoritative source (oa3: TA does not produce destinos; QID not captured).
-        # Operator must run a destinos/default sweep (Mtur seed) before a TA atrativos
-        # sweep, or atrativos will quarantine with parent_destino_absent per record.
-        import asyncio as _asyncio
-
-        from sqlalchemy import select as _select
-
-        from brave.core.models import NascenteRecord as _NascenteRecord
-        from brave.core.models import RioRecord as _RioRecord
-        session.flush()
-        destino_rows = session.execute(
-            _select(_RioRecord.id, _NascenteRecord.source_ref, _RioRecord.municipio_id)
-            .join(_NascenteRecord, _RioRecord.nascente_id == _NascenteRecord.id)
-            .where(
-                _NascenteRecord.entity_type == "destination",
-                _RioRecord.uf == uf,
-            )
-        ).all()
-        # Map ibge_code → (rio_id, source_ref)
-        destino_rio_map: dict = {
-            row.municipio_id: (row.id, row.source_ref)
-            for row in destino_rows
-            if row.municipio_id
-        }
-
-        # Build the INLINE Places enrichment agent (distrito + hours/contact/price +
-        # liveness — never the description, see below), run per-record inside produce()
-        # after Rio routing — like the other completude steps. Constructed once per sweep
-        # behind run_real_externals + the operator flags; the Null clients keep the TA floor + advance the record offline
-        # (ZERO external spend). Replaces the old post-produce enrich_description/_places
-        # dispatch, which the 600s time_limit could kill before it ran.
-        # Build resiliently: a client-construction failure (e.g. a missing key) disables
-        # inline enrichment for this sweep and logs — it must never crash the ingest.
-        places_agent = None
-        _distritos: list = []
-        try:
-            from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
-            from brave.shared.ibge_distritos import load_distritos
-
-            _distritos = load_distritos(session)
-            if effective.places_enrichment_enabled:
-                _places_client = clients.places
-            else:
-                from brave.clients.null_places import NullPlacesClient
-                _places_client = NullPlacesClient()
-
-            # The sweep NEVER writes descriptions, whatever the flags: description_enabled
-            # =False makes PlacesEnrichmentAgent skip the whole description block cleanly.
-            # Descriptions come later, per UF, from brave.describe_uf (engine action
-            # "describe") or the batch lane (submit/collect_description_batch).
-            from brave.clients.null_llm import NullLLMClient
-
-            places_agent = PlacesEnrichmentAgent(
-                places_client=_places_client,
-                session=session,
-                config=config,
-                llm_client=NullLLMClient(),
-                distritos=_distritos,
-                voice_model_slug=effective.atrativo_voice_model_slug,
-                description_enabled=False,
-                enable_web_search=effective.run_real_externals,
-                max_distance_km=effective.places_match_max_distance_km,
-            )
-        except Exception:  # noqa: BLE001 — enrichment build must not crash the sweep
-            logger.warning("inline_enrichment_build_failed", uf=uf)
-            places_agent = None
-
-        # Run atrativos producer using destino_rio_map.
-        # ta_config=ta_config wires the TripAdvisorConfig instance so the
-        # fetch_attraction_geo ftx geo-linkage guard activates under real externals.
-        atrativos_ingest = TripAdvisorAtrativosIngest(
-            ta_client=ta_client,
-            session=session,
-            config=config,
-            ibge_records=ibge_records,
-            destino_rio_map=destino_rio_map,
-            geocoder=geocoder,
-            ta_config=ta_config,
-            places_agent=places_agent,
-            distritos=_distritos,
-        )
-        # Per-UF path enriches review recency (fetch_recent_review per card) so
-        # atualidade lifts the reliability score. The bulk_national branch above leaves
-        # enrichment OFF (no per-card review calls at 10k scale).
-        # redis=engine_rc lets the per-UF producer honor a mid-run Motor Pausado/
-        # Desligado (engine.should_halt_producer) — otherwise the fanned-out producer
-        # keeps paginating + inserting atrativos/synthesized destinos after a pause.
-        ingested_rio_ids = _asyncio.run(
-            _using(
-                clients,
-                atrativos_ingest.produce(
-                    uf,
-                    run_rio=run_rio,
-                    enrich_reviews=True,
-                    redis=engine_rc,
-                    max_per_uf=max_per_uf,
-                ),
-            )
-        )
-
-        session.commit()
-
-        # Enrichment now runs INLINE inside produce() (per record, via places_agent) — no
-        # post-produce dispatch. This survives a task-kill (per-record commit) where the old
-        # dispatch loop was never reached when the 600s time_limit fired mid-produce.
+            # Enrichment now runs INLINE inside produce() (per record, via places_agent) — no
+            # post-produce dispatch. This survives a task-kill (per-record commit) where the old
+            # dispatch loop was never reached when the 600s time_limit fired mid-produce.
 
     except (SessionMissingError, SessionExpiredError) as exc:
         # Operator error: session not injected (Missing) or expired at DataDome (Expired).
@@ -959,48 +879,6 @@ def sweep_tripadvisor(
         )
         return  # No retry, no quarantine — operator must re-inject session
 
-    except ProviderBalanceError as exc:
-        # A paid provider (search/LLM/Places) reported a billing wall mid-produce.
-        # Pause the motor with a reason — NOT a hard off (R1's DESLIGADO above is for
-        # an operator error); no retry, no quarantine, the run just halts here.
-        session.rollback()
-        collection_engine.pause_with_reason(engine_rc, "provider_balance", exc.provider, action="sweep")
-        logger.warning("sweep_tripadvisor_provider_balance", uf=uf, provider=exc.provider)
-        return
-
-    except PermanentError as exc:
-        session.rollback()
-        q_session, q_engine = _get_session()
-        try:
-            _quarantine(
-                session=q_session,
-                nascente_id=None,
-                task_name="brave.sweep_tripadvisor",
-                error=str(exc),
-                payload={"uf": uf},
-            )
-            q_session.commit()
-        finally:
-            q_session.close()
-
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            q_session, q_engine = _get_session()
-            try:
-                _quarantine(
-                    session=q_session,
-                    nascente_id=None,
-                    task_name="brave.sweep_tripadvisor",
-                    error=str(exc),
-                    payload={"uf": uf},
-                )
-                q_session.commit()
-            finally:
-                q_session.close()
-
     finally:
         # Producer-completes lifecycle: engine_sweep_run claimed the per-UF producer before
         # .delay (Retry-guarded: only the terminal run counts). The bulk branch claimed
@@ -1030,73 +908,40 @@ def find_contacts_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to advance.
     """
-    from brave.core.quarantine import quarantine_poison as _quarantine
     from brave.lanes.atrativos.contact_finder_agent import ContactFinderAgent
 
     session, engine = _get_session()
     try:
-        rio_uuid = uuid.UUID(rio_id)
-        # FOR UPDATE: ContactFinderAgent merges its writes onto the row's current
-        # `normalized` under the same lock; taking it here holds it for the whole task so a
-        # concurrent writer (copy_batch collect) cannot commit between our read and our write.
-        rio = session.get(RioRecord, rio_uuid, with_for_update=True)
-        if rio is None:
-            raise PermanentError(f"RioRecord {rio_id} not found")
+        with task_failure_policy(self, session, "brave.find_contacts", payload={"rio_id": rio_id}):
+            rio_uuid = uuid.UUID(rio_id)
+            # FOR UPDATE: ContactFinderAgent merges its writes onto the row's current
+            # `normalized` under the same lock; taking it here holds it for the whole task so a
+            # concurrent writer (copy_batch collect) cannot commit between our read and our write.
+            rio = session.get(RioRecord, rio_uuid, with_for_update=True)
+            if rio is None:
+                raise PermanentError(f"RioRecord {rio_id} not found")
 
-        # Idempotency: ContactFinderAgent.run() handles sub_state guard internally
-        clients = clients_for(_load_config(session))
-        agent = ContactFinderAgent(
-            places_client=clients.places,
-            session=session,
-        )
-
-        asyncio.run(_using(clients, agent.run(rio)))
-        session.commit()
-
-        # ORCH-02 / D-03: continue the chain only if this record actually advanced to
-        # contacts_found (the ContactFinder inline guard short-circuits a duplicate/stale
-        # dispatch — in which case we must NOT enqueue). Re-read sub_state after commit and
-        # dispatch gather_signals_task with the same dispatch-then-inline-fallback. Keyed on
-        # sub_state, not a return value (D-03); replay-safe via the signal_agent guard (D-04).
-        session.refresh(rio)
-        if rio.sub_state == "contacts_found":
-            try:
-                gather_signals_task.delay(str(rio_id))
-            except Exception:
-                gather_signals_task.run(str(rio_id))
-
-    except PermanentError as exc:
-        session.rollback()
-        q_session, q_engine = _get_session()
-        try:
-            _quarantine(
-                session=q_session,
-                nascente_id=None,
-                task_name="brave.find_contacts",
-                error=str(exc),
-                payload={"rio_id": rio_id},
+            # Idempotency: ContactFinderAgent.run() handles sub_state guard internally
+            clients = clients_for(_load_config(session))
+            agent = ContactFinderAgent(
+                places_client=clients.places,
+                session=session,
             )
-            q_session.commit()
-        finally:
-            q_session.close()
 
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            q_session, q_engine = _get_session()
-            try:
-                _quarantine(
-                    session=q_session,
-                    nascente_id=None,
-                    task_name="brave.find_contacts",
-                    error=str(exc),
-                    payload={"rio_id": rio_id},
-                )
-                q_session.commit()
-            finally:
-                q_session.close()
+            asyncio.run(_using(clients, agent.run(rio)))
+            session.commit()
+
+            # ORCH-02 / D-03: continue the chain only if this record actually advanced to
+            # contacts_found (the ContactFinder inline guard short-circuits a duplicate/stale
+            # dispatch — in which case we must NOT enqueue). Re-read sub_state after commit and
+            # dispatch gather_signals_task with the same dispatch-then-inline-fallback. Keyed on
+            # sub_state, not a return value (D-03); replay-safe via the signal_agent guard (D-04).
+            session.refresh(rio)
+            if rio.sub_state == "contacts_found":
+                try:
+                    gather_signals_task.delay(str(rio_id))
+                except Exception:
+                    gather_signals_task.run(str(rio_id))
 
     finally:
         session.close()
@@ -1123,74 +968,41 @@ def gather_signals_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to advance.
     """
-    from brave.core.quarantine import quarantine_poison as _quarantine
     from brave.lanes.atrativos.signal_agent import SignalAgent
 
     session, engine = _get_session()
     try:
-        rio_uuid = uuid.UUID(rio_id)
-        # FOR UPDATE: same reason as find_contacts_task — SignalAgent merges under this lock.
-        rio = session.get(RioRecord, rio_uuid, with_for_update=True)
-        if rio is None:
-            raise PermanentError(f"RioRecord {rio_id} not found")
+        with task_failure_policy(self, session, "brave.gather_signals", payload={"rio_id": rio_id}):
+            rio_uuid = uuid.UUID(rio_id)
+            # FOR UPDATE: same reason as find_contacts_task — SignalAgent merges under this lock.
+            rio = session.get(RioRecord, rio_uuid, with_for_update=True)
+            if rio is None:
+                raise PermanentError(f"RioRecord {rio_id} not found")
 
-        effective = _load_config(session)
-        config = effective.score
+            effective = _load_config(session)
+            config = effective.score
 
-        clients = clients_for(effective)
-        agent = SignalAgent(
-            places_client=clients.places,
-            session=session,
-            config=config,
-        )
-
-        asyncio.run(_using(clients, agent.run(rio)))
-        session.commit()
-
-        # ORCH-02 / D-03: continue the chain only if this record actually advanced to
-        # signals_gathered (a CLOSED / no-recent-reviews record is terminal DLQ with
-        # sub_state=None, and must NOT be enriched). Re-read after commit and dispatch
-        # enrich_places_task (the single enrichment agent — description + distrito + hours +
-        # liveness). Keyed on sub_state; replay-safe via the Places agent's own guard.
-        session.refresh(rio)
-        if rio.sub_state == "signals_gathered":
-            try:
-                enrich_places_task.delay(str(rio_id))
-            except Exception:
-                enrich_places_task.run(str(rio_id))
-
-    except PermanentError as exc:
-        session.rollback()
-        q_session, q_engine = _get_session()
-        try:
-            _quarantine(
-                session=q_session,
-                nascente_id=None,
-                task_name="brave.gather_signals",
-                error=str(exc),
-                payload={"rio_id": rio_id},
+            clients = clients_for(effective)
+            agent = SignalAgent(
+                places_client=clients.places,
+                session=session,
+                config=config,
             )
-            q_session.commit()
-        finally:
-            q_session.close()
 
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            q_session, q_engine = _get_session()
-            try:
-                _quarantine(
-                    session=q_session,
-                    nascente_id=None,
-                    task_name="brave.gather_signals",
-                    error=str(exc),
-                    payload={"rio_id": rio_id},
-                )
-                q_session.commit()
-            finally:
-                q_session.close()
+            asyncio.run(_using(clients, agent.run(rio)))
+            session.commit()
+
+            # ORCH-02 / D-03: continue the chain only if this record actually advanced to
+            # signals_gathered (a CLOSED / no-recent-reviews record is terminal DLQ with
+            # sub_state=None, and must NOT be enriched). Re-read after commit and dispatch
+            # enrich_places_task (the single enrichment agent — description + distrito + hours +
+            # liveness). Keyed on sub_state; replay-safe via the Places agent's own guard.
+            session.refresh(rio)
+            if rio.sub_state == "signals_gathered":
+                try:
+                    enrich_places_task.delay(str(rio_id))
+                except Exception:
+                    enrich_places_task.run(str(rio_id))
 
     finally:
         session.close()
@@ -1334,65 +1146,16 @@ def enrich_places_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to enrich.
     """
-    from brave.core.quarantine import quarantine_poison as _quarantine
-
     session, engine = _get_session()
     try:
-        rio_uuid = uuid.UUID(rio_id)
-        rio = session.get(RioRecord, rio_uuid)
-        if rio is None:
-            raise PermanentError(f"RioRecord {rio_id} not found")
+        with task_failure_policy(self, session, "brave.enrich_places", payload={"rio_id": rio_id}):
+            rio_uuid = uuid.UUID(rio_id)
+            rio = session.get(RioRecord, rio_uuid)
+            if rio is None:
+                raise PermanentError(f"RioRecord {rio_id} not found")
 
-        _enrich_one(session, rio)
-        session.commit()
-
-    except PermanentError as exc:
-        session.rollback()
-        q_session, q_engine = _get_session()
-        try:
-            _quarantine(
-                session=q_session,
-                nascente_id=None,
-                task_name="brave.enrich_places",
-                error=str(exc),
-                payload={"rio_id": rio_id},
-            )
-            q_session.commit()
-        finally:
-            q_session.close()
-
-    except ProviderBalanceError as exc:
-        # A paid provider reported a billing wall — pause the motor with a reason.
-        # No retry, no quarantine: the record is untouched, next pass tries again.
-        session.rollback()
-        import redis as _redis_lib  # noqa: PLC0415
-
-        from brave.core import engine as collection_engine  # noqa: PLC0415
-
-        rc = _redis_lib.from_url(
-            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-        )
-        collection_engine.pause_with_reason(rc, "provider_balance", exc.provider, action="describe")
-        logger.warning("enrich_places_provider_balance", rio_id=rio_id, provider=exc.provider)
-        return
-
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            q_session, q_engine = _get_session()
-            try:
-                _quarantine(
-                    session=q_session,
-                    nascente_id=None,
-                    task_name="brave.enrich_places",
-                    error=str(exc),
-                    payload={"rio_id": rio_id},
-                )
-                q_session.commit()
-            finally:
-                q_session.close()
+            _enrich_one(session, rio)
+            session.commit()
 
     finally:
         session.close()
@@ -1838,140 +1601,108 @@ def outreach_task(self, rio_id: str) -> None:
 
     session, engine = _get_session()
     try:
-        rio_uuid = uuid.UUID(rio_id)
-        # CR-04: lock the row (SELECT ... FOR UPDATE) so the idempotency guard and
-        # the send are serialized — two concurrent dispatches for the same rio_id
-        # cannot both pass the guard and double-send. The second waits on the lock,
-        # re-reads the advanced/changed state, and no-ops.
-        rio = session.get(RioRecord, rio_uuid, with_for_update=True)
-        if rio is None:
-            raise PermanentError(f"RioRecord {rio_id} not found")
+        with task_failure_policy(self, session, "brave.outreach", payload={"rio_id": rio_id}):
+            rio_uuid = uuid.UUID(rio_id)
+            # CR-04: lock the row (SELECT ... FOR UPDATE) so the idempotency guard and
+            # the send are serialized — two concurrent dispatches for the same rio_id
+            # cannot both pass the guard and double-send. The second waits on the lock,
+            # re-reads the advanced/changed state, and no-ops.
+            rio = session.get(RioRecord, rio_uuid, with_for_update=True)
+            if rio is None:
+                raise PermanentError(f"RioRecord {rio_id} not found")
 
-        # Idempotency: only send if sub_state is whatsapp_in_progress
-        if rio.sub_state != "whatsapp_in_progress":
-            return  # Already advanced past this step — idempotent no-op
+            # Idempotency: only send if sub_state is whatsapp_in_progress
+            if rio.sub_state != "whatsapp_in_progress":
+                return  # Already advanced past this step — idempotent no-op
 
-        effective = _load_config(session)
-        config = effective.score
+            effective = _load_config(session)
+            config = effective.score
 
-        # WhatsApp + LLM adapters (production: Twilio/Real or Null; never Fake, T-03-04-07)
-        clients = clients_for(effective)
-        wa_client = clients.whatsapp
-        llm_client = clients.llm("atrativos", session=session)
-        redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-        import redis as redis_lib
-        redis_client = redis_lib.from_url(redis_url)
+            # WhatsApp + LLM adapters (production: Twilio/Real or Null; never Fake, T-03-04-07)
+            clients = clients_for(effective)
+            wa_client = clients.whatsapp
+            llm_client = clients.llm("atrativos", session=session)
+            redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+            import redis as redis_lib
+            redis_client = redis_lib.from_url(redis_url)
 
-        settings = effective.whatsapp
+            settings = effective.whatsapp
 
-        async def _run() -> Any:
-            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            async def _run() -> Any:
+                from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-            db_url = os.environ.get("BRAVE_DB_URL", "")
-            # Strip SQLAlchemy driver prefix — langgraph-checkpoint-postgres
-            # expects plain postgresql:// (not postgresql+psycopg://)
-            pg_dsn = db_url.replace("postgresql+psycopg://", "postgresql://")
+                db_url = os.environ.get("BRAVE_DB_URL", "")
+                # Strip SQLAlchemy driver prefix — langgraph-checkpoint-postgres
+                # expects plain postgresql:// (not postgresql+psycopg://)
+                pg_dsn = db_url.replace("postgresql+psycopg://", "postgresql://")
 
-            saver = await AsyncPostgresSaver.from_conn_string(pg_dsn)
-            await saver.setup()  # creates checkpoints + checkpoint_blobs tables
+                saver = await AsyncPostgresSaver.from_conn_string(pg_dsn)
+                await saver.setup()  # creates checkpoints + checkpoint_blobs tables
 
-            graph = build_graph(
-                wa_client=wa_client,
-                llm_client=llm_client,
-                session=session,
-                redis_client=redis_client,
-                rio=rio,
-                config=config,
-                settings=settings,
-                push_confirmed_fn=publish_mar.delay,
-                checkpointer=saver,
-            )
+                graph = build_graph(
+                    wa_client=wa_client,
+                    llm_client=llm_client,
+                    session=session,
+                    redis_client=redis_client,
+                    rio=rio,
+                    config=config,
+                    settings=settings,
+                    push_confirmed_fn=publish_mar.delay,
+                    checkpointer=saver,
+                )
 
-            thread_id = f"atrativo:{rio_id}"
-            # Extract contact phone from the canonical ContactFinder location
-            # (CR-03): normalized["contacts"]["phone_e164"].
-            contact_phone = _extract_contact_phone(rio)
-            if not contact_phone:
-                # No reachable owner — route to DLQ instead of dispatching an
-                # empty send / writing a consent row keyed on "".
-                rio.routing = "dlq"
-                rio.dlq_reason = "no_contact_phone"
-                rio.sub_state = None
-                logger.warning(
-                    "outreach_no_contact_phone",
+                thread_id = f"atrativo:{rio_id}"
+                # Extract contact phone from the canonical ContactFinder location
+                # (CR-03): normalized["contacts"]["phone_e164"].
+                contact_phone = _extract_contact_phone(rio)
+                if not contact_phone:
+                    # No reachable owner — route to DLQ instead of dispatching an
+                    # empty send / writing a consent row keyed on "".
+                    rio.routing = "dlq"
+                    rio.dlq_reason = "no_contact_phone"
+                    rio.sub_state = None
+                    logger.warning(
+                        "outreach_no_contact_phone",
+                        rio_id=rio_id,
+                    )
+                    return
+                outreach_template = settings.approved_templates[0] if settings.approved_templates else "norteia_v1"
+
+                initial_state = {
+                    "rio_id": rio_id,
+                    "contact_phone": contact_phone,
+                    "messages": [],
+                    "extraction": None,
+                    "opted_out": False,
+                    "window_open": True,
+                    "last_inbound_at": None,
+                    "turns": 0,
+                    "max_turns": 3,
+                    "outreach_template": outreach_template,
+                    "message_text": "",
+                }
+
+                final_state = await graph.ainvoke(
+                    initial_state,
+                    config={"configurable": {"thread_id": thread_id}},
+                )
+                return final_state, contact_phone
+
+            run_result = asyncio.run(_using(clients, _run()))
+            # R2 Option B (DASH-05): append the produced OUTBOUND ask message(s) read from
+            # the graph's FINAL state to the append-only conversation_message log, on this
+            # task's OWN session, BEFORE the single commit below (alongside the saver — the
+            # AsyncPostgresSaver persistence is untouched). Tolerant of the no-contact-phone
+            # early return (run_result is None → nothing appended).
+            if run_result is not None:
+                final_state, used_phone = run_result
+                _log_conversation_messages(
+                    session=session,
                     rio_id=rio_id,
+                    contact_phone=used_phone,
+                    final_state=final_state,
                 )
-                return
-            outreach_template = settings.approved_templates[0] if settings.approved_templates else "norteia_v1"
-
-            initial_state = {
-                "rio_id": rio_id,
-                "contact_phone": contact_phone,
-                "messages": [],
-                "extraction": None,
-                "opted_out": False,
-                "window_open": True,
-                "last_inbound_at": None,
-                "turns": 0,
-                "max_turns": 3,
-                "outreach_template": outreach_template,
-                "message_text": "",
-            }
-
-            final_state = await graph.ainvoke(
-                initial_state,
-                config={"configurable": {"thread_id": thread_id}},
-            )
-            return final_state, contact_phone
-
-        run_result = asyncio.run(_using(clients, _run()))
-        # R2 Option B (DASH-05): append the produced OUTBOUND ask message(s) read from
-        # the graph's FINAL state to the append-only conversation_message log, on this
-        # task's OWN session, BEFORE the single commit below (alongside the saver — the
-        # AsyncPostgresSaver persistence is untouched). Tolerant of the no-contact-phone
-        # early return (run_result is None → nothing appended).
-        if run_result is not None:
-            final_state, used_phone = run_result
-            _log_conversation_messages(
-                session=session,
-                rio_id=rio_id,
-                contact_phone=used_phone,
-                final_state=final_state,
-            )
-        session.commit()
-
-    except PermanentError as exc:
-        session.rollback()
-        q_session, q_engine = _get_session()
-        try:
-            quarantine_poison(
-                session=q_session,
-                nascente_id=None,
-                task_name="brave.outreach",
-                error=str(exc),
-                payload={"rio_id": rio_id},
-            )
-            q_session.commit()
-        finally:
-            q_session.close()
-
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            q_session, q_engine = _get_session()
-            try:
-                quarantine_poison(
-                    session=q_session,
-                    nascente_id=None,
-                    task_name="brave.outreach",
-                    error=str(exc),
-                    payload={"rio_id": rio_id},
-                )
-                q_session.commit()
-            finally:
-                q_session.close()
+            session.commit()
 
     finally:
         session.close()
@@ -2010,118 +1741,91 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
 
     session, engine = _get_session()
     try:
-        rio_uuid = uuid.UUID(rio_id)
-        # CR-04: lock the row so two concurrent inbound webhooks for the same
-        # rio_id (owner double-tap / Twilio re-delivery) cannot both pass the
-        # guard, resume the same checkpoint, and double-send a follow-up. The
-        # second waits on the lock, re-reads the state, and no-ops if the
-        # conversation already advanced past whatsapp_in_progress.
-        rio = session.get(RioRecord, rio_uuid, with_for_update=True)
-        if rio is None:
-            raise PermanentError(f"RioRecord {rio_id} not found")
+        with task_failure_policy(
+            self,
+            session,
+            "brave.resume_conversation",
+            payload={"rio_id": rio_id},
+        ):
+            rio_uuid = uuid.UUID(rio_id)
+            # CR-04: lock the row so two concurrent inbound webhooks for the same
+            # rio_id (owner double-tap / Twilio re-delivery) cannot both pass the
+            # guard, resume the same checkpoint, and double-send a follow-up. The
+            # second waits on the lock, re-reads the state, and no-ops if the
+            # conversation already advanced past whatsapp_in_progress.
+            rio = session.get(RioRecord, rio_uuid, with_for_update=True)
+            if rio is None:
+                raise PermanentError(f"RioRecord {rio_id} not found")
 
-        # Idempotency: only resume if conversation is still active
-        if rio.sub_state != "whatsapp_in_progress":
-            return  # Conversation already completed or never started — no-op
+            # Idempotency: only resume if conversation is still active
+            if rio.sub_state != "whatsapp_in_progress":
+                return  # Conversation already completed or never started — no-op
 
-        effective = _load_config(session)
-        config = effective.score
+            effective = _load_config(session)
+            config = effective.score
 
-        # WhatsApp + LLM adapters (production: Twilio/Real or Null; never Fake, T-03-04-07)
-        clients = clients_for(effective)
-        wa_client = clients.whatsapp
-        llm_client = clients.llm("atrativos", session=session)
-        redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-        import redis as redis_lib
-        redis_client = redis_lib.from_url(redis_url)
+            # WhatsApp + LLM adapters (production: Twilio/Real or Null; never Fake, T-03-04-07)
+            clients = clients_for(effective)
+            wa_client = clients.whatsapp
+            llm_client = clients.llm("atrativos", session=session)
+            redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+            import redis as redis_lib
+            redis_client = redis_lib.from_url(redis_url)
 
-        settings = effective.whatsapp
+            settings = effective.whatsapp
 
-        # Canonical contact phone for masking the conversation_message rows (R3).
-        contact_phone = _extract_contact_phone(rio)
+            # Canonical contact phone for masking the conversation_message rows (R3).
+            contact_phone = _extract_contact_phone(rio)
 
-        async def _run() -> Any:
-            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            async def _run() -> Any:
+                from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-            db_url = os.environ.get("BRAVE_DB_URL", "")
-            pg_dsn = db_url.replace("postgresql+psycopg://", "postgresql://")
+                db_url = os.environ.get("BRAVE_DB_URL", "")
+                pg_dsn = db_url.replace("postgresql+psycopg://", "postgresql://")
 
-            saver = await AsyncPostgresSaver.from_conn_string(pg_dsn)
-            await saver.setup()
+                saver = await AsyncPostgresSaver.from_conn_string(pg_dsn)
+                await saver.setup()
 
-            graph = build_graph(
-                wa_client=wa_client,
-                llm_client=llm_client,
-                session=session,
-                redis_client=redis_client,
-                rio=rio,
-                config=config,
-                settings=settings,
-                push_confirmed_fn=publish_mar.delay,
-                checkpointer=saver,
-            )
-
-            thread_id = f"atrativo:{rio_id}"
-
-            # Resume from checkpoint: pass reply_text as message_text state update.
-            # LangGraph loads from AsyncPostgresSaver checkpoint → runs from recv_reply_node.
-            # The message_text field is read by recv_reply_node from state.
-            resume_state = {
-                "message_text": reply_text,
-            }
-
-            final_state = await graph.ainvoke(
-                resume_state,
-                config={"configurable": {"thread_id": thread_id}},
-            )
-            return final_state
-
-        final_state = asyncio.run(_using(clients, _run()))
-        # R2 Option B (DASH-05): append BOTH the INBOUND reply_text AND any follow-up
-        # OUTBOUND message + extraction snapshot read from the graph's FINAL state to the
-        # append-only conversation_message log, on this task's OWN session, BEFORE the
-        # single commit below (alongside the saver — AsyncPostgresSaver is untouched).
-        _log_conversation_messages(
-            session=session,
-            rio_id=rio_id,
-            contact_phone=contact_phone,
-            final_state=final_state,
-            inbound_text=reply_text,
-        )
-        session.commit()
-
-    except PermanentError as exc:
-        session.rollback()
-        q_session, q_engine = _get_session()
-        try:
-            quarantine_poison(
-                session=q_session,
-                nascente_id=None,
-                task_name="brave.resume_conversation",
-                error=str(exc),
-                payload={"rio_id": rio_id},
-            )
-            q_session.commit()
-        finally:
-            q_session.close()
-
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            q_session, q_engine = _get_session()
-            try:
-                quarantine_poison(
-                    session=q_session,
-                    nascente_id=None,
-                    task_name="brave.resume_conversation",
-                    error=str(exc),
-                    payload={"rio_id": rio_id},
+                graph = build_graph(
+                    wa_client=wa_client,
+                    llm_client=llm_client,
+                    session=session,
+                    redis_client=redis_client,
+                    rio=rio,
+                    config=config,
+                    settings=settings,
+                    push_confirmed_fn=publish_mar.delay,
+                    checkpointer=saver,
                 )
-                q_session.commit()
-            finally:
-                q_session.close()
+
+                thread_id = f"atrativo:{rio_id}"
+
+                # Resume from checkpoint: pass reply_text as message_text state update.
+                # LangGraph loads from AsyncPostgresSaver checkpoint → runs from recv_reply_node.
+                # The message_text field is read by recv_reply_node from state.
+                resume_state = {
+                    "message_text": reply_text,
+                }
+
+                final_state = await graph.ainvoke(
+                    resume_state,
+                    config={"configurable": {"thread_id": thread_id}},
+                )
+                return final_state
+
+            final_state = asyncio.run(_using(clients, _run()))
+            # R2 Option B (DASH-05): append BOTH the INBOUND reply_text AND any follow-up
+            # OUTBOUND message + extraction snapshot read from the graph's FINAL state to the
+            # append-only conversation_message log, on this task's OWN session, BEFORE the
+            # single commit below (alongside the saver — AsyncPostgresSaver is untouched).
+            _log_conversation_messages(
+                session=session,
+                rio_id=rio_id,
+                contact_phone=contact_phone,
+                final_state=final_state,
+                inbound_text=reply_text,
+            )
+            session.commit()
 
     finally:
         session.close()
@@ -2171,125 +1875,97 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
 
     from brave.core.atrativos.state_machine import advance_sub_state
     from brave.core.models import whatsapp_candidate_from_phone
-    from brave.core.quarantine import quarantine_poison as _quarantine
     from brave.lanes.atrativos.contact_finder_agent import _normalize_phone_e164
     from brave.lanes.atrativos.number_discovery import discover_number
 
     session, engine = _get_session()
     try:
-        rio_uuid = uuid.UUID(rio_id)
-        # CR-04: hold the row lock for the whole task so a concurrent inbound/resume
-        # cannot interleave with the discovery → advance/bounce write.
-        rio = session.get(RioRecord, rio_uuid, with_for_update=True)
-        if rio is None:
-            raise PermanentError(f"RioRecord {rio_id} not found")
+        with task_failure_policy(
+            self,
+            session,
+            "brave.discover_whatsapp_number",
+            payload={"rio_id": rio_id},
+        ):
+            rio_uuid = uuid.UUID(rio_id)
+            # CR-04: hold the row lock for the whole task so a concurrent inbound/resume
+            # cannot interleave with the discovery → advance/bounce write.
+            rio = session.get(RioRecord, rio_uuid, with_for_update=True)
+            if rio is None:
+                raise PermanentError(f"RioRecord {rio_id} not found")
 
-        # Idempotency (D-01): only run while parked at the gate awaiting a number.
-        if rio.sub_state != "aguardando_consulta_whatsapp":
-            return
+            # Idempotency (D-01): only run while parked at the gate awaiting a number.
+            if rio.sub_state != "aguardando_consulta_whatsapp":
+                return
 
-        # LLM adapter (D-18): Null offline (no number), Real opt-in.
-        clients = clients_for(_load_config(session))
-        normalized = rio.normalized or {}
-        raw_phone = asyncio.run(
-            _using(
-                clients,
-                discover_number(
-                    clients.llm("atrativos", session=session),
-                    name=normalized.get("name") or "",
-                    uf=rio.uf,
-                    address=normalized.get("address"),
-                ),
+            # LLM adapter (D-18): Null offline (no number), Real opt-in.
+            clients = clients_for(_load_config(session))
+            normalized = rio.normalized or {}
+            raw_phone = asyncio.run(
+                _using(
+                    clients,
+                    discover_number(
+                        clients.llm("atrativos", session=session),
+                        name=normalized.get("name") or "",
+                        uf=rio.uf,
+                        address=normalized.get("address"),
+                    ),
+                )
             )
-        )
 
-        # Only a MOBILE (celular) number is a plausible WhatsApp — whatsapp_candidate_from_phone
-        # returns the MASKED celular or None (landline / no number). The raw E.164 is kept
-        # separately for the consent/outreach path.
-        masked_candidate = whatsapp_candidate_from_phone(raw_phone)
+            # Only a MOBILE (celular) number is a plausible WhatsApp — whatsapp_candidate_from_phone
+            # returns the MASKED celular or None (landline / no number). The raw E.164 is kept
+            # separately for the consent/outreach path.
+            masked_candidate = whatsapp_candidate_from_phone(raw_phone)
 
-        if raw_phone and masked_candidate is not None:
-            phone_e164 = _normalize_phone_e164(raw_phone)
-            new_normalized = dict(normalized)
-            contacts = dict(new_normalized.get("contacts") or {})
-            contacts["phone_e164"] = phone_e164
-            new_normalized["contacts"] = contacts
-            # Store the WhatsApp candidate ALREADY MASKED (LGPD R3) — never the raw celular.
-            new_normalized["contact"] = {"whatsapp_candidate": masked_candidate}
-            rio.normalized = new_normalized
-            flag_modified(rio, "normalized")
+            if raw_phone and masked_candidate is not None:
+                phone_e164 = _normalize_phone_e164(raw_phone)
+                new_normalized = dict(normalized)
+                contacts = dict(new_normalized.get("contacts") or {})
+                contacts["phone_e164"] = phone_e164
+                new_normalized["contacts"] = contacts
+                # Store the WhatsApp candidate ALREADY MASKED (LGPD R3) — never the raw celular.
+                new_normalized["contact"] = {"whatsapp_candidate": masked_candidate}
+                rio.normalized = new_normalized
+                flag_modified(rio, "normalized")
 
-            # Found → approve for outreach (aguardando → whatsapp_in_progress).
+                # Found → approve for outreach (aguardando → whatsapp_in_progress).
+                advance_sub_state(
+                    session,
+                    rio,
+                    "aguardando_consulta_whatsapp",
+                    "whatsapp_in_progress",
+                    actor="number_discovery",
+                    validate=True,
+                    lock=False,
+                )
+                session.commit()
+
+                # Dispatch-then-inline-fallback (same idiom the batch endpoint uses): the
+                # per-task commit above released the row lock, so an inline outreach_task.run
+                # can re-acquire it offline; .delay is the normal broker path.
+                try:
+                    outreach_task.delay(rio_id)
+                except Exception:
+                    outreach_task.run(rio_id)
+
+                logger.info("whatsapp_number_found", rio_id=rio_id)
+                return
+
+            # Not found → back to DLQ (aguardando_consulta_whatsapp → None) with a distinct reason.
             advance_sub_state(
                 session,
                 rio,
                 "aguardando_consulta_whatsapp",
-                "whatsapp_in_progress",
+                None,
                 actor="number_discovery",
                 validate=True,
                 lock=False,
             )
+            rio.routing = "dlq"
+            rio.dlq_reason = "no_contact_found"
             session.commit()
 
-            # Dispatch-then-inline-fallback (same idiom the batch endpoint uses): the
-            # per-task commit above released the row lock, so an inline outreach_task.run
-            # can re-acquire it offline; .delay is the normal broker path.
-            try:
-                outreach_task.delay(rio_id)
-            except Exception:
-                outreach_task.run(rio_id)
-
-            logger.info("whatsapp_number_found", rio_id=rio_id)
-            return
-
-        # Not found → back to DLQ (aguardando_consulta_whatsapp → None) with a distinct reason.
-        advance_sub_state(
-            session,
-            rio,
-            "aguardando_consulta_whatsapp",
-            None,
-            actor="number_discovery",
-            validate=True,
-            lock=False,
-        )
-        rio.routing = "dlq"
-        rio.dlq_reason = "no_contact_found"
-        session.commit()
-
-        logger.info("whatsapp_number_not_found", rio_id=rio_id)
-
-    except PermanentError as exc:
-        session.rollback()
-        q_session, q_engine = _get_session()
-        try:
-            _quarantine(
-                session=q_session,
-                nascente_id=None,
-                task_name="brave.discover_whatsapp_number",
-                error=str(exc),
-                payload={"rio_id": rio_id},
-            )
-            q_session.commit()
-        finally:
-            q_session.close()
-
-    except Exception as exc:
-        session.rollback()
-        try:
-            raise self.retry(exc=exc, max_retries=3)
-        except self.MaxRetriesExceededError:
-            q_session, q_engine = _get_session()
-            try:
-                _quarantine(
-                    session=q_session,
-                    nascente_id=None,
-                    task_name="brave.discover_whatsapp_number",
-                    error=str(exc),
-                    payload={"rio_id": rio_id},
-                )
-                q_session.commit()
-            finally:
-                q_session.close()
+            logger.info("whatsapp_number_not_found", rio_id=rio_id)
 
     finally:
         session.close()

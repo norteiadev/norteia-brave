@@ -397,7 +397,9 @@ def pause_with_reason(
     Distinct from a plain ``set_mode(redis, PAUSADO)``: this ALSO writes the reason
     (``provider_balance`` | ``daily_budget``), which provider tripped it (if any), and
     which action (``sweep`` | ``describe``) was interrupted — so the Painel can render a
-    banner and rebuild the Continuar resume call. Cleared only by ``set_mode(LIGADO)``.
+    banner and rebuild the Continuar resume call. ``action=None`` (a chain task, e.g.
+    enrich_places) means Continuar only lifts the pause, starting no run. Cleared only by
+    ``set_mode(LIGADO)``.
     """
     redis.set(
         _PAUSE_REASON_KEY,
