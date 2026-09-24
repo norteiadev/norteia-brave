@@ -153,7 +153,7 @@ def test_patch_writes_audit_row(db, redis):
     assert audit.after_state == {"score.threshold_mar": 82.0}
     # before_state captures the prior effective value (the env default).
     assert audit.before_state == {"score.threshold_mar": 80.0}
-    assert db.commits == 1  # committed before the cache-bust side effect
+    assert db.commits == 1
 
 
 def test_patch_response_is_read_from_the_db_not_the_cache(db, redis):

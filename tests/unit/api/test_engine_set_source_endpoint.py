@@ -177,3 +177,19 @@ def test_engine_set_source_no_auth(client):
     assert resp.status_code in (401, 403), (
         f"Expected 401 or 403, got {resp.status_code}: {resp.text}"
     )
+
+
+def test_engine_set_source_503_when_config_store_unreadable(client, db):
+    """An unreadable config_settings → 503, never an env fallback that could re-enable a lane."""
+    from sqlalchemy.exc import OperationalError
+
+    def _boom(_stmt):
+        raise OperationalError("SELECT", {}, Exception("db down"))
+
+    db.execute = _boom
+    resp = client.post(
+        "/api/v1/engine/source",
+        headers=STEWARD_HEADERS,
+        json={"source": "tripadvisor"},
+    )
+    assert resp.status_code == 503, resp.text

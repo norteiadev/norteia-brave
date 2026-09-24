@@ -472,8 +472,8 @@ def engine_set_mode(
         )
     # Phase D: persist the mode durably. Redis stays the fast/authoritative live path
     # (set FIRST inside set_mode); config_settings is the durable store so a Redis
-    # flush no longer resets the mode to LIGADO. Passing session enables the upsert +
-    # snapshot-cache bust.
+    # flush no longer resets the mode to LIGADO. Passing session enables the upsert; the
+    # overlay cache is dropped after the request's commit (runtime after_commit listener).
     collection_engine.set_mode(redis, mode, session=db)
     logger.info("engine_mode_set", mode=mode)
     return {

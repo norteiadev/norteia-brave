@@ -33,6 +33,7 @@ scoring path (offline posture preserved).
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import os
 from dataclasses import dataclass
@@ -79,7 +80,7 @@ class ConfigKey:
         """This key's value on ``config`` — the seed default when ``config`` is env-only."""
         value: Any = config
         for part in self.field:
-            value = value.get(part) if isinstance(value, dict) else getattr(value, part)
+            value = value.get(part, False) if isinstance(value, dict) else getattr(value, part)
         return value
 
 
@@ -170,17 +171,20 @@ def _apply_overlay(base: AppConfig, overlays: dict[str, Any]) -> AppConfig:
 # ---------------------------------------------------------------------------
 
 
+@functools.lru_cache(maxsize=1)
 def overlay_redis() -> Redis:
     """The Redis that holds the overlay cache: ``BRAVE_DB_REDIS_URL``, shared by every process.
 
-    Used by the Celery tasks' config read and by the after-commit bust. Tests swap it for
-    a fakeredis (tests/conftest.py).
+    Used by the Celery tasks' config read and by the after-commit bust. One client per
+    process (its pool is reused); both timeouts bound a hung Redis, since the bust runs
+    right after a request's commit. Tests swap it for a fakeredis (tests/conftest.py).
     """
     import redis as _redis_lib  # noqa: PLC0415
 
     return _redis_lib.from_url(
         os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"),
         socket_connect_timeout=1,
+        socket_timeout=1,
     )
 
 
@@ -239,9 +243,11 @@ def _bust_overlay_after_commit(session: Session) -> None:
         logger.error("config_overlay_bust_failed", error=str(exc))
 
 
-@event.listens_for(Session, "after_rollback")
-def _forget_overlay_dirty(session: Session) -> None:
-    session.info.pop(_OVERLAY_DIRTY, None)
+@event.listens_for(Session, "after_soft_rollback")
+def _forget_overlay_dirty(session: Session, previous_transaction: Any) -> None:
+    # A SAVEPOINT rollback keeps the outer transaction's config write pending.
+    if not previous_transaction.nested:
+        session.info.pop(_OVERLAY_DIRTY, None)
 
 
 def upsert_config(

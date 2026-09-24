@@ -58,3 +58,11 @@ def test_module_schedule_is_built_from_enabled_sources():
 
     assert isinstance(BRAVE_BEAT_SCHEDULE, dict)
     assert "prune-record-events-daily" in BRAVE_BEAT_SCHEDULE
+
+
+def test_unreadable_config_store_schedules_no_lane(monkeypatch):
+    """DB unreachable at beat import → no sweep lane (fail-closed), import still succeeds."""
+    from brave.tasks.beat_schedule import _enabled_sources_best_effort
+
+    monkeypatch.setenv("BRAVE_DB_URL", "postgresql+psycopg://nobody:x@127.0.0.1:1/none")
+    assert _enabled_sources_best_effort() == []

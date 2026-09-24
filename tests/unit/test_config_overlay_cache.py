@@ -99,3 +99,13 @@ def test_apply_overlay_sets_every_registered_field():
         assert entry.read(effective) == overlays[key], key
     # Unknown keys are ignored.
     assert _apply_overlay(base, {"some.future.key": 1}) == base
+
+
+def test_savepoint_rollback_keeps_the_outer_write_pending(session, redis):
+    redis.set(OVERLAY_KEY, "{}")
+    upsert_config(session, {"score.threshold_mar": 70.0})
+    session.begin_nested().rollback()
+
+    session.commit()
+
+    assert not redis.exists(OVERLAY_KEY)

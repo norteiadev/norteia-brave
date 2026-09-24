@@ -130,7 +130,11 @@ services:
     # Only one beat instance should run — redbeat enforces this via a Redis lock.
     command:
       ["/app/.venv/bin/celery", "-A", "brave.tasks.beat_schedule", "beat", "--loglevel=info"]
+    # migrate too: the schedule reads the config_settings overlay at import, and an
+    # unreadable config store schedules no lane sweeps (fail-closed) until a restart.
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     restart: unless-stopped

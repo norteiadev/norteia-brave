@@ -130,9 +130,9 @@ def get_config_snapshot(
     db: Session = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ) -> dict[str, Any]:
-    """Return the effective config snapshot (env defaults + config_settings overlay).
+    """Return the effective config (env defaults + config_settings overlay).
 
-    Secrets are redacted (never echoed). ``redis`` warms/serves the snapshot cache.
+    Secrets are redacted (never echoed). ``redis`` warms/serves the overlay cache.
     """
     effective = load_effective_config(db, redis)
     return _redact(effective.model_dump())
