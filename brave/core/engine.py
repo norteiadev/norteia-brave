@@ -398,9 +398,13 @@ def pause_with_reason(
     (``provider_balance`` | ``daily_budget``), which provider tripped it (if any), and
     which action (``sweep`` | ``describe``) was interrupted — so the Painel can render a
     banner and rebuild the Continuar resume call. ``action=None`` (a chain task, e.g.
-    enrich_places) means Continuar only lifts the pause, starting no run. Cleared only by
-    ``set_mode(LIGADO)``.
+    enrich_places) means Continuar only lifts the pause, starting no run — unless a pause
+    is already recorded: its action is kept, so when a producer stopped a sweep and its
+    queued chain tasks hit the same wall, Continuar still resumes the sweep. Cleared only
+    by ``set_mode(LIGADO)``.
     """
+    if action is None:
+        action = (get_pause_reason(redis) or {}).get("action")
     redis.set(
         _PAUSE_REASON_KEY,
         json.dumps(

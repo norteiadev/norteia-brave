@@ -1218,23 +1218,23 @@ async def _describe_chunk(
             except SoftTimeLimitExceeded:
                 raise
             except ProviderBalanceError as exc:
-                balance = exc  # no further fetch starts
-                raise
+                # No further fetch starts; the ones in flight finish (and are paid for),
+                # so their results and spend rows are written below.
+                balance = exc
+                return
             except Exception as exc:  # noqa: BLE001 — kept per record, raised in phase 2
                 fetched[rio_id] = exc
 
     cut = False
     async with clients:
         try:
-            # _fetch keeps every per-record failure in ``fetched``; only the soft time limit
-            # and a billing wall escape, and the results already in ``fetched`` are still
-            # written below.
+            # _fetch keeps every per-record failure in ``fetched`` and a billing wall in
+            # ``balance`` (raised once the spend rows are committed); only the soft time
+            # limit escapes, and the results already in ``fetched`` are still written below.
             await asyncio.gather(*(_fetch(rio_id, args) for rio_id, args in jobs))
         except SoftTimeLimitExceeded:
             cut = True
             logger.warning("describe_uf_soft_time_limit", uf=uf, fetched=len(fetched))
-        except ProviderBalanceError:
-            pass  # held in ``balance``, raised once the spend rows are committed
 
         for rio_id, _args in jobs:
             result = fetched.get(rio_id)

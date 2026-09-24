@@ -119,6 +119,18 @@ def test_provider_balance_pauses_without_retry_or_quarantine(
     assert collection_engine.get_mode(fake) == collection_engine.PAUSADO
 
 
+# 1b. Inline .run() (no broker): not exhausted — the caller decides, no quarantine here.
+def test_inline_run_failure_reraises_without_quarantine(monkeypatch):
+    _fail_with(monkeypatch, RuntimeError("boom"))
+    quarantine = MagicMock()
+    monkeypatch.setattr("brave.core.quarantine.quarantine_poison", quarantine)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        pipeline.gather_signals_task.run(_RIO)
+
+    quarantine.assert_not_called()
+
+
 # 3. ComplianceError → blocked, no retry, no quarantine, no pause.
 @pytest.mark.parametrize(("attr", "args", "_payload", "_action"), F1, ids=_IDS)
 def test_compliance_error_ends_without_retry_or_quarantine(

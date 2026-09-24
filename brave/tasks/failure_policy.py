@@ -83,14 +83,21 @@ def task_failure_policy(
             raise task.retry(exc=exc)
         except Retry:
             raise
-        except BaseException:
-            # Exhausted (Celery re-raised exc) or no retry possible (inline .run()).
+        except BaseException as retry_exc:
+            # Inline .run() (Celery re-raises exc at once): not exhausted — the caller decides,
+            # and quarantining here would add a second row when the caller's own policy runs.
+            if getattr(task.request, "called_directly", False):
+                raise
+            # Exhausted (Celery re-raised exc), or the retry itself failed (e.g. broker down).
             if quarantine:
-                _quarantine(task_name, exc, nascente_id, payload)
+                note = "" if retry_exc is exc else f" (retry failed: {type(retry_exc).__name__})"
+                _quarantine(task_name, exc, nascente_id, payload, note)
             raise
 
 
-def _quarantine(task_name: str, exc: BaseException, nascente_id: Any, payload: Any) -> None:
+def _quarantine(
+    task_name: str, exc: BaseException, nascente_id: Any, payload: Any, note: str = ""
+) -> None:
     """PoisonQuarantine row in a fresh session (the task's own was rolled back).
 
     Both names are looked up on their modules at call time, so a test patching
@@ -106,7 +113,7 @@ def _quarantine(task_name: str, exc: BaseException, nascente_id: Any, payload: A
             session=q_session,
             nascente_id=nascente_id,
             task_name=task_name,
-            error=str(exc),
+            error=str(exc) + note,
             payload=payload,
         )
         q_session.commit()

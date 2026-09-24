@@ -129,6 +129,40 @@ def test_describe_uf_balance_mid_chunk_keeps_fetched_descriptions_and_spend(monk
     assert (reason["reason"], reason["action"]) == ("provider_balance", "describe")
 
 
+class _InFlightAgent(_Agent):
+    """1st search is slow and succeeds; the 2nd hits the wall while the 1st is in flight."""
+
+    async def write_description(self, nome, municipio, uf, details, local=""):
+        import asyncio  # noqa: PLC0415
+
+        self.calls += 1
+        if self.calls > 1:
+            raise ProviderBalanceError("tavily")
+        await asyncio.sleep(0.05)
+        if self.rows is not None:
+            self.rows.add(f"spend:{nome}")
+        return f"desc:{nome}"
+
+
+def test_describe_uf_balance_waits_for_searches_already_in_flight(monkeypatch):
+    """A wall hit while another search is in flight: that paid search still finishes and
+    its description + spend row are written (not cancelled with the gather)."""
+    agent = _InFlightAgent()
+
+    class _Buf(pipeline._RowBuffer):
+        def __init__(self):
+            super().__init__()
+            agent.rows = self
+
+    monkeypatch.setattr(pipeline, "_RowBuffer", _Buf)
+    fake, session, _chain, _lifecycle, ids = _run_describe(monkeypatch, agent)
+
+    first = str(ids[0])
+    assert agent.ran == [(first, f"desc:{first}")]
+    session.add_all.assert_called_once_with([f"spend:{first}"])
+    assert collection_engine.get_status(fake)["pause_reason"]["action"] == "describe"
+
+
 def test_enrich_places_task_pauses_on_provider_balance_error_no_retry_no_quarantine(
     monkeypatch,
 ):
