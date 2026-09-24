@@ -309,9 +309,13 @@ def producer_done(redis: Any, session: Any, run_id: str | None = None) -> bool:
     """A producer reached its terminal outcome. Returns True iff it completed the run.
 
     A producer of an older generation is ignored — it can never drain the new run's
-    counter. The decrement is clamped at zero (DESLIGADO zeroes the counter while
-    producers are still in flight).
+    counter. So is one with ``run_id=None``: it ran outside any run (the daily discover
+    beat, a reprocess, the CLI) and was never claimed, so it has nothing to pay back.
+    The decrement is clamped at zero (DESLIGADO zeroes the counter while producers are
+    still in flight).
     """
+    if run_id is None:
+        return False
     current = _current(redis, run_id)
     if current is None:
         return False

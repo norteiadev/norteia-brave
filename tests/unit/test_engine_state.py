@@ -450,12 +450,19 @@ def test_stale_generation_producer_done_does_not_drain_new_run(redis):
     assert engine.producer_done(redis, None, new) is True
 
 
-def test_producer_done_without_run_id_acts_on_current_run(redis):
-    """In-flight messages from before the deploy carry no run_id → the current run."""
+def test_producer_done_without_run_id_does_not_drain_live_run(redis):
+    """A producer dispatched outside any run (daily beat, reprocess, CLI) carries no
+    run_id and was never claimed: it must not drain nor complete the live run."""
     run_id = _start(redis)
-    assert engine.claim_producer(redis) == run_id
-    engine.dispatch_finished(redis, None)
-    assert engine.producer_done(redis, None) is True
+    engine.claim_producer(redis, run_id)
+    engine.dispatch_finished(redis, None, run_id)
+
+    assert engine.producer_done(redis, None) is False
+    status = engine.get_status(redis)
+    assert status["state"] == engine.RUNNING
+    assert status["sync_phase"] == "syncing"
+    # The claimed producer still completes it.
+    assert engine.producer_done(redis, None, run_id) is True
 
 
 def test_full_run_is_concluido(redis):
