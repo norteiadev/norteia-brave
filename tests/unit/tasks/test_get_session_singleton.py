@@ -19,13 +19,12 @@ def test_engine_is_lazy_singleton_keyed_by_db_url(monkeypatch):
 
 
 
-def test_config_snapshot_expires():
-    """A snapshot re-written around a concurrent config write must not live forever."""
+def test_config_overlay_cache_expires():
+    """An overlay re-written around a concurrent config write must not live forever."""
     import fakeredis
 
-    from brave.config.runtime import SNAPSHOT_KEY, _write_snapshot
-    from brave.config.settings import AppConfig
+    from brave.config.runtime import OVERLAY_KEY, _write_cached_overlay
 
     rc = fakeredis.FakeRedis()
-    _write_snapshot(rc, AppConfig())
-    assert 0 < rc.ttl(SNAPSHOT_KEY) <= 60
+    _write_cached_overlay(rc, {})
+    assert 0 < rc.ttl(OVERLAY_KEY) <= 60

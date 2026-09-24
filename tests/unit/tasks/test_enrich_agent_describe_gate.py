@@ -37,7 +37,7 @@ def test_enrich_places_task_never_turns_the_copywriter_on(monkeypatch):
     monkeypatch.setattr(
         pipeline,
         "clients_for",
-        lambda a, e=None, **k: Clients(a, e, places=places, llm=FakeLLMClient()),
+        lambda c, **k: Clients(c, places=places, llm=FakeLLMClient()),
     )
     built = MagicMock(return_value=MagicMock(run=AsyncMock()))
     monkeypatch.setattr("brave.lanes.atrativos.places_enrichment.PlacesEnrichmentAgent", built)

@@ -97,16 +97,20 @@ def db_config() -> DBConfig | None:
 
 @pytest.fixture(autouse=True)
 def _task_config_from_db_only(monkeypatch):
-    """Tasks read config from the test DB, never from a Redis snapshot.
+    """Tasks read config from the test DB, never from the Redis overlay cache.
 
-    pipeline._load_config serves brave:config:snapshot from BRAVE_DB_REDIS_URL, which on
+    pipeline._load_config serves brave:config:overlay from BRAVE_DB_REDIS_URL, which on
     a dev machine is the running stack's Redis — its overlay must not leak into tests.
+    Likewise a test's config write must not bust that Redis on commit: the after-commit
+    listener gets a throwaway fakeredis.
     """
+    from brave.config import runtime
     from brave.tasks import pipeline
 
     monkeypatch.setattr(
         pipeline, "_load_config", lambda session: pipeline.load_effective_config(session)
     )
+    monkeypatch.setattr(runtime, "overlay_redis", fakeredis.FakeRedis)
 
 
 # ---------------------------------------------------------------------------

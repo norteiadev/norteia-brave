@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 import fakeredis
 import pytest
 
+from brave.config.settings import ScoreConfig
 from brave.core import engine as collection_engine
 from brave.domains import get_domain
 from brave.domains.base import SourceDomain
@@ -63,7 +64,7 @@ def test_create_via_facade_blocked_when_engine_ligado():
         pytest.raises(EditingLockedError),
     ):
         MANUAL_DOMAIN.create(
-            session, redis, entity_type="destination", uf="BA", name="Praia do Forte"
+            session, redis, entity_type="destination", uf="BA", name="Praia do Forte", config=ScoreConfig()
         )
     mock_store.assert_not_called()
 
@@ -86,6 +87,7 @@ def test_create_via_facade_writes_manual_record_when_paused():
             uf="BA",
             name="Mirante Bonito",
             municipio_id="2919207",
+            config=ScoreConfig(),
         )
 
     assert mock_store.call_count == 1

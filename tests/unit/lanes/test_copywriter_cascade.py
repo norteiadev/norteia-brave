@@ -25,6 +25,7 @@ import respx
 
 from brave.clients.parallel import PARALLEL_SEARCH_URL, ParallelSearch
 from brave.clients.tavily import TAVILY_SEARCH_URL, format_results
+from brave.config.settings import ScoreConfig
 from brave.core.models import AtrativoBusca
 from brave.lanes.atrativos.copywriter import (
     CASCADE_MODEL,
@@ -360,6 +361,7 @@ async def _run_agent(
         llm_client=llm,
         search_client=_FakeSearch(results),
         cascade_model=cascade_model,
+        config=ScoreConfig(),
     )
     with patch("brave.lanes.atrativos.places_enrichment.write_audit"), \
          patch("brave.lanes.atrativos.places_enrichment.record_event"), \

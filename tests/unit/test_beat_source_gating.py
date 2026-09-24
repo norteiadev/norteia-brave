@@ -51,11 +51,18 @@ def test_gated_schedule_pins_no_nondefault_queue():
 
 
 def test_module_schedule_is_built_from_enabled_sources():
-    # The module-level schedule is produced by build_beat_schedule; with the default
-    # (both-enabled) config it carries the full set. This guards the wiring, not a
-    # hardcoded count (WR-04 / test_workers_endpoints reads it dynamically).
+    # The module-level schedule is build_beat_schedule(enabled lanes) + the maintenance
+    # entries; with no readable overlay it is maintenance-only, never empty. This guards
+    # the wiring, not a hardcoded count (WR-04 / test_workers_endpoints reads it dynamically).
     from brave.tasks.beat_schedule import BRAVE_BEAT_SCHEDULE
 
     assert isinstance(BRAVE_BEAT_SCHEDULE, dict)
-    # At least the default lane's sweeps OR the TA keepalive must be schedulable.
-    assert BRAVE_BEAT_SCHEDULE  # non-empty under the default both-enabled config
+    assert "prune-record-events-daily" in BRAVE_BEAT_SCHEDULE
+
+
+def test_unreadable_config_store_schedules_no_lane(monkeypatch):
+    """DB unreachable at beat import → no sweep lane (fail-closed), import still succeeds."""
+    from brave.tasks.beat_schedule import _enabled_sources_best_effort
+
+    monkeypatch.setenv("BRAVE_DB_URL", "postgresql+psycopg://nobody:x@127.0.0.1:1/none")
+    assert _enabled_sources_best_effort() == []

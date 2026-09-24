@@ -244,7 +244,7 @@ class PlacesEnrichmentAgent:
         self,
         places_client: PlacesClientProtocol,
         session: Session,
-        config: ScoreConfig | None = None,
+        config: ScoreConfig,
         llm_client: LLMClientProtocol | None = None,
         distritos: list[IbgeDistrito] | None = None,
         voice_model_slug: str = "claude-sonnet-4-5",
@@ -257,7 +257,7 @@ class PlacesEnrichmentAgent:
     ) -> None:
         self._places_client = places_client
         self._session = session
-        self._config = config or ScoreConfig()
+        self._config = config
         self._llm_client = llm_client
         self._distritos = distritos or []
         self._description_enabled = description_enabled

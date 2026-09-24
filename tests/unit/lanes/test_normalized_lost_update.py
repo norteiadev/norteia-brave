@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from brave.config.settings import ScoreConfig
 from tests.fakes.fake_places import SIGNAL_FIXTURE_OPEN, FakePlacesClient
 
 _NOW = datetime(2026, 6, 15, tzinfo=UTC)
@@ -74,7 +75,7 @@ async def test_signal_agent_does_not_erase_a_description_committed_mid_call() ->
     inner = FakePlacesClient(fixture_details={_PLACE_ID: SIGNAL_FIXTURE_OPEN})
     rio = _make_rio("contacts_found")
     session = MagicMock()
-    agent = SignalAgent(places_client=_RacingPlacesClient(inner, rio), session=session, now=_NOW)
+    agent = SignalAgent(places_client=_RacingPlacesClient(inner, rio), session=session, now=_NOW, config=ScoreConfig())
 
     with (
         patch("brave.lanes.atrativos.signal_agent.write_audit"),

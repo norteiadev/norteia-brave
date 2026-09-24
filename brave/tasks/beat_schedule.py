@@ -24,7 +24,11 @@ sweep_atrativos_by_uf:
 
 import os
 
+import structlog
+
 from brave.tasks.celery_app import app
+
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Brazilian states (D-05 fan-out by UF)
@@ -79,31 +83,32 @@ def build_beat_schedule(enabled: list[str]) -> dict:
 def _enabled_sources_best_effort() -> list[str]:
     """The enabled lanes from the effective config, computed import-safely.
 
-    Reads the ``config_settings`` overlay when a DB is reachable so a durably-disabled
-    lane is not scheduled at beat startup (the correct resync point per the redbeat
-    note above). Any failure — no ``BRAVE_DB_URL``, DB down, pytest-socket blocked at
-    import — falls back to the env-only ``AppConfig()`` (both lanes enabled), so beat
-    import NEVER breaks. A dedicated short-lived engine is used and disposed to avoid
-    importing the FastAPI DI layer (``brave.api.deps``) into the Celery process.
+    Reads the ``config_settings`` overlay so a durably-disabled lane is not scheduled
+    at beat startup (the correct resync point per the redbeat note above). Any failure
+    — no ``BRAVE_DB_URL``, DB down, pytest-socket blocked at import — schedules NO sweep
+    lane (maintenance entries only) and logs an error: an env fallback would re-enable
+    a lane the operator turned off. Beat import NEVER breaks. A dedicated short-lived
+    engine is used and disposed to avoid importing the FastAPI DI layer
+    (``brave.api.deps``) into the Celery process.
     """
     from brave.config.runtime import enabled_sources, load_effective_config
-    from brave.config.settings import AppConfig
 
-    db_url = os.environ.get("BRAVE_DB_URL")
-    if db_url:
+    try:
+        from sqlalchemy import create_engine  # noqa: PLC0415
+        from sqlalchemy.orm import sessionmaker  # noqa: PLC0415
+
+        db_url = os.environ.get("BRAVE_DB_URL")
+        if not db_url:
+            raise RuntimeError("BRAVE_DB_URL not set")
+        engine = create_engine(db_url)
         try:
-            from sqlalchemy import create_engine  # noqa: PLC0415
-            from sqlalchemy.orm import sessionmaker  # noqa: PLC0415
-
-            engine = create_engine(db_url)
-            try:
-                with sessionmaker(bind=engine)() as session:
-                    return enabled_sources(load_effective_config(session))
-            finally:
-                engine.dispose()
-        except Exception:
-            pass
-    return enabled_sources(AppConfig())
+            with sessionmaker(bind=engine)() as session:
+                return enabled_sources(load_effective_config(session))
+        finally:
+            engine.dispose()
+    except Exception as exc:
+        logger.error("beat_enabled_sources_unavailable", error=str(exc))
+        return []
 
 
 # ---------------------------------------------------------------------------

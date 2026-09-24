@@ -131,7 +131,8 @@ from brave.api.routers.logs import router as logs_router  # noqa: E402
 app.include_router(logs_router)
 
 # Phase D: operator-tunable runtime config (config_settings overlay) — GET (Bearer)
-# effective snapshot + PATCH (steward) upsert with reliability validation + audit + cache-bust.
+# effective config + PATCH (steward) upsert with reliability validation + audit (the overlay
+# cache is dropped after commit by the runtime listener).
 from brave.api.routers.config import router as config_router  # noqa: E402
 
 app.include_router(config_router)

@@ -10,11 +10,12 @@ Covers (task #5):
   - reliability weight-sum-100 validation (422 on a single-weight edit that breaks the sum);
   - threshold bounds (422 on out-of-range) + unknown-key rejection;
   - an AuditLog row (action='config_updated', actor='steward') is written;
-  - the Redis snapshot cache is busted (a poisoned pre-PATCH cache is not served after).
+  - the PATCH echo is recomputed from the DB (a poisoned overlay cache is not served).
 """
 
 from __future__ import annotations
 
+import json
 import os
 
 import fakeredis
@@ -24,8 +25,7 @@ from fastapi import HTTPException
 os.environ.setdefault("BRAVE_USE_FAKEREDIS", "1")
 
 from brave.api.routers.config import get_config_snapshot, update_config  # noqa: E402
-from brave.config.runtime import SNAPSHOT_KEY  # noqa: E402
-from brave.config.settings import AppConfig  # noqa: E402
+from brave.config.runtime import OVERLAY_KEY  # noqa: E402
 from brave.core.models import AuditLog, ConfigSetting  # noqa: E402
 
 BEARER = "test-bearer-config"
@@ -135,7 +135,7 @@ def test_get_reflects_an_existing_overlay_row(db, redis):
 
 
 def test_patch_overlays_and_round_trips(db, redis):
-    out = update_config(body={"score.threshold_mar": 85.0}, db=db, redis=redis)
+    out = update_config(body={"score.threshold_mar": 85.0}, db=db)
     assert "score.threshold_mar" in out["updated"]
     assert out["config"]["score"]["threshold_mar"] == 85.0
     # Row persisted under the {"v": ...} wrapper.
@@ -145,7 +145,7 @@ def test_patch_overlays_and_round_trips(db, redis):
 
 
 def test_patch_writes_audit_row(db, redis):
-    update_config(body={"score.threshold_mar": 82.0}, db=db, redis=redis)
+    update_config(body={"score.threshold_mar": 82.0}, db=db)
     assert len(db.audits) == 1
     audit = db.audits[0]
     assert audit.action == "config_updated"
@@ -153,27 +153,25 @@ def test_patch_writes_audit_row(db, redis):
     assert audit.after_state == {"score.threshold_mar": 82.0}
     # before_state captures the prior effective value (the env default).
     assert audit.before_state == {"score.threshold_mar": 80.0}
-    assert db.commits == 1  # committed before the cache-bust side effect
+    assert db.commits == 1
 
 
-def test_patch_busts_stale_snapshot_cache(db, redis):
-    # Poison the cache with a VALID but wrong snapshot (threshold 999).
-    poisoned = AppConfig().model_copy(
-        update={"score": AppConfig().score.model_copy(update={"threshold_mar": 999.0})}
-    )
-    redis.set(SNAPSHOT_KEY, poisoned.model_dump_json())
+def test_patch_response_is_read_from_the_db_not_the_cache(db, redis):
+    # Poison the overlay cache with a VALID but wrong row (threshold 999).
+    redis.set(OVERLAY_KEY, json.dumps({"score.threshold_mar": 999.0}))
     # Served from cache before the write.
     assert get_config_snapshot(db=db, redis=redis)["score"]["threshold_mar"] == 999.0
 
-    update_config(body={"score.threshold_mar": 77.0}, db=db, redis=redis)
+    out = update_config(body={"score.threshold_mar": 77.0}, db=db)
 
-    # The stale cache was busted → GET now recomputes the real overlay.
-    assert get_config_snapshot(db=db, redis=redis)["score"]["threshold_mar"] == 77.0
+    # The PATCH echo recomputes from the DB. Dropping the cache on commit is the
+    # after_commit listener's job (tests/unit/test_config_overlay_cache.py).
+    assert out["config"]["score"]["threshold_mar"] == 77.0
 
 
 def test_patch_toggles_source_enabled(db, redis):
     out = update_config(
-        body={"source.tripadvisor.enabled": False}, db=db, redis=redis
+        body={"source.tripadvisor.enabled": False}, db=db
     )
     assert out["config"]["sources"]["tripadvisor"] is False
     assert db.rows["source.tripadvisor.enabled"].value == {"v": False}
@@ -181,7 +179,7 @@ def test_patch_toggles_source_enabled(db, redis):
 
 def test_patch_toggles_description_enrichment(db, redis):
     out = update_config(
-        body={"description_enrichment_enabled": False}, db=db, redis=redis
+        body={"description_enrichment_enabled": False}, db=db
     )
     # The overlay flows through load_effective_config into the returned snapshot.
     assert out["config"]["description_enrichment_enabled"] is False
@@ -191,7 +189,7 @@ def test_patch_toggles_description_enrichment(db, redis):
 def test_patch_rejects_non_bool_description_enrichment(db, redis):
     with pytest.raises(HTTPException) as exc:
         update_config(
-            body={"description_enrichment_enabled": "yes"}, db=db, redis=redis
+            body={"description_enrichment_enabled": "yes"}, db=db
         )
     assert exc.value.status_code == 422
 
@@ -202,7 +200,7 @@ def test_patch_toggles_atrativo_description_batch(db, redis):
     assert snap["atrativo_description_batch_enabled"] is False
 
     out = update_config(
-        body={"atrativo_description_batch_enabled": True}, db=db, redis=redis
+        body={"atrativo_description_batch_enabled": True}, db=db
     )
     assert out["config"]["atrativo_description_batch_enabled"] is True
     assert db.rows["atrativo_description_batch_enabled"].value == {"v": True}
@@ -211,7 +209,7 @@ def test_patch_toggles_atrativo_description_batch(db, redis):
 def test_patch_rejects_non_bool_atrativo_description_batch(db, redis):
     with pytest.raises(HTTPException) as exc:
         update_config(
-            body={"atrativo_description_batch_enabled": 1}, db=db, redis=redis
+            body={"atrativo_description_batch_enabled": 1}, db=db
         )
     assert exc.value.status_code == 422
 
@@ -222,7 +220,6 @@ def test_patch_accepts_weight_set_summing_100(db, redis):
     out = update_config(
         body={"score.weight_origem": 40.0, "score.weight_completude": 10.0},
         db=db,
-        redis=redis,
     )
     assert out["config"]["score"]["weight_origem"] == 40.0
     assert out["config"]["score"]["weight_completude"] == 10.0
@@ -236,7 +233,7 @@ def test_patch_accepts_weight_set_summing_100(db, redis):
 def test_patch_rejects_weight_sum_not_100(db, redis):
     # Touching a single weight to a value that breaks the sum-100 invariant → 422.
     with pytest.raises(HTTPException) as exc:
-        update_config(body={"score.weight_origem": 40.0}, db=db, redis=redis)
+        update_config(body={"score.weight_origem": 40.0}, db=db)
     assert exc.value.status_code == 422
     assert db.rows == {}  # nothing written
     assert db.audits == []
@@ -244,33 +241,33 @@ def test_patch_rejects_weight_sum_not_100(db, redis):
 
 def test_patch_rejects_threshold_out_of_bounds(db, redis):
     with pytest.raises(HTTPException) as exc:
-        update_config(body={"score.threshold_mar": 150.0}, db=db, redis=redis)
+        update_config(body={"score.threshold_mar": 150.0}, db=db)
     assert exc.value.status_code == 422
     assert db.rows == {}
 
 
 def test_patch_rejects_negative_weight(db, redis):
     with pytest.raises(HTTPException) as exc:
-        update_config(body={"score.weight_origem": -5.0}, db=db, redis=redis)
+        update_config(body={"score.weight_origem": -5.0}, db=db)
     assert exc.value.status_code == 422
 
 
 def test_patch_rejects_unknown_key(db, redis):
     with pytest.raises(HTTPException) as exc:
-        update_config(body={"score.bogus": 1.0}, db=db, redis=redis)
+        update_config(body={"score.bogus": 1.0}, db=db)
     assert exc.value.status_code == 422
     assert db.rows == {}
 
 
 def test_patch_rejects_empty_body(db, redis):
     with pytest.raises(HTTPException) as exc:
-        update_config(body={}, db=db, redis=redis)
+        update_config(body={}, db=db)
     assert exc.value.status_code == 422
 
 
 def test_patch_rejects_invalid_engine_mode(db, redis):
     with pytest.raises(HTTPException) as exc:
-        update_config(body={"engine.mode": "bogus"}, db=db, redis=redis)
+        update_config(body={"engine.mode": "bogus"}, db=db)
     assert exc.value.status_code == 422
 
 
@@ -347,7 +344,7 @@ def test_patch_toggles_atrativo_description_cascade(db, redis, monkeypatch):
     assert "parallel_api_key" not in snap and "prl-secret" not in str(snap)
 
     out = update_config(
-        body={"atrativo_description_cascade_enabled": True}, db=db, redis=redis
+        body={"atrativo_description_cascade_enabled": True}, db=db
     )
     assert out["config"]["atrativo_description_cascade_enabled"] is True
     assert db.rows["atrativo_description_cascade_enabled"].value == {"v": True}

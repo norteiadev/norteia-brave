@@ -308,10 +308,9 @@ class TestSweepTripAdvisorPerUfDestinoBuild:
         mock_app_config = MagicMock()
         mock_app_config.run_real_externals = False  # uses NullTripAdvisorClient
 
-        monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
         monkeypatch.setattr(
             "brave.tasks.pipeline.load_effective_config",
-            lambda session, redis=None: MagicMock(),
+            lambda session, redis=None: mock_app_config,
         )
         monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
         monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
@@ -770,10 +769,9 @@ class TestSweepTripAdvisorTaConfig:
         mock_app_config = MagicMock()
         mock_app_config.run_real_externals = real_externals
 
-        monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
         monkeypatch.setattr(
             "brave.tasks.pipeline.load_effective_config",
-            lambda session, redis=None: MagicMock(),
+            lambda session, redis=None: mock_app_config,
         )
         monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
         monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
@@ -886,10 +884,9 @@ class TestSweepTripAdvisorInlineEnrichment:
         mock_app_config.atrativo_voice_model_slug = "claude-sonnet-4-5"
         mock_app_config.places_match_max_distance_km = 20.0
 
-        monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
         monkeypatch.setattr(
             "brave.tasks.pipeline.load_effective_config",
-            lambda session, redis=None: MagicMock(),
+            lambda session, redis=None: mock_app_config,
         )
         monkeypatch.setattr(
             "brave.shared.ibge_distritos.load_distritos", lambda session: []
@@ -964,24 +961,21 @@ class TestSweepNeverDescribes:
             async def produce(self, uf: str, **kw: Any) -> list[str]:
                 return []
 
-        # The real-client guards read the env-built AppConfig; the sweep reads the mock.
         monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
-        mock_app_config = MagicMock()
-        mock_app_config.run_real_externals = True
-        mock_app_config.atrativo_voice_model_slug = "claude-sonnet-4-5"
-        mock_app_config.places_match_max_distance_km = 20.0
-        mock_app_config.parallel_api_key = "prl"
-        mock_app_config.parallel_search_mode = "turbo"
-        mock_app_config.atrativo_cascade_model = model
-        mock_app_config.llm = LLMConfig(openrouter_api_key="or", gemini_api_key=gemini_key)
         effective = MagicMock(
+            run_real_externals=True,
+            atrativo_voice_model_slug="claude-sonnet-4-5",
+            places_match_max_distance_km=20.0,
+            parallel_api_key="prl",
+            parallel_search_mode="turbo",
+            atrativo_cascade_model=model,
+            llm=LLMConfig(openrouter_api_key="or", gemini_api_key=gemini_key),
             places_enrichment_enabled=False,
             description_enrichment_enabled=True,
             atrativo_description_batch_enabled=False,
             atrativo_description_cascade_enabled=True,
         )
 
-        monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: mock_app_config)
         monkeypatch.setattr(
             "brave.tasks.pipeline.load_effective_config", lambda session, redis=None: effective
         )

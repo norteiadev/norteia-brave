@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import fakeredis
 import pytest
 
+from brave.config.settings import ScoreConfig
 from brave.core import engine as collection_engine
 from brave.domains import get_domain
 from brave.domains.base import SourceDomain
@@ -103,6 +104,7 @@ def test_create_blocked_when_engine_ligado():
             entity_type="destination",
             uf="BA",
             name="Praia do Forte",
+            config=ScoreConfig(),
         )
 
     mock_store.assert_not_called()
@@ -128,6 +130,7 @@ def test_create_writes_manual_record_when_paused():
             uf="BA",
             name="Mirante Bonito",
             municipio_id="2919207",
+            config=ScoreConfig(),
         )
 
     assert mock_store.call_count == 1
@@ -161,6 +164,7 @@ def test_create_nascente_only_skips_rio_when_run_rio_false():
             uf="MG",
             name="Ouro Preto",
             run_rio=False,
+            config=ScoreConfig(),
         )
 
     mock_rio.assert_not_called()
@@ -184,6 +188,7 @@ def test_update_is_also_edit_lock_gated():
             entity_type="destination",
             uf="BA",
             name="Praia do Forte (rev)",
+            config=ScoreConfig(),
         )
     mock_store.assert_not_called()
 

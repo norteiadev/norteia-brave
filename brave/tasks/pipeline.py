@@ -29,7 +29,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from brave.clients.factory import clients_for
-from brave.config.runtime import load_effective_config
+from brave.config.runtime import load_effective_config, overlay_redis
 from brave.config.settings import AppConfig
 from brave.core.mar.publication import publish, republish_pending
 from brave.core.models import RioRecord
@@ -284,15 +284,12 @@ def _get_session() -> tuple[Session, Any]:
 
 
 def _load_config(session: Session) -> AppConfig:
-    """Effective config for a task, served from the Redis snapshot when present.
+    """Effective config for a task, its overlay rows served from the Redis cache when present.
 
-    The snapshot is busted by every config_settings writer (config router, engine mode);
-    a Redis outage degrades to the plain DB read inside load_effective_config.
+    The cache is dropped whenever a config_settings write commits; a Redis outage
+    degrades to the plain DB read inside load_effective_config.
     """
-    import redis as _redis_lib  # noqa: PLC0415
-
-    rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
-    return load_effective_config(session, rc)
+    return load_effective_config(session, overlay_redis())
 
 
 async def _using(clients: Any, coro: Any) -> Any:
@@ -557,8 +554,8 @@ def discover_atrativo_task(
 
     session, engine = _get_session()
     try:
-        app_config = AppConfig()
-        config = _load_config(session).score
+        effective = _load_config(session)
+        config = effective.score
 
         from brave.clients.places import load_municipio_name_ibge_lookup
 
@@ -566,7 +563,7 @@ def discover_atrativo_task(
         # the municipios reference table so attractions get a resolved municipio_ibge
         # (required for parent-destino linkage via ensure_destino).
         clients = clients_for(
-            app_config, ibge_lookup=lambda: load_municipio_name_ibge_lookup(session)
+            effective, ibge_lookup=lambda: load_municipio_name_ibge_lookup(session)
         )
         places_client = clients.places
         llm_client = clients.llm("atrativos", session=session)
@@ -747,7 +744,6 @@ def sweep_tripadvisor(
     try:
         effective = _load_config(session)
         config = effective.score
-        app_config = AppConfig()
 
         # T1 (pfr-01): ta_config must be defined before the branch so it is always
         # in scope for the per-UF TripAdvisorAtrativosIngest constructor. Without
@@ -755,14 +751,14 @@ def sweep_tripadvisor(
         # the offline path would raise NameError; passing None keeps the
         # fetch_attraction_geo guard (ta_config is not None) dormant offline.
         ta_config = None
-        if app_config.run_real_externals:
+        if effective.run_real_externals:
             from brave.config.settings import TripAdvisorConfig
 
             ta_config = TripAdvisorConfig()
         from brave.clients.places import load_municipio_name_ibge_lookup
 
         clients = clients_for(
-            app_config, ibge_lookup=lambda: load_municipio_name_ibge_lookup(session)
+            effective, ibge_lookup=lambda: load_municipio_name_ibge_lookup(session)
         )
         ta_client = clients.tripadvisor
         geocoder = clients.geocoder
@@ -886,10 +882,10 @@ def sweep_tripadvisor(
                 config=config,
                 llm_client=NullLLMClient(),
                 distritos=_distritos,
-                voice_model_slug=app_config.atrativo_voice_model_slug,
+                voice_model_slug=effective.atrativo_voice_model_slug,
                 description_enabled=False,
-                enable_web_search=app_config.run_real_externals,
-                max_distance_km=app_config.places_match_max_distance_km,
+                enable_web_search=effective.run_real_externals,
+                max_distance_km=effective.places_match_max_distance_km,
             )
         except Exception:  # noqa: BLE001 — enrichment build must not crash the sweep
             logger.warning("inline_enrichment_build_failed", uf=uf)
@@ -1048,9 +1044,7 @@ def find_contacts_task(self, rio_id: str) -> None:
             raise PermanentError(f"RioRecord {rio_id} not found")
 
         # Idempotency: ContactFinderAgent.run() handles sub_state guard internally
-        app_config = AppConfig()
-
-        clients = clients_for(app_config)
+        clients = clients_for(_load_config(session))
         agent = ContactFinderAgent(
             places_client=clients.places,
             session=session,
@@ -1140,10 +1134,10 @@ def gather_signals_task(self, rio_id: str) -> None:
         if rio is None:
             raise PermanentError(f"RioRecord {rio_id} not found")
 
-        app_config = AppConfig()
-        config = _load_config(session).score
+        effective = _load_config(session)
+        config = effective.score
 
-        clients = clients_for(app_config)
+        clients = clients_for(effective)
         agent = SignalAgent(
             places_client=clients.places,
             session=session,
@@ -1202,7 +1196,7 @@ def gather_signals_task(self, rio_id: str) -> None:
         session.close()
 
 
-def _description_on(app_config: AppConfig, effective: AppConfig) -> bool:
+def _description_on(effective: AppConfig) -> bool:
     """The inline copywriter gate: real externals + description flag ON + batch lane OFF.
 
     description_enabled is gated on run_real_externals so an offline/CI run never writes
@@ -1210,7 +1204,7 @@ def _description_on(app_config: AppConfig, effective: AppConfig) -> bool:
     submit/collect_description_batch (50% off tokens) instead.
     """
     return bool(
-        app_config.run_real_externals
+        effective.run_real_externals
         and effective.description_enrichment_enabled
         and not effective.atrativo_description_batch_enabled
     )
@@ -1219,7 +1213,6 @@ def _description_on(app_config: AppConfig, effective: AppConfig) -> bool:
 class _EnrichCtx(NamedTuple):
     """The per-record-invariant inputs of _enrich_one, built once per chunk/task."""
 
-    app_config: AppConfig
     effective: AppConfig
     distritos: Any
     ibge_lookup: Any  # cached loader: the ~16k-row map loads once, and only for real Places
@@ -1235,7 +1228,6 @@ def _enrich_ctx(session: Session) -> _EnrichCtx:
     from brave.shared.ibge_distritos import load_distritos
 
     return _EnrichCtx(
-        AppConfig(),
         _load_config(session),
         load_distritos(session),
         functools.cache(functools.partial(load_municipio_name_ibge_lookup, session)),
@@ -1243,7 +1235,7 @@ def _enrich_ctx(session: Session) -> _EnrichCtx:
 
 
 def _enrich_clients(ctx: _EnrichCtx) -> Any:
-    return clients_for(ctx.app_config, ctx.effective, ibge_lookup=ctx.ibge_lookup)
+    return clients_for(ctx.effective, ibge_lookup=ctx.ibge_lookup)
 
 
 def _enrich_agent(
@@ -1266,7 +1258,7 @@ def _enrich_agent(
     from brave.clients.null_places import NullPlacesClient
     from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
 
-    app_config, effective = ctx.app_config, ctx.effective
+    effective = ctx.effective
 
     # The operator-toggleable places_enrichment_enabled flag (config_settings overlay,
     # /painel) gates the Places sub-step. When off, the Null client keeps the TA floor and
@@ -1281,7 +1273,7 @@ def _enrich_agent(
     # rule on top of the flags: ONLY brave.describe_uf (the Painel's "describe" action)
     # passes it. A sweep / enrich_places_task / repair script never writes a description,
     # whatever the overlay says.
-    desc_on = describe and _description_on(app_config, effective)
+    desc_on = describe and _description_on(effective)
     if desc_on:
         copy_llm = clients.llm(
             "atrativo_copywriter", session=session if llm_session is None else llm_session
@@ -1297,12 +1289,12 @@ def _enrich_agent(
         config=effective.score,
         llm_client=copy_llm,
         distritos=ctx.distritos,
-        voice_model_slug=app_config.atrativo_voice_model_slug,
+        voice_model_slug=effective.atrativo_voice_model_slug,
         description_enabled=desc_on,
-        enable_web_search=app_config.run_real_externals,
-        max_distance_km=app_config.places_match_max_distance_km,
+        enable_web_search=effective.run_real_externals,
+        max_distance_km=effective.places_match_max_distance_km,
         search_client=copy_search,
-        cascade_model=app_config.atrativo_cascade_model,
+        cascade_model=effective.atrativo_cascade_model,
     )
 
 
@@ -1554,9 +1546,8 @@ def describe_uf(
     session, engine = _get_session()
     chained = False
     try:
-        app_config = AppConfig()
         effective = _load_config(session)
-        if not _description_on(app_config, effective):
+        if not _description_on(effective):
             logger.warning("describe_uf_description_disabled", uf=uf)
             return
         ctx = _enrich_ctx(session)
@@ -1591,7 +1582,7 @@ def describe_uf(
                 logger.info("describe_uf_halted", uf=uf, at_rio_id=str(rio_id))
                 return True
             try:
-                pre_dispatch_check(rc, app_config.llm)
+                pre_dispatch_check(rc, effective.llm)
             except CostGuardError:
                 # The agent swallows a tripped budget as "no attempt" and would still
                 # re-score + audit every remaining record, chunk after chunk, writing
@@ -1700,22 +1691,21 @@ def submit_description_batch_task(self) -> None:
 
     session, engine = _get_session()
     try:
-        app_config = AppConfig()
         effective = _load_config(session)
         if not (
-            app_config.run_real_externals
+            effective.run_real_externals
             and effective.description_enrichment_enabled
             and effective.atrativo_description_batch_enabled
         ):
             return
         submit_batch(
             session,
-            clients_for(app_config).batch,
-            model=app_config.atrativo_voice_model_slug,
+            clients_for(effective).batch,
+            model=effective.atrativo_voice_model_slug,
             redis_client=_redis_lib.from_url(
                 os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
             ),
-            llm_config=app_config.llm,
+            llm_config=effective.llm,
         )
     except Exception as exc:  # noqa: BLE001 — beat retries on the next tick
         session.rollback()
@@ -1756,19 +1746,18 @@ def collect_description_batches_task(self) -> None:
 
     session, engine = _get_session()
     try:
-        app_config = AppConfig()
-        if not app_config.run_real_externals:
+        effective = _load_config(session)
+        if not effective.run_real_externals:
             reap_stale_claims(session, None)
             return
-        effective = _load_config(session)
         collect_batches(
             session,
-            clients_for(app_config).batch,
+            clients_for(effective).batch,
             effective.score,
             redis_client=_redis_lib.from_url(
                 os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
             ),
-            model=app_config.atrativo_voice_model_slug,
+            model=effective.atrativo_voice_model_slug,
         )
     except Exception as exc:  # noqa: BLE001 — beat retries on the next tick
         session.rollback()
@@ -1846,18 +1835,18 @@ def outreach_task(self, rio_id: str) -> None:
         if rio.sub_state != "whatsapp_in_progress":
             return  # Already advanced past this step — idempotent no-op
 
-        app_config = AppConfig()
-        config = _load_config(session).score
+        effective = _load_config(session)
+        config = effective.score
 
         # WhatsApp + LLM adapters (production: Twilio/Real or Null; never Fake, T-03-04-07)
-        clients = clients_for(app_config)
+        clients = clients_for(effective)
         wa_client = clients.whatsapp
         llm_client = clients.llm("atrativos", session=session)
         redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         import redis as redis_lib
         redis_client = redis_lib.from_url(redis_url)
 
-        settings = app_config.whatsapp
+        settings = effective.whatsapp
 
         async def _run() -> Any:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -2019,18 +2008,18 @@ def resume_conversation_task(self, rio_id: str, reply_text: str) -> None:
         if rio.sub_state != "whatsapp_in_progress":
             return  # Conversation already completed or never started — no-op
 
-        app_config = AppConfig()
-        config = _load_config(session).score
+        effective = _load_config(session)
+        config = effective.score
 
         # WhatsApp + LLM adapters (production: Twilio/Real or Null; never Fake, T-03-04-07)
-        clients = clients_for(app_config)
+        clients = clients_for(effective)
         wa_client = clients.whatsapp
         llm_client = clients.llm("atrativos", session=session)
         redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
         import redis as redis_lib
         redis_client = redis_lib.from_url(redis_url)
 
-        settings = app_config.whatsapp
+        settings = effective.whatsapp
 
         # Canonical contact phone for masking the conversation_message rows (R3).
         contact_phone = _extract_contact_phone(rio)
@@ -2183,10 +2172,8 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
         if rio.sub_state != "aguardando_consulta_whatsapp":
             return
 
-        app_config = AppConfig()
-
         # LLM adapter (D-18): Null offline (no number), Real opt-in.
-        clients = clients_for(app_config)
+        clients = clients_for(_load_config(session))
         normalized = rio.normalized or {}
         raw_phone = asyncio.run(
             _using(

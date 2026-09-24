@@ -22,6 +22,7 @@ import structlog
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from redis import Redis
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from brave.api.deps import (
@@ -43,20 +44,20 @@ router = APIRouter()
 
 
 def _effective_config(db: Session, redis: Redis) -> AppConfig:
-    """Return the effective (env + config_settings overlay) config, best-effort.
+    """Return the effective (env + config_settings overlay) config, or 503.
 
     Phase D: the source registered/enabled gate reads the DB overlay so an operator
-    who disables a lane in ``config_settings`` can no longer start it. The read is
-    best-effort — any DB hiccup (or a MagicMock/stub session in the offline suite)
-    falls back to the env-bootstrapped ``AppConfig()`` (both lanes enabled), so a
-    config-store blip can never wedge the start endpoint. ``redis`` warms/serves the
-    snapshot cache when available.
+    who disables a lane in ``config_settings`` can no longer start it. There is no env
+    fallback: when the config store cannot be read the lane gate cannot be trusted, so
+    the request fails with 503 rather than starting a lane the operator disabled.
+    ``redis`` warms/serves the overlay cache.
     """
     try:
         return load_effective_config(db, redis)
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        logger.warning("engine_effective_config_fallback", error=str(exc))
-        return AppConfig()
+    except SQLAlchemyError as exc:
+        logger.error("engine_effective_config_unavailable", error=str(exc))
+        raise HTTPException(status_code=503, detail="config store unavailable") from exc
+
 
 _ATRATIVO_SUB_STATES = [
     "discovered",
@@ -271,7 +272,7 @@ def engine_start(
 
         # The cascade's build guard (writer key/price, Parallel key/mode): every record
         # would fail on it before the agent, so refuse the run up front.
-        reason = clients_for(AppConfig(), cfg).check_search()
+        reason = clients_for(cfg).check_search()
         if reason is not None:
             raise HTTPException(status_code=409, detail=f"Cascata mal configurada: {reason}")
         # runs_history labels for the Varreduras trail; never written to the depth/source keys.
@@ -412,6 +413,7 @@ def engine_start(
 def engine_set_source(
     redis: Redis = Depends(get_redis),
     body: dict = Body(default={}),
+    db: Session = Depends(get_db),
 ) -> dict:
     """Persist the active collection source without starting a run.
 
@@ -420,13 +422,13 @@ def engine_set_source(
     and route to the correct sweep lane.
 
     Registry-driven (Phase G STEP 3): the allowed set is ``enabled_sources`` of the
-    env-effective ``AppConfig`` — no hardcoded ``'default'/'tripadvisor'`` literal, and
-    no DB dependency (this configuration write stays DB-free, unlike /start which reads
-    the config_settings overlay). Invalid source → 422 before any Redis write. No
-    RunHistory row — this is a configuration write, not a dispatch.
+    effective config (env + config_settings overlay, same gate as /start) — no
+    hardcoded ``'default'/'tripadvisor'`` literal. Invalid or disabled source → 422
+    before any Redis write. No RunHistory row — this is a configuration write, not a
+    dispatch.
     """
     source = body.get("source", "tripadvisor")
-    valid = enabled_sources(AppConfig())
+    valid = enabled_sources(_effective_config(db, redis))
     if source not in valid:
         raise HTTPException(
             status_code=422,
@@ -470,8 +472,8 @@ def engine_set_mode(
         )
     # Phase D: persist the mode durably. Redis stays the fast/authoritative live path
     # (set FIRST inside set_mode); config_settings is the durable store so a Redis
-    # flush no longer resets the mode to LIGADO. Passing session enables the upsert +
-    # snapshot-cache bust.
+    # flush no longer resets the mode to LIGADO. Passing session enables the upsert; the
+    # overlay cache is dropped after the request's commit (runtime after_commit listener).
     collection_engine.set_mode(redis, mode, session=db)
     logger.info("engine_mode_set", mode=mode)
     return {

@@ -3,8 +3,7 @@
 Provides:
   get_db()      — yields a synchronous SQLAlchemy Session
   get_redis()   — yields a Redis client
-  get_config()  — returns AppConfig singleton
-  get_db_config() — returns DBConfig
+  get_config()  — returns a fresh env-only AppConfig (not cached, no config_settings overlay)
   get_webhook_config() — returns WebhookConfig
   get_publish_enqueue() — returns brave.publish_mar's .delay (override in tests)
 """
@@ -23,12 +22,13 @@ from brave.config.settings import AppConfig, DashboardConfig, StewardConfig, Web
 from brave.core import engine as collection_engine
 
 # ---------------------------------------------------------------------------
-# Config singletons (lazily initialized)
+# Config
 # ---------------------------------------------------------------------------
 
 
 def get_config() -> AppConfig:
-    """Return AppConfig singleton."""
+    """Return a fresh env-only AppConfig (built per call; the config_settings overlay is
+    NOT applied — use brave.config.runtime.load_effective_config for that)."""
     return AppConfig()
 
 
