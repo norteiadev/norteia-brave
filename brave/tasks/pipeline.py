@@ -1434,23 +1434,28 @@ async def _describe_chunk(
     Phase 1 gathers the copywriter I/O, _DESCRIBE_CONCURRENCY at a time, and never touches
     the Session. ``stop(rio_id)`` (engine halt + cost guard) runs per record, right before
     its I/O. Phase 2 hands each result to agent.run and commits, one record at a time — a
-    failure on either side rolls back that record only.
+    failure on either side rolls back that record only. A ProviderBalanceError stops new
+    fetches and phase 2, but is raised only after what was fetched is written and the
+    spend rows are committed.
     """
     from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
     sem = asyncio.Semaphore(_DESCRIBE_CONCURRENCY)
     fetched: dict[uuid.UUID, Any] = {}
+    balance: ProviderBalanceError | None = None
 
     async def _fetch(rio_id: uuid.UUID, args: tuple[str, str, str]) -> None:
+        nonlocal balance
         async with sem:
-            if stop(rio_id):
+            if balance is not None or stop(rio_id):
                 return
             try:
                 # details={}: every record here is google_enriched (no Places context).
                 fetched[rio_id] = await agent.write_description(*args[:3], {}, args[3])
             except SoftTimeLimitExceeded:
                 raise
-            except ProviderBalanceError:
+            except ProviderBalanceError as exc:
+                balance = exc  # no further fetch starts
                 raise
             except Exception as exc:  # noqa: BLE001 — kept per record, raised in phase 2
                 fetched[rio_id] = exc
@@ -1459,11 +1464,14 @@ async def _describe_chunk(
     async with clients:
         try:
             # _fetch keeps every per-record failure in ``fetched``; only the soft time limit
-            # escapes, and the results already in ``fetched`` are still written below.
+            # and a billing wall escape, and the results already in ``fetched`` are still
+            # written below.
             await asyncio.gather(*(_fetch(rio_id, args) for rio_id, args in jobs))
         except SoftTimeLimitExceeded:
             cut = True
             logger.warning("describe_uf_soft_time_limit", uf=uf, fetched=len(fetched))
+        except ProviderBalanceError:
+            pass  # held in ``balance``, raised once the spend rows are committed
 
         for rio_id, _args in jobs:
             result = fetched.get(rio_id)
@@ -1483,6 +1491,11 @@ async def _describe_chunk(
                 cut = True
                 logger.warning("describe_uf_soft_time_limit", uf=uf, rio_id=str(rio_id))
                 break
+            except ProviderBalanceError as exc:
+                # Not a per-record failure: stop here, still commit the spend below.
+                session.rollback()
+                balance = exc
+                break
             except Exception:  # noqa: BLE001 — one bad record must not abort the chunk
                 session.rollback()
                 logger.warning("describe_uf_record_failed", uf=uf, rio_id=str(rio_id), exc_info=True)
@@ -1495,6 +1508,8 @@ async def _describe_chunk(
         except Exception:  # noqa: BLE001
             session.rollback()
             logger.warning("describe_uf_llm_generations_failed", uf=uf, exc_info=True)
+    if balance is not None:
+        raise balance
     return cut
 
 
@@ -1618,8 +1633,9 @@ def describe_uf(
                 cut = asyncio.run(_describe_chunk(session, agent, clients, rows, jobs, _stop, uf))
             except ProviderBalanceError as exc:
                 # A paid provider reported a billing wall mid-chunk — pause the motor with a
-                # reason and halt the chunk/chain. No retry, no self-chain (chained stays
-                # False, so the finally still runs _producer_done exactly once).
+                # reason and halt the chunk/chain. _describe_chunk already wrote what was
+                # fetched and committed the spend rows. No retry, no self-chain (chained
+                # stays False, so the finally still runs _producer_done exactly once).
                 session.rollback()
                 collection_engine.pause_with_reason(rc, "provider_balance", exc.provider, action="describe")
                 logger.warning("describe_uf_provider_balance", uf=uf, provider=exc.provider)
