@@ -32,6 +32,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from brave.config.settings import ScoreConfig
 from tests.fakes.fake_llm import FakeLLMClient
 from tests.fakes.fake_places import FakePlacesClient
 
@@ -152,7 +153,7 @@ async def test_match_persists_hours_and_liveness() -> None:
         )},
     )
     rio = _make_rio()  # routing=dlq, sub_state=None (realistic post-description)
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     mock_route = await _run(agent, rio)
 
     assert rio.normalized["weekday_text"] == ["segunda-feira: 08:00 – 18:00", "domingo: Fechado"]
@@ -186,7 +187,7 @@ async def test_runs_on_dlq_record_regression() -> None:
         fixture_details={"ChIJmatriz001": _details()},
     )
     rio = _make_rio(routing="dlq", sub_state=None)
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     await _run(agent, rio)
 
     assert rio.normalized["weekday_text"]  # hours collected despite dlq
@@ -204,7 +205,7 @@ async def test_closed_place_hard_descarte() -> None:
         fixture_details={"ChIJmatriz001": _details(business_status="CLOSED_PERMANENTLY")},
     )
     rio = _make_rio()
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     mock_route = await _run(agent, rio)
 
     assert rio.routing == "descarte"
@@ -223,7 +224,7 @@ async def test_no_name_match_keeps_floor() -> None:
         fixture_details={"ChIJmatriz001": _details()},
     )
     rio = _make_rio()
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     mock_route = await _run(agent, rio)
 
     assert "weekday_text" not in rio.normalized
@@ -248,7 +249,7 @@ async def test_far_location_rejected_keeps_floor() -> None:
         fixture_details={"ChIJmatriz001": _details()},
     )
     rio = _make_rio()
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     await _run(agent, rio)
 
     assert "weekday_text" not in rio.normalized
@@ -276,7 +277,7 @@ async def test_geographic_entity_rejected_keeps_floor() -> None:
         fixture_details={"ChIJmatriz001": _details()},
     )
     rio = _make_rio()
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     await _run(agent, rio)
 
     assert fake.place_details_calls == [], "a political entity must never be fetched"
@@ -314,7 +315,7 @@ async def test_real_poi_wins_over_a_higher_scoring_geographic_entity() -> None:
         fixture_details={"ChIJpoi": _details()},
     )
     rio = _make_rio()
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     await _run(agent, rio)
 
     assert fake.place_details_calls == ["ChIJpoi"]
@@ -340,7 +341,7 @@ async def test_natural_feature_is_not_rejected() -> None:
         fixture_details={"ChIJmatriz001": _details()},
     )
     rio = _make_rio()
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     await _run(agent, rio)
 
     assert fake.place_details_calls == ["ChIJmatriz001"]
@@ -362,7 +363,7 @@ async def test_result_without_types_is_still_matched() -> None:
         fixture_details={"ChIJmatriz001": _details()},
     )
     rio = _make_rio()
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     await _run(agent, rio)
 
     assert fake.place_details_calls == ["ChIJmatriz001"]
@@ -375,7 +376,7 @@ async def test_place_id_cache_skips_text_search() -> None:
 
     fake = FakePlacesClient(fixture_details={"ChIJcached": _details()})
     rio = _make_rio(extra_normalized={"place_id_cache": "ChIJcached"})
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     await _run(agent, rio)
 
     assert fake.text_search_calls == [], "cached place_id must skip Text Search"
@@ -395,7 +396,7 @@ async def test_idempotency_marker_noop() -> None:
         "descricao_editorial": "Prosa já escrita.",
     })
     agent = PlacesEnrichmentAgent(
-        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW, config=ScoreConfig()
     )
     mock_route = await _run(agent, rio)
 
@@ -418,7 +419,7 @@ async def test_cross_lane_places_fsm_record_untouched() -> None:
         "descricao_editorial": "Prosa já escrita.",
     })
     agent = PlacesEnrichmentAgent(
-        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW, config=ScoreConfig()
     )
     mock_route = await _run(agent, rio)
 
@@ -445,7 +446,7 @@ async def test_description_backfill_spends_no_places_sku() -> None:
     fake_llm = FakeLLMClient(generate_result="Prosa da Norteia.")
     rio = _make_rio(extra_normalized={"google_enriched": True, "completude_value": 75.0})
     agent = PlacesEnrichmentAgent(
-        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW, config=ScoreConfig()
     )
     mock_route = await _run(agent, rio)
 
@@ -472,7 +473,7 @@ async def test_cross_lane_record_gets_description_without_redetails() -> None:
         "weekday_text": ["Monday: 9-5"],
     })
     agent = PlacesEnrichmentAgent(
-        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW, config=ScoreConfig()
     )
     await _run(agent, rio)
 
@@ -491,7 +492,7 @@ async def test_descarte_record_never_earns_a_description() -> None:
     fake_llm = FakeLLMClient(generate_result="Prosa da Norteia.")
     rio = _make_rio(routing="descarte", extra_normalized={"google_enriched": True})
     agent = PlacesEnrichmentAgent(
-        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW, config=ScoreConfig()
     )
     mock_route = await _run(agent, rio)
 
@@ -518,7 +519,7 @@ async def test_failing_copywriter_retries_are_bounded() -> None:
     fake_llm = FakeLLMClient(generate_result="")  # always yields no prose
     rio = _make_rio(extra_normalized={"google_enriched": True})
     agent = PlacesEnrichmentAgent(
-        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW, config=ScoreConfig()
     )
 
     for _ in range(_MAX_DESCRIPTION_ATTEMPTS):
@@ -546,7 +547,7 @@ async def test_exhausted_description_budget_is_logged() -> None:
         "descricao_attempts": pe._MAX_DESCRIPTION_ATTEMPTS,
     })
     agent = pe.PlacesEnrichmentAgent(
-        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW, config=ScoreConfig()
     )
     with patch.object(pe.logger, "warning") as mock_warn:
         await _run(agent, rio)
@@ -575,7 +576,7 @@ async def test_cost_guard_block_never_burns_attempt_budget() -> None:
     fake_llm = FakeLLMClient(raise_on_call=CostGuardError("daily budget exceeded"))
     rio = _make_rio(extra_normalized={"google_enriched": True})
     agent = PlacesEnrichmentAgent(
-        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW, config=ScoreConfig()
     )
 
     for _ in range(_MAX_DESCRIPTION_ATTEMPTS + 2):
@@ -595,7 +596,7 @@ async def test_successful_description_never_burns_attempt_budget() -> None:
     fake_llm = FakeLLMClient(generate_result="Prosa da Norteia.")
     rio = _make_rio(extra_normalized={"google_enriched": True})
     agent = PlacesEnrichmentAgent(
-        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW, config=ScoreConfig()
     )
     await _run(agent, rio)
 
@@ -624,7 +625,7 @@ async def test_a_record_inside_a_live_batch_is_never_billed_inline() -> None:
     rio = _make_rio()
     rio.descricao_batch_id = "msgbatch_01"  # submitted; Anthropic is billing already
     agent = PlacesEnrichmentAgent(
-        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW
+        places_client=fake, session=_make_session(), llm_client=fake_llm, now=_NOW, config=ScoreConfig()
     )
     await _run(agent, rio)
 
@@ -650,7 +651,7 @@ async def test_atualidade_max_keeps_higher_ta_value() -> None:
         )},
     )
     rio = _make_rio(extra_normalized={"atualidade_value": 70.0})
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     await _run(agent, rio)
 
     assert rio.normalized["atualidade_value"] == 70.0  # max(70 TA, 0 Google)
@@ -702,7 +703,7 @@ async def test_a_description_committed_during_the_places_call_is_not_erased() ->
     rio = _make_rio()
     session = _make_session()
     agent = PlacesEnrichmentAgent(
-        places_client=_RacingPlacesClient(inner, rio), session=session, now=_NOW
+        places_client=_RacingPlacesClient(inner, rio), session=session, now=_NOW, config=ScoreConfig()
     )
     await _run(agent, rio)
 
@@ -729,7 +730,7 @@ async def test_hard_descarte_writes_the_cause_to_the_atrativo_log() -> None:
         fixture_details={"ChIJmatriz001": details},
     )
     rio = _make_rio()
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     with patch("brave.lanes.atrativos.places_enrichment.write_audit") as audit, \
          patch("brave.lanes.atrativos.places_enrichment.record_event") as event, \
          patch("brave.lanes.atrativos.places_enrichment.route_by_score"):
@@ -754,12 +755,14 @@ async def test_locate_only_accepts_a_confident_match_placed_in_the_uf() -> None:
     agent = PlacesEnrichmentAgent(
         places_client=FakePlacesClient(fixture_results={"Cachoeira do Macaquinho": [in_uf]}),
         session=_make_session(),
+        config=ScoreConfig(),
     )
     assert (await agent.locate("Cachoeira do Macaquinho", "GO"))["municipio_ibge"] == "5200605"
 
     agent = PlacesEnrichmentAgent(
         places_client=FakePlacesClient(fixture_results={"Cachoeira do Macaquinho": [other_uf]}),
         session=_make_session(),
+        config=ScoreConfig(),
     )
     assert await agent.locate("Cachoeira do Macaquinho", "GO") is None
 
@@ -778,6 +781,7 @@ async def test_locate_falls_back_to_the_municipio_every_in_uf_result_agrees_on()
     agent = PlacesEnrichmentAgent(
         places_client=FakePlacesClient(fixture_results={"Jardim de Maytreia": agree}),
         session=_make_session(),
+        config=ScoreConfig(),
     )
     assert await agent.locate("Jardim de Maytreia", "GO") == {
         "municipio_ibge": "5200605",
@@ -788,6 +792,7 @@ async def test_locate_falls_back_to_the_municipio_every_in_uf_result_agrees_on()
     agent = PlacesEnrichmentAgent(
         places_client=FakePlacesClient(fixture_results={"Cachoeira do Vale do Rio Macaco": split}),
         session=_make_session(),
+        config=ScoreConfig(),
     )
     assert await agent.locate("Cachoeira do Vale do Rio Macaco", "GO") is None
 
@@ -805,7 +810,7 @@ async def test_coordless_record_never_matches_a_place_outside_its_uf() -> None:
     )
     rio = _make_rio()
     rio.normalized = {k: v for k, v in rio.normalized.items() if k not in ("lat", "lon")}
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     await _run(agent, rio)
 
     assert fake.place_details_calls == []
@@ -832,7 +837,7 @@ async def test_coordless_record_matches_only_near_its_municipio_seat() -> None:
         session.get.return_value = seat
         rio = _make_rio(extra_normalized={"municipio_id": "5212501"})
         rio.normalized = {k: v for k, v in rio.normalized.items() if k not in ("lat", "lon")}
-        await _run(PlacesEnrichmentAgent(places_client=fake, session=session, now=_NOW), rio)
+        await _run(PlacesEnrichmentAgent(places_client=fake, session=session, now=_NOW, config=ScoreConfig()), rio)
         assert fake.place_details_calls == expected
 
 
@@ -847,7 +852,7 @@ async def test_temporarily_closed_is_enriched_but_parked_in_dlq() -> None:
         fixture_details={"ChIJmatriz001": _details(business_status="CLOSED_TEMPORARILY")},
     )
     rio = _make_rio()
-    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW)
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
 
     def promote(_session, r, _config):
         r.routing = "mar"

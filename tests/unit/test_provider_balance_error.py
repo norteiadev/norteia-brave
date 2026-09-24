@@ -12,6 +12,7 @@ import httpx
 import pytest
 import respx
 
+from brave.config.settings import ScoreConfig
 from brave.shared.exceptions import ProviderBalanceError, raise_if_balance_wall
 
 # ---------------------------------------------------------------------------
@@ -94,6 +95,7 @@ async def test_places_enrichment_write_description_reraises_provider_balance_err
         places_client=FakePlacesClient(),
         session=MagicMock(),
         llm_client=fake_llm,
+        config=ScoreConfig(),
     )
 
     with pytest.raises(ProviderBalanceError):

@@ -151,19 +151,20 @@ class SignalAgent:
     Args:
         places_client: PlacesClientProtocol implementation (real or fake).
         session:       SQLAlchemy synchronous Session.
-        config:        ScoreConfig with reliability weights (optional; defaults to ScoreConfig()).
+        config:        ScoreConfig with reliability weights — the effective one
+                       (load_effective_config(session).score), never a silent default.
     """
 
     def __init__(
         self,
         places_client: PlacesClientProtocol,
         session: Session,
-        config: ScoreConfig | None = None,
+        config: ScoreConfig,
         now: datetime | None = None,
     ) -> None:
         self._places_client = places_client
         self._session = session
-        self._config = config or ScoreConfig()
+        self._config = config
         # Injectable reference clock (Phase F). None → resolved to
         # datetime.now(timezone.utc) at run() time. Pinning it makes the atualidade
         # buckets AND the 90-day no-recent-reviews rule fully deterministic offline.

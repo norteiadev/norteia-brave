@@ -25,6 +25,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from brave.config.settings import ScoreConfig
 from tests.fakes.fake_places import SIGNAL_FIXTURE_CLOSED, SIGNAL_FIXTURE_OPEN, FakePlacesClient
 
 # Pinned reference clock so the atualidade buckets AND the Phase F 90-day
@@ -101,6 +102,7 @@ async def test_signal_agent_hard_descarte_closed_permanently() -> None:
         places_client=fake_places,
         session=session,
         now=_NOW,
+        config=ScoreConfig(),
     )
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"):
@@ -135,6 +137,7 @@ async def test_signal_agent_closed_temporarily_parks_in_dlq() -> None:
         places_client=fake_places,
         session=session,
         now=_NOW,
+        config=ScoreConfig(),
     )
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"):
@@ -172,6 +175,7 @@ async def test_signal_agent_advances_sub_state_for_open_place() -> None:
         places_client=fake_places,
         session=session,
         now=_NOW,
+        config=ScoreConfig(),
     )
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
@@ -218,6 +222,7 @@ async def test_signal_agent_writes_corroboracao_constant_zero() -> None:
         places_client=fake_places,
         session=session,
         now=_NOW,
+        config=ScoreConfig(),
     )
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
@@ -263,7 +268,7 @@ async def test_signal_agent_with_recent_reviews_is_scored() -> None:
     session = _make_mock_session()
     rio = _make_rio(sub_state="contacts_found")
 
-    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW)
+    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW, config=ScoreConfig())
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
          patch("brave.lanes.atrativos.signal_agent.route_by_score") as mock_route:
@@ -290,7 +295,7 @@ async def test_signal_agent_no_reviews_routes_to_terminal_dlq() -> None:
     session = _make_mock_session()
     rio = _make_rio(sub_state="contacts_found")
 
-    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW)
+    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW, config=ScoreConfig())
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
          patch("brave.lanes.atrativos.signal_agent.route_by_score") as mock_route:
@@ -316,7 +321,7 @@ async def test_signal_agent_stale_reviews_over_90d_routes_to_terminal_dlq() -> N
     session = _make_mock_session()
     rio = _make_rio(sub_state="contacts_found")
 
-    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW)
+    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW, config=ScoreConfig())
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
          patch("brave.lanes.atrativos.signal_agent.route_by_score") as mock_route:
@@ -343,7 +348,7 @@ async def test_signal_agent_persists_formatted_address() -> None:
     session = _make_mock_session()
     rio = _make_rio(sub_state="contacts_found")
 
-    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW)
+    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW, config=ScoreConfig())
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
          patch("brave.lanes.atrativos.signal_agent.route_by_score"):
@@ -365,7 +370,7 @@ async def test_signal_agent_missing_address_keeps_nascente_value() -> None:
     rio = _make_rio(sub_state="contacts_found")
     rio.normalized["address"] = "Rua do Nascente, 100"
 
-    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW)
+    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW, config=ScoreConfig())
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
          patch("brave.lanes.atrativos.signal_agent.route_by_score"):
@@ -388,7 +393,7 @@ async def test_signal_agent_no_recent_reviews_never_reaches_whatsapp_gate() -> N
     session = _make_mock_session()
     rio = _make_rio(sub_state="contacts_found")
 
-    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW)
+    agent = SignalAgent(places_client=fake_places, session=session, now=_NOW, config=ScoreConfig())
 
     with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
          patch("brave.lanes.atrativos.signal_agent.route_by_score"):

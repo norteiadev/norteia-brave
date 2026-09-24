@@ -62,7 +62,7 @@ class ManualService:
         completude_value: float = 100.0,
         corroboracao_value: float = 0.0,
         atualidade_value: float = 100.0,
-        config: ScoreConfig | None = None,
+        config: ScoreConfig,
         source_ref: str | None = None,
         run_rio: bool = True,
     ) -> RioRecord | NascenteRecord:
@@ -97,7 +97,7 @@ class ManualService:
             payload=payload,
         )
         if run_rio:
-            return process_nascente_record(session, nascente, config or ScoreConfig())
+            return process_nascente_record(session, nascente, config)
         return nascente
 
     def update(
@@ -114,7 +114,7 @@ class ManualService:
         completude_value: float = 100.0,
         corroboracao_value: float = 0.0,
         atualidade_value: float = 100.0,
-        config: ScoreConfig | None = None,
+        config: ScoreConfig,
         run_rio: bool = True,
     ) -> RioRecord | NascenteRecord:
         """Revise a manual record under a known ``source_ref`` (mutation — gated).
