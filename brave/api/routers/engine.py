@@ -271,7 +271,7 @@ def engine_start(
 
         # The cascade's build guard (writer key/price, Parallel key/mode): every record
         # would fail on it before the agent, so refuse the run up front.
-        reason = clients_for(AppConfig(), cfg).check_search()
+        reason = clients_for(cfg).check_search()
         if reason is not None:
             raise HTTPException(status_code=409, detail=f"Cascata mal configurada: {reason}")
         # runs_history labels for the Varreduras trail; never written to the depth/source keys.

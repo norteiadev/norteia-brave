@@ -1,6 +1,6 @@
 """The ONE seam that decides real vs offline external clients (D-18).
 
-``clients_for(app_config)`` returns a ``Clients`` bag that builds each adapter lazily, on
+``clients_for(config)`` returns a ``Clients`` bag that builds each adapter lazily, on
 first access: the real adapter when ``run_real_externals`` is on, else its Null twin. It
 decides ONLY which adapter (externals switch, keys, Gemini pricing, Parallel mode) —
 business flags (places_enrichment_enabled, description flags, …) stay in the tasks.
@@ -28,9 +28,8 @@ class Clients:
     """Lazily-built external adapters for one task run (see module docstring).
 
     Args:
-        app_config:  Env-built AppConfig: run_real_externals + every key. None → AppConfig().
-        effective:   Overlay config (load_effective_config) for the cascade flag. None →
-                     app_config.
+        config:      The effective AppConfig (load_effective_config): run_real_externals,
+                     every key and the cascade flag. None → AppConfig() (env only).
         ibge_lookup: Zero-arg loader of the name→IBGE map for the real Places client; only
                      called when that client is built.
         places, llm, search, tripadvisor, geocoder, whatsapp, norteia_api, batch:
@@ -39,8 +38,7 @@ class Clients:
 
     def __init__(
         self,
-        app_config: AppConfig | None = None,
-        effective: AppConfig | None = None,
+        config: AppConfig | None = None,
         *,
         ibge_lookup: Callable[[], dict[tuple[str, str], str]] | None = None,
         places: Any = None,
@@ -52,8 +50,7 @@ class Clients:
         norteia_api: Any = None,
         batch: Any = None,
     ) -> None:
-        self._cfg = app_config if app_config is not None else AppConfig()
-        self._effective = effective if effective is not None else self._cfg
+        self._cfg = config if config is not None else AppConfig()
         self._ibge_lookup = ibge_lookup
         self._given: dict[str, Any] = {
             k: v
@@ -133,7 +130,7 @@ class Clients:
         BRAVE_LLM_GEMINI_API_KEY and a price (else generate() fails per atrativo and burns
         one descricao_attempt each), and Parallel needs its key and a known mode.
         """
-        if "search" in self._given or not self._effective.atrativo_description_cascade_enabled:
+        if "search" in self._given or not self._cfg.atrativo_description_cascade_enabled:
             return None
         if not self._real:
             return None
@@ -157,7 +154,7 @@ class Clients:
         (web_search mode). Raises RuntimeError when check_search() finds a reason."""
         if "search" in self._given:
             return self._given["search"]
-        if not self._effective.atrativo_description_cascade_enabled:
+        if not self._cfg.atrativo_description_cascade_enabled:
             return None
 
         def build() -> Any:
@@ -274,10 +271,10 @@ class Clients:
 
 
 def clients_for(
-    app_config: AppConfig | None = None,
-    effective: AppConfig | None = None,
+    config: AppConfig,
     *,
     ibge_lookup: Callable[[], dict[tuple[str, str], str]] | None = None,
 ) -> Clients:
-    """The external clients for one task run (see ``Clients``)."""
-    return Clients(app_config, effective, ibge_lookup=ibge_lookup)
+    """The external clients for one task run (see ``Clients``). ``config`` is the effective
+    config; a caller with no DB session passes ``AppConfig()``."""
+    return Clients(config, ibge_lookup=ibge_lookup)

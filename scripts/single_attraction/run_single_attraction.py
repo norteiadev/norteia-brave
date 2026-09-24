@@ -195,7 +195,8 @@ def main() -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from brave.config.settings import AppConfig, ScoreConfig, TripAdvisorConfig
+    from brave.config.runtime import load_effective_config
+    from brave.config.settings import TripAdvisorConfig
     from brave.clients.nominatim import NominatimGeocoderClient
     from brave.domains.tripadvisor.ibge import load_ibge_csv
     from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
@@ -203,8 +204,6 @@ def main() -> None:
     from brave.core.models import RioRecord
     from sqlalchemy import select
 
-    app_config = AppConfig()
-    score_config = ScoreConfig()
     redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
     redis_client = redis_lib.from_url(redis_url)
 
@@ -217,6 +216,9 @@ def main() -> None:
     engine = create_engine(os.environ["BRAVE_DB_URL"])
     Session = sessionmaker(bind=engine)
     session = Session()
+    # The same effective config (env + config_settings overlay) the sweep scores with.
+    app_config = load_effective_config(session)
+    score_config = app_config.score
 
     ta_client = TripAdvisorClient(config=TripAdvisorConfig(), redis=redis_client)
     geocoder = NominatimGeocoderClient(config=app_config.nominatim, redis=redis_client)
@@ -285,7 +287,6 @@ def main() -> None:
             ibge_lookup=load_municipio_name_ibge_lookup(session),
         )
         from brave.clients.factory import clients_for
-        from brave.config.runtime import load_effective_config
 
         llm_client = RealLLMClient(
             config=app_config.llm, redis_client=redis_client,
@@ -293,7 +294,7 @@ def main() -> None:
         )
         # Same writer choice as the sweep: cascade (Parallel + atrativo_cascade_model) when the
         # overlay flag is on, else Sonnet + web_search. Raises when the cascade can't be built.
-        search_client = clients_for(app_config, load_effective_config(session)).search()
+        search_client = clients_for(app_config).search()
         agent = PlacesEnrichmentAgent(
             places_client=places_client, session=session, config=score_config,
             llm_client=llm_client, distritos=load_distritos(session),

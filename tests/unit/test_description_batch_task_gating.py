@@ -24,13 +24,12 @@ def _run_task(*, run_real_externals: bool) -> tuple[MagicMock, MagicMock, MagicM
 
     with (
         patch("brave.tasks.pipeline._get_session", return_value=(session, MagicMock())),
-        patch("brave.tasks.pipeline.AppConfig") as app_config,
-        patch("brave.tasks.pipeline.load_effective_config"),
+        patch("brave.tasks.pipeline.load_effective_config") as effective,
         patch("brave.tasks.pipeline.clients_for") as deps,
         patch("brave.lanes.atrativos.copy_batch.reap_stale_claims") as reap,
         patch("brave.lanes.atrativos.copy_batch.collect_batches") as collect,
     ):
-        app_config.return_value.run_real_externals = run_real_externals
+        effective.return_value.run_real_externals = run_real_externals
         raw_fn(SimpleNamespace())
 
     return session, reap, collect, deps

@@ -59,8 +59,8 @@ def harness(monkeypatch):
 
     enriched: list = []
     clients_builds = MagicMock(
-        side_effect=lambda a, e=None, **k: Clients(
-            a, e, places=FakePlacesClient(), llm=FakeLLMClient()
+        side_effect=lambda c, **k: Clients(
+            c, places=FakePlacesClient(), llm=FakeLLMClient()
         )
     )
     monkeypatch.setattr(pipeline, "clients_for", clients_builds)

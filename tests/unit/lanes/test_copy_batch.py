@@ -990,13 +990,12 @@ def test_collect_task_dispatches_no_push() -> None:
 
     with (
         patch("brave.tasks.pipeline._get_session", return_value=(session, MagicMock())),
-        patch("brave.tasks.pipeline.AppConfig") as app_config,
-        patch("brave.tasks.pipeline.load_effective_config"),
+        patch("brave.tasks.pipeline.load_effective_config") as effective,
         patch("brave.tasks.pipeline.clients_for"),
         patch("brave.tasks.pipeline.publish_mar") as push,
         patch("brave.lanes.atrativos.copy_batch.collect_batches", return_value=3) as collect,
     ):
-        app_config.return_value.run_real_externals = True
+        effective.return_value.run_real_externals = True
         raw_fn(SimpleNamespace())
 
     collect.assert_called_once()

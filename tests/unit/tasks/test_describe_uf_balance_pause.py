@@ -49,7 +49,7 @@ def test_describe_uf_halts_and_pauses_on_provider_balance_error(monkeypatch):
     monkeypatch.setattr(
         pipeline,
         "clients_for",
-        lambda a, e=None, **k: Clients(a, e, places=FakePlacesClient(), llm=FakeLLMClient()),
+        lambda c, **k: Clients(c, places=FakePlacesClient(), llm=FakeLLMClient()),
     )
 
     class Agent:
