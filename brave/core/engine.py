@@ -48,6 +48,8 @@ from typing import Any
 
 import structlog
 
+from brave.config.runtime import ENGINE_MODE_KEY, upsert_config
+
 logger = structlog.get_logger(__name__)
 
 IDLE = "idle"
@@ -492,9 +494,9 @@ def set_mode(redis: Any, mode: str, *, session: Any = None) -> None:
     LIVE mode (dispatch + card edit-lock). When ``session`` is supplied the mode is
     ALSO upserted into ``config_settings`` (key ``engine.mode``) so a Redis flush no
     longer resets the mode to LIGADO — :func:`get_mode` re-seeds Redis from that row.
-    The snapshot cache is busted so the next effective-config read reflects the change.
-    The Redis write happens FIRST (and the DESLIGADO side effects), so a DB hiccup can
-    never lose the live mode. When ``session`` is None the behavior is exactly the
+    The caller commits; that commit drops the cached config overlay (upsert_config's
+    after_commit listener). The Redis write happens FIRST (and the DESLIGADO side
+    effects), so a DB hiccup can never lose the live mode. When ``session`` is None the behavior is exactly the
     Phase-C Redis-only path (unchanged).
     """
     if mode not in VALID_MODES:
@@ -517,12 +519,7 @@ def set_mode(redis: Any, mode: str, *, session: Any = None) -> None:
         # every resume without separate clear-on-resume code anywhere else.
         redis.delete(_PAUSE_REASON_KEY)
     if session is not None:
-        # Lazy import keeps brave.core.engine importable without brave.config.runtime
-        # at module load (mirrors brave.core.dlq.service, which already depends on it).
-        from brave.config.runtime import bust_config_snapshot, upsert_config
-
-        upsert_config(session, {_ENGINE_MODE_CONFIG_KEY: mode}, updated_by="engine")
-        bust_config_snapshot(redis)
+        upsert_config(session, {ENGINE_MODE_KEY: mode}, updated_by="engine")
 
 
 def get_mode(redis: Any, *, session: Any = None) -> str:
@@ -550,10 +547,6 @@ def get_mode(redis: Any, *, session: Any = None) -> str:
     return LIGADO
 
 
-# config_settings dotted key mirroring the Redis _MODE_KEY (durable store).
-_ENGINE_MODE_CONFIG_KEY = "engine.mode"
-
-
 def _read_persisted_mode(session: Any) -> str | None:
     """Return the durable ``engine.mode`` from config_settings, or None when absent/invalid.
 
@@ -563,7 +556,7 @@ def _read_persisted_mode(session: Any) -> str | None:
     """
     from brave.core.models import ConfigSetting  # lazy: same package, avoids import cost
 
-    row = session.get(ConfigSetting, _ENGINE_MODE_CONFIG_KEY)
+    row = session.get(ConfigSetting, ENGINE_MODE_KEY)
     if row is None or not isinstance(row.value, dict):
         return None
     value = row.value.get("v")

@@ -520,6 +520,6 @@ class AppConfig(BaseSettings):
         """Load AppConfig, optionally overriding the DB URL.
 
         DBConfig is not nested directly because it has a required field (url).
-        Use brave.config.get_db_config() to load DBConfig separately.
+        Load it separately with ``DBConfig()`` (env ``BRAVE_DB_URL``).
         """
         return cls()
