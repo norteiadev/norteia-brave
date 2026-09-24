@@ -10,7 +10,7 @@ Endpoints under test:
     - 401 without Bearer
     - 200 + empty lines on fresh source
     - 200 + seeded lines
-    - defaults to brave:engine:source when no source param given
+    - defaults to the engine's active source when no source param given
 """
 
 import json
@@ -99,11 +99,11 @@ def test_logs_returns_seeded_lines(client, fake_redis):
 
 
 def test_logs_defaults_to_active_engine_source(client, fake_redis):
-    """GET /api/v1/logs (no source param) uses brave:engine:source from Redis."""
+    """GET /api/v1/logs (no source param) uses the engine's active source."""
+    from brave.core import engine as collection_engine  # noqa: PLC0415
     from brave.observability.log_buffer import append_log  # noqa: PLC0415
 
-    # Seed the active engine source key
-    fake_redis.set("brave:engine:source", "default")
+    collection_engine.set_source(fake_redis, "default")
 
     # Seed one log entry under "default"
     append_log(fake_redis, "default", {"event": "engine_tick", "level": "debug"})

@@ -143,10 +143,13 @@ def test_engine_status_includes_source_key():
 
 @pytest.fixture
 def running_engine(monkeypatch):
-    """Fakeredis with engine state=RUNNING and no per-UF delay."""
+    """Fakeredis with a started run and no per-UF delay."""
     from brave.core import engine as collection_engine
     fake = fakeredis.FakeStrictRedis()
-    fake.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
+    collection_engine.start(
+        fake, None, action="sweep", depth="nascente", source="tripadvisor",
+        ufs=["SP", "RJ"], lane="both",
+    )
     monkeypatch.setattr("redis.from_url", lambda *_a, **_k: fake)
     monkeypatch.setenv("BRAVE_ENGINE_UF_DELAY_SECONDS", "0")
     return fake

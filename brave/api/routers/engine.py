@@ -15,7 +15,6 @@ caller must not be able to fan out expensive LLM/Places sweeps).
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -279,17 +278,17 @@ def engine_start(
         depth = source = "descricao"
         lane = "atrativos"
     else:
-        # Validate depth BEFORE start_run (and before the already-running/409 branch):
+        # Validate depth BEFORE engine.start (and before the already-running/409 branch):
         # a missing/invalid depth must return 422 even mid-run, never flipping engine
         # state nor first tripping 409 (T-10-02).
         depth = body.get("depth")
-        if depth not in collection_engine._VALID_DEPTHS:
+        if depth not in collection_engine.VALID_DEPTHS:
             raise HTTPException(
                 status_code=422,
                 detail="depth is required: nascente|nascente_rio|nascente_rio_mar",
             )
 
-        # Validate source BEFORE start_run — same order as depth (T-11-03-03).
+        # Validate source BEFORE engine.start — same order as depth (T-11-03-03).
         # Phase D: the source must be REGISTERED (a known lane in the effective config)
         # AND ENABLED (enabled_sources). An unknown lane is a 422 (malformed request); a
         # known-but-disabled lane is a 409 (valid name, not currently collectable) — both
@@ -321,7 +320,7 @@ def engine_start(
 
     # Optional operator test-run throttle: cap attractions ingested per UF so the whole
     # Nascente→Rio→Mar flow can be exercised with a handful of records. Absent/null = no
-    # cap (full sweep). Validated BEFORE start_run — a bad value 422s without mutating
+    # cap (full sweep). Validated BEFORE engine.start — a bad value 422s without mutating
     # engine state, mirroring the depth/source guards above. bool is an int subclass, so
     # reject it explicitly (True would otherwise pass as 1).
     max_atrativos_per_uf = body.get("max_atrativos_per_uf")
@@ -335,53 +334,25 @@ def engine_start(
             detail="max_atrativos_per_uf must be a positive integer",
         )
 
-    if not collection_engine.start_run(redis, ufs_total=len(ufs)):
+    # Reached ONLY after the 422/409 guards above — a rejected start never mutates engine
+    # state nor creates a phantom runs_history row (Pitfall 3). The source is persisted
+    # under the SAME registered-and-enabled contract just validated (injected: the kernel
+    # engine module must not import the domains registry, D-18).
+    run_id = collection_engine.start(
+        redis,
+        db,
+        action=action,
+        depth=depth,
+        source=source,
+        ufs=list(ufs),
+        lane=lane,
+        valid_sources=enabled_sources(cfg) if action == "sweep" else None,
+    )
+    if run_id is None:
         raise HTTPException(
             status_code=409,
             detail="Engine already running — stop it before starting a new run.",
         )
-
-    if action == "sweep":
-        collection_engine.set_depth(redis, depth)
-        # Persist the source under the SAME registered-and-enabled contract just validated
-        # above (source ∈ cfg.sources ∧ source ∈ enabled_sources) — injected because the
-        # kernel engine module must not import the domains registry (D-18).
-        collection_engine.set_source(redis, source, valid_sources=enabled_sources(cfg))
-
-    # A cold /start IS the LIGADO transition — the operator is turning collection ON.
-    # Without this the operator-mode axis stays at whatever it was (e.g. DESLIGADO
-    # after a fresh config_settings seed / DB reset), and engine_sweep_run's mode gate
-    # (`get_mode() != LIGADO → break`) aborts the run BEFORE dispatching any UF: the
-    # sweep "starts" (enabled=1, state=running) but collects nothing (dispatched=0).
-    # Persist LIGADO durably (config_settings) so the dispatch loop and the Kanban
-    # edit-lock agree. Mirrors the warm-resume path (POST /engine/mode LIGADO).
-    collection_engine.set_mode(redis, collection_engine.LIGADO, session=db)
-
-    # Persist a durable runs_history row (UI-PAINEL-2 Varreduras trail). Pitfall 3:
-    # this is reached ONLY after the depth/source 422 guards AND start_run() success
-    # — a rejected start (422/409 raises above) never creates a phantom row. The id
-    # is generated client-side so run_id is available without a flush. Best-effort:
-    # a runs-history write failure must NEVER abort an otherwise-valid engine start
-    # (T-17.1-02-02). The run will simply have no DB trail (run_id stays None).
-    run_id: str | None = None
-    try:
-        from brave.core.models import RunHistory
-
-        run = RunHistory(
-            id=uuid.uuid4(),
-            ufs=list(ufs),
-            source=source,
-            depth=depth,
-            lane=lane,
-            ufs_total=len(ufs),
-            status="running",
-        )
-        db.add(run)
-        db.commit()
-        run_id = str(run.id)
-        redis.set("brave:engine:run_id", run_id)
-    except Exception as exc:  # best-effort — never abort a valid start
-        logger.warning("engine_start_runs_history_write_failed", error=str(exc))
 
     try:
         from brave.tasks.pipeline import engine_sweep_run
@@ -405,7 +376,7 @@ def engine_start(
             )
     except Exception as exc:  # broker-down
         if AppConfig().run_real_externals:
-            collection_engine.mark_idle(redis)  # revert — the run never launched
+            collection_engine.abort(redis, db, run_id)  # revert — the run never launched
             logger.error("engine_start_dispatch_failed", error=str(exc))
             raise HTTPException(
                 status_code=503,
@@ -492,7 +463,7 @@ def engine_set_mode(
     mode plus editing_unlocked so the dashboard can update the lock indicator.
     """
     mode = body.get("mode")
-    if mode not in collection_engine._VALID_MODES:
+    if mode not in collection_engine.VALID_MODES:
         raise HTTPException(
             status_code=422,
             detail="mode must be 'LIGADO', 'PAUSADO', or 'DESLIGADO'",

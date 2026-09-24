@@ -132,7 +132,10 @@ def test_status_includes_enabled_field(client):
     assert "enabled" in status, "get_status must always include 'enabled'"
     assert status["enabled"] is False
 
-    collection_engine.start_run(rc, ufs_total=1)
+    collection_engine.start(
+        rc, None, action="sweep", depth="nascente", source="tripadvisor",
+        ufs=["SP", "RJ"], lane="both",
+    )
     assert collection_engine.get_status(rc)["enabled"] is True
 
 
@@ -143,16 +146,8 @@ def test_stop_when_idle_clears_enabled(client):
 
     rc = get_redis()
 
-    # Start the engine → enabled=True, state=RUNNING.
-    resp = client.post(
-        "/api/v1/engine/start",
-        headers=STEWARD_HEADERS,
-        json={"depth": "nascente"},
-    )
-    assert resp.status_code == 202
-
-    # Simulate orchestrator finishing: force state back to IDLE while latch stays.
-    collection_engine.mark_idle(rc)
+    # Latch set while the engine is idle (never started).
+    collection_engine.set_enabled(rc, True)
     assert collection_engine.get_state(rc) == collection_engine.IDLE
     assert collection_engine.is_enabled(rc) is True  # latch still set before stop
 

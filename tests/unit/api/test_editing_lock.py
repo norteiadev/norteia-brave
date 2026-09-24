@@ -276,7 +276,10 @@ def test_set_mode_desligado_idles_engine_and_clears_enabled(client):
     from brave.core import engine as collection_engine
 
     rc = _rc()
-    collection_engine.start_run(rc, ufs_total=2)
+    collection_engine.start(
+        rc, None, action="sweep", depth="nascente", source="tripadvisor",
+        ufs=["SP", "RJ"], lane="both",
+    )
     assert collection_engine.is_enabled(rc) is True
     assert collection_engine.get_state(rc) == collection_engine.RUNNING
 
@@ -293,7 +296,10 @@ def test_set_mode_pausado_does_not_clear_enabled(client):
     from brave.core import engine as collection_engine
 
     rc = _rc()
-    collection_engine.start_run(rc, ufs_total=2)
+    collection_engine.start(
+        rc, None, action="sweep", depth="nascente", source="tripadvisor",
+        ufs=["SP", "RJ"], lane="both",
+    )
 
     r = client.post(
         "/api/v1/engine/mode", headers=STEWARD_HEADERS, json={"mode": "PAUSADO"}

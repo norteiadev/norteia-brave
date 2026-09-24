@@ -151,7 +151,7 @@ def _validate_updates(db: Session, updates: dict[str, Any]) -> None:
                     status_code=422, detail=f"{key} must be within [0, 100]"
                 )
         elif key == _ENGINE_MODE_KEY:
-            if value not in collection_engine._VALID_MODES:
+            if value not in collection_engine.VALID_MODES:
                 raise HTTPException(
                     status_code=422,
                     detail="engine.mode must be 'LIGADO', 'PAUSADO', or 'DESLIGADO'",
@@ -167,12 +167,12 @@ def _validate_updates(db: Session, updates: dict[str, Any]) -> None:
                     status_code=422, detail=f"{key} must be a boolean"
                 )
             source_name = key[len(_SOURCE_PREFIX) : -len(_SOURCE_SUFFIX)]
-            if source_name not in collection_engine._VALID_SOURCES:
+            if source_name not in collection_engine.VALID_SOURCES:
                 raise HTTPException(
                     status_code=422,
                     detail=(
                         f"unknown source {source_name!r}: must be one of "
-                        f"{sorted(collection_engine._VALID_SOURCES)}"
+                        f"{sorted(collection_engine.VALID_SOURCES)}"
                     ),
                 )
         else:

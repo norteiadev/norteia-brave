@@ -593,6 +593,62 @@ class TestSweepTripAdvisorBulkNational:
         )
 
 
+    def test_bulk_counts_its_pages_against_the_current_run(self, monkeypatch):
+        """The standalone bulk run claims itself against the current engine run, counts
+        each page as progress and pays the claim back when it ends."""
+        from brave.core import engine as collection_engine
+
+        page1 = [_make_card(location_id=10_000)]
+        page2 = [_make_card(location_id=20_000)]
+        fake_client = FakeTripAdvisorClient(gql_pages=[(0, page1), (30, page2)])
+        fake_geo = FakeGeocoderClient(
+            fixture_national_results=_resolvable_geo_fixture(["10000", "20000"])
+        )
+        fake_redis = fakeredis.FakeRedis()
+        run_id = collection_engine.start(
+            fake_redis, None, action="sweep", depth="nascente_rio",
+            source="tripadvisor", ufs=["BR"], lane="atrativos",
+        )
+
+        _run_bulk_sweep(
+            fake_client=fake_client,
+            fake_geo=fake_geo,
+            fake_redis=fake_redis,
+            monkeypatch=monkeypatch,
+            max_pages=2,
+        )
+
+        assert collection_engine.get_status(fake_redis)["ufs_done"] == 2
+        # The bulk producer is done → only the dispatch side keeps the run open.
+        assert collection_engine.dispatch_finished(fake_redis, None, run_id) is True
+
+    def test_bulk_provider_balance_error_pauses_without_name_error(self, monkeypatch):
+        """REGRESSION: a ProviderBalanceError in the bulk branch used to hit an unbound
+        per-UF Redis client (NameError). It must pause the motor with a reason."""
+        from brave.core import engine as collection_engine
+        from brave.shared.exceptions import ProviderBalanceError
+
+        class _BalanceClient:
+            async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=334):
+                raise ProviderBalanceError("places")
+                yield  # unreachable — marks this coroutine as an async generator
+
+        fake_redis = fakeredis.FakeRedis()
+        _, retry_calls, _ = _run_bulk_sweep(
+            fake_client=_BalanceClient(),
+            fake_geo=FakeGeocoderClient(fixture_national_results={}),
+            fake_redis=fake_redis,
+            monkeypatch=monkeypatch,
+            max_pages=2,
+        )
+
+        assert retry_calls == []
+        status = collection_engine.get_status(fake_redis)
+        assert status["mode"] == collection_engine.PAUSADO
+        assert status["pause_reason"]["reason"] == "provider_balance"
+        assert status["pause_reason"]["provider"] == "places"
+
+
 # ---------------------------------------------------------------------------
 # R1: session expiry turns the engine OFF (260629-e69)
 # ---------------------------------------------------------------------------
@@ -612,7 +668,10 @@ class TestR1EngineOffOnSessionExpiry:
 
         fake_redis = _fr.FakeRedis()
         # Seed engine as running (operator started a sweep)
-        collection_engine.start_run(fake_redis, ufs_total=1)
+        collection_engine.start(
+            fake_redis, None, action="sweep", depth="nascente_rio",
+            source="tripadvisor", ufs=["SP"], lane="atrativos",
+        )
         assert collection_engine.is_enabled(fake_redis), "precondition: engine enabled"
 
         _run_sweep_with_stub_client(_StubMissingSessionClient, fake_redis, monkeypatch)
@@ -635,7 +694,10 @@ class TestR1EngineOffOnSessionExpiry:
         from brave.core import engine as collection_engine
 
         fake_redis = _fr.FakeRedis()
-        collection_engine.start_run(fake_redis, ufs_total=1)
+        collection_engine.start(
+            fake_redis, None, action="sweep", depth="nascente_rio",
+            source="tripadvisor", ufs=["SP"], lane="atrativos",
+        )
         assert collection_engine.is_enabled(fake_redis), "precondition: engine enabled"
 
         _run_sweep_with_stub_client(_StubExpiredSessionClient, fake_redis, monkeypatch)

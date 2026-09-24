@@ -102,7 +102,7 @@ def unlock_editing():
     try:
         yield
     finally:
-        rc.delete(collection_engine._MODE_KEY)  # restore default (LIGADO)
+        collection_engine.set_mode(rc, collection_engine.LIGADO)  # restore the default
 
 
 # ---------------------------------------------------------------------------

@@ -383,7 +383,6 @@ class TestProducerPauseHalt:
         from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         rc = fakeredis.FakeStrictRedis()
-        rc.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
         collection_engine.set_mode(rc, collection_engine.PAUSADO)
 
         fake_client = _make_fake_client()
@@ -411,7 +410,6 @@ class TestProducerPauseHalt:
         from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         rc = fakeredis.FakeStrictRedis()
-        rc.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
         collection_engine.set_mode(rc, collection_engine.LIGADO)
 
         fake_client = _make_fake_client()
@@ -440,7 +438,6 @@ class TestProducerPauseHalt:
         from brave.lanes.tripadvisor.destinos import TripAdvisorDestinosIngest
 
         rc = fakeredis.FakeStrictRedis()
-        rc.set(collection_engine._STATE_KEY, collection_engine.RUNNING)
         collection_engine.set_mode(rc, collection_engine.DESLIGADO)
 
         fake_client = _make_fake_client()

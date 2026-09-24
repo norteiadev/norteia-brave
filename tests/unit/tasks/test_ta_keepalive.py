@@ -22,6 +22,7 @@ import os
 import fakeredis
 import pytest
 
+from brave.core import engine as collection_engine
 from brave.lanes.tripadvisor.client import (
     BRAVE_TA_SESSION_KEY,
     SessionExpiredError,
@@ -30,8 +31,6 @@ from brave.lanes.tripadvisor.client import (
 
 # Redis key constants (mirrors pipeline.py)
 _TA_NEEDS_BOOTSTRAP_KEY = "brave:ta:needs_bootstrap"
-_ENGINE_ENABLED_KEY = "brave:engine:enabled"
-_ENGINE_MODE_KEY = "brave:engine:mode"
 _TA_KEEPALIVE_FAILURES_KEY = "brave:ta:keepalive_failures"
 
 
@@ -208,13 +207,15 @@ class TestTaKeepaliveTask:
         Deciding a session is dead belongs to sweep_tripadvisor (R1), not to a health beat."""
         fake = fakeredis.FakeRedis()
         _seed_session(fake, ttl=1800)
-        fake.set(_ENGINE_MODE_KEY, "LIGADO")
-        fake.set(_ENGINE_ENABLED_KEY, "1")
+        collection_engine.set_mode(fake, collection_engine.LIGADO)
+        collection_engine.set_enabled(fake, True)
 
         _run_keepalive(monkeypatch, fake, _StubExpiredClient)
 
-        assert fake.get(_ENGINE_MODE_KEY) == b"LIGADO", "the keepalive must not turn the motor off"
-        assert fake.get(_ENGINE_ENABLED_KEY) == b"1"
+        assert collection_engine.get_mode(fake) == collection_engine.LIGADO, (
+            "the keepalive must not turn the motor off"
+        )
+        assert collection_engine.is_enabled(fake) is True
         assert fake.get(_TA_NEEDS_BOOTSTRAP_KEY) is None, "one failure is not a verdict"
         assert fake.get(_TA_KEEPALIVE_FAILURES_KEY) == b"1"
 
@@ -222,7 +223,7 @@ class TestTaKeepaliveTask:
         """Two failures stay quiet; the third marks the operator flag — engine still on."""
         fake = fakeredis.FakeRedis()
         _seed_session(fake, ttl=1800)
-        fake.set(_ENGINE_MODE_KEY, "LIGADO")
+        collection_engine.set_mode(fake, collection_engine.LIGADO)
 
         for _ in range(2):
             _run_keepalive(monkeypatch, fake, _StubExpiredClient)
@@ -231,7 +232,9 @@ class TestTaKeepaliveTask:
         _run_keepalive(monkeypatch, fake, _StubExpiredClient)
 
         assert fake.get(_TA_NEEDS_BOOTSTRAP_KEY) is not None
-        assert fake.get(_ENGINE_MODE_KEY) == b"LIGADO", "even a streak leaves the motor alone"
+        assert collection_engine.get_mode(fake) == collection_engine.LIGADO, (
+            "even a streak leaves the motor alone"
+        )
 
     def test_a_success_between_failures_resets_the_streak(self, monkeypatch):
         """Blips scattered over hours must never add up to a verdict."""
@@ -252,11 +255,11 @@ class TestTaKeepaliveTask:
         """SessionMissingError counts like an expiry: no engine change, no marker at one."""
         fake = fakeredis.FakeRedis()
         _seed_session(fake, ttl=1800)
-        fake.set(_ENGINE_MODE_KEY, "LIGADO")
+        collection_engine.set_mode(fake, collection_engine.LIGADO)
 
         _run_keepalive(monkeypatch, fake, _StubMissingClient)
 
-        assert fake.get(_ENGINE_MODE_KEY) == b"LIGADO"
+        assert collection_engine.get_mode(fake) == collection_engine.LIGADO
         assert fake.get(_TA_NEEDS_BOOTSTRAP_KEY) is None
         assert fake.get(_TA_KEEPALIVE_FAILURES_KEY) == b"1"
 

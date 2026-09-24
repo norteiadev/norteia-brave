@@ -526,7 +526,9 @@ def reprocess_record_task(self, rio_id: str) -> None:
     reject_on_worker_lost=True,
     time_limit=600,  # Places API can be slow — 10 min limit
 )
-def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
+def discover_atrativo_task(
+    self, uf: str, depth: str | None = None, *, run_id: str | None = None
+) -> None:
     """Fan-out attraction discovery for one UF (sub_state → discovered).
 
     Sweeps Google Places for attractions in the given UF, resolves parent
@@ -650,10 +652,9 @@ def discover_atrativo_task(self, uf: str, depth: str | None = None) -> None:
                 q_session.close()
 
     finally:
-        # Producer-completes lifecycle: dispatched by engine_sweep_run
-        # (incr_inflight before .delay); decrement so the LAST producer completes the
-        # run. Best-effort, never breaks the task (single outermost finally).
-        _producer_finally_lifecycle()
+        # Producer-completes lifecycle: engine_sweep_run claimed this producer before
+        # .delay; the LAST producer completes the run (single outermost finally).
+        _producer_done(run_id)
         session.close()
 
 
@@ -681,6 +682,7 @@ def sweep_tripadvisor(
     max_pages: int | None = None,
     geo_id: int = 294280,
     max_per_uf: int | None = None,
+    run_id: str | None = None,
 ) -> None:
     """TripAdvisor sweep for one UF — atrativos only, parent destinos from authoritative Rio records (Mtur/IBGE) (oa3).
 
@@ -727,13 +729,21 @@ def sweep_tripadvisor(
 
     run_rio = depth != collection_engine.NASCENTE
 
+    import redis as _redis_lib  # noqa: PLC0415
+
     session, engine = _get_session()
-    # rc is the sync Redis client for the live progress hash. It MUST be initialized
-    # before the try so the SHARED fail-fast except can reference it safely: the per-UF
-    # path (which can ALSO raise SessionExpiredError) reaches that except with rc still
-    # None, and the guarded `if rc is not None` keeps it from raising UnboundLocalError
-    # (T-15-07-04). Only the bulk_national branch assigns rc.
+    # One engine Redis client for every path (lifecycle, pause, R1, producer halt) —
+    # built before the try so each except can use it whichever branch raised.
+    engine_rc = _redis_lib.from_url(
+        os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+    )
+    # rc is the live progress hash client — bulk_national only. The per-UF path reaches
+    # the SHARED fail-fast except with rc still None; the guarded `if rc is not None`
+    # keeps it from touching the bulk panel (T-15-07-04).
     rc = None
+    # The standalone bulk run claims itself (it is not dispatched by engine_sweep_run);
+    # None = not counted against any run, so its finally must not call producer_done.
+    bulk_run_id = None
     try:
         effective = _load_config(session)
         config = effective.score
@@ -767,20 +777,11 @@ def sweep_tripadvisor(
             # producer / destino_rio_map (parent-less bulk ingest). Per-page commits
             # happen inside produce_paginated; this branch only seeds/finishes progress
             # and reuses the SHARED fail-fast except below on a mid-run 403/429.
-            import redis as _redis_lib  # noqa: PLC0415
-
-            rc = _redis_lib.from_url(
-                os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-            )
-
-            # Standalone bulk runs are dispatched directly (scripts/ta_bulk_sweep.py),
-            # NOT via engine_sweep_run/start_run, so reset the producer-lifecycle keys to
-            # a clean baseline. A stale positive inflight (or a claimed last_run_ended)
-            # from a prior orchestrator run would otherwise make this run's maybe_complete
-            # return False and the badge would never flip to "synced".
-            rc.set(collection_engine._INFLIGHT_KEY, "0")
-            rc.delete(collection_engine._DISPATCH_DONE_KEY)
-            rc.delete(collection_engine._LAST_RUN_ENDED_KEY)
+            rc = engine_rc
+            # Standalone bulk runs are dispatched directly (scripts/ta_bulk_sweep.py), not
+            # via engine_sweep_run, so the task claims itself — per execution, paired with
+            # the producer_done in the finally (a Celery retry re-claims on its re-run).
+            bulk_run_id = collection_engine.claim_producer(rc, run_id)
 
             # Resume: when a prior run recorded progress, continue from the page AFTER
             # the last completed offset (offset//30 + 2). Otherwise start a fresh run at
@@ -816,29 +817,13 @@ def sweep_tripadvisor(
                         max_pages or 334,
                         rc,
                         run_rio=run_rio,
+                        run_id=bulk_run_id,
                     ),
                 )
             )
             sweep_progress.mark_done(rc)
             # Terminal commit (produce_paginated already commits per page).
             session.commit()
-            # Standalone completion: the bulk run is dispatched directly (scripts/
-            # ta_bulk_sweep.py), NOT via engine_sweep_run, so it never went through the
-            # incr_inflight/dispatch_done lifecycle. Latch dispatch_done and complete the
-            # run inline so the badge flips DESLIGADO + "synced" (race-safe GETSET claim;
-            # the shared outermost finally then no-ops on the already-claimed marker).
-            _bulk_final_state = collection_engine.get_state(rc)
-            collection_engine.set_dispatch_done(rc, True)
-            if collection_engine.maybe_complete(rc):
-                _bulk_run_id = (
-                    collection_engine._decode(rc.get(collection_engine._RUN_ID_KEY))
-                    or None
-                )
-                if _bulk_run_id:
-                    _bulk_dispatched = sweep_progress.get_progress(rc).get("pages_done", 0)
-                    _finalize_run_history(
-                        _bulk_run_id, _bulk_dispatched, _bulk_final_state
-                    )
             return
 
         # Build destino_rio_map: keyed by municipio_id (IBGE code) → (rio_id, source_ref)
@@ -927,13 +912,9 @@ def sweep_tripadvisor(
         # Per-UF path enriches review recency (fetch_recent_review per card) so
         # atualidade lifts the reliability score. The bulk_national branch above leaves
         # enrichment OFF (no per-card review calls at 10k scale).
-        # redis=_prod_rc lets the per-UF producer honor a mid-run Motor Pausado/
+        # redis=engine_rc lets the per-UF producer honor a mid-run Motor Pausado/
         # Desligado (engine.should_halt_producer) — otherwise the fanned-out producer
         # keeps paginating + inserting atrativos/synthesized destinos after a pause.
-        import redis as _prod_redis_lib  # noqa: PLC0415
-        _prod_rc = _prod_redis_lib.from_url(
-            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-        )
         ingested_rio_ids = _asyncio.run(
             _using(
                 clients,
@@ -941,7 +922,7 @@ def sweep_tripadvisor(
                     uf,
                     run_rio=run_rio,
                     enrich_reviews=True,
-                    redis=_prod_rc,
+                    redis=engine_rc,
                     max_per_uf=max_per_uf,
                 ),
             )
@@ -967,16 +948,12 @@ def sweep_tripadvisor(
         if rc is not None:
             sweep_progress.stop_needs_bootstrap(rc)
         # R1: token expired → engine OFF — operator must inject a valid session before re-starting
-        import redis as _r1_redis  # noqa: PLC0415
-        _r1_rc = rc if rc is not None else _r1_redis.from_url(
-            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-        )
         # R1 is a HARD off (operator must re-inject a session before restarting).
-        # set_mode(DESLIGADO) subsumes set_enabled(False) + mark_idle + inflight=0 AND
+        # set_mode(DESLIGADO) subsumes set_enabled(False) + idle + inflight=0 AND
         # resets the operator mode — without it the engine lands at enabled=0 while
         # mode stays LIGADO, which makes the topbar "Ligar" button a no-op (stuck UI).
         # Redis-only (no session) keeps this fail-fast path from ever raising.
-        collection_engine.set_mode(_r1_rc, collection_engine.DESLIGADO)
+        collection_engine.set_mode(engine_rc, collection_engine.DESLIGADO)
         logger.warning(
             "sweep_tripadvisor_session_fail_fast",
             uf=uf,
@@ -991,7 +968,7 @@ def sweep_tripadvisor(
         # Pause the motor with a reason — NOT a hard off (R1's DESLIGADO above is for
         # an operator error); no retry, no quarantine, the run just halts here.
         session.rollback()
-        collection_engine.pause_with_reason(_prod_rc, "provider_balance", exc.provider, action="sweep")
+        collection_engine.pause_with_reason(engine_rc, "provider_balance", exc.provider, action="sweep")
         logger.warning("sweep_tripadvisor_provider_balance", uf=uf, provider=exc.provider)
         return
 
@@ -1029,13 +1006,13 @@ def sweep_tripadvisor(
                 q_session.close()
 
     finally:
-        # Producer-completes lifecycle: the per-UF TA producer is dispatched by
-        # engine_sweep_run (incr_inflight before .delay). Decrement here so the LAST
-        # producer completes the run. Best-effort, never breaks the task. The bulk_national
-        # branch is dispatched standalone (not via engine_sweep_run) so it never
-        # incremented — decr clamps at 0 and its own inline maybe_complete already
-        # completed the run (idempotent: the GETSET claim makes this a no-op).
-        _producer_finally_lifecycle()
+        # Producer-completes lifecycle: engine_sweep_run claimed the per-UF producer before
+        # .delay (Retry-guarded: only the terminal run counts). The bulk branch claimed
+        # itself this execution, so it always pays that claim back.
+        if not bulk_national:
+            _producer_done(run_id)
+        elif bulk_run_id is not None:
+            _producer_done(bulk_run_id, retrying_counts=True)
         session.close()
 
 
@@ -1536,7 +1513,13 @@ async def _describe_chunk(
     time_limit=3600,
     soft_time_limit=3540,
 )
-def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) -> None:
+def describe_uf(
+    uf: str,
+    max_n: int | None = None,
+    after_id: str | None = None,
+    *,
+    run_id: str | None = None,
+) -> None:
     """Write descricao_editorial for one UF's atrativos (engine action "describe").
 
     The TA sweep never writes descriptions; this producer backfills them afterwards,
@@ -1549,7 +1532,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
     chunk (or one cut short by the soft time limit) with no halt and max_n budget left
     re-dispatches itself from the last id consumed and hands its inflight token over (no
     decrement); a Stop/pause or a tripped cost guard halts. Any other exit is terminal and runs
-    _producer_finally_lifecycle exactly once. The cursor always advances, so a record whose
+    _producer_done exactly once. The cursor always advances, so a record whose
     description keeps failing cannot loop the chain. A per-record failure is logged and
     rolled back — it never aborts the chunk.
 
@@ -1645,7 +1628,7 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
             except ProviderBalanceError as exc:
                 # A paid provider reported a billing wall mid-chunk — pause the motor with a
                 # reason and halt the chunk/chain. No retry, no self-chain (chained stays
-                # False, so the finally still runs _producer_finally_lifecycle exactly once).
+                # False, so the finally still runs _producer_done exactly once).
                 session.rollback()
                 collection_engine.pause_with_reason(rc, "provider_balance", exc.provider, action="describe")
                 logger.warning("describe_uf_provider_balance", uf=uf, provider=exc.provider)
@@ -1675,13 +1658,13 @@ def describe_uf(uf: str, max_n: int | None = None, after_id: str | None = None) 
             and (cut or len(ids) == _DESCRIBE_CHUNK)
             and (remaining is None or remaining > 0)
         ):
-            describe_uf.delay(uf, remaining, after_id=str(ids[-1]))
+            describe_uf.delay(uf, remaining, after_id=str(ids[-1]), run_id=run_id)
             chained = True
     finally:
         # Only the terminal run of the chain decrements: a self-chained successor carries
         # the inflight token engine_sweep_run counted for this UF.
         if not chained:
-            _producer_finally_lifecycle()
+            _producer_done(run_id)
         session.close()
 
 
@@ -2412,23 +2395,37 @@ def engine_sweep_run(
             # lives in each domain's ``sweep_plan``). Each producer still ``.delay()``s
             # onto the single 'celery' queue; behavior is byte-identical per source.
             if action == "describe":
-                collection_engine.incr_inflight(rc)
-                describe_uf.delay(uf, max_per_uf)
+                producers = [(describe_uf, (uf, max_per_uf), {})]
             else:
-                for _spec in domain.sweep_plan(
-                    uf,
-                    depth=effective_depth,
-                    lane=lane,
-                    nascente_only=nascente_only,
-                    max_per_uf=max_per_uf,
-                ):
-                    _producer = globals()[_PRODUCER_ATTR_BY_TASK_NAME[_spec.task_name]]
-                    # Producer-completes lifecycle: count this producer BEFORE dispatch
-                    # so the run stays RUNNING/syncing until its finally decrements. The
-                    # matching decrement lives in each producer's OUTERMOST finally.
-                    collection_engine.incr_inflight(rc)
-                    _producer.delay(*_spec.args, **_spec.kwargs)
-            collection_engine.mark_uf_dispatched(rc, uf)
+                producers = [
+                    (
+                        globals()[_PRODUCER_ATTR_BY_TASK_NAME[_spec.task_name]],
+                        _spec.args,
+                        _spec.kwargs,
+                    )
+                    for _spec in domain.sweep_plan(
+                        uf,
+                        depth=effective_depth,
+                        lane=lane,
+                        nascente_only=nascente_only,
+                        max_per_uf=max_per_uf,
+                    )
+                ]
+            stale = False
+            for _producer, _args, _kwargs in producers:
+                # Producer-completes lifecycle: claim this producer BEFORE dispatch so the
+                # run stays RUNNING/syncing until its terminal finally calls producer_done
+                # with the same run_id. None = this orchestrator's run is no longer the
+                # current one (a newer start replaced it) — stop dispatching for it.
+                claimed = collection_engine.claim_producer(rc, run_id)
+                if claimed is None:
+                    stale = True
+                    break
+                _producer.delay(*_args, **_kwargs, run_id=claimed)
+            if stale:
+                logger.info("engine_stale_run_drain", at_uf=uf, dispatched=dispatched)
+                break
+            collection_engine.progress(rc, run_id, uf=uf)
             dispatched += 1
             logger.info(
                 "engine_uf_dispatched",
@@ -2440,125 +2437,68 @@ def engine_sweep_run(
             if per_uf_delay > 0:
                 _time.sleep(per_uf_delay)
     finally:
-        # Read the engine state BEFORE any completion to detect a mid-run Stop (the same
-        # signal the loop reads at the top): STOPPING ⇒ the run drained early ⇒ parcial.
-        # NB the state may still be RUNNING/STOPPING here — the dispatch loop is done but
-        # the fanned-out producers keep running (live kanban), so the motor is NOT turned
-        # off here anymore. It flips off only when the LAST producer's finally drains
-        # inflight to 0 (or immediately below when nothing/everything is already done).
-        final_state = collection_engine.get_state(rc)
-        # Latch dispatch_done, then attempt completion. maybe_complete only fires when
-        # dispatch is done AND no producer is in flight — i.e. the fast paths where the
-        # loop dispatched nothing (paused/stopped before the first UF) or every producer
-        # already finished. In the common case producers are still in flight → this
-        # returns False and the LAST producer completes the run. Redis-only + race-safe
-        # (single-winner GETSET claim); D-18: the run_history finalize stays HERE.
-        collection_engine.set_dispatch_done(rc, True)
-        if collection_engine.maybe_complete(rc):
+        # The dispatch loop is done but the fanned-out producers keep running (live
+        # kanban), so the motor is NOT turned off here unless nothing is in flight — the
+        # fast paths where the loop dispatched nothing (paused/stopped before the first
+        # UF) or every producer already finished. Otherwise the LAST producer's
+        # producer_done completes the run.
+        if _lifecycle(collection_engine.dispatch_finished, rc, run_id):
             logger.info("engine_run_complete", dispatched=dispatched, depth=effective_depth)
-            # Finalize the durable runs_history row (UI-PAINEL-2 Varreduras trail).
-            # BEST-EFFORT: a runs-history write failure must NEVER abort the sweep
-            # (T-17.1-02-02). Skipped when the start never persisted a row (run_id None).
-            if run_id:
-                _finalize_run_history(run_id, dispatched, final_state)
         else:
             logger.info(
                 "engine_dispatch_complete_producers_inflight",
                 dispatched=dispatched,
-                inflight=collection_engine.get_inflight(rc),
                 depth=effective_depth,
             )
 
     return {"dispatched": dispatched, "lane": lane, "depth": effective_depth, "source": source}
 
 
-def _finalize_run_history(run_id: str, dispatched: int, final_state: str) -> None:
-    """Best-effort finalize of a runs_history row at sweep completion.
-
-    UPDATE the row keyed by run_id: ended_at=now(), ufs_dispatched, and status
-    ("parcial" if a Stop drained the run early, else "concluido"). Any failure —
-    DB unavailable, session error, missing row — is swallowed and logged; this
-    function NEVER raises into the sweep's finally block (T-17.1-02-02).
+def _lifecycle(verb: Any, rc: Any, run_id: str | None) -> bool:
+    """Call an engine lifecycle verb (producer_done / dispatch_finished) with a fresh DB
+    session for the runs_history finalize. BEST-EFFORT: a Redis/DB hiccup must never
+    break the task's own result or error handling — it is logged and reads as False.
+    Without a DB the Redis lifecycle still runs (session None skips only the row write).
     """
-    from datetime import datetime
-
-    from brave.core import engine as collection_engine
-    from brave.core.models import RunHistory
-
     try:
-        session, db_engine = _get_session()
-        try:
-            run = session.get(RunHistory, uuid.UUID(run_id))
-            if run is not None:
-                run.ended_at = datetime.now(UTC)
-                run.ufs_dispatched = dispatched
-                run.status = (
-                    "parcial"
-                    if final_state == collection_engine.STOPPING
-                    else "concluido"
-                )
-                session.commit()
-        finally:
+        session, _ = _get_session()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("engine_lifecycle_no_db", error=str(exc))
+        session = None
+    try:
+        return verb(rc, session, run_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort; never break the task
+        logger.warning("engine_lifecycle_failed", verb=verb.__name__, error=str(exc))
+        return False
+    finally:
+        if session is not None:
             session.close()
-    except Exception as exc:  # best-effort — never abort the sweep
-        logger.warning(
-            "engine_run_history_finalize_failed", run_id=run_id, error=str(exc)
-        )
 
 
-def _producer_finally_lifecycle() -> None:
-    """Producer-completes lifecycle decrement — called ONCE in a producer's outermost finally.
+def _producer_done(run_id: str | None, *, retrying_counts: bool = False) -> None:
+    """Producer-completes lifecycle — called ONCE in a producer's outermost finally.
 
-    The orchestrator (engine_sweep_run) only DISPATCHES the producer tasks; they run for
-    minutes afterward. To keep the engine "syncing" until real work stops, each dispatched
-    producer decrements the shared in-flight counter here and, when it is the LAST to
-    finish (dispatch already latched done + counter drained to 0), completes the run:
-    race-safe motor-off via engine.maybe_complete (single-winner GETSET claim) plus a
-    best-effort runs_history finalize.
-
-    BEST-EFFORT + idempotent: wrapped so a Redis/DB hiccup can NEVER break the producer's
-    own result or error handling. Placed in the SINGLE outermost finally (not per-except)
-    so exactly one decrement runs per dispatch regardless of the retry/quarantine branch.
-    D-18 stays intact — engine.maybe_complete is redis-only; only this pipeline layer
-    touches runs_history.
+    A Celery Retry unwinding through the finally is NOT a terminal outcome: self.retry()
+    raises Retry, Celery re-queues, and the RE-RUN hits the finally again. The claim
+    fires ONCE per logical dispatch (orchestrator), so producer_done must fire once per
+    TERMINAL outcome — skip it while a Retry is in flight. ``retrying_counts`` is for a
+    producer that claims itself per execution (the standalone bulk branch): every
+    execution pays its own claim back.
     """
-    # A Celery Retry unwinding through the producer's finally is NOT a terminal
-    # completion — self.retry() raises Retry, Celery re-queues, and the RE-RUN hits
-    # this finally again. incr_inflight fires ONCE per logical dispatch (orchestrator),
-    # so the decrement must fire ONCE per TERMINAL outcome — not per execution. Skip
-    # the decrement while a Retry is in flight; the eventual terminal run (success,
-    # PermanentError→quarantine, MaxRetriesExceeded→quarantine, or fail-fast return)
-    # decrements exactly once. Without this, N retries decrement N+1 times → counter
-    # drains early → premature "synced" while the retried producer is still running.
     import sys  # noqa: PLC0415
 
+    import redis as _r  # noqa: PLC0415
+    from celery.exceptions import Retry  # noqa: PLC0415
+
+    from brave.core import engine as collection_engine  # noqa: PLC0415
+
+    if not retrying_counts and isinstance(sys.exc_info()[1], Retry):
+        return
     try:
-        from celery.exceptions import Retry  # noqa: PLC0415
-
-        if isinstance(sys.exc_info()[1], Retry):
-            return
-    except Exception:  # noqa: BLE001 — never let the guard itself break the producer
-        pass
-
-    try:
-        import redis as _r  # noqa: PLC0415
-
-        from brave.core import engine as _ce  # noqa: PLC0415
-
-        _rc = _r.from_url(
-            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-        )
-        # Snapshot BEFORE completion — maybe_complete flips state to IDLE, and the
-        # runs_history status hinges on a mid-run Stop (STOPPING → parcial).
-        _final_state = _ce.get_state(_rc)
-        _dispatched = int(_ce._decode(_rc.get(_ce._UFS_DONE_KEY)) or 0)
-        _ce.decr_inflight(_rc)
-        if _ce.maybe_complete(_rc):
-            _run_id = _ce._decode(_rc.get(_ce._RUN_ID_KEY)) or None
-            if _run_id:
-                _finalize_run_history(_run_id, _dispatched, _final_state)
+        rc = _r.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
     except Exception:  # noqa: BLE001 — best-effort; never break the producer
-        pass
+        return
+    _lifecycle(collection_engine.producer_done, rc, run_id)
 
 
 @shared_task(
