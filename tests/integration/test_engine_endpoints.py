@@ -10,10 +10,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("BRAVE_USE_FAKEREDIS", "1")
-os.environ.setdefault(
-    "BRAVE_DB_URL",
-    "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave",
-)
 
 BEARER = "test-engine-bearer-token"
 STEWARD = "test-engine-steward-secret"
@@ -40,6 +36,9 @@ def client(monkeypatch, dispatched):
 
     # Reset engine state between tests (fakeredis singleton persists per process).
     get_redis().flushall()
+    # /start without a source resolves to the tripadvisor lane (the env default), whose
+    # gate 409s without a TA session with a valid TTL — seed one, as a Painel cURL would.
+    get_redis().set("brave:ta:session", '{"cookies":{}}', ex=3600)
 
     # Mock the orchestrator dispatch so start never touches a broker; capture the
     # call kwargs so tests can assert depth was threaded through.
