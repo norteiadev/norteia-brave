@@ -1033,7 +1033,7 @@ class TripAdvisorAtrativosIngest:
         *,
         run_rio: bool = True,
         run_id: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Drive the paginated GraphQL listing and bulk-ingest each page (Phase 15).
 
         Streams ``(offset, cards)`` tuples from ``fetch_attractions_paginated_gql``
@@ -1062,6 +1062,10 @@ class TripAdvisorAtrativosIngest:
             redis:      Sync Redis client for the live progress hash (fakeredis-safe).
             run_rio:    When True, trigger the Rio pipeline per ingested card.
             run_id:     Engine run to count each completed page against (None = none).
+
+        Returns:
+            True when a pause/off/stop halted the run before the pages ran out (the task
+            then marks the progress ``stopped``, not ``done``); False otherwise.
         """
         async for offset, cards in self._client.fetch_attractions_paginated_gql(
             geo_id, start_page, max_pages
@@ -1072,7 +1076,7 @@ class TripAdvisorAtrativosIngest:
             # painel PAUSADO/DESLIGADO. See engine.should_halt_producer.
             if collection_engine.should_halt_producer(redis):
                 logger.info("ta_bulk_producer_halt", offset=offset)
-                break
+                return True
             ingested = 0
             errors = 0
             synced = self._already_synced(cards, run_rio=run_rio)
@@ -1081,6 +1085,8 @@ class TripAdvisorAtrativosIngest:
                     continue  # already in Brave — skip the geocode/ingest (see produce)
                 try:
                     wrote_row = await self._ingest_one_bulk(card, run_rio=run_rio)
+                except ProviderBalanceError:
+                    raise  # a balance wall stops the run (task: progress stopped + pause), as in produce()
                 except Exception as exc:  # noqa: BLE001
                     wrote_row = False
                     # Unified locationId fallback (str(... or "")) so this failure
@@ -1127,3 +1133,4 @@ class TripAdvisorAtrativosIngest:
                 ingested=ingested,
                 errors=errors,
             )
+        return False

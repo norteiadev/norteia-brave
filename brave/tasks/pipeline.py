@@ -637,7 +637,8 @@ def sweep_tripadvisor(
     destino_rio_map (parent-less bulk ingest). It reads the resume offset from
     sweep_progress so a re-run continues from the page after the last completed offset
     (NOT page 1), seeds the live progress hash, commits per-page (inside produce_paginated),
-    marks the run done on completion, and on a mid-run 403/429 SessionExpiredError reuses
+    marks the run done when the pages run out (``stopped`` on a pause/off/stop or a provider
+    billing wall), and on a mid-run 403/429 SessionExpiredError reuses
     the SHARED fail-fast block plus a GUARDED sweep_progress.stop_needs_bootstrap. The
     slice (small max_pages) and the full 334-page run share this ONE page-range-parameterized
     code path. The per-UF (bulk_national=False) path is left byte-for-byte unchanged.
@@ -746,20 +747,28 @@ def sweep_tripadvisor(
                     destino_rio_map=None,
                     geocoder=geocoder,
                 )
-                asyncio.run(
-                    _using(
-                        clients,
-                        bulk_ingest.produce_paginated(
-                            geo_id,
-                            _effective_start_page,
-                            max_pages or 334,
-                            rc,
-                            run_rio=run_rio,
-                            run_id=bulk_run_id,
-                        ),
+                try:
+                    halted = asyncio.run(
+                        _using(
+                            clients,
+                            bulk_ingest.produce_paginated(
+                                geo_id,
+                                _effective_start_page,
+                                max_pages or 334,
+                                rc,
+                                run_rio=run_rio,
+                                run_id=bulk_run_id,
+                            ),
+                        )
                     )
-                )
-                sweep_progress.mark_done(rc)
+                except ProviderBalanceError:
+                    sweep_progress.stop(rc)  # the failure policy then pauses the motor
+                    raise
+                # A pause/off/stop is not "done": the pages did not run out.
+                if halted:
+                    sweep_progress.stop(rc)
+                else:
+                    sweep_progress.mark_done(rc)
                 # Terminal commit (produce_paginated already commits per page).
                 session.commit()
                 return

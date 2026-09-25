@@ -10,7 +10,7 @@ State lives in one Redis HASH (following the repo `brave:ta:*` convention, cf.
 `client.py:47` `brave:ta:session`):
 
   brave:ta:sweep:progress
-    state                  idle | running | done | stopped_needs_bootstrap
+    state                  idle | running | done | stopped | stopped_needs_bootstrap
     pages_total            how many pages this run will fetch
     pages_done             how many pages have been ingested so far
     attractions_ingested   running count of cards landed in Nascente
@@ -40,8 +40,9 @@ from typing import Any
 IDLE = "idle"
 RUNNING = "running"
 DONE = "done"
+STOPPED = "stopped"
 STOPPED_NEEDS_BOOTSTRAP = "stopped_needs_bootstrap"
-_VALID_STATES = frozenset({IDLE, RUNNING, DONE, STOPPED_NEEDS_BOOTSTRAP})
+_VALID_STATES = frozenset({IDLE, RUNNING, DONE, STOPPED, STOPPED_NEEDS_BOOTSTRAP})
 
 # One Redis HASH, brave:ta:* convention (client.py:47 brave:ta:session).
 _PROGRESS_KEY = "brave:ta:sweep:progress"
@@ -129,6 +130,12 @@ def stop_needs_bootstrap(redis: Any) -> None:
         _PROGRESS_KEY,
         mapping={_F_STATE: STOPPED_NEEDS_BOOTSTRAP, _F_UPDATED_AT: _now()},
     )
+
+
+def stop(redis: Any) -> None:
+    """Terminal state: the run ended before its last page — motor paused/off/stopped, or a
+    provider billing wall. The resume offset is intact; a re-run continues from it."""
+    redis.hset(_PROGRESS_KEY, mapping={_F_STATE: STOPPED, _F_UPDATED_AT: _now()})
 
 
 def mark_done(redis: Any) -> None:
