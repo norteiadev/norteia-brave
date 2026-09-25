@@ -190,6 +190,42 @@ def test_quarantined_record_is_never_redispatched(tx_session, spies):
 
 
 @pytest.mark.integration
+def test_finished_enrich_is_not_stalled(tx_session, spies):
+    """enrich_places never moves sub_state: signals_gathered + google_enriched is DONE."""
+    dispatched, _fake = spies
+    done = _rio(tx_session, "signals_gathered", None, routing="in_progress")
+    rio = tx_session.get(RioRecord, uuid.UUID(done))
+    rio.normalized = {"google_enriched": True}
+    pending = _rio(tx_session, "signals_gathered", None, routing="in_progress")
+    tx_session.commit()
+
+    assert pipeline.redispatch_stalled_chain.run() == 1
+
+    assert dispatched == [("enrich_places_task", pending)]
+
+
+@pytest.mark.integration
+def test_quarantine_cooldown_expires(tx_session, spies):
+    """An old quarantine no longer blocks: a transient outage must not strand a record."""
+    from brave.core.models import PoisonQuarantine
+    from brave.core.quarantine import quarantine_poison
+
+    dispatched, _fake = spies
+    rid = _rio(tx_session, "contacts_found", None)
+    row = quarantine_poison(
+        session=tx_session, nascente_id=None, task_name="brave.gather_signals",
+        error="boom", payload={"rio_id": rid},
+    )
+    tx_session.flush()
+    tx_session.get(PoisonQuarantine, row.id).quarantined_at = _OLD
+    tx_session.commit()
+
+    assert pipeline.redispatch_stalled_chain.run() == 1
+
+    assert dispatched == [("gather_signals_task", rid)]
+
+
+@pytest.mark.integration
 def test_nascente_rio_depth_leaves_discovered_alone(tx_session, spies):
     dispatched, fake = spies
     collection_engine.set_depth(fake, collection_engine.NASCENTE_RIO)

@@ -290,13 +290,14 @@ def _load_config(session: Session) -> AppConfig:
     return load_effective_config(session, overlay_redis())
 
 
-def _dispatch_chain(task: Any, rio_id: str) -> None:
+def _dispatch_chain(task: Any, rio_id: str) -> bool:
     """Enqueue the next chain task; a broker failure is logged, never run inline.
 
-    The record keeps its current sub_state; brave.redispatch_stalled_chain recovers the
-    Places chain states (discovered / contacts_found / signals_gathered). An inline .run()
-    here used to end, with the broker down, in the CALLER's quarantine ("retry failed:
-    Reject") — and in discover it cut the fan-out short.
+    Returns False when the enqueue failed. The record keeps its current sub_state;
+    brave.redispatch_stalled_chain recovers the Places chain states (discovered /
+    contacts_found / signals_gathered). An inline .run() here used to end, with the broker
+    down, in the CALLER's quarantine ("retry failed: Reject") — and in discover it cut the
+    fan-out short.
     """
     try:
         task.delay(rio_id)
@@ -304,6 +305,8 @@ def _dispatch_chain(task: Any, rio_id: str) -> None:
         logger.warning(
             "chain_dispatch_failed", task=task.name, rio_id=rio_id, error_type=type(exc).__name__
         )
+        return False
+    return True
 
 
 def _beat_health(task: str, exc: BaseException | None = None) -> None:
@@ -1171,7 +1174,10 @@ def enrich_places_task(self, rio_id: str) -> None:
     try:
         with task_failure_policy(self, session, "brave.enrich_places", payload={"rio_id": rio_id}):
             rio_uuid = uuid.UUID(rio_id)
-            rio = session.get(RioRecord, rio_uuid)
+            # FOR UPDATE, like find_contacts / gather_signals: a duplicate (the sweeper
+            # re-dispatching while the original is still queued) blocks here, then reads
+            # google_enriched and skips the paid Places sub-step.
+            rio = session.get(RioRecord, rio_uuid, with_for_update=True)
             if rio is None:
                 raise PermanentError(f"RioRecord {rio_id} not found")
 
@@ -1192,6 +1198,7 @@ _CHAIN_NEXT_TASK: dict[str, str] = {
 }
 _STALLED_AFTER_MINUTES = 30  # younger records may still have their task queued
 _STALLED_BATCH = 50
+_QUARANTINE_COOLDOWN_DAYS = 7  # a quarantined record is not paid for again before this
 
 
 @shared_task(name="brave.redispatch_stalled_chain", time_limit=300)
@@ -1221,14 +1228,15 @@ def _redispatch_stalled_chain() -> int:
 
     A re-dispatched row gets sub_state_changed_at = now, so the column reads "last chain
     activity" and a stuck record goes to the back of the line instead of holding one of the
-    50 slots forever. A record with a poison_quarantine row (its task exhausted its retries,
-    or failed permanently) is never re-dispatched: each attempt would pay for up to four
-    Places calls every 30 min, forever — it waits for a steward reprocess instead.
+    50 slots forever. A record quarantined in the last 7 days (its task exhausted its
+    retries, or failed permanently) is skipped: each attempt would pay for up to four Places
+    calls every 30 min. After the cooldown it gets one more try per quarantine — a transient
+    Places outage does not strand a record forever.
     """
     from datetime import datetime, timedelta  # noqa: PLC0415
 
     import redis as _redis_lib  # noqa: PLC0415
-    from sqlalchemy import String, cast, exists, or_, update  # noqa: PLC0415
+    from sqlalchemy import String, and_, cast, exists, or_, update  # noqa: PLC0415
 
     from brave.config.runtime import enabled_sources  # noqa: PLC0415
     from brave.core import engine as collection_engine  # noqa: PLC0415
@@ -1253,8 +1261,16 @@ def _redispatch_stalled_chain() -> int:
             .where(
                 RioRecord.entity_type == "attraction",
                 RioRecord.sub_state.in_(states),
-                # SignalAgent clears sub_state on a dlq routing; never enrich a dlq record.
-                or_(RioRecord.sub_state != "signals_gathered", RioRecord.routing != "dlq"),
+                # signals_gathered is also where a FINISHED record rests: enrich_places never
+                # moves sub_state, it only marks google_enriched. So only a record enrich never
+                # finished is stalled there (and SignalAgent clears sub_state on a dlq routing).
+                or_(
+                    RioRecord.sub_state != "signals_gathered",
+                    and_(
+                        RioRecord.routing != "dlq",
+                        RioRecord.normalized["google_enriched"].as_string().is_(None),
+                    ),
+                ),
                 or_(
                     RioRecord.sub_state_changed_at.is_(None),
                     RioRecord.sub_state_changed_at
@@ -1262,7 +1278,9 @@ def _redispatch_stalled_chain() -> int:
                 ),
                 ~exists().where(
                     PoisonQuarantine.payload["rio_id"].as_string()
-                    == cast(RioRecord.id, String)
+                    == cast(RioRecord.id, String),
+                    PoisonQuarantine.quarantined_at
+                    > now - timedelta(days=_QUARANTINE_COOLDOWN_DAYS),
                 ),
             )
             .order_by(RioRecord.sub_state_changed_at.asc().nulls_first())
@@ -2068,9 +2086,24 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
                 )
                 session.commit()
 
-                # A failed .delay leaves the record at whatsapp_in_progress (logged); no
-                # inline .run — its failure would quarantine THIS task's record.
-                _dispatch_chain(outreach_task, rio_id)
+                # No inline .run — its failure would quarantine THIS task's record. The
+                # sweeper does not cover the WhatsApp states (it must never send on its own),
+                # so a failed enqueue bounces the record back to the DLQ, where the operator
+                # sees it and can move it to the gate again, instead of stranding it at
+                # whatsapp_in_progress, invisible to the gate queue.
+                if not _dispatch_chain(outreach_task, rio_id):
+                    advance_sub_state(
+                        session,
+                        rio,
+                        "whatsapp_in_progress",
+                        None,
+                        actor="number_discovery",
+                        validate=True,
+                        lock=False,
+                    )
+                    session.commit()
+                    logger.error("outreach_dispatch_failed_back_to_dlq", rio_id=rio_id)
+                    return
 
                 logger.info("whatsapp_number_found", rio_id=rio_id)
                 return
@@ -2338,6 +2371,7 @@ def ta_keepalive() -> None:
     app_config = AppConfig()
     if not app_config.run_real_externals:
         logger.debug("ta_keepalive_skipped_offline")
+        _beat_health("brave.ta_keepalive")  # a skip is not a failure: clear a stale one
         return
 
     import redis as _redis_lib  # noqa: PLC0415
@@ -2350,6 +2384,7 @@ def ta_keepalive() -> None:
     ttl = rc.ttl(BRAVE_TA_SESSION_KEY)
     if ttl <= 0:
         logger.debug("ta_keepalive_skipped_no_session")
+        _beat_health("brave.ta_keepalive")
         return
 
     from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
@@ -2389,6 +2424,8 @@ def ta_keepalive() -> None:
         falhas = _bump_keepalive_failures(rc, ta_config.session_ttl)
         if falhas >= _KEEPALIVE_FAILURES_BEFORE_BOOTSTRAP:
             _mark_needs_bootstrap()
+        # A dead session shows on the TA session pill, not as a failing beat.
+        _beat_health("brave.ta_keepalive")
         logger.warning(
             "ta_keepalive_session_expired",
             error_type=type(exc).__name__,

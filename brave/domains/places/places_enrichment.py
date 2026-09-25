@@ -210,9 +210,10 @@ class PlacesEnrichmentAgent:
     """The single atrativo enrichment agent: description + distrito + hours/contact/price +
     review liveness, all off one Google Places ``place_details`` call.
 
-    Advances sub_state (None | "signals_gathered") → "places_enriched". Serves both the TA
-    inline path (sub_state None, dispatched by sweep_tripadvisor) and the Places-FSM discovery
-    path (sub_state "signals_gathered"). Cross-lane guard: a record that already carries
+    Leaves sub_state untouched and marks ``google_enriched`` instead — a finished Places-FSM
+    record rests at "signals_gathered" with that marker. Serves both the TA inline path
+    (sub_state None, dispatched by sweep_tripadvisor) and the Places-FSM discovery path
+    (sub_state "signals_gathered"). Cross-lane guard: a record that already carries
     place_id_cache AND weekday_text was enriched by the Places-FSM SignalAgent — its PAID
     Places sub-step is skipped, but the description sub-step still runs (this agent is the
     ONLY writer of descricao_editorial, so that lane would otherwise never get one).
