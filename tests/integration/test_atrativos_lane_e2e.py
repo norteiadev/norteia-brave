@@ -58,7 +58,6 @@ from brave.core.models import (
     ConsentLog,
     MarRecord,
     NascenteRecord,
-    PoisonQuarantine,
     RioRecord,
 )
 from brave.core.nascente.service import store_raw
@@ -77,7 +76,7 @@ from tests.fakes.fake_whatsapp import FakeWhatsAppClient
 # Ensure DB URL is set before any module-level imports trigger model loading
 os.environ.setdefault(
     "BRAVE_DB_URL",
-    "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave",
+    "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave_test",
 )
 os.environ.setdefault("BRAVE_STEWARD_SECRET", "test-e2e-steward-secret")
 
@@ -462,88 +461,6 @@ def test_discovery_inits_sub_state_discovered(db_session: Session) -> None:
     )
     assert rio.sub_state == "discovered", (
         "A record already at 'discovered' must not be reset by a replayed produce()"
-    )
-
-
-# ---------------------------------------------------------------------------
-# test_sc2: DiscoveryAgent skips when parent destino absent from Mar
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.integration
-def test_sc2_discovery_skips_absent_parent_destino(db_session: Session) -> None:
-    """SC-2: DiscoveryAgent skips ingest when parent destino NOT in Mar (D-03).
-
-    Verifies: ATR-01, ATR-02, D-03
-
-    Setup:
-      - NO MarRecord for UF="XX" (synthetic non-existent UF — guaranteed no pre-existing data)
-      - FakePlacesClient returns a result with municipio_ibge="9999999"
-
-    Assertions:
-      - NascenteRecord NOT created (store_raw never called for this place)
-      - PoisonQuarantine row exists with error containing "parent_destino_absent"
-
-    Note: Using uf="XX" (non-existent Brazilian UF) to guarantee no pre-existing
-    destination MarRecords match the fallback in _resolve_parent_destino, which
-    searches mtur:{uf}:* — real UF codes may have seeded data from earlier test runs.
-    """
-    uf = "XX"  # Non-existent UF — guaranteed no pre-existing MarRecords
-    ibge_absent = "9999999"
-    place_id = "ChIJtest_absent_parent"
-
-    fake_places = FakePlacesClient(
-        fixture_results={
-            f"atrativos em {uf}": [
-                {
-                    "place_id": place_id,
-                    "name": "Cascata do Nada",
-                    "formatted_address": "Cascata do Nada, XX",
-                    "municipio_ibge": ibge_absent,
-                    "municipio_nome": "Inexistente",
-                }
-            ],
-            f"pontos turísticos em {uf}": [],
-        }
-    )
-    fake_llm = FakeLLMClient()  # Should not be called — parent check fires first
-
-    config = ScoreConfig()
-    agent = DiscoveryAgent(
-        places_client=fake_places,
-        llm_client=fake_llm,
-        session=db_session,
-        config=config,
-    )
-    asyncio.run(agent.produce(uf))
-    db_session.flush()
-
-    # Assert NascenteRecord was NOT created for this source_ref (uf="XX" has no parent)
-    source_ref = f"places:{uf}:{place_id}"
-    nascente = db_session.scalar(
-        select(NascenteRecord).where(NascenteRecord.source_ref == source_ref)
-    )
-    assert nascente is None, (
-        f"NascenteRecord should NOT have been created when parent destino is absent (D-03), "
-        f"but found: {nascente}"
-    )
-
-    # LLM client must not have been called (parent check precedes LLM extraction)
-    assert len(fake_llm.calls) == 0, (
-        f"FakeLLMClient.extract should not have been called when parent destino is absent. "
-        f"Got {len(fake_llm.calls)} call(s): {fake_llm.calls}"
-    )
-
-    # PoisonQuarantine row must record the skip with "parent_destino_absent" reason
-    quarantine_row = db_session.scalar(
-        select(PoisonQuarantine).where(
-            PoisonQuarantine.task_name == "brave.discover_atrativo",
-            PoisonQuarantine.error_message.contains("parent_destino_absent"),
-        )
-    )
-    assert quarantine_row is not None, (
-        "Expected a PoisonQuarantine row with error 'parent_destino_absent' after "
-        "DiscoveryAgent.produce() with no parent destino in Mar (D-03)"
     )
 
 

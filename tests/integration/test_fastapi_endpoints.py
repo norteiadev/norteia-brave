@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 def client():
     """FastAPI TestClient for endpoint tests."""
     # Set env var for TestClient (no DB needed for pure unit endpoint tests)
-    os.environ.setdefault("BRAVE_DB_URL", "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave")
+    os.environ.setdefault("BRAVE_DB_URL", "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave_test")
     from brave.api.main import app
     return TestClient(app, raise_server_exceptions=False)
 

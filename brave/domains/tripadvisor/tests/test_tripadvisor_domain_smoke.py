@@ -48,7 +48,11 @@ def test_sweep_plan_is_single_atrativos_producer_regardless_of_lane():
                 "RJ", depth="nascente_rio", lane=lane, nascente_only=nascente_only
             )
             assert plan == [
-                SweepDispatch("brave.sweep_tripadvisor", ("RJ",), {"depth": "nascente_rio"})
+                SweepDispatch(
+                    "brave.sweep_tripadvisor",
+                    ("RJ",),
+                    {"depth": "nascente_rio", "max_per_uf": None},
+                )
             ]
 
 

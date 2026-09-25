@@ -9,7 +9,8 @@ Fixtures:
   - db_config       — DBConfig (requires BRAVE_DB_URL env var)
 
 Integration fixtures require:
-  BRAVE_DB_URL=postgresql+psycopg://brave:brave@localhost:5432/norteia_brave
+  BRAVE_DB_URL=postgresql+psycopg://brave:brave@localhost:5432/norteia_brave_test
+  (the live dev DB `norteia_brave` is refused — see pytest_collection_finish)
 
 pytest-socket enforcement (PITFALLS §5, TEST-01):
   Unit tests run with --disable-socket by default (no outbound network).
@@ -41,6 +42,21 @@ from brave.config.settings import AppConfig, DBConfig, ScoreConfig
 # real_browser tests need a live browser + TripAdvisor access (real external).
 # CI runs with RUN_REAL_EXTERNALS=0, so they skip by default.
 # ---------------------------------------------------------------------------
+
+
+def pytest_collection_finish(session):
+    """Refuse to run against the live dev database.
+
+    Integration tests truncate tables (local_businesses, municipios, config_settings…).
+    Checked after collection, when every test module's own BRAVE_DB_URL default has run.
+    """
+    url = os.environ.get("BRAVE_DB_URL", "")
+    if url.rstrip("/").rsplit("/", 1)[-1].split("?")[0] == "norteia_brave":
+        pytest.exit(
+            "BRAVE_DB_URL points at the live dev DB 'norteia_brave' — run the suite "
+            "against norteia_brave_test",
+            returncode=2,
+        )
 
 
 def pytest_collection_modifyitems(config, items):

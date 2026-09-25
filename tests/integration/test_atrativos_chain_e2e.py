@@ -42,6 +42,7 @@ weights origem=30%, completude=20%, corroboracao=20%, atualidade=15%, validacao_
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -77,7 +78,11 @@ _PLACE_DETAILS: dict[str, Any] = {
     ],
     "reviews": [
         {
-            "publishTime": "2026-06-10T12:00:00Z",
+            # Relative, not a fixed date: the signal agent's 90-day recency rule turned a
+            # fixed "2026-06-10" into a stale review (terminal DLQ, no signals_gathered).
+            "publishTime": (datetime.now(UTC) - timedelta(days=10)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
             "rating": 5,
             "text": "Lugar incrível, recomendo muito!",
         }

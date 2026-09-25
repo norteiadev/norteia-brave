@@ -39,7 +39,7 @@ from brave.domains.tripadvisor.ibge import IbgeMunicipio
 # sibling integration modules; the shared db_session fixture reads BRAVE_DB_URL).
 os.environ.setdefault(
     "BRAVE_DB_URL",
-    "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave",
+    "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave_test",
 )
 
 # Bearer token pinned for the failure-endpoint TestClient. DashboardConfig re-reads

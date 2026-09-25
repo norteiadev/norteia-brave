@@ -88,7 +88,8 @@ ignore = ["alembic"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+# brave/domains: each domain's co-located smoke tests (brave/domains/<x>/tests).
+testpaths = ["tests", "brave/domains"]
 addopts = "-q"
 markers = [
     "integration: marks tests that require docker-compose services (DB + Redis)",
