@@ -38,6 +38,8 @@ _CROSS_DOMAIN_RE = re.compile(
 
 # CHECK D: capture the full imported module path under `brave.domains`.
 _CLIENT_DOMAIN_RE = re.compile(r"^\s*(?:from|import)\s+(brave\.domains(?:\.[A-Za-z0-9_]+)*)")
+# `from brave import domains` reaches the package without naming brave.domains.
+_CLIENT_FROM_BRAVE_RE = re.compile(r"^\s*from\s+brave\s+import\s+.*\bdomains\b")
 _CLIENT_DOMAIN_ALLOWLIST = {("clients/factory.py", "brave.domains.tripadvisor.client")}
 
 
@@ -122,13 +124,25 @@ def test_clients_never_import_domains() -> None:
     assert clients_dir.is_dir(), f"brave/clients not found at {clients_dir}"
 
     violations: list[tuple[Path, int, str]] = []
+    seen: set[tuple[str, str]] = set()
     for py_file, lines in _iter_py(clients_dir):
         rel = py_file.relative_to(_BRAVE_DIR).as_posix()
         for lineno, line in enumerate(lines, start=1):
+            if _CLIENT_FROM_BRAVE_RE.match(line):
+                violations.append((py_file, lineno, line.rstrip()))
+                continue
             m = _CLIENT_DOMAIN_RE.match(line)
-            if m is None or (rel, m.group(1)) in _CLIENT_DOMAIN_ALLOWLIST:
+            if m is None:
+                continue
+            if (rel, m.group(1)) in _CLIENT_DOMAIN_ALLOWLIST:
+                seen.add((rel, m.group(1)))
                 continue
             violations.append((py_file, lineno, line.rstrip()))
+
+    # A stale allowlist entry would silently permit the import if it came back elsewhere.
+    assert seen == _CLIENT_DOMAIN_ALLOWLIST, (
+        f"allowlisted clients→domains import no longer present: {_CLIENT_DOMAIN_ALLOWLIST - seen}"
+    )
 
     if violations:
         report = "\n".join(

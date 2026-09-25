@@ -17,6 +17,7 @@ import asyncio
 import functools
 import os
 import uuid
+from datetime import UTC
 from typing import Any, NamedTuple
 
 import structlog
@@ -295,8 +296,6 @@ async def _using(clients: Any, coro: Any) -> Any:
     async with clients:
         return await coro
 
-
-from datetime import UTC
 
 # ---------------------------------------------------------------------------
 # Celery tasks
