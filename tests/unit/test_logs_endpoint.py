@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 # Set environment before importing the app — matches the workers endpoint pattern.
 BEARER_TOKEN = "test-logs-bearer-ks0"
 os.environ.setdefault(
-    "BRAVE_DB_URL", "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave"
+    "BRAVE_DB_URL", "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave_test"
 )
 os.environ["BRAVE_USE_FAKEREDIS"] = "1"
 

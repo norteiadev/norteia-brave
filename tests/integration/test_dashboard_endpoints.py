@@ -53,7 +53,7 @@ def client():
     """FastAPI TestClient for route-level auth-gate tests."""
     os.environ.setdefault(
         "BRAVE_DB_URL",
-        "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave",
+        "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave_test",
     )
     from brave.api.main import app
 
@@ -286,7 +286,7 @@ def authed_client():
     os.environ["BRAVE_DASHBOARD_BEARER_TOKEN"] = BEARER_TOKEN
     os.environ.setdefault(
         "BRAVE_DB_URL",
-        "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave",
+        "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave_test",
     )
     from brave.api.main import app
 

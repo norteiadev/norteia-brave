@@ -32,7 +32,7 @@ from brave.core.models import RioRecord, ConsentLog
 
 os.environ.setdefault(
     "BRAVE_DB_URL",
-    "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave",
+    "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave_test",
 )
 
 STEWARD_SECRET = "test-atrativos-gate-steward-secret"

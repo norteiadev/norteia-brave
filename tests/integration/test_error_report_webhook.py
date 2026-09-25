@@ -36,7 +36,7 @@ def webhook_client():
     os.environ["BRAVE_WEBHOOK_SECRET"] = WEBHOOK_SECRET
     os.environ.setdefault(
         "BRAVE_DB_URL",
-        "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave",
+        "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave_test",
     )
     from brave.api.main import app
 

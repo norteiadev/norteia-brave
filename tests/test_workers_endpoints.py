@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 BEARER_TOKEN = "test-workers-bearer-token-08-07"
 os.environ.setdefault(
     "BRAVE_DB_URL",
-    "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave",
+    "postgresql+psycopg://brave:brave@localhost:5432/norteia_brave_test",
 )
 
 BEARER_HEADERS = {"Authorization": f"Bearer {BEARER_TOKEN}"}
