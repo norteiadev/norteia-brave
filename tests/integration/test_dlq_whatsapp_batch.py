@@ -549,7 +549,7 @@ def test_discovery_task_found_advances_and_dispatches_outreach(
     db_session, monkeypatch
 ) -> None:
     """Found number (fake LLM) → whatsapp_in_progress, populates contact, dispatches outreach."""
-    from brave.lanes.atrativos.schemas import WhatsAppNumberDiscovery
+    from brave.domains.places.schemas import WhatsAppNumberDiscovery
     from brave.tasks import pipeline
     from tests.fakes.fake_llm import FakeLLMClient
 

@@ -62,7 +62,7 @@ async def buscar(n: int, conc: int) -> int:
 
     from brave.clients.tavily import RealTavilyClient
     from brave.config.settings import AppConfig
-    from brave.lanes.atrativos.copywriter import cascade_queries
+    from brave.domains.places.copywriter import cascade_queries
 
     cache = json.loads(CACHE.read_text()) if CACHE.exists() else {}
     tav = RealTavilyClient(AppConfig().tavily_api_key, http_client=httpx.AsyncClient(timeout=30.0))
@@ -192,7 +192,7 @@ def obediencia(texto: str) -> list[str]:
 
 # ---------------------------------------------------------------------------
 async def rodar(modelo: str, thinking: bool, n: int, n_seq: int, conc: int) -> int:
-    from brave.lanes.atrativos.copywriter import TourismCopywriter
+    from brave.domains.places.copywriter import TourismCopywriter
 
     llm = haiku() if modelo.startswith("claude") else GeminiOpenRouter(thinking)
     cw = TourismCopywriter(llm, modelo, search_client=BuscaEmCache())

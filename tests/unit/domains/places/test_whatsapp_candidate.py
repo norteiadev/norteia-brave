@@ -82,7 +82,7 @@ def _make_rio() -> MagicMock:
 async def test_contact_finder_captures_masked_whatsapp_candidate() -> None:
     """A celular from Places is stored MASKED at normalized['contact']['whatsapp_candidate'];
     the raw celular lives only in normalized['contacts']['phone_e164']."""
-    from brave.lanes.atrativos.contact_finder_agent import ContactFinderAgent
+    from brave.domains.places.contact_finder_agent import ContactFinderAgent
 
     fake_places = FakePlacesClient(
         fixture_details={"ChIJx": {"international_phone_number": "+55 73 99999-0001"}},
@@ -91,7 +91,7 @@ async def test_contact_finder_captures_masked_whatsapp_candidate() -> None:
     rio = _make_rio()
 
     agent = ContactFinderAgent(places_client=fake_places, session=session)
-    with patch("brave.lanes.atrativos.contact_finder_agent.write_audit"):
+    with patch("brave.domains.places.contact_finder_agent.write_audit"):
         await agent.run(rio)
 
     assert rio.normalized["contact"]["whatsapp_candidate"] == _MASKED_CELULAR
@@ -104,7 +104,7 @@ async def test_contact_finder_captures_masked_whatsapp_candidate() -> None:
 @pytest.mark.asyncio
 async def test_contact_finder_no_candidate_for_landline() -> None:
     """A landline is not a WhatsApp celular → no normalized['contact'] written."""
-    from brave.lanes.atrativos.contact_finder_agent import ContactFinderAgent
+    from brave.domains.places.contact_finder_agent import ContactFinderAgent
 
     fake_places = FakePlacesClient(
         fixture_details={"ChIJx": {"international_phone_number": "+55 11 3333-4444"}},
@@ -113,7 +113,7 @@ async def test_contact_finder_no_candidate_for_landline() -> None:
     rio = _make_rio()
 
     agent = ContactFinderAgent(places_client=fake_places, session=session)
-    with patch("brave.lanes.atrativos.contact_finder_agent.write_audit"):
+    with patch("brave.domains.places.contact_finder_agent.write_audit"):
         await agent.run(rio)
 
     assert "contact" not in rio.normalized
@@ -122,14 +122,14 @@ async def test_contact_finder_no_candidate_for_landline() -> None:
 @pytest.mark.asyncio
 async def test_contact_finder_no_candidate_when_no_phone() -> None:
     """NullPlacesClient-style empty details → no phone → no normalized['contact']."""
-    from brave.lanes.atrativos.contact_finder_agent import ContactFinderAgent
+    from brave.domains.places.contact_finder_agent import ContactFinderAgent
 
     fake_places = FakePlacesClient(fixture_details={"ChIJx": {}})
     session = MagicMock()
     rio = _make_rio()
 
     agent = ContactFinderAgent(places_client=fake_places, session=session)
-    with patch("brave.lanes.atrativos.contact_finder_agent.write_audit"):
+    with patch("brave.domains.places.contact_finder_agent.write_audit"):
         await agent.run(rio)
 
     assert "contact" not in rio.normalized

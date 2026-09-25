@@ -1,6 +1,6 @@
 """Deferred (Message Batches API) variant of the TourismCopywriter description step.
 
-Same prompt, same tool, same guards as :mod:`brave.lanes.atrativos.copywriter` — only the
+Same prompt, same tool, same guards as :mod:`brave.domains.places.copywriter` — only the
 transport differs: requests are submitted to Anthropic's Message Batches API (50% off input
 and output tokens, results within 24h) instead of being awaited inline in the sweep. The
 web_search fee is NOT discounted ("priced the same as those in regular Messages API
@@ -40,7 +40,7 @@ resubmit" and "still to collect";
 there is no Redis worklist (one existed, had no TTL and no reaper, and the repo's own
 reset-brave-db skill flushes ``brave:*`` — which stranded every stamped record forever).
 
-D-18 boundary: no imports from brave.lanes.destinos or brave.tasks.
+D-18 boundary: no imports from other domains or brave.tasks.
 """
 
 from __future__ import annotations
@@ -72,13 +72,13 @@ from brave.clients.llm import (
 )
 from brave.core.models import LLMGeneration, RioRecord
 from brave.core.rio.routing import route_by_score
-from brave.lanes.atrativos.copywriter import (
+from brave.domains.places.copywriter import (
     COPYWRITER_SYSTEM,
     WEB_SEARCH_TOOL,
     _build_context,
     _strip_dashes,
 )
-from brave.lanes.atrativos.places_enrichment import (
+from brave.domains.places.places_enrichment import (
     _COMPLETUDE_WITH_DESCRIPTION,
     _MAX_DESCRIPTION_ATTEMPTS,
 )

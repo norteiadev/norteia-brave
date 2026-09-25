@@ -9,7 +9,7 @@ Sub-state transition (D-01, D-02):
   Writes audit row on every successful transition.
   Uses flag_modified for JSONB normalized column mutation (Phase 2 lesson).
 
-D-18 boundary: no imports from brave.lanes.destinos or brave.tasks.
+D-18 boundary: no imports from other domains or brave.tasks.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from brave.core.models import whatsapp_candidate_from_phone
 from brave.core.rio.persist import persist_normalized
-from brave.lanes.atrativos.schemas import ContactResult
+from brave.domains.places.schemas import ContactResult
 from brave.observability.audit import write_audit
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ class ContactFinderAgent:
     Idempotency guard: returns immediately if sub_state != "discovered".
     Writes audit row and uses flag_modified on the JSONB normalized column.
 
-    D-18 boundary: no imports from brave.lanes.destinos.
+    D-18 boundary: no imports from other domains.
 
     Args:
         places_client: PlacesClientProtocol implementation (real or fake).

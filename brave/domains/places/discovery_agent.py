@@ -13,7 +13,7 @@ Pipeline per municipality-level sweep:
 
 D-03: parent_destino_absent → quarantine + continue (never raises)
 D-04 / COMP-03: only place_id stored from Google; canonical data = AtrativoResult (first-party)
-D-18 boundary: no imports from brave.lanes.destinos or brave.tasks
+D-18 boundary: no imports from other domains or brave.tasks
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from brave.core.models import MarRecord
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
 from brave.core.rio.routing import process_nascente_record
-from brave.lanes.atrativos.schemas import AtrativoResult
+from brave.domains.places.schemas import AtrativoResult
 from brave.observability.audit import write_audit
 from brave.shared.destino import ensure_destino
 from brave.shared.ibge_distritos import resolve_distrito
@@ -120,7 +120,7 @@ class DiscoveryAgent:
       4. Calls store_raw with source="places_discovery", entity_type="attraction".
          Payload canonical includes only AtrativoResult fields + place_id cache (D-04).
 
-    D-18 boundary: no imports from brave.lanes.destinos.
+    D-18 boundary: no imports from other domains.
     COMP-03 / D-04: only place_id from Google persisted; all canonical data from LLM extraction.
 
     Args:

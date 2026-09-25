@@ -21,7 +21,7 @@ Covers:
   - atualidade = max(TA, Google) keeps the higher TA value
   - description-only backfill (paid Places sub-step already done) → ZERO Places SKU spent
 
-D-18 boundary: no import from brave.lanes.destinos.
+D-18 boundary: no import from other domains.
 """
 
 from __future__ import annotations
@@ -130,9 +130,9 @@ def _details(
 
 
 async def _run(agent, rio):
-    with patch("brave.lanes.atrativos.places_enrichment.write_audit"), \
-         patch("brave.lanes.atrativos.places_enrichment.record_event"), \
-         patch("brave.lanes.atrativos.places_enrichment.route_by_score") as mock_route:
+    with patch("brave.domains.places.places_enrichment.write_audit"), \
+         patch("brave.domains.places.places_enrichment.record_event"), \
+         patch("brave.domains.places.places_enrichment.route_by_score") as mock_route:
         await agent.run(rio)
     return mock_route
 
@@ -143,7 +143,7 @@ async def _run(agent, rio):
 @pytest.mark.asyncio
 async def test_match_persists_hours_and_liveness() -> None:
     """Confident match on a dlq record → hours + coords + liveness + ids + marker."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     recent_dt = (_NOW - timedelta(days=10)).replace(microsecond=0)
     fake = FakePlacesClient(
@@ -180,7 +180,7 @@ async def test_runs_on_dlq_record_regression() -> None:
     The prior sub_state gate (== description_enriched) skipped every TA record because
     they dlq-bounce sub_state to None. This asserts Places now fires on that state.
     """
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(
         fixture_results={"Igreja Matriz": [_search_result()]},
@@ -198,7 +198,7 @@ async def test_runs_on_dlq_record_regression() -> None:
 @pytest.mark.asyncio
 async def test_closed_place_hard_descarte() -> None:
     """business_status CLOSED_* on a confident match → descarte + marker, no re-score."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(
         fixture_results={"Igreja Matriz": [_search_result()]},
@@ -217,7 +217,7 @@ async def test_closed_place_hard_descarte() -> None:
 @pytest.mark.asyncio
 async def test_no_name_match_keeps_floor() -> None:
     """A wrong-name result (< threshold) → TA floor kept, marker set, still re-scores."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(
         fixture_results={"Igreja Matriz": [_search_result(name="Restaurante do Zé")]},
@@ -241,7 +241,7 @@ async def test_no_name_match_keeps_floor() -> None:
 @pytest.mark.asyncio
 async def test_far_location_rejected_keeps_floor() -> None:
     """Right name but far away (different city) → rejected, floor kept."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     # Same name, ~1100 km away (São Paulo) → outside the match radius (wrong city).
     fake = FakePlacesClient(
@@ -266,7 +266,7 @@ async def test_geographic_entity_rejected_keeps_floor() -> None:
     sit at the atrativo's own coordinates and share its name — so both existing guards pass
     and the wrong place_id used to be stamped onto the canonical record.
     """
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(
         fixture_results={
@@ -295,7 +295,7 @@ async def test_real_poi_wins_over_a_higher_scoring_geographic_entity() -> None:
     (< 100). Rejecting the winner after the fact would drop the whole result set; skipping
     per-candidate keeps the POI.
     """
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(
         fixture_results={
@@ -330,7 +330,7 @@ async def test_natural_feature_is_not_rejected() -> None:
     Measured: Praia de Camburi resolved to ["beach","natural_feature","establishment"] and
     returned an editorialSummary. Only the administrative entity is worthless.
     """
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(
         fixture_results={
@@ -351,7 +351,7 @@ async def test_natural_feature_is_not_rejected() -> None:
 @pytest.mark.asyncio
 async def test_result_without_types_is_still_matched() -> None:
     """A candidate with no `types` key at all is kept — the guard fails OPEN by design."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     bare = {
         "place_id": "ChIJmatriz001",
@@ -372,7 +372,7 @@ async def test_result_without_types_is_still_matched() -> None:
 @pytest.mark.asyncio
 async def test_place_id_cache_skips_text_search() -> None:
     """Refresh path: place_id_cache present (no weekday_text, no marker) → skip Text Search."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(fixture_details={"ChIJcached": _details()})
     rio = _make_rio(extra_normalized={"place_id_cache": "ChIJcached"})
@@ -387,7 +387,7 @@ async def test_place_id_cache_skips_text_search() -> None:
 @pytest.mark.asyncio
 async def test_idempotency_marker_noop() -> None:
     """google_enriched set AND a description already written → nothing left to do."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
     fake_llm = FakeLLMClient()
@@ -409,7 +409,7 @@ async def test_idempotency_marker_noop() -> None:
 @pytest.mark.asyncio
 async def test_cross_lane_places_fsm_record_untouched() -> None:
     """Places-FSM record that already has a description → agent no-ops entirely."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(fixture_details={"ChIJx": _details()})
     fake_llm = FakeLLMClient()
@@ -437,7 +437,7 @@ async def test_description_backfill_spends_no_places_sku() -> None:
     Places-enriched record whose copywriter pass never landed gets its prose on a later
     pass at ZERO Places spend (no Text Search, no Place Details).
     """
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(
         fixture_results={"Igreja Matriz": [_search_result()]},
@@ -464,7 +464,7 @@ async def test_cross_lane_record_gets_description_without_redetails() -> None:
     This agent is the ONLY writer of descricao_editorial, so the discovery lane would
     otherwise never get one — and the Details SKU it already spent is not re-spent.
     """
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(fixture_details={"ChIJx": _details()})
     fake_llm = FakeLLMClient(generate_result="Prosa da Norteia.")
@@ -486,7 +486,7 @@ async def test_cross_lane_record_gets_description_without_redetails() -> None:
 @pytest.mark.asyncio
 async def test_descarte_record_never_earns_a_description() -> None:
     """A discarded record (closed place) must not earn an LLM call on a second pass."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
     fake_llm = FakeLLMClient(generate_result="Prosa da Norteia.")
@@ -510,7 +510,7 @@ async def test_failing_copywriter_retries_are_bounded() -> None:
     pass forever: a systemic copywriter failure (outage, cost guard) would re-spend an LLM
     call + audit + re-score on EVERY sweep, for every already-enriched atrativo.
     """
-    from brave.lanes.atrativos.places_enrichment import (
+    from brave.domains.places.places_enrichment import (
         _MAX_DESCRIPTION_ATTEMPTS,
         PlacesEnrichmentAgent,
     )
@@ -538,7 +538,7 @@ async def test_failing_copywriter_retries_are_bounded() -> None:
 @pytest.mark.asyncio
 async def test_exhausted_description_budget_is_logged() -> None:
     """An exhausted budget must be visible in the logs — not a silent no-op forever."""
-    from brave.lanes.atrativos import places_enrichment as pe
+    from brave.domains.places import places_enrichment as pe
 
     fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
     fake_llm = FakeLLMClient(generate_result="")
@@ -566,7 +566,7 @@ async def test_cost_guard_block_never_burns_attempt_budget() -> None:
     that as an attempt would let one budget trip per sweep lock the ENTIRE backlog out of
     descriptions after _MAX_DESCRIPTION_ATTEMPTS sweeps, at zero LLM spend.
     """
-    from brave.lanes.atrativos.places_enrichment import (
+    from brave.domains.places.places_enrichment import (
         _MAX_DESCRIPTION_ATTEMPTS,
         PlacesEnrichmentAgent,
     )
@@ -590,7 +590,7 @@ async def test_cost_guard_block_never_burns_attempt_budget() -> None:
 @pytest.mark.asyncio
 async def test_successful_description_never_burns_attempt_budget() -> None:
     """Prose landed → no attempt counter written (the budget is for failures only)."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
     fake_llm = FakeLLMClient(generate_result="Prosa da Norteia.")
@@ -615,7 +615,7 @@ async def test_a_record_inside_a_live_batch_is_never_billed_inline() -> None:
     web_search call (~$0.09-0.12) for prose Anthropic is already producing. Collect then
     overwrites it an hour later: one description, two bills, plus two LLMGeneration rows.
     """
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(
         fixture_results={"Igreja Matriz": [_search_result()]},
@@ -640,7 +640,7 @@ async def test_a_record_inside_a_live_batch_is_never_billed_inline() -> None:
 @pytest.mark.asyncio
 async def test_atualidade_max_keeps_higher_ta_value() -> None:
     """Existing TA atualidade higher than the Google value → keep the TA value."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     # Google review is old (> 180 days → Google atualidade 0); TA already set 70.
     old_dt = (_NOW - timedelta(days=400)).replace(microsecond=0)
@@ -694,7 +694,7 @@ async def test_a_description_committed_during_the_places_call_is_not_erased() ->
     already cleared descricao_batch_id, the record is instantly eligible again and the next
     tick pays for the same description a second time. Merge onto the CURRENT value instead.
     """
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     inner = FakePlacesClient(
         fixture_results={"Igreja Matriz": [_search_result()]},
@@ -721,7 +721,7 @@ async def test_a_description_committed_during_the_places_call_is_not_erased() ->
 async def test_hard_descarte_writes_the_cause_to_the_atrativo_log() -> None:
     """The Log tab says why the record left the pipeline, and the audit's before_state
     is the routing BEFORE the descarte (it used to read the already-mutated value)."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     details = _details(business_status="CLOSED_PERMANENTLY")
     details["name"] = "Water Park Itumbiara"
@@ -731,9 +731,9 @@ async def test_hard_descarte_writes_the_cause_to_the_atrativo_log() -> None:
     )
     rio = _make_rio()
     agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
-    with patch("brave.lanes.atrativos.places_enrichment.write_audit") as audit, \
-         patch("brave.lanes.atrativos.places_enrichment.record_event") as event, \
-         patch("brave.lanes.atrativos.places_enrichment.route_by_score"):
+    with patch("brave.domains.places.places_enrichment.write_audit") as audit, \
+         patch("brave.domains.places.places_enrichment.record_event") as event, \
+         patch("brave.domains.places.places_enrichment.route_by_score"):
         await agent.run(rio)
 
     ev = event.call_args.kwargs
@@ -748,7 +748,7 @@ async def test_hard_descarte_writes_the_cause_to_the_atrativo_log() -> None:
 
 @pytest.mark.asyncio
 async def test_locate_only_accepts_a_confident_match_placed_in_the_uf() -> None:
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     in_uf = {**_search_result(name="Cachoeira do Macaquinho"), "municipio_ibge": "5200605"}
     other_uf = {**_search_result(name="Cachoeira do Macaquinho"), "municipio_ibge": ""}
@@ -771,7 +771,7 @@ async def test_locate_only_accepts_a_confident_match_placed_in_the_uf() -> None:
 async def test_locate_falls_back_to_the_municipio_every_in_uf_result_agrees_on() -> None:
     """No name match, but all in-UF results cluster in one município → município only,
     never a place_id (none of them is provably the atrativo). Disagreement → None."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     def res(name, ibge):
         return {**_search_result(name=name), "municipio_ibge": ibge}
@@ -801,7 +801,7 @@ async def test_locate_falls_back_to_the_municipio_every_in_uf_result_agrees_on()
 async def test_coordless_record_never_matches_a_place_outside_its_uf() -> None:
     """Without coords there is no distance guard: a same-name church in another state
     (municipio_ibge "" — the client resolves it within the UF only) must not match."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     elsewhere = {**_search_result(), "municipio_ibge": ""}
     fake = FakePlacesClient(
@@ -822,7 +822,7 @@ async def test_coordless_record_matches_only_near_its_municipio_seat() -> None:
     """No coords: the município seat stands in for them, with a wider radius — a same-name
     place 190 km away in the same UF is rejected, one near the seat is accepted."""
     from brave.core.models import Municipio
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     seat = Municipio(ibge_code="5212501", nome="Luziânia", uf="GO", lat=-16.2525, lng=-47.95)
     far = {**_search_result(lat=-14.4497, lng=-46.9469), "municipio_ibge": "5208152"}
@@ -845,7 +845,7 @@ async def test_coordless_record_matches_only_near_its_municipio_seat() -> None:
 async def test_temporarily_closed_is_enriched_but_parked_in_dlq() -> None:
     """CLOSED_TEMPORARILY: no descarte — hours/coords are kept, the record goes to the DLQ
     with dlq_reason "closed_temporarily" even when the re-score would promote it."""
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(
         fixture_results={"Igreja Matriz": [_search_result()]},
@@ -857,9 +857,9 @@ async def test_temporarily_closed_is_enriched_but_parked_in_dlq() -> None:
     def promote(_session, r, _config):
         r.routing = "mar"
 
-    with patch("brave.lanes.atrativos.places_enrichment.write_audit"), \
-         patch("brave.lanes.atrativos.places_enrichment.record_event") as event, \
-         patch("brave.lanes.atrativos.places_enrichment.route_by_score", side_effect=promote):
+    with patch("brave.domains.places.places_enrichment.write_audit"), \
+         patch("brave.domains.places.places_enrichment.record_event") as event, \
+         patch("brave.domains.places.places_enrichment.route_by_score", side_effect=promote):
         await agent.run(rio)
 
     assert rio.routing == "dlq"

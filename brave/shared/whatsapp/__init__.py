@@ -12,7 +12,7 @@ Holds the reusable, transport-facing WhatsApp owner-validation conversation:
                        ``build_graph``.
 
 Per the D-18 import rule, ``brave.shared`` MUST NOT import ``brave.domains``
-(``brave.lanes``) or ``brave.tasks``.
+or ``brave.tasks``.
 
 KNOWN DEVIATION (tracked follow-up): ``agent._finalize_node`` still imports
 ``brave.core.models`` / ``brave.core.rio.routing`` and reaches ``brave.core`` via

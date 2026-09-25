@@ -75,7 +75,7 @@ async def test_parallel_post_raises_provider_balance_error_on_402(
 
 
 async def test_copywriter_write_reraises_provider_balance_error() -> None:
-    from brave.lanes.atrativos.copywriter import TourismCopywriter
+    from brave.domains.places.copywriter import TourismCopywriter
     from tests.fakes.fake_llm import FakeLLMClient
 
     fake = FakeLLMClient(raise_on_call=ProviderBalanceError("anthropic"))
@@ -86,7 +86,7 @@ async def test_copywriter_write_reraises_provider_balance_error() -> None:
 
 
 async def test_places_enrichment_write_description_reraises_provider_balance_error() -> None:
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
     from tests.fakes.fake_llm import FakeLLMClient
     from tests.fakes.fake_places import FakePlacesClient
 

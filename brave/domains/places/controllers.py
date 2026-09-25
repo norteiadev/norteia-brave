@@ -63,7 +63,7 @@ class PlacesDomain:
                 "PlacesDomain.discover requires session=, config=, places_client= and "
                 "llm_client= (injected by the task layer)"
             )
-        from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+        from brave.domains.places.discovery_agent import DiscoveryAgent
 
         await DiscoveryAgent(places_client, llm_client, session, config).produce(uf)
 

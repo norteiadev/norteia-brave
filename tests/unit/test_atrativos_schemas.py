@@ -23,7 +23,7 @@ from pydantic import ValidationError
 
 def test_atrativo_result_valid_round_trip() -> None:
     """AtrativoResult round-trip with valid data succeeds."""
-    from brave.lanes.atrativos.schemas import AtrativoResult
+    from brave.domains.places.schemas import AtrativoResult
 
     data = {
         "nome": "Praia do Forte",
@@ -46,7 +46,7 @@ def test_atrativo_result_valid_round_trip() -> None:
 
 def test_atrativo_result_invalid_municipio_ibge_raises() -> None:
     """AtrativoResult with invalid municipio_ibge pattern raises ValidationError."""
-    from brave.lanes.atrativos.schemas import AtrativoResult
+    from brave.domains.places.schemas import AtrativoResult
 
     data = {
         "nome": "Parque Nacional",
@@ -65,7 +65,7 @@ def test_atrativo_result_invalid_municipio_ibge_raises() -> None:
 
 def test_atrativo_result_all_tipo_literals() -> None:
     """AtrativoResult accepts all 11 valid tipo values."""
-    from brave.lanes.atrativos.schemas import AtrativoResult
+    from brave.domains.places.schemas import AtrativoResult
 
     valid_tipos = [
         "praia",
@@ -97,7 +97,7 @@ def test_atrativo_result_all_tipo_literals() -> None:
 
 def test_atrativo_result_invalid_tipo_raises() -> None:
     """AtrativoResult with unknown tipo raises ValidationError."""
-    from brave.lanes.atrativos.schemas import AtrativoResult
+    from brave.domains.places.schemas import AtrativoResult
 
     data = {
         "nome": "Atrativo",
@@ -120,7 +120,7 @@ def test_atrativo_result_invalid_tipo_raises() -> None:
 
 
 def _full_atrativo(**overrides):
-    from brave.lanes.atrativos.schemas import AtrativoResult
+    from brave.domains.places.schemas import AtrativoResult
 
     base = {
         "nome": "Praia do Forte",
@@ -137,14 +137,14 @@ def _full_atrativo(**overrides):
 
 def test_completude_ceiling_without_description_is_75() -> None:
     """All five discovery fields, no descricao_editorial → 75.0 (unchanged floor)."""
-    from brave.lanes.atrativos.discovery_agent import _compute_completude
+    from brave.domains.places.discovery_agent import _compute_completude
 
     assert _compute_completude(_full_atrativo()) == 75.0
 
 
 def test_completude_new_degrau_with_description_is_90() -> None:
     """All five fields + a curated descricao_editorial → the new 90.0 degrau."""
-    from brave.lanes.atrativos.discovery_agent import _compute_completude
+    from brave.domains.places.discovery_agent import _compute_completude
 
     result = _full_atrativo(
         descricao_editorial="Descrição editorial curada, na voz da Norteia."
@@ -154,9 +154,9 @@ def test_completude_new_degrau_with_description_is_90() -> None:
 
 def test_completude_description_below_ceiling_stays_50() -> None:
     """Missing ibge/place_id keeps the 50 degrau even with a description (no jump)."""
-    from brave.lanes.atrativos.discovery_agent import _compute_completude
+    from brave.domains.places.discovery_agent import _compute_completude
 
-    from brave.lanes.atrativos.schemas import AtrativoResult
+    from brave.domains.places.schemas import AtrativoResult
 
     result = AtrativoResult(
         nome="Atrativo",
@@ -230,7 +230,7 @@ def test_conversation_extraction_result_confidence_out_of_range_raises() -> None
 
 def test_contact_result_all_none_is_valid() -> None:
     """ContactResult with all-None fields is valid."""
-    from brave.lanes.atrativos.schemas import ContactResult
+    from brave.domains.places.schemas import ContactResult
 
     result = ContactResult()
     assert result.phone_e164 is None
@@ -241,7 +241,7 @@ def test_contact_result_all_none_is_valid() -> None:
 
 def test_contact_result_partial_fill() -> None:
     """ContactResult with partial fields is valid."""
-    from brave.lanes.atrativos.schemas import ContactResult
+    from brave.domains.places.schemas import ContactResult
 
     result = ContactResult(phone_e164="+5573999999999", website="https://example.com")
     assert result.phone_e164 == "+5573999999999"
@@ -256,7 +256,7 @@ def test_contact_result_partial_fill() -> None:
 
 def test_signal_result_valid() -> None:
     """SignalResult with valid data populates correctly."""
-    from brave.lanes.atrativos.schemas import SignalResult
+    from brave.domains.places.schemas import SignalResult
 
     result = SignalResult(
         business_status="OPERATIONAL",

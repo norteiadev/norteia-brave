@@ -40,7 +40,7 @@ from sqlalchemy.dialects import postgresql
 
 from brave.config.settings import LLMConfig, ScoreConfig
 from brave.core.models import LLMGeneration, RioRecord
-from brave.lanes.atrativos.copy_batch import (
+from brave.domains.places.copy_batch import (
     _CUSTOM_ID_RE,
     _EST_USD_PER_DESCRIPTION,
     _EXPIRIES_KEY,
@@ -56,7 +56,7 @@ from brave.lanes.atrativos.copy_batch import (
     reap_stale_claims,
     submit_batch,
 )
-from brave.lanes.atrativos.copywriter import WEB_SEARCH_TOOL, TourismCopywriter
+from brave.domains.places.copywriter import WEB_SEARCH_TOOL, TourismCopywriter
 from brave.observability.cost_guard import _daily_key
 from tests.fakes.fake_llm import FakeLLMClient
 
@@ -596,7 +596,7 @@ def _stamped(batch_id: str = "msgbatch_01", **extra) -> RioRecord:
 
 def test_errored_increments_attempts_and_clears_the_stamp() -> None:
     rio = _stamped(descricao_attempts=1)
-    with patch("brave.lanes.atrativos.copy_batch.route_by_score") as rbs:
+    with patch("brave.domains.places.copy_batch.route_by_score") as rbs:
         assert apply_result(
             _FakeSession(), rio, _result("errored"), ScoreConfig(), batch_id="msgbatch_01"
         )
@@ -611,7 +611,7 @@ def test_expired_and_canceled_burn_a_bounded_expiry_counter_not_an_attempt(rtype
     """Anthropic does not bill these, so burning an attempt would starve the record — but
     leaving nothing behind makes it instantly re-eligible and it can expire forever."""
     rio = _stamped(descricao_attempts=1)
-    with patch("brave.lanes.atrativos.copy_batch.route_by_score"):
+    with patch("brave.domains.places.copy_batch.route_by_score"):
         apply_result(_FakeSession(), rio, _result(rtype), ScoreConfig(), batch_id="msgbatch_01")
     assert rio.normalized["descricao_attempts"] == 1
     assert rio.normalized[_EXPIRIES_KEY] == 1
@@ -626,7 +626,7 @@ def test_the_expiry_bound_makes_a_record_ineligible() -> None:
 def test_succeeded_writes_description_and_lifts_completude() -> None:
     rio = _stamped()
     session = _FakeSession()
-    with patch("brave.lanes.atrativos.copy_batch.route_by_score") as rbs:
+    with patch("brave.domains.places.copy_batch.route_by_score") as rbs:
         apply_result(
             session,
             rio,
@@ -644,7 +644,7 @@ def test_succeeded_writes_description_and_lifts_completude() -> None:
 def test_pause_turn_is_a_billed_failed_attempt() -> None:
     rio = _stamped()
     session = _FakeSession()
-    with patch("brave.lanes.atrativos.copy_batch.route_by_score"):
+    with patch("brave.domains.places.copy_batch.route_by_score"):
         apply_result(
             session,
             rio,
@@ -660,7 +660,7 @@ def test_pause_turn_is_a_billed_failed_attempt() -> None:
 def test_cost_is_batch_rates_plus_undiscounted_search_fee() -> None:
     """50% off tokens; the $10/1k web_search fee is NOT discounted in batch."""
     session = _FakeSession()
-    with patch("brave.lanes.atrativos.copy_batch.route_by_score"):
+    with patch("brave.domains.places.copy_batch.route_by_score"):
         apply_result(
             session,
             _stamped(),
@@ -683,7 +683,7 @@ def test_cache_tokens_are_priced_at_batch_rates_like_the_inline_path() -> None:
     every request in a batch, so the obvious next step), on the one lane whose spend is
     already irrevocably committed."""
     session = _FakeSession()
-    with patch("brave.lanes.atrativos.copy_batch.route_by_score"):
+    with patch("brave.domains.places.copy_batch.route_by_score"):
         apply_result(
             session,
             _stamped(),
@@ -799,7 +799,7 @@ def test_reaper_frees_a_batch_that_anthropic_no_longer_has() -> None:
 
 
 def _collect(session: _FakeSession, batches: _FakeBatches, redis_client) -> int:  # noqa: ANN001
-    with patch("brave.lanes.atrativos.copy_batch.route_by_score"):
+    with patch("brave.domains.places.copy_batch.route_by_score"):
         return collect_batches(
             session,
             _fake_client(batches),
@@ -934,7 +934,7 @@ def test_reconcile_is_told_which_day_the_reservation_was_booked_on() -> None:
     booked_on = rio.descricao_batch_submitted_at
     session = _FakeSession([], ["msgbatch_01"])
     session.register(rio)
-    with patch("brave.lanes.atrativos.copy_batch.reconcile_spend", _fake):
+    with patch("brave.domains.places.copy_batch.reconcile_spend", _fake):
         _collect(
             session,
             _FakeBatches(results=[_entry(rio, _result("expired"))]),
@@ -993,7 +993,7 @@ def test_collect_task_dispatches_no_push() -> None:
         patch("brave.tasks.pipeline.load_effective_config") as effective,
         patch("brave.tasks.pipeline.clients_for"),
         patch("brave.tasks.pipeline.publish_mar") as push,
-        patch("brave.lanes.atrativos.copy_batch.collect_batches", return_value=3) as collect,
+        patch("brave.domains.places.copy_batch.collect_batches", return_value=3) as collect,
     ):
         effective.return_value.run_real_externals = True
         raw_fn(SimpleNamespace())

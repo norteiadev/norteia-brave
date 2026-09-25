@@ -4,7 +4,7 @@ Implements the WhatsApp outreach conversation as a LangGraph StateGraph with
 AsyncPostgresSaver checkpoint. Persists conversation state across worker restarts
 so a multi-day conversation (owner doesn't reply for 24h+) survives Celery restarts.
 
-Phase G: moved from ``brave.lanes.atrativos.whatsapp_agent`` to ``brave.shared.whatsapp``.
+Phase G: moved from the atrativos lane's ``whatsapp_agent`` to ``brave.shared.whatsapp``.
 The pure conversation state / opt-out / routing primitives live in the sibling
 ``conversation`` module; this module holds the I/O-bearing graph nodes,
 ``_compliant_send``, and ``build_graph``.

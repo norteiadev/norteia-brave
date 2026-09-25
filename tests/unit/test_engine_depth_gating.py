@@ -150,7 +150,7 @@ def _patched_discover(discovered_ids=("rio-1", "rio-2")):
             fc_calls["run"] += 1
 
     with patch.object(pipeline, "_get_session", return_value=(fake_session, MagicMock())), patch(
-        "brave.lanes.atrativos.discovery_agent.DiscoveryAgent", _FakeDiscovery
+        "brave.domains.places.discovery_agent.DiscoveryAgent", _FakeDiscovery
     ), patch.object(pipeline, "find_contacts_task", _SpyFindContacts()):
         yield fc_calls
 

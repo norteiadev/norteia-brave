@@ -2,8 +2,8 @@
 
 ``ConversationExtractionResult`` is the DeepSeek/instructor Mode.Tools 2nd-layer
 validator for owner WhatsApp replies (D-08, D-09). It moved here from
-``brave.lanes.atrativos.schemas`` so the shared WhatsApp agent can validate
-extractions without ``brave.shared`` importing ``brave.lanes`` (D-18).
+``brave.domains.places.schemas`` so the shared WhatsApp agent can validate
+extractions without ``brave.shared`` importing ``brave.domains`` (D-18).
 
 Dependency-free: imports only ``typing`` + ``pydantic``.
 """

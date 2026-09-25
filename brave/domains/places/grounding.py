@@ -14,7 +14,7 @@ Two gates, one on each side of the model call (docs/poc/gemini-viability.md §23
 
 Ported from scripts/poc/cascade_scale_probe.py (which now imports it from here).
 
-D-18 boundary: no imports from brave.lanes.destinos or brave.tasks.
+D-18 boundary: no imports from other domains or brave.tasks.
 """
 
 from __future__ import annotations

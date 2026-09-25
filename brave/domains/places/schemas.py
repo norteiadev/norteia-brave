@@ -8,7 +8,7 @@ Four schemas:
 
 ConversationExtractionResult (owner WhatsApp reply extraction) moved to
 ``brave.shared.whatsapp.schemas`` in Phase G so the shared WhatsApp agent can
-validate extractions without ``brave.shared`` importing ``brave.lanes`` (D-18).
+validate extractions without ``brave.shared`` importing ``brave.domains`` (D-18).
 
 Every Field has a description= kwarg for instructor Mode.Tools tool-calling compliance.
 Literal types are used for constrained fields; `| None` for optional extraction outputs.

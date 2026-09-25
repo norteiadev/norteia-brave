@@ -45,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from cascade_gemini_probe import _REC, OPENROUTER, GeminiOpenRouter, amostra_ta, obediencia  # noqa: E402
 from fontes_abertas_probe import FonteFixa, contexto, limpar, riqueza  # noqa: E402
 
-from brave.lanes.atrativos.grounding import groundedness_ratio, menciona  # noqa: E402
+from brave.domains.places.grounding import groundedness_ratio, menciona  # noqa: E402
 
 AQUI = Path(__file__).parent
 DEEPSEEK = "deepseek/deepseek-v4-flash-0731"
@@ -155,7 +155,7 @@ async def escrever(conc: int, so_deepseek: bool = False) -> int:
     ``finish_reason: length`` (o raciocínio come os 2.048 tokens da lane) e 21 textos
     aprovados cortados. Refeito com ``reasoning: {"enabled": false}`` (§28.3).
     """
-    from brave.lanes.atrativos.copywriter import TourismCopywriter
+    from brave.domains.places.copywriter import TourismCopywriter
 
     itens = amostra_ta(140)
     fontes, _ = limpar(json.loads((AQUI / "fontes_abertas_probe.fontes.json").read_text()))

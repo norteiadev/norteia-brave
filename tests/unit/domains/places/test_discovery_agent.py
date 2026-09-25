@@ -10,7 +10,7 @@ Test suite covers must_haves from 03-02-PLAN.md:
   - test_discovery_stores_raw_with_place_id_only
   - test_discovery_dedup_idempotent
 
-D-18 boundary: no import from brave.lanes.destinos in this file.
+D-18 boundary: no import from other domains in this file.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def _make_atrativo_result(
     municipio_ibge: str = "2919207",
 ) -> Any:
     """Build a minimal AtrativoResult mock for LLM extraction."""
-    from brave.lanes.atrativos.schemas import AtrativoResult
+    from brave.domains.places.schemas import AtrativoResult
 
     return AtrativoResult(
         nome="Praia de Trancoso",
@@ -85,7 +85,7 @@ async def test_discovery_materializes_parent_destino_and_ingests() -> None:
     and the payload must carry parent_rio_id + parent_source_ref (Mar id optional).
     """
     from brave.config.settings import ScoreConfig
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.domains.places.discovery_agent import DiscoveryAgent
 
     places_result = _make_places_result()
 
@@ -116,13 +116,13 @@ async def test_discovery_materializes_parent_destino_and_ingests() -> None:
     # here we isolate the attraction ingest contract. Returns (rio_id, source_ref, None)
     # — the ensured destino has not reached Mar yet, so parent_mar_id stays absent.
     with patch(
-        "brave.lanes.atrativos.discovery_agent.ensure_destino",
+        "brave.domains.places.discovery_agent.ensure_destino",
         return_value=(parent_rio_id, "ibge:BA:2919207", None),
     ) as mock_ensure, \
-         patch("brave.lanes.atrativos.discovery_agent.store_raw", return_value=mock_nascente) as mock_store_raw, \
-         patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
-         patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
-         patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
+         patch("brave.domains.places.discovery_agent.store_raw", return_value=mock_nascente) as mock_store_raw, \
+         patch("brave.domains.places.discovery_agent.process_nascente_record"), \
+         patch("brave.domains.places.discovery_agent.advance_sub_state"), \
+         patch("brave.domains.places.discovery_agent.quarantine_poison") as mock_quarantine:
         await agent.produce(uf="BA")
 
     # ensure_destino materializes the parent — called with the resolved município
@@ -151,7 +151,7 @@ async def test_discovery_stores_raw_with_place_id_only() -> None:
       as canonical identity (only AtrativoResult extraction + place_id cache)
     """
     from brave.config.settings import ScoreConfig
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.domains.places.discovery_agent import DiscoveryAgent
 
     places_result = _make_places_result()
 
@@ -178,13 +178,13 @@ async def test_discovery_stores_raw_with_place_id_only() -> None:
     # covered against a real DB in test_atrativos_lane_e2e.py). ensure_destino is also
     # patched so only the attraction store_raw is asserted.
     with patch(
-        "brave.lanes.atrativos.discovery_agent.ensure_destino",
+        "brave.domains.places.discovery_agent.ensure_destino",
         return_value=(uuid.uuid4(), "ibge:BA:2919207", None),
     ), \
-         patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
-         patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
-         patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
-         patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
+         patch("brave.domains.places.discovery_agent.store_raw") as mock_store_raw, \
+         patch("brave.domains.places.discovery_agent.process_nascente_record"), \
+         patch("brave.domains.places.discovery_agent.advance_sub_state"), \
+         patch("brave.domains.places.discovery_agent.quarantine_poison") as mock_quarantine:
         # Patch store_raw to return a mock NascenteRecord
         from unittest.mock import MagicMock as MM
         mock_nascente = MM()
@@ -222,7 +222,7 @@ async def test_discovery_dedup_idempotent() -> None:
     handles dedup internally), and no quarantine is triggered.
     """
     from brave.config.settings import ScoreConfig
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.domains.places.discovery_agent import DiscoveryAgent
 
     places_result = _make_places_result()
 
@@ -246,13 +246,13 @@ async def test_discovery_dedup_idempotent() -> None:
     # FSM-init collaborators (Plan 05-02 Task 1) patched out — see note above; this test
     # asserts store_raw dedup behavior, not Rio creation / sub_state seeding.
     with patch(
-        "brave.lanes.atrativos.discovery_agent.ensure_destino",
+        "brave.domains.places.discovery_agent.ensure_destino",
         return_value=(uuid.uuid4(), "ibge:BA:2919207", None),
     ), \
-         patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw, \
-         patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
-         patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
-         patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
+         patch("brave.domains.places.discovery_agent.store_raw") as mock_store_raw, \
+         patch("brave.domains.places.discovery_agent.process_nascente_record"), \
+         patch("brave.domains.places.discovery_agent.advance_sub_state"), \
+         patch("brave.domains.places.discovery_agent.quarantine_poison") as mock_quarantine:
         mock_nascente = MagicMock()
         mock_nascente.id = uuid.uuid4()
         mock_nascente.source_ref = "places:BA:ChIJtest001"
@@ -288,7 +288,7 @@ async def test_empty_ibge_still_calls_ensure_destino_no_quarantine() -> None:
     follow-up risk; see the §3/§5 report.)
     """
     from brave.config.settings import ScoreConfig
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.domains.places.discovery_agent import DiscoveryAgent
 
     # Place result with empty municipio_ibge — Places lookup miss.
     places_result = _make_places_result(municipio_ibge="", municipio_nome="")
@@ -315,13 +315,13 @@ async def test_empty_ibge_still_calls_ensure_destino_no_quarantine() -> None:
     mock_nascente.source_ref = "places:BA:ChIJtest001"
 
     with patch(
-        "brave.lanes.atrativos.discovery_agent.ensure_destino",
+        "brave.domains.places.discovery_agent.ensure_destino",
         return_value=(uuid.uuid4(), "ibge:BA:", None),
     ) as mock_ensure, \
-         patch("brave.lanes.atrativos.discovery_agent.store_raw", return_value=mock_nascente), \
-         patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
-         patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
-         patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
+         patch("brave.domains.places.discovery_agent.store_raw", return_value=mock_nascente), \
+         patch("brave.domains.places.discovery_agent.process_nascente_record"), \
+         patch("brave.domains.places.discovery_agent.advance_sub_state"), \
+         patch("brave.domains.places.discovery_agent.quarantine_poison") as mock_quarantine:
         await agent.produce(uf="BA")
 
     # ensure_destino is called even with an empty ibge (no pre-guard quarantine)
@@ -348,7 +348,7 @@ async def test_produce_for_destino_links_to_known_parent() -> None:
     - The targeted query "pontos turísticos em Porto Seguro BA" drives the search
     """
     from brave.config.settings import ScoreConfig
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.domains.places.discovery_agent import DiscoveryAgent
 
     parent_mar_id = uuid.uuid4()
     mock_parent_mar = MagicMock()
@@ -390,11 +390,11 @@ async def test_produce_for_destino_links_to_known_parent() -> None:
     mock_nascente.id = uuid.uuid4()
     mock_nascente.source_ref = "places:BA:ChIJtest001"
 
-    with patch("brave.lanes.atrativos.discovery_agent.store_raw", return_value=mock_nascente) as mock_store_raw, \
-         patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
-         patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
-         patch("brave.lanes.atrativos.discovery_agent.write_audit"), \
-         patch("brave.lanes.atrativos.discovery_agent.quarantine_poison") as mock_quarantine:
+    with patch("brave.domains.places.discovery_agent.store_raw", return_value=mock_nascente) as mock_store_raw, \
+         patch("brave.domains.places.discovery_agent.process_nascente_record"), \
+         patch("brave.domains.places.discovery_agent.advance_sub_state"), \
+         patch("brave.domains.places.discovery_agent.write_audit"), \
+         patch("brave.domains.places.discovery_agent.quarantine_poison") as mock_quarantine:
         result = await agent.produce_for_destino(mock_parent_mar, target_count=1)
 
     # Must return 1 created record
@@ -422,7 +422,7 @@ async def test_produce_for_destino_derives_uf_ibge_from_source_ref() -> None:
     'mtur:{UF}:{ibge}' so the targeted query is built and discovery is not a silent no-op.
     """
     from brave.config.settings import ScoreConfig
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.domains.places.discovery_agent import DiscoveryAgent
 
     parent_mar_id = uuid.uuid4()
     mock_parent_mar = MagicMock()
@@ -455,11 +455,11 @@ async def test_produce_for_destino_derives_uf_ibge_from_source_ref() -> None:
     mock_nascente.id = uuid.uuid4()
     mock_nascente.source_ref = "places:BA:ChIJtest001"
 
-    with patch("brave.lanes.atrativos.discovery_agent.store_raw", return_value=mock_nascente) as mock_store_raw, \
-         patch("brave.lanes.atrativos.discovery_agent.process_nascente_record"), \
-         patch("brave.lanes.atrativos.discovery_agent.advance_sub_state"), \
-         patch("brave.lanes.atrativos.discovery_agent.write_audit"), \
-         patch("brave.lanes.atrativos.discovery_agent.quarantine_poison"):
+    with patch("brave.domains.places.discovery_agent.store_raw", return_value=mock_nascente) as mock_store_raw, \
+         patch("brave.domains.places.discovery_agent.process_nascente_record"), \
+         patch("brave.domains.places.discovery_agent.advance_sub_state"), \
+         patch("brave.domains.places.discovery_agent.write_audit"), \
+         patch("brave.domains.places.discovery_agent.quarantine_poison"):
         result = await agent.produce_for_destino(mock_parent_mar, target_count=1)
 
     # Derived uf=BA from source_ref → targeted query ran → 1 atrativo created (not a 0 no-op)
@@ -476,7 +476,7 @@ async def test_produce_for_destino_returns_zero_on_missing_municipio() -> None:
     call store_raw.
     """
     from brave.config.settings import ScoreConfig
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.domains.places.discovery_agent import DiscoveryAgent
 
     mock_parent_mar = MagicMock()
     mock_parent_mar.id = uuid.uuid4()
@@ -495,7 +495,7 @@ async def test_produce_for_destino_returns_zero_on_missing_municipio() -> None:
         config=config,
     )
 
-    with patch("brave.lanes.atrativos.discovery_agent.store_raw") as mock_store_raw:
+    with patch("brave.domains.places.discovery_agent.store_raw") as mock_store_raw:
         result = await agent.produce_for_destino(mock_parent_mar)
 
     assert result == 0

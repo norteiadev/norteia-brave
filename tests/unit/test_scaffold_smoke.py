@@ -244,7 +244,7 @@ class TestClientProtocols:
 
 
 # ---------------------------------------------------------------------------
-# 4. Package boundary: core/ and lanes/ and clients/ are importable
+# 4. Package boundary: core/ and clients/ are importable
 # ---------------------------------------------------------------------------
 
 
@@ -254,9 +254,6 @@ class TestPackageBoundaries:
 
     def test_brave_core_importable(self) -> None:
         import brave.core.models  # noqa: F401
-
-    def test_brave_lanes_importable(self) -> None:
-        import brave.lanes.base  # noqa: F401
 
     def test_brave_clients_importable(self) -> None:
         import brave.clients.base  # noqa: F401

@@ -74,7 +74,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from brave.lanes.atrativos.copy_batch import build_request, candidates_select
+    from brave.domains.places.copy_batch import build_request, candidates_select
 
     engine = create_engine(os.environ["BRAVE_DB_URL"])
     session = sessionmaker(bind=engine)()

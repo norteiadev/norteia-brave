@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from brave.lanes.atrativos.schemas import WhatsAppNumberDiscovery
+from brave.domains.places.schemas import WhatsAppNumberDiscovery
 
 if TYPE_CHECKING:
     from brave.clients.base import LLMClientProtocol

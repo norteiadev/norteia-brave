@@ -17,7 +17,7 @@ Guards (system prompt + a deterministic post-generation pass):
   - Accuracy: ground every claim in the Places context or a web-search result; never invent
     amenities or accessibility. Nothing verifiable → shorter sensory prose, no factual claims.
 
-D-18 boundary: no imports from brave.lanes.destinos or brave.tasks.
+D-18 boundary: no imports from other domains or brave.tasks.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from brave.lanes.atrativos.grounding import (
+from brave.domains.places.grounding import (
     MIN_GROUNDEDNESS,
     groundedness_ratio,
     menciona,

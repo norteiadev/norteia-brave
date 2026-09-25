@@ -5,7 +5,7 @@ style of ``test_no_test_imports_in_brave.py`` — import STATEMENTS only, so
 docstrings/comments never false-positive):
 
   CHECK A — kernel purity: ``brave/core`` and ``brave/shared`` must NEVER import
-    ``brave.domains``, ``brave.tasks`` (or ``brave.lanes``). The kernel sits below
+    ``brave.domains`` or ``brave.tasks``. The kernel sits below
     the sources; a kernel→domain import inverts the layering.
 
   CHECK B — no cross-domain imports: a module under ``brave/domains/<x>/`` must
@@ -29,7 +29,7 @@ _REPO_ROOT = Path(__file__).parent.parent.parent
 _BRAVE_DIR = _REPO_ROOT / "brave"
 
 # CHECK A: kernel (core/shared) must not import these top-level packages.
-_KERNEL_FORBIDDEN_RE = re.compile(r"^\s*(?:from|import)\s+brave\.(domains|tasks|lanes)\b")
+_KERNEL_FORBIDDEN_RE = re.compile(r"^\s*(?:from|import)\s+brave\.(domains|tasks)\b")
 
 # CHECK B: capture the first path segment after `brave.domains.`
 _CROSS_DOMAIN_RE = re.compile(
@@ -52,7 +52,7 @@ def _iter_py(root: Path):
 
 
 def test_kernel_never_imports_domains_or_tasks() -> None:
-    """CHECK A: no file under brave/core or brave/shared imports domains/tasks/lanes."""
+    """CHECK A: no file under brave/core or brave/shared imports domains/tasks."""
     assert _BRAVE_DIR.is_dir(), f"brave/ not found at {_BRAVE_DIR}"
 
     violations: list[tuple[Path, int, str]] = []
@@ -71,7 +71,7 @@ def test_kernel_never_imports_domains_or_tasks() -> None:
         )
         raise AssertionError(
             "Kernel purity violation (generalized D-18): brave.core / brave.shared "
-            "must never import brave.domains / brave.tasks / brave.lanes:\n" + report
+            "must never import brave.domains / brave.tasks:\n" + report
         )
 
 

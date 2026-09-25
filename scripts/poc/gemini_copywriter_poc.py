@@ -2,7 +2,7 @@
 """POC: can Gemini replace Claude Sonnet 4.5 in the TourismCopywriter lane?
 
 Read-only probe. Touches NOTHING in the pipeline: it imports the real
-``COPYWRITER_SYSTEM`` + ``_build_context`` from ``brave.lanes.atrativos.copywriter``
+``COPYWRITER_SYSTEM`` + ``_build_context`` from ``brave.domains.places.copywriter``
 so the prompt is byte-identical to production, then runs the same prompt against:
 
   1. Gemini (``google_search`` grounding tool = the Anthropic ``web_search`` analogue)
@@ -38,7 +38,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from brave.lanes.atrativos.copywriter import (  # noqa: E402
+from brave.domains.places.copywriter import (  # noqa: E402
     COPYWRITER_SYSTEM,
     WEB_SEARCH_TOOL,
     _build_context,

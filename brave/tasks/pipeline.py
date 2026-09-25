@@ -477,7 +477,7 @@ def discover_atrativo_task(
         depth: Pipeline depth (nascente_rio | nascente_rio_mar). None → full.
     """
     from brave.core import engine as collection_engine
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.domains.places.discovery_agent import DiscoveryAgent
 
     effective_depth = depth or collection_engine.NASCENTE_RIO_MAR
 
@@ -770,7 +770,7 @@ def sweep_tripadvisor(
             places_agent = None
             _distritos: list = []
             try:
-                from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+                from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
                 from brave.shared.ibge_distritos import load_distritos
 
                 _distritos = load_distritos(session)
@@ -898,7 +898,7 @@ def find_contacts_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to advance.
     """
-    from brave.lanes.atrativos.contact_finder_agent import ContactFinderAgent
+    from brave.domains.places.contact_finder_agent import ContactFinderAgent
 
     session, engine = _get_session()
     try:
@@ -958,7 +958,7 @@ def gather_signals_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to advance.
     """
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     session, engine = _get_session()
     try:
@@ -1054,7 +1054,7 @@ def _enrich_agent(
     """
     from brave.clients.null_llm import NullLLMClient
     from brave.clients.null_places import NullPlacesClient
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     effective = ctx.effective
 
@@ -1299,8 +1299,8 @@ def describe_uf(
     from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
     from brave.core import engine as collection_engine
-    from brave.lanes.atrativos.copy_batch import description_candidates_filter
-    from brave.lanes.atrativos.copywriter import local_hint
+    from brave.domains.places.copy_batch import description_candidates_filter
+    from brave.domains.places.copywriter import local_hint
     from brave.observability.cost_guard import pre_dispatch_check
     from brave.shared.exceptions import CostGuardError
 
@@ -1430,7 +1430,7 @@ def describe_uf(
 # When atrativo_description_batch_enabled is on, _enrich_one runs with description_enabled
 # =False (the TA sweep always does) — the copywriter never fires inline. These
 # two beat-driven tasks own the description instead: submit hourly, collect every 15 min.
-# All the logic lives in brave/lanes/atrativos/copy_batch.py; these are transport.
+# All the logic lives in brave/domains/places/copy_batch.py; these are transport.
 # ---------------------------------------------------------------------------
 
 
@@ -1452,7 +1452,7 @@ def submit_description_batch_task(self) -> None:
     """
     import redis as _redis_lib  # noqa: PLC0415
 
-    from brave.lanes.atrativos.copy_batch import submit_batch  # noqa: PLC0415
+    from brave.domains.places.copy_batch import submit_batch  # noqa: PLC0415
 
     session, engine = _get_session()
     try:
@@ -1507,7 +1507,7 @@ def collect_description_batches_task(self) -> None:
     """
     import redis as _redis_lib  # noqa: PLC0415
 
-    from brave.lanes.atrativos.copy_batch import collect_batches, reap_stale_claims  # noqa: PLC0415
+    from brave.domains.places.copy_batch import collect_batches, reap_stale_claims  # noqa: PLC0415
 
     session, engine = _get_session()
     try:
@@ -1861,8 +1861,8 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
 
     from brave.core.atrativos.state_machine import advance_sub_state
     from brave.core.models import whatsapp_candidate_from_phone
-    from brave.lanes.atrativos.contact_finder_agent import _normalize_phone_e164
-    from brave.lanes.atrativos.number_discovery import discover_number
+    from brave.domains.places.contact_finder_agent import _normalize_phone_e164
+    from brave.domains.places.number_discovery import discover_number
 
     session, engine = _get_session()
     try:

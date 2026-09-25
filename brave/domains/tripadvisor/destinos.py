@@ -18,8 +18,6 @@ requires RUN_REAL_EXTERNALS=1 and an explicit POST /api/v1/engine/start with
 source="tripadvisor". See data/tripadvisor/README for the full operator
 checklist (proxy setup, scraper dep group, LGPD acknowledgement).
 
-Mirrors brave/lanes/destinos/mtur.py exactly in class structure (D-18).
-
 D-04: Producers populate *_value fields in the Nascente payload; the Rio
 normalizer reads them from process_nascente_record — no core changes required.
 

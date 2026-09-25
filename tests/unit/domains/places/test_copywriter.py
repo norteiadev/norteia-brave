@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from brave.lanes.atrativos.copywriter import (
+from brave.domains.places.copywriter import (
     WEB_SEARCH_TOOL,
     TourismCopywriter,
     _strip_dashes,

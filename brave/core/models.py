@@ -164,7 +164,7 @@ class RioRecord(Base):
         String(256), nullable=True, unique=True
     )
 
-    # Batched-description lane state (brave/lanes/atrativos/copy_batch.py). REAL COLUMNS,
+    # Batched-description lane state (brave/domains/places/copy_batch.py). REAL COLUMNS,
     # deliberately NOT keys in `normalized`: any writer that rewrites the whole JSONB column
     # from a stale snapshot would erase a stamp living inside it, and the same records would
     # be submitted — and billed — a second time. (PlacesEnrichmentAgent did exactly that; it

@@ -27,13 +27,13 @@ from brave.clients.parallel import PARALLEL_SEARCH_URL, ParallelSearch
 from brave.clients.tavily import TAVILY_SEARCH_URL, format_results
 from brave.config.settings import ScoreConfig
 from brave.core.models import AtrativoBusca
-from brave.lanes.atrativos.copywriter import (
+from brave.domains.places.copywriter import (
     CASCADE_MODEL,
     TourismCopywriter,
     cascade_objective,
     cascade_queries,
 )
-from brave.lanes.atrativos.grounding import (
+from brave.domains.places.grounding import (
     MIN_GROUNDEDNESS,
     groundedness_ratio,
     menciona,
@@ -349,7 +349,7 @@ def _rio() -> MagicMock:
 async def _run_agent(
     rio: MagicMock, results: list[dict], prosa: str, cascade_model: str = CASCADE_MODEL
 ) -> tuple:
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
     from tests.fakes.fake_llm import FakeLLMClient
     from tests.fakes.fake_places import FakePlacesClient
 
@@ -363,9 +363,9 @@ async def _run_agent(
         cascade_model=cascade_model,
         config=ScoreConfig(),
     )
-    with patch("brave.lanes.atrativos.places_enrichment.write_audit"), \
-         patch("brave.lanes.atrativos.places_enrichment.record_event"), \
-         patch("brave.lanes.atrativos.places_enrichment.route_by_score"):
+    with patch("brave.domains.places.places_enrichment.write_audit"), \
+         patch("brave.domains.places.places_enrichment.record_event"), \
+         patch("brave.domains.places.places_enrichment.route_by_score"):
         await agent.run(rio)
     buscas = [c.args[0] for c in session.add.call_args_list if isinstance(c.args[0], AtrativoBusca)]
     return llm, buscas
@@ -479,7 +479,7 @@ def test_tavily_wait_honours_retry_after_capped() -> None:
 
 
 def test_local_hint_prefers_distrito_then_bairro_and_drops_the_municipio_echo() -> None:
-    from brave.lanes.atrativos.copywriter import local_hint
+    from brave.domains.places.copywriter import local_hint
 
     addr = "Praça Brg. Eduardo Gomes, 50 - Centro, Porto Seguro - BA, 45816-000, Brazil"
     assert local_hint({"municipio": "Porto Seguro", "address": addr}) == "Centro"

@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import select
 
 from brave.core.models import RioRecord
-from brave.lanes.atrativos.copy_batch import description_candidates_filter
+from brave.domains.places.copy_batch import description_candidates_filter
 
 pytestmark = pytest.mark.integration
 

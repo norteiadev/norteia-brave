@@ -14,7 +14,7 @@ Corroboração note (Phase E): the Apify IG signal was removed. SignalAgent now 
 deterministic corroboracao_value=0.0 (documented constant) — no Places field feeds it —
 which matches the prior offline (Null) behaviour and keeps reliability routing stable.
 
-D-18 boundary: no import from brave.lanes.destinos.
+D-18 boundary: no import from other domains.
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ async def test_signal_agent_hard_descarte_closed_permanently() -> None:
       - rio.sub_state must be None
       - rio.dlq_reason must be "closed_place"
     """
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     closed_fixture = {
         **SIGNAL_FIXTURE_CLOSED,
@@ -105,7 +105,7 @@ async def test_signal_agent_hard_descarte_closed_permanently() -> None:
         config=ScoreConfig(),
     )
 
-    with patch("brave.lanes.atrativos.signal_agent.write_audit"):
+    with patch("brave.domains.places.signal_agent.write_audit"):
         await agent.run(rio)
 
     assert rio.routing == "descarte"
@@ -117,7 +117,7 @@ async def test_signal_agent_hard_descarte_closed_permanently() -> None:
 async def test_signal_agent_closed_temporarily_parks_in_dlq() -> None:
     """CLOSED_TEMPORARILY is a steward's call, not a descarte (2026-09-18): DLQ with
     dlq_reason "closed_temporarily" — the Painel badges it "Fechado Temporariamente"."""
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     closed_tmp_fixture = {
         "place_id": "ChIJtest001",
@@ -140,7 +140,7 @@ async def test_signal_agent_closed_temporarily_parks_in_dlq() -> None:
         config=ScoreConfig(),
     )
 
-    with patch("brave.lanes.atrativos.signal_agent.write_audit"):
+    with patch("brave.domains.places.signal_agent.write_audit"):
         await agent.run(rio)
 
     assert rio.routing == "dlq"
@@ -160,7 +160,7 @@ async def test_signal_agent_advances_sub_state_for_open_place() -> None:
     SIGNAL_FIXTURE_OPEN has a review from 2026-06-01 (≤30 days before 2026-06-15).
     atualidade_value in normalized should be 100 after run.
     """
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     open_fixture = {**SIGNAL_FIXTURE_OPEN, "place_id": "ChIJtest001"}
 
@@ -178,8 +178,8 @@ async def test_signal_agent_advances_sub_state_for_open_place() -> None:
         config=ScoreConfig(),
     )
 
-    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
-         patch("brave.lanes.atrativos.signal_agent.route_by_score"):
+    with patch("brave.domains.places.signal_agent.write_audit"), \
+         patch("brave.domains.places.signal_agent.route_by_score"):
         await agent.run(rio)
 
     # sub_state must be "signals_gathered"
@@ -205,7 +205,7 @@ async def test_signal_agent_writes_corroboracao_constant_zero() -> None:
     corroboração, so the lane must write the documented 0.0 constant regardless of any
     stale prior value. It then hands off to route_by_score (the reliability routing path).
     """
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     open_fixture = {**SIGNAL_FIXTURE_OPEN, "place_id": "ChIJtest001"}
 
@@ -225,8 +225,8 @@ async def test_signal_agent_writes_corroboracao_constant_zero() -> None:
         config=ScoreConfig(),
     )
 
-    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
-         patch("brave.lanes.atrativos.signal_agent.route_by_score") as mock_route:
+    with patch("brave.domains.places.signal_agent.write_audit"), \
+         patch("brave.domains.places.signal_agent.route_by_score") as mock_route:
         await agent.run(rio)
 
     # Deterministic constant: corroboracao_value is exactly 0.0 (Apify retired).
@@ -258,7 +258,7 @@ async def test_signal_agent_with_recent_reviews_is_scored() -> None:
     The no-recent-reviews rule must NOT fire; the record advances to
     signals_gathered, route_by_score runs, and most_recent_review_at is persisted.
     """
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     # Review 20 days before the pinned clock → recent (≤ 90 days).
     recent_dt = (_NOW - timedelta(days=20)).replace(microsecond=0)
@@ -270,8 +270,8 @@ async def test_signal_agent_with_recent_reviews_is_scored() -> None:
 
     agent = SignalAgent(places_client=fake_places, session=session, now=_NOW, config=ScoreConfig())
 
-    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
-         patch("brave.lanes.atrativos.signal_agent.route_by_score") as mock_route:
+    with patch("brave.domains.places.signal_agent.write_audit"), \
+         patch("brave.domains.places.signal_agent.route_by_score") as mock_route:
         await agent.run(rio)
 
     assert rio.sub_state == "signals_gathered"
@@ -288,7 +288,7 @@ async def test_signal_agent_no_reviews_routes_to_terminal_dlq() -> None:
     route_by_score must NOT run (the rule short-circuits before scoring), and the
     record must land at sub_state=None — never sub_state='aguardando_consulta_whatsapp'.
     """
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     fixture = _open_fixture([])  # zero reviews
     fake_places = FakePlacesClient(fixture_details={"ChIJtest001": fixture})
@@ -297,8 +297,8 @@ async def test_signal_agent_no_reviews_routes_to_terminal_dlq() -> None:
 
     agent = SignalAgent(places_client=fake_places, session=session, now=_NOW, config=ScoreConfig())
 
-    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
-         patch("brave.lanes.atrativos.signal_agent.route_by_score") as mock_route:
+    with patch("brave.domains.places.signal_agent.write_audit"), \
+         patch("brave.domains.places.signal_agent.route_by_score") as mock_route:
         await agent.run(rio)
 
     assert rio.routing == "dlq"
@@ -311,7 +311,7 @@ async def test_signal_agent_no_reviews_routes_to_terminal_dlq() -> None:
 @pytest.mark.asyncio
 async def test_signal_agent_stale_reviews_over_90d_routes_to_terminal_dlq() -> None:
     """Phase F: newest review older than 90 days → terminal DLQ, NOT the gate."""
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     # Newest review 120 days before the pinned clock → stale (> 90 days).
     stale_dt = (_NOW - timedelta(days=120)).replace(microsecond=0)
@@ -323,8 +323,8 @@ async def test_signal_agent_stale_reviews_over_90d_routes_to_terminal_dlq() -> N
 
     agent = SignalAgent(places_client=fake_places, session=session, now=_NOW, config=ScoreConfig())
 
-    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
-         patch("brave.lanes.atrativos.signal_agent.route_by_score") as mock_route:
+    with patch("brave.domains.places.signal_agent.write_audit"), \
+         patch("brave.domains.places.signal_agent.route_by_score") as mock_route:
         await agent.run(rio)
 
     assert rio.routing == "dlq"
@@ -336,7 +336,7 @@ async def test_signal_agent_stale_reviews_over_90d_routes_to_terminal_dlq() -> N
 @pytest.mark.asyncio
 async def test_signal_agent_persists_formatted_address() -> None:
     """Places formatted_address → normalized['address'] (the flat push field)."""
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     recent_dt = (_NOW - timedelta(days=20)).replace(microsecond=0)
     fixture = {
@@ -350,8 +350,8 @@ async def test_signal_agent_persists_formatted_address() -> None:
 
     agent = SignalAgent(places_client=fake_places, session=session, now=_NOW, config=ScoreConfig())
 
-    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
-         patch("brave.lanes.atrativos.signal_agent.route_by_score"):
+    with patch("brave.domains.places.signal_agent.write_audit"), \
+         patch("brave.domains.places.signal_agent.route_by_score"):
         await agent.run(rio)
 
     assert rio.normalized["address"] == "Praça Central, Porto Seguro - BA"
@@ -360,7 +360,7 @@ async def test_signal_agent_persists_formatted_address() -> None:
 @pytest.mark.asyncio
 async def test_signal_agent_missing_address_keeps_nascente_value() -> None:
     """Places without formatted_address must never wipe an address already carried in."""
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     recent_dt = (_NOW - timedelta(days=20)).replace(microsecond=0)
     fixture = _open_fixture([{"publishTime": recent_dt.isoformat(), "rating": 5, "text": "ok"}])
@@ -372,8 +372,8 @@ async def test_signal_agent_missing_address_keeps_nascente_value() -> None:
 
     agent = SignalAgent(places_client=fake_places, session=session, now=_NOW, config=ScoreConfig())
 
-    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
-         patch("brave.lanes.atrativos.signal_agent.route_by_score"):
+    with patch("brave.domains.places.signal_agent.write_audit"), \
+         patch("brave.domains.places.signal_agent.route_by_score"):
         await agent.run(rio)
 
     assert rio.normalized["address"] == "Rua do Nascente, 100"
@@ -386,7 +386,7 @@ async def test_signal_agent_no_recent_reviews_never_reaches_whatsapp_gate() -> N
     Regression pin for the 'manual now' requirement: the terminal-DLQ short-circuit
     replaces the old auto-enrollment into sub_state='aguardando_consulta_whatsapp'.
     """
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     fixture = _open_fixture([])
     fake_places = FakePlacesClient(fixture_details={"ChIJtest001": fixture})
@@ -395,8 +395,8 @@ async def test_signal_agent_no_recent_reviews_never_reaches_whatsapp_gate() -> N
 
     agent = SignalAgent(places_client=fake_places, session=session, now=_NOW, config=ScoreConfig())
 
-    with patch("brave.lanes.atrativos.signal_agent.write_audit"), \
-         patch("brave.lanes.atrativos.signal_agent.route_by_score"):
+    with patch("brave.domains.places.signal_agent.write_audit"), \
+         patch("brave.domains.places.signal_agent.route_by_score"):
         await agent.run(rio)
 
     assert rio.sub_state is None

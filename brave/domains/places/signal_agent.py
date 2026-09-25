@@ -30,7 +30,7 @@ After gathering signals, calls route_by_score to apply reliability scoring and r
 For a NON-stale borderline record (routing == "dlq" via score), sets
 sub_state = "aguardando_consulta_whatsapp" (human WhatsApp gate, D-06).
 
-D-18 boundary: no imports from brave.lanes.destinos or brave.tasks.
+D-18 boundary: no imports from other domains or brave.tasks.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ from sqlalchemy.orm import Session
 from brave.config.settings import ScoreConfig
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import route_by_score
-from brave.lanes.atrativos.schemas import SignalResult
+from brave.domains.places.schemas import SignalResult
 from brave.observability.audit import write_audit
 
 if TYPE_CHECKING:
@@ -146,7 +146,7 @@ class SignalAgent:
     After signals: calls route_by_score. If routing == "dlq" (borderline), sets
     sub_state = "aguardando_consulta_whatsapp" (human gate, D-06).
 
-    D-18 boundary: no imports from brave.lanes.destinos.
+    D-18 boundary: no imports from other domains.
 
     Args:
         places_client: PlacesClientProtocol implementation (real or fake).

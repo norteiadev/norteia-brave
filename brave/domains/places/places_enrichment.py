@@ -26,7 +26,7 @@ Graceful degradation (mirrors DescriptionEnrichmentAgent): no confident match, e
 Text Search, or ANY external failure keeps the TA floor (no Google keys written), still
 advances sub_state + re-scores — a scraper/API defect can never strand the record.
 
-D-18 boundary: no imports from brave.lanes.destinos or brave.tasks.
+D-18 boundary: no imports from other domains or brave.tasks.
 """
 
 from __future__ import annotations
@@ -45,14 +45,14 @@ from brave.config.settings import ScoreConfig
 from brave.core.models import AtrativoBusca, Municipio
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import route_by_score
-from brave.lanes.atrativos.copywriter import (
+from brave.domains.places.copywriter import (
     CASCADE_MODEL,
     CascadeResult,
     TourismCopywriter,
     local_hint,
 )
-from brave.lanes.atrativos.schemas import SignalResult
-from brave.lanes.atrativos.signal_agent import (
+from brave.domains.places.schemas import SignalResult
+from brave.domains.places.signal_agent import (
     CLOSED_STATUSES,
     TEMPORARILY_CLOSED,
     TEMPORARILY_CLOSED_REASON,
@@ -130,7 +130,7 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in km (pure math).
 
     Inlined (not imported from brave.domains.tripadvisor.ibge) to keep this
-    brave.lanes.atrativos agent free of a cross-package import for ~8 lines of math.
+    brave.domains.places agent free of a cross-package import for ~8 lines of math.
     """
     r = 6371.0
     phi1, phi2 = math.radians(lat1), math.radians(lat2)

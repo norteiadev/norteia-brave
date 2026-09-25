@@ -70,7 +70,7 @@ def _make_rio(sub_state: str) -> MagicMock:
 @pytest.mark.asyncio
 async def test_signal_agent_does_not_erase_a_description_committed_mid_call() -> None:
     """SignalAgent must merge its delta onto the CURRENT column, under a row lock."""
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     inner = FakePlacesClient(fixture_details={_PLACE_ID: SIGNAL_FIXTURE_OPEN})
     rio = _make_rio("contacts_found")
@@ -78,8 +78,8 @@ async def test_signal_agent_does_not_erase_a_description_committed_mid_call() ->
     agent = SignalAgent(places_client=_RacingPlacesClient(inner, rio), session=session, now=_NOW, config=ScoreConfig())
 
     with (
-        patch("brave.lanes.atrativos.signal_agent.write_audit"),
-        patch("brave.lanes.atrativos.signal_agent.route_by_score"),
+        patch("brave.domains.places.signal_agent.write_audit"),
+        patch("brave.domains.places.signal_agent.route_by_score"),
     ):
         await agent.run(rio)
 
@@ -98,7 +98,7 @@ async def test_signal_agent_does_not_erase_a_description_committed_mid_call() ->
 @pytest.mark.asyncio
 async def test_contact_finder_does_not_erase_a_description_committed_mid_call() -> None:
     """Same shape at ContactFinderAgent — it writes the whole column too."""
-    from brave.lanes.atrativos.contact_finder_agent import ContactFinderAgent
+    from brave.domains.places.contact_finder_agent import ContactFinderAgent
 
     inner = FakePlacesClient(
         fixture_details={_PLACE_ID: {"international_phone_number": "+55 73 99999-0001"}}
@@ -107,7 +107,7 @@ async def test_contact_finder_does_not_erase_a_description_committed_mid_call() 
     session = MagicMock()
     agent = ContactFinderAgent(places_client=_RacingPlacesClient(inner, rio), session=session)
 
-    with patch("brave.lanes.atrativos.contact_finder_agent.write_audit"):
+    with patch("brave.domains.places.contact_finder_agent.write_audit"):
         await agent.run(rio)
 
     assert rio.normalized["descricao_editorial"] == "Prosa paga pelo batch."

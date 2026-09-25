@@ -1,11 +1,11 @@
-"""Core quarantine utility — importable by both brave/tasks/ and brave/lanes/ without
-creating a tasks→lanes or lanes→tasks coupling (D-18).
+"""Core quarantine utility — importable by both brave/tasks/ and brave/domains/ without
+creating a tasks→domains or domains→tasks coupling (D-18).
 
-quarantine_poison is extracted from brave/tasks/pipeline.py so that lane code
-(e.g. producers under brave/lanes/) can write to PoisonQuarantine without
+quarantine_poison is extracted from brave/tasks/pipeline.py so that domain code
+(e.g. producers under brave/domains/) can write to PoisonQuarantine without
 importing from the tasks layer.
 
-D-18 boundary note: brave/core/ never imports from brave/lanes/ or brave/tasks/.
+D-18 boundary note: brave/core/ never imports from brave/domains/ or brave/tasks/.
 """
 
 import uuid
@@ -30,7 +30,7 @@ def quarantine_poison(
 
     Used by:
       - brave/tasks/failure_policy.py (Celery task failures)
-      - lane producers under brave/lanes/ (e.g. malformed LLM output)
+      - domain producers under brave/domains/ (e.g. malformed LLM output)
 
     Args:
         session:     SQLAlchemy Session.

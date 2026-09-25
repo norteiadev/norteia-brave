@@ -56,7 +56,7 @@ USD_TAVILY = 0.008
 def _chave(nome: str, uf: str) -> str:
     """Só o nome, dobrado: o fixture do TA não tem UF, e "Museu do Amanha" (fixture) é o
     mesmo "Museu Do Amanhã" (piloto, RJ)."""
-    from brave.lanes.atrativos.grounding import _fold
+    from brave.domains.places.grounding import _fold
 
     return " ".join(_fold(nome).split())
 
@@ -145,7 +145,7 @@ def construir():
     from brave.clients.llm import RealLLMClient
     from brave.clients.tavily import RealTavilyClient
     from brave.config.settings import AppConfig
-    from brave.lanes.atrativos.copywriter import CASCADE_MODEL, TourismCopywriter
+    from brave.domains.places.copywriter import CASCADE_MODEL, TourismCopywriter
 
     app = AppConfig()
     llm = RealLLMClient(config=app.llm)  # sem redis/session: o cost guard não é o objeto aqui

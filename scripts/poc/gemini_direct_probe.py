@@ -24,12 +24,12 @@ sys.path.insert(0, str(ROOT / "scripts/poc"))
 from fontes_abertas_probe import riqueza  # noqa: E402
 from parallel_direto_probe import amostra_ta  # noqa: E402
 
-from brave.lanes.atrativos.copywriter import (  # noqa: E402
+from brave.domains.places.copywriter import (  # noqa: E402
     COPYWRITER_SYSTEM,
     _build_context,
     _strip_dashes,
 )
-from brave.lanes.atrativos.grounding import (  # noqa: E402
+from brave.domains.places.grounding import (  # noqa: E402
     MIN_GROUNDEDNESS,
     groundedness_ratio,
     menciona,
