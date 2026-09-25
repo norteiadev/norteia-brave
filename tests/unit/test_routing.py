@@ -126,10 +126,16 @@ def test_route_by_score_sets_breakdown(score_config, rio_record):
     assert "origem" in rio_record.score_breakdown
 
 
+def _reprocess(rio_record, score_config):
+    """Run reprocess_record against an in-memory RioRecord (repo + session mocked)."""
+    repo = MagicMock()
+    repo.get.return_value = rio_record
+    with patch.object(routing, "_rio_repo", repo):
+        return routing.reprocess_record(MagicMock(), rio_record.id, score_config)
+
+
 def test_reprocess_record_resets_routing(score_config):
     """reprocess_record resets RioRecord.routing to 'in_progress' then re-scores."""
-    from brave.core.rio.routing import reprocess_record_inline
-
     rio_record = RioRecord(
         id=uuid.uuid4(),
         nascente_id=uuid.uuid4(),
@@ -144,15 +150,13 @@ def test_reprocess_record_resets_routing(score_config):
             "validacao_humana_value": 0.0,
         },
     )
-    reprocess_record_inline(rio_record, score_config)
+    _reprocess(rio_record, score_config)
     # After reprocess, routing is determined by score (85.0 → mar)
     assert rio_record.routing == "mar"
 
 
 def test_reprocess_record_idempotent(score_config):
-    """Calling reprocess_record_inline twice produces the same result."""
-    from brave.core.rio.routing import reprocess_record_inline
-
+    """Calling reprocess_record twice produces the same result."""
     rio_record = RioRecord(
         id=uuid.uuid4(),
         nascente_id=uuid.uuid4(),
@@ -167,11 +171,11 @@ def test_reprocess_record_idempotent(score_config):
             "validacao_humana_value": 0.0,
         },
     )
-    reprocess_record_inline(rio_record, score_config)
+    _reprocess(rio_record, score_config)
     score_after_first = rio_record.score
     routing_after_first = rio_record.routing
 
-    reprocess_record_inline(rio_record, score_config)
+    _reprocess(rio_record, score_config)
     assert rio_record.score == score_after_first
     assert rio_record.routing == routing_after_first
 
