@@ -1146,6 +1146,93 @@ def enrich_places_task(self, rio_id: str) -> None:
         session.close()
 
 
+# Places chain: the task that moves a record OUT of each sub_state. Only `discovered` has
+# another way back in (the daily discover re-query); a record left at contacts_found or
+# signals_gathered by a failed .delay or an exhausted task waits here for the sweeper.
+_CHAIN_NEXT_TASK: dict[str, str] = {
+    "discovered": "find_contacts_task",
+    "contacts_found": "gather_signals_task",
+    "signals_gathered": "enrich_places_task",
+}
+_STALLED_AFTER_MINUTES = 30  # younger records may still have their task queued
+_STALLED_BATCH = 50
+
+
+@shared_task(name="brave.redispatch_stalled_chain", time_limit=300)
+def redispatch_stalled_chain() -> int:
+    """Beat (15 min): re-dispatch the next chain task for atrativos stuck mid-chain.
+
+    Picks up to 50 attractions at discovered / contacts_found / signals_gathered whose
+    sub_state has not moved for 30 min (NULL = unknown = old enough), oldest first, and
+    .delay()s the task that advances each one. The chain tasks are idempotent (sub_state
+    guard under FOR UPDATE), so a duplicate costs no Places call.
+
+    Skips the whole round unless the motor is LIGADO, run_real_externals is on and the
+    ``default`` lane is enabled — every one of these tasks calls Google Places (paid).
+    Depth gate, mirrored from discover_atrativo_task: under a NASCENTE_RIO run the chain is
+    never kicked, so ``discovered`` is left alone.
+
+    A re-dispatched row gets sub_state_changed_at = now, so the column reads "last chain
+    activity": a record whose task keeps failing is retried at most every 30 min and goes
+    to the back of the line instead of holding one of the 50 slots forever.
+    """
+    from datetime import datetime, timedelta  # noqa: PLC0415
+
+    import redis as _redis_lib  # noqa: PLC0415
+    from sqlalchemy import or_, update  # noqa: PLC0415
+
+    from brave.config.runtime import enabled_sources  # noqa: PLC0415
+    from brave.core import engine as collection_engine  # noqa: PLC0415
+
+    rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+    session, _ = _get_session()
+    try:
+        effective = _load_config(session)
+        if (
+            not effective.run_real_externals
+            or "default" not in enabled_sources(effective)
+            or collection_engine.get_mode(rc, session=session) != collection_engine.LIGADO
+        ):
+            return 0
+        states = list(_CHAIN_NEXT_TASK)
+        if collection_engine.get_depth(rc) == collection_engine.NASCENTE_RIO:
+            states.remove("discovered")
+        now = datetime.now(UTC)
+        rows = session.execute(
+            select(RioRecord.id, RioRecord.sub_state)
+            .where(
+                RioRecord.entity_type == "attraction",
+                RioRecord.sub_state.in_(states),
+                # SignalAgent clears sub_state on a dlq routing; never enrich a dlq record.
+                or_(RioRecord.sub_state != "signals_gathered", RioRecord.routing != "dlq"),
+                or_(
+                    RioRecord.sub_state_changed_at.is_(None),
+                    RioRecord.sub_state_changed_at
+                    < now - timedelta(minutes=_STALLED_AFTER_MINUTES),
+                ),
+            )
+            .order_by(RioRecord.sub_state_changed_at.asc().nulls_first())
+            .limit(_STALLED_BATCH)
+        ).all()
+        if not rows:
+            return 0
+        session.execute(
+            update(RioRecord)
+            .where(RioRecord.id.in_([r.id for r in rows]))
+            .values(sub_state_changed_at=now)
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    counts: dict[str, int] = {}
+    for rio_id, sub_state in rows:
+        globals()[_CHAIN_NEXT_TASK[sub_state]].delay(str(rio_id))
+        counts[sub_state] = counts.get(sub_state, 0) + 1
+    logger.info("stalled_chain_redispatched", total=len(rows), **counts)
+    return len(rows)
+
+
 # Records per describe_uf run. Each one can take up to enrich_places' 300s budget, so a
 # chunk fits the hour time_limit; a full chunk self-chains the next one by id cursor.
 _DESCRIBE_CHUNK = 25
