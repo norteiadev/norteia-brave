@@ -1220,16 +1220,19 @@ def _redispatch_stalled_chain() -> int:
     never kicked, so ``discovered`` is left alone.
 
     A re-dispatched row gets sub_state_changed_at = now, so the column reads "last chain
-    activity": a record whose task keeps failing is retried at most every 30 min and goes
-    to the back of the line instead of holding one of the 50 slots forever.
+    activity" and a stuck record goes to the back of the line instead of holding one of the
+    50 slots forever. A record with a poison_quarantine row (its task exhausted its retries,
+    or failed permanently) is never re-dispatched: each attempt would pay for up to four
+    Places calls every 30 min, forever — it waits for a steward reprocess instead.
     """
     from datetime import datetime, timedelta  # noqa: PLC0415
 
     import redis as _redis_lib  # noqa: PLC0415
-    from sqlalchemy import or_, update  # noqa: PLC0415
+    from sqlalchemy import String, cast, exists, or_, update  # noqa: PLC0415
 
     from brave.config.runtime import enabled_sources  # noqa: PLC0415
     from brave.core import engine as collection_engine  # noqa: PLC0415
+    from brave.core.models import PoisonQuarantine  # noqa: PLC0415
 
     rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
     session, _ = _get_session()
@@ -1256,6 +1259,10 @@ def _redispatch_stalled_chain() -> int:
                     RioRecord.sub_state_changed_at.is_(None),
                     RioRecord.sub_state_changed_at
                     < now - timedelta(minutes=_STALLED_AFTER_MINUTES),
+                ),
+                ~exists().where(
+                    PoisonQuarantine.payload["rio_id"].as_string()
+                    == cast(RioRecord.id, String)
                 ),
             )
             .order_by(RioRecord.sub_state_changed_at.asc().nulls_first())

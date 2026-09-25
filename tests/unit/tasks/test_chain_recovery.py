@@ -171,6 +171,25 @@ def test_limit_takes_the_oldest_first(tx_session, spies, monkeypatch):
 
 
 @pytest.mark.integration
+def test_quarantined_record_is_never_redispatched(tx_session, spies):
+    """A task that exhausted its retries must not be paid for again every 30 min."""
+    from brave.core.quarantine import quarantine_poison
+
+    dispatched, _fake = spies
+    poisoned = _rio(tx_session, "contacts_found", None)
+    healthy = _rio(tx_session, "contacts_found", None)
+    quarantine_poison(
+        session=tx_session, nascente_id=None, task_name="brave.gather_signals",
+        error="boom", payload={"rio_id": poisoned},
+    )
+    tx_session.commit()
+
+    assert pipeline.redispatch_stalled_chain.run() == 1
+
+    assert dispatched == [("gather_signals_task", healthy)]
+
+
+@pytest.mark.integration
 def test_nascente_rio_depth_leaves_discovered_alone(tx_session, spies):
     dispatched, fake = spies
     collection_engine.set_depth(fake, collection_engine.NASCENTE_RIO)
