@@ -578,3 +578,36 @@ def test_discovery_task_found_advances_and_dispatches_outreach(
     assert rio.normalized["contacts"]["phone_e164"] == _RAW_CELULAR
     assert rio.normalized["contact"]["whatsapp_candidate"] == _MASKED_CELULAR
     assert outreach == [(str(rio.id),)]
+
+
+@pytest.mark.integration
+def test_discovery_task_outreach_enqueue_failure_bounces_back_to_dlq(
+    db_session, monkeypatch
+) -> None:
+    """Broker down on the outreach enqueue: the record goes back to the DLQ (visible to the
+    operator), never stranded at whatsapp_in_progress — the sweeper never sends on its own."""
+    from brave.domains.places.schemas import WhatsAppNumberDiscovery
+    from brave.tasks import pipeline
+    from tests.fakes.fake_llm import FakeLLMClient
+
+    monkeypatch.setattr(
+        "brave.clients.null_llm.NullLLMClient",
+        lambda *a, **k: FakeLLMClient(
+            fixture_result=WhatsAppNumberDiscovery(phone=_RAW_CELULAR, confidence=0.9)
+        ),
+    )
+
+    def _broker_down(*_a, **_k):
+        raise ConnectionError("broker down")
+
+    monkeypatch.setattr(pipeline.outreach_task, "delay", _broker_down)
+
+    rio = _make_dlq_atrativo(
+        db_session, routing="in_progress", sub_state="aguardando_consulta_whatsapp"
+    )
+    db_session.commit()
+
+    pipeline.discover_whatsapp_number_task.run(str(rio.id))
+
+    db_session.refresh(rio)
+    assert rio.sub_state is None

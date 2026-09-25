@@ -121,7 +121,7 @@ class TASweepProgressResponse(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    state: Literal["running", "done", "stopped_needs_bootstrap", "idle"]
+    state: Literal["running", "done", "stopped", "stopped_needs_bootstrap", "idle"]
     pages_done: int
     pages_total: int
     attractions_ingested: int

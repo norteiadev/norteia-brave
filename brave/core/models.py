@@ -19,7 +19,7 @@ Key design decisions implemented here:
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
@@ -35,6 +35,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     func,
     text,
 )
@@ -150,6 +151,11 @@ class RioRecord(Base):
     dlq_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # Sub-state for Atrativos (Phase 3); null for Destinos
     sub_state: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Last sub_state change, stamped by _stamp_sub_state_change below (every ORM writer).
+    # NULL = unknown (rows older than migration 0017). Read by redispatch_stalled_chain.
+    sub_state_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     normalized: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # pgvector column for HNSW fuzzy dedup (D-07, D-08)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
@@ -185,6 +191,15 @@ class RioRecord(Base):
             f"<RioRecord id={self.id} entity_type={self.entity_type!r} "
             f"uf={self.uf!r} routing={self.routing!r}>"
         )
+
+
+# active_history: the old value is loaded even when the attribute was expired (after a
+# commit), so a write of the same value is recognized and does not re-stamp.
+@event.listens_for(RioRecord.sub_state, "set", active_history=True)
+def _stamp_sub_state_change(target: RioRecord, value: Any, oldvalue: Any, _initiator: Any) -> None:
+    """Stamp sub_state_changed_at whenever sub_state actually changes (any ORM writer)."""
+    if value != oldvalue:
+        target.sub_state_changed_at = datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------

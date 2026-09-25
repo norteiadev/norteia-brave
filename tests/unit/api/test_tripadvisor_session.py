@@ -402,6 +402,18 @@ def test_sweep_progress_running_snapshot(authed_client, fake_redis):
     assert body["started_at"] is not None
 
 
+def test_sweep_progress_serializes_stopped(authed_client, fake_redis):
+    """A halted bulk run (pause/off/stop, billing wall) reads back as state=stopped."""
+    from brave.domains.tripadvisor import sweep_progress
+
+    sweep_progress.start(fake_redis, pages_total=334)
+    sweep_progress.stop(fake_redis)
+
+    resp = authed_client.get("/api/v1/tripadvisor/sweep/progress")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["state"] == "stopped"
+
+
 def test_sweep_progress_no_secret_fields(authed_client, fake_redis):
     """The progress response must carry no cookie/session/datadome field (T-15-03-02)."""
     from brave.domains.tripadvisor import sweep_progress

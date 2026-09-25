@@ -111,11 +111,13 @@ class PlacesDomain:
         return []
 
     def beat_entries(self, uf_list: list[str]) -> dict[str, dict]:
-        """Per-UF daily beat rows: discover_atrativo @ 3 AM UTC only.
+        """Per-UF daily beat rows (discover_atrativo @ 3 AM UTC) + the chain sweeper.
 
-        One entry per UF, no ``options.queue`` (single-queue model). The retired
-        Mtur ``sweep_uf`` entry is gone. Gated by ``enabled_sources`` in
-        ``build_beat_schedule`` — emitted only when the ``default`` lane is enabled.
+        One discover entry per UF, no ``options.queue`` (single-queue model). The retired
+        Mtur ``sweep_uf`` entry is gone. ``redispatch-stalled-chain-15min`` re-dispatches
+        atrativos stuck mid-chain (brave.redispatch_stalled_chain). Gated by
+        ``enabled_sources`` in ``build_beat_schedule`` — emitted only when the ``default``
+        lane is enabled.
         """
         from celery.schedules import crontab  # noqa: PLC0415
 
@@ -128,6 +130,12 @@ class PlacesDomain:
                 "args": (_uf,),
                 "kwargs": {},
             }
+        schedule["redispatch-stalled-chain-15min"] = {
+            "task": "brave.redispatch_stalled_chain",
+            "schedule": crontab(minute="*/15"),
+            "args": (),
+            "kwargs": {},
+        }
         return schedule
 
 

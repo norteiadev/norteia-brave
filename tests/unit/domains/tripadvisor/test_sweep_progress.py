@@ -154,6 +154,14 @@ def test_mark_done_sets_done_state(redis):
     assert sweep_progress.get_progress(redis)["state"] == "done"
 
 
+def test_stop_sets_stopped_state_and_keeps_resume_offset(redis):
+    sweep_progress.start(redis, pages_total=334)
+    sweep_progress.record_page(redis, offset=30, ingested_delta=30)
+    sweep_progress.stop(redis)
+    assert sweep_progress.get_progress(redis)["state"] == "stopped"
+    assert sweep_progress.get_resume_offset(redis) == 30
+
+
 # ---------------------------------------------------------------------------
 # Secret-free invariant (T-15-03-02)
 # ---------------------------------------------------------------------------

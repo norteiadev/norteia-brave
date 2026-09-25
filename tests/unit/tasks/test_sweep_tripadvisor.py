@@ -160,7 +160,7 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
 
     retry_calls = []
 
-    def _recording_retry(exc=None, max_retries=None):
+    def _recording_retry(exc=None, max_retries=None, countdown=None):
         # What a worker's retry() does while retries are left: raise celery's Retry.
         # (Once exhausted it re-raises ``exc`` itself — never MaxRetriesExceededError
         # when exc= is given; tests/unit/tasks/test_failure_policy.py covers that path.)
@@ -400,15 +400,18 @@ class _RaisingPaginatedClient:
     DataDome/session expiry (403/429) after some pages have already been ingested.
     """
 
-    def __init__(self, *args, pages_before_raise: int = 1, **kwargs) -> None:
+    def __init__(
+        self, *args, pages_before_raise: int = 1, exc: Exception | None = None, **kwargs
+    ) -> None:
         self._pages_before_raise = pages_before_raise
+        self._exc = exc
 
     async def fetch_attractions_paginated_gql(
         self, geo_id: int, start_page: int = 1, max_pages: int = 334
     ) -> AsyncIterator[tuple[int, list[dict[str, Any]]]]:
         for i in range(self._pages_before_raise):
             yield i * 30, [_make_card(location_id=1000 + i)]
-        raise SessionExpiredError("TripAdvisor GraphQL returned 403 — session expired.")
+        raise self._exc or SessionExpiredError("TripAdvisor GraphQL returned 403 — session expired.")
 
 
 class _RecordingGqlClient:
@@ -478,7 +481,7 @@ def _run_bulk_sweep(
     mock_self = MagicMock()
     retry_calls = []
 
-    def _recording_retry(exc=None, max_retries=None):
+    def _recording_retry(exc=None, max_retries=None, countdown=None):
         retry_calls.append(exc)
         raise Retry(exc=exc)
 
@@ -564,6 +567,46 @@ class TestSweepTripAdvisorBulkNational:
         assert store_call_count == 1, "page-1 record must remain durable (per-page commit)"
         assert snap["pages_done"] == 1
         assert sweep_progress.get_resume_offset(fake_redis) == 0
+
+    def test_bulk_halt_marks_stopped_not_done(self, monkeypatch):
+        """Motor PAUSADO mid-run → produce_paginated halts → state=stopped, never done."""
+        from brave.core import engine as collection_engine  # noqa: PLC0415
+
+        page1 = [_make_card(location_id=10_000 + i) for i in range(30)]
+        fake_redis = fakeredis.FakeRedis()
+
+        _run_bulk_sweep(
+            fake_client=FakeTripAdvisorClient(gql_pages=[(0, page1)]),
+            fake_geo=FakeGeocoderClient(fixture_national_results={}),
+            fake_redis=fake_redis,
+            monkeypatch=monkeypatch,
+            max_pages=1,
+            pre_seed=lambda rc: collection_engine.set_mode(rc, collection_engine.PAUSADO),
+        )
+
+        snap = sweep_progress.get_progress(fake_redis)
+        assert snap["state"] == "stopped"
+        assert snap["pages_done"] == 0
+
+    def test_bulk_provider_balance_marks_stopped_and_pauses(self, monkeypatch):
+        """A billing wall mid-run → state=stopped (not done), motor paused, no retry."""
+        from brave.core import engine as collection_engine  # noqa: PLC0415
+        from brave.shared.exceptions import ProviderBalanceError  # noqa: PLC0415
+
+        fake_redis = fakeredis.FakeRedis()
+
+        _, retry_calls, _ = _run_bulk_sweep(
+            fake_client=_RaisingPaginatedClient(
+                pages_before_raise=1, exc=ProviderBalanceError("openrouter")
+            ),
+            fake_geo=FakeGeocoderClient(fixture_national_results={}),
+            fake_redis=fake_redis,
+            monkeypatch=monkeypatch,
+        )
+
+        assert retry_calls == []
+        assert sweep_progress.get_progress(fake_redis)["state"] == "stopped"
+        assert collection_engine.get_mode(fake_redis) == collection_engine.PAUSADO
 
     def test_bulk_resume_starts_after_last_completed_offset(self, monkeypatch):
         """A re-run with last_completed_offset=30 calls produce_paginated at start_page 3."""

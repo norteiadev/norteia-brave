@@ -27,9 +27,9 @@ Isolation: the chain tasks call session.commit() internally, so we use the SAVEP
 session pattern established in the destinos-lane integration tests — every commit only releases a savepoint and the
 outer rollback at teardown discards everything (no leakage into the shared docker-compose DB).
 
-Sync-fallback fidelity: there is no Celery worker in the test, so we force the production
-"dispatch .delay, except → run inline" fallback by patching .delay to raise. This exercises the
-exact offline path an operator hits when no broker/worker is reachable.
+No Celery worker in the test: every chain .delay is a no-op and _run_chain runs each task
+with .run, in chain order, while the record sits at the sub_state that task advances — the
+same condition each task checks before dispatching the next one.
 
 Requires: docker-compose postgres up + BRAVE_DB_URL set (load .env before running).
 Marked @pytest.mark.integration — skipped when DB unavailable.
@@ -241,22 +241,14 @@ def _patch_fakes(monkeypatch) -> None:
     )
 
 
-def _force_inline_fallback(monkeypatch, pipeline) -> None:
-    """Force the production dispatch-then-inline fallback (no broker/worker in the test).
-
-    Patching .delay to raise makes discover_atrativo_task/find_contacts_task take their
-    `except → .run(...)` branch, advancing the chain synchronously in-process — the exact
-    path an operator hits with no reachable broker.
-    """
-    def _raise(*args, **kwargs):
-        raise RuntimeError("no broker in test — force inline .run fallback")
-
-    monkeypatch.setattr(pipeline.find_contacts_task, "delay", _raise)
-    monkeypatch.setattr(pipeline.gather_signals_task, "delay", _raise)
+def _mute_chain_dispatch(monkeypatch, pipeline) -> None:
+    """No broker in the test: the chain's .delay calls go nowhere (_run_chain runs them)."""
+    for attr in pipeline._CHAIN_NEXT_TASK.values():
+        monkeypatch.setattr(getattr(pipeline, attr), "delay", lambda *a, **k: None)
 
 
 def _run_chain(db, monkeypatch):
-    """Seed the parent destino + run the full auto chain inline.
+    """Seed the parent destino + run the full auto chain, one task at a time.
 
     Returns (gate_rio, read_session): read_session is a fresh post-chain session that sees
     every committed write the chain made. Caller uses read_session for all assertions (the
@@ -270,9 +262,18 @@ def _run_chain(db, monkeypatch):
     # Each nested chain task opens its OWN real session via _get_session (production fidelity).
     monkeypatch.setattr(pipeline, "_get_session", db.get_session)
     _patch_fakes(monkeypatch)
-    _force_inline_fallback(monkeypatch, pipeline)
+    _mute_chain_dispatch(monkeypatch, pipeline)
 
     pipeline.discover_atrativo_task.run(UF)
+    # discovered → find_contacts → gather_signals → (signals_gathered) enrich_places.
+    for _hop in pipeline._CHAIN_NEXT_TASK:  # bounded: a task that does not advance stops here
+        check = db.fresh()
+        rio = check.scalar(select(RioRecord).where(RioRecord.canonical_key == SOURCE_REF))
+        next_task = pipeline._CHAIN_NEXT_TASK.get(rio.sub_state) if rio else None
+        check.close()
+        if next_task is None:
+            break
+        getattr(pipeline, next_task).run(str(rio.id))
 
     read = db.fresh()
     rio = read.scalar(

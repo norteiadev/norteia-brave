@@ -290,6 +290,45 @@ def _load_config(session: Session) -> AppConfig:
     return load_effective_config(session, overlay_redis())
 
 
+def _dispatch_chain(task: Any, rio_id: str) -> bool:
+    """Enqueue the next chain task; a broker failure is logged, never run inline.
+
+    Returns False when the enqueue failed. The record keeps its current sub_state;
+    brave.redispatch_stalled_chain recovers the Places chain states (discovered /
+    contacts_found / signals_gathered). An inline .run() here used to end, with the broker
+    down, in the CALLER's quarantine ("retry failed: Reject") — and in discover it cut the
+    fan-out short.
+    """
+    try:
+        task.delay(rio_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "chain_dispatch_failed", task=task.name, rio_id=rio_id, error_type=type(exc).__name__
+        )
+        return False
+    return True
+
+
+def _beat_health(task: str, exc: BaseException | None = None) -> None:
+    """Record (``exc``) or clear (None) a beat task's last error for the Painel.
+
+    Best-effort (brave.core.beat_health): Redis being down must not change the task's own
+    outcome.
+    """
+    import redis as _redis_lib  # noqa: PLC0415
+
+    from brave.core import beat_health  # noqa: PLC0415
+
+    try:
+        rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+        if exc is None:
+            beat_health.clear_error(rc, task)
+        else:
+            beat_health.record_error(rc, task, exc)
+    except Exception:  # noqa: BLE001
+        logger.warning("beat_health_write_failed", task=task)
+
+
 async def _using(clients: Any, coro: Any) -> Any:
     """Await ``coro`` inside ``clients``: persistent HTTP connections held for the whole
     event loop, everything the bag built closed when it ends (brave.clients.factory)."""
@@ -380,11 +419,15 @@ def repush_pending_mar() -> int:
     session, _ = _get_session()
     try:
         dispatched = republish_pending(session, publish_mar.delay)
-        if dispatched:
-            logger.info("repush_pending_mar_dispatched", count=dispatched)
-        return dispatched
+    except Exception as exc:
+        _beat_health("brave.repush_pending_mar", exc)
+        raise
     finally:
         session.close()
+    _beat_health("brave.repush_pending_mar")
+    if dispatched:
+        logger.info("repush_pending_mar_dispatched", count=dispatched)
+    return dispatched
 
 
 @shared_task(
@@ -524,14 +567,11 @@ def discover_atrativo_task(
             # ORCH-02 / D-03: fan out the FSM chain. DiscoveryAgent.produce returns None,
             # so chaining is keyed on sub_state queries (self-healing across restarts) —
             # never on a producer return value. Query every attraction this sweep landed at
-            # sub_state='discovered' and dispatch find_contacts_task per row. Dispatch-then-
-            # inline-fallback (swallow-all, from dlq.py): an operator/test with no broker still
-            # advances the chain synchronously. Replay-safe: a duplicate dispatch hits the
-            # contact_finder inline precondition guard and no-ops (D-04, finding #2).
-            # Materialize the IDs up front (as strings) BEFORE dispatching. The inline
-            # fallback (.run) opens/commits a session that can expire/detach live ORM rows;
-            # holding ORM objects across a dispatch would raise DetachedInstanceError on the
-            # next loop iteration. Selecting the scalar id column avoids that entirely.
+            # sub_state='discovered' and dispatch find_contacts_task per row. A failed
+            # .delay is logged and skipped: the record stays 'discovered' and
+            # brave.redispatch_stalled_chain picks it up — one bad dispatch never stops the
+            # fan-out. Replay-safe: a duplicate dispatch hits the contact_finder inline
+            # precondition guard and no-ops (D-04, finding #2).
             discovered_ids = session.scalars(
                 select(RioRecord.id).where(
                     RioRecord.entity_type == "attraction",
@@ -541,14 +581,10 @@ def discover_atrativo_task(
             ).all()
             # Depth gate (plan 10-02): only NASCENTE_RIO_MAR kicks the WhatsApp-gate
             # FSM chain. Under NASCENTE_RIO discovery/Rio still ran above, but the
-            # ENTIRE fan-out below — both the .delay dispatch AND the .run inline
-            # fallback — is suppressed so the chain never advances toward the gate.
+            # ENTIRE fan-out below is suppressed so the chain never advances toward the gate.
             if effective_depth != collection_engine.NASCENTE_RIO:
                 for rio_id in discovered_ids:
-                    try:
-                        find_contacts_task.delay(str(rio_id))
-                    except Exception:
-                        find_contacts_task.run(str(rio_id))
+                    _dispatch_chain(find_contacts_task, str(rio_id))
 
     finally:
         # Producer-completes lifecycle: engine_sweep_run claimed this producer before
@@ -604,7 +640,8 @@ def sweep_tripadvisor(
     destino_rio_map (parent-less bulk ingest). It reads the resume offset from
     sweep_progress so a re-run continues from the page after the last completed offset
     (NOT page 1), seeds the live progress hash, commits per-page (inside produce_paginated),
-    marks the run done on completion, and on a mid-run 403/429 SessionExpiredError reuses
+    marks the run done when the pages run out (``stopped`` on a pause/off/stop or a provider
+    billing wall), and on a mid-run 403/429 SessionExpiredError reuses
     the SHARED fail-fast block plus a GUARDED sweep_progress.stop_needs_bootstrap. The
     slice (small max_pages) and the full 334-page run share this ONE page-range-parameterized
     code path. The per-UF (bulk_national=False) path is left byte-for-byte unchanged.
@@ -713,20 +750,28 @@ def sweep_tripadvisor(
                     destino_rio_map=None,
                     geocoder=geocoder,
                 )
-                asyncio.run(
-                    _using(
-                        clients,
-                        bulk_ingest.produce_paginated(
-                            geo_id,
-                            _effective_start_page,
-                            max_pages or 334,
-                            rc,
-                            run_rio=run_rio,
-                            run_id=bulk_run_id,
-                        ),
+                try:
+                    halted = asyncio.run(
+                        _using(
+                            clients,
+                            bulk_ingest.produce_paginated(
+                                geo_id,
+                                _effective_start_page,
+                                max_pages or 334,
+                                rc,
+                                run_rio=run_rio,
+                                run_id=bulk_run_id,
+                            ),
+                        )
                     )
-                )
-                sweep_progress.mark_done(rc)
+                except ProviderBalanceError:
+                    sweep_progress.stop(rc)  # the failure policy then pauses the motor
+                    raise
+                # A pause/off/stop is not "done": the pages did not run out.
+                if halted:
+                    sweep_progress.stop(rc)
+                else:
+                    sweep_progress.mark_done(rc)
                 # Terminal commit (produce_paginated already commits per page).
                 session.commit()
                 return
@@ -923,14 +968,11 @@ def find_contacts_task(self, rio_id: str) -> None:
             # ORCH-02 / D-03: continue the chain only if this record actually advanced to
             # contacts_found (the ContactFinder inline guard short-circuits a duplicate/stale
             # dispatch — in which case we must NOT enqueue). Re-read sub_state after commit and
-            # dispatch gather_signals_task with the same dispatch-then-inline-fallback. Keyed on
-            # sub_state, not a return value (D-03); replay-safe via the signal_agent guard (D-04).
+            # dispatch gather_signals_task (_dispatch_chain). Keyed on sub_state, not a return
+            # value (D-03); replay-safe via the signal_agent guard (D-04).
             session.refresh(rio)
             if rio.sub_state == "contacts_found":
-                try:
-                    gather_signals_task.delay(str(rio_id))
-                except Exception:
-                    gather_signals_task.run(str(rio_id))
+                _dispatch_chain(gather_signals_task, str(rio_id))
 
     finally:
         session.close()
@@ -988,10 +1030,7 @@ def gather_signals_task(self, rio_id: str) -> None:
             # liveness). Keyed on sub_state; replay-safe via the Places agent's own guard.
             session.refresh(rio)
             if rio.sub_state == "signals_gathered":
-                try:
-                    enrich_places_task.delay(str(rio_id))
-                except Exception:
-                    enrich_places_task.run(str(rio_id))
+                _dispatch_chain(enrich_places_task, str(rio_id))
 
     finally:
         session.close()
@@ -1135,7 +1174,10 @@ def enrich_places_task(self, rio_id: str) -> None:
     try:
         with task_failure_policy(self, session, "brave.enrich_places", payload={"rio_id": rio_id}):
             rio_uuid = uuid.UUID(rio_id)
-            rio = session.get(RioRecord, rio_uuid)
+            # FOR UPDATE, like find_contacts / gather_signals: a duplicate (the sweeper
+            # re-dispatching while the original is still queued) blocks here, then reads
+            # google_enriched and skips the paid Places sub-step.
+            rio = session.get(RioRecord, rio_uuid, with_for_update=True)
             if rio is None:
                 raise PermanentError(f"RioRecord {rio_id} not found")
 
@@ -1144,6 +1186,123 @@ def enrich_places_task(self, rio_id: str) -> None:
 
     finally:
         session.close()
+
+
+# Places chain: the task that moves a record OUT of each sub_state. Only `discovered` has
+# another way back in (the daily discover re-query); a record left at contacts_found or
+# signals_gathered by a failed .delay or an exhausted task waits here for the sweeper.
+_CHAIN_NEXT_TASK: dict[str, str] = {
+    "discovered": "find_contacts_task",
+    "contacts_found": "gather_signals_task",
+    "signals_gathered": "enrich_places_task",
+}
+_STALLED_AFTER_MINUTES = 30  # younger records may still have their task queued
+_STALLED_BATCH = 50
+_QUARANTINE_COOLDOWN_DAYS = 7  # a quarantined record is not paid for again before this
+
+
+@shared_task(name="brave.redispatch_stalled_chain", time_limit=300)
+def redispatch_stalled_chain() -> int:
+    """Beat (15 min): _redispatch_stalled_chain, its failures kept for the Painel."""
+    try:
+        count = _redispatch_stalled_chain()
+    except Exception as exc:
+        _beat_health("brave.redispatch_stalled_chain", exc)
+        raise
+    _beat_health("brave.redispatch_stalled_chain")
+    return count
+
+
+def _redispatch_stalled_chain() -> int:
+    """Re-dispatch the next chain task for atrativos stuck mid-chain.
+
+    Picks up to 50 attractions at discovered / contacts_found / signals_gathered whose
+    sub_state has not moved for 30 min (NULL = unknown = old enough), oldest first, and
+    .delay()s the task that advances each one. The chain tasks are idempotent (sub_state
+    guard under FOR UPDATE), so a duplicate costs no Places call.
+
+    Skips the whole round unless the motor is LIGADO, run_real_externals is on and the
+    ``default`` lane is enabled — every one of these tasks calls Google Places (paid).
+    Depth gate, mirrored from discover_atrativo_task: under a NASCENTE_RIO run the chain is
+    never kicked, so ``discovered`` is left alone.
+
+    A re-dispatched row gets sub_state_changed_at = now, so the column reads "last chain
+    activity" and a stuck record goes to the back of the line instead of holding one of the
+    50 slots forever. A record quarantined in the last 7 days (its task exhausted its
+    retries, or failed permanently) is skipped: each attempt would pay for up to four Places
+    calls every 30 min. After the cooldown it gets one more try per quarantine — a transient
+    Places outage does not strand a record forever.
+    """
+    from datetime import datetime, timedelta  # noqa: PLC0415
+
+    import redis as _redis_lib  # noqa: PLC0415
+    from sqlalchemy import String, and_, cast, exists, or_, update  # noqa: PLC0415
+
+    from brave.config.runtime import enabled_sources  # noqa: PLC0415
+    from brave.core import engine as collection_engine  # noqa: PLC0415
+    from brave.core.models import PoisonQuarantine  # noqa: PLC0415
+
+    rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+    session, _ = _get_session()
+    try:
+        effective = _load_config(session)
+        if (
+            not effective.run_real_externals
+            or "default" not in enabled_sources(effective)
+            or collection_engine.get_mode(rc, session=session) != collection_engine.LIGADO
+        ):
+            return 0
+        states = list(_CHAIN_NEXT_TASK)
+        if collection_engine.get_depth(rc) == collection_engine.NASCENTE_RIO:
+            states.remove("discovered")
+        now = datetime.now(UTC)
+        rows = session.execute(
+            select(RioRecord.id, RioRecord.sub_state)
+            .where(
+                RioRecord.entity_type == "attraction",
+                RioRecord.sub_state.in_(states),
+                # signals_gathered is also where a FINISHED record rests: enrich_places never
+                # moves sub_state, it only marks google_enriched. So only a record enrich never
+                # finished is stalled there (and SignalAgent clears sub_state on a dlq routing).
+                or_(
+                    RioRecord.sub_state != "signals_gathered",
+                    and_(
+                        RioRecord.routing != "dlq",
+                        RioRecord.normalized["google_enriched"].as_string().is_(None),
+                    ),
+                ),
+                or_(
+                    RioRecord.sub_state_changed_at.is_(None),
+                    RioRecord.sub_state_changed_at
+                    < now - timedelta(minutes=_STALLED_AFTER_MINUTES),
+                ),
+                ~exists().where(
+                    PoisonQuarantine.payload["rio_id"].as_string()
+                    == cast(RioRecord.id, String),
+                    PoisonQuarantine.quarantined_at
+                    > now - timedelta(days=_QUARANTINE_COOLDOWN_DAYS),
+                ),
+            )
+            .order_by(RioRecord.sub_state_changed_at.asc().nulls_first())
+            .limit(_STALLED_BATCH)
+        ).all()
+        if not rows:
+            return 0
+        session.execute(
+            update(RioRecord)
+            .where(RioRecord.id.in_([r.id for r in rows]))
+            .values(sub_state_changed_at=now)
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    counts: dict[str, int] = {}
+    for rio_id, sub_state in rows:
+        globals()[_CHAIN_NEXT_TASK[sub_state]].delay(str(rio_id))
+        counts[sub_state] = counts.get(sub_state, 0) + 1
+    logger.info("stalled_chain_redispatched", total=len(rows), **counts)
+    return len(rows)
 
 
 # Records per describe_uf run. Each one can take up to enrich_places' 300s budget, so a
@@ -1513,19 +1672,21 @@ def collect_description_batches_task(self) -> None:
         effective = _load_config(session)
         if not effective.run_real_externals:
             reap_stale_claims(session, None)
-            return
-        collect_batches(
-            session,
-            clients_for(effective).batch,
-            effective.score,
-            redis_client=_redis_lib.from_url(
-                os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-            ),
-            model=effective.atrativo_voice_model_slug,
-        )
+        else:
+            collect_batches(
+                session,
+                clients_for(effective).batch,
+                effective.score,
+                redis_client=_redis_lib.from_url(
+                    os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+                ),
+                model=effective.atrativo_voice_model_slug,
+            )
+        _beat_health("brave.collect_description_batches")
     except Exception as exc:  # noqa: BLE001 — beat retries on the next tick
         session.rollback()
         logger.warning("copy_batch_collect_failed", error=str(exc))
+        _beat_health("brave.collect_description_batches", exc)
     finally:
         session.close()
 
@@ -1925,13 +2086,24 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
                 )
                 session.commit()
 
-                # Dispatch-then-inline-fallback (same idiom the batch endpoint uses): the
-                # per-task commit above released the row lock, so an inline outreach_task.run
-                # can re-acquire it offline; .delay is the normal broker path.
-                try:
-                    outreach_task.delay(rio_id)
-                except Exception:
-                    outreach_task.run(rio_id)
+                # No inline .run — its failure would quarantine THIS task's record. The
+                # sweeper does not cover the WhatsApp states (it must never send on its own),
+                # so a failed enqueue bounces the record back to the DLQ, where the operator
+                # sees it and can move it to the gate again, instead of stranding it at
+                # whatsapp_in_progress, invisible to the gate queue.
+                if not _dispatch_chain(outreach_task, rio_id):
+                    advance_sub_state(
+                        session,
+                        rio,
+                        "whatsapp_in_progress",
+                        None,
+                        actor="number_discovery",
+                        validate=True,
+                        lock=False,
+                    )
+                    session.commit()
+                    logger.error("outreach_dispatch_failed_back_to_dlq", rio_id=rio_id)
+                    return
 
                 logger.info("whatsapp_number_found", rio_id=rio_id)
                 return
@@ -2199,6 +2371,7 @@ def ta_keepalive() -> None:
     app_config = AppConfig()
     if not app_config.run_real_externals:
         logger.debug("ta_keepalive_skipped_offline")
+        _beat_health("brave.ta_keepalive")  # a skip is not a failure: clear a stale one
         return
 
     import redis as _redis_lib  # noqa: PLC0415
@@ -2211,6 +2384,7 @@ def ta_keepalive() -> None:
     ttl = rc.ttl(BRAVE_TA_SESSION_KEY)
     if ttl <= 0:
         logger.debug("ta_keepalive_skipped_no_session")
+        _beat_health("brave.ta_keepalive")
         return
 
     from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
@@ -2241,6 +2415,7 @@ def ta_keepalive() -> None:
         # the session works, and persist_rotated_cookies only writes when cookies rotate.
         rc.expire(BRAVE_TA_SESSION_KEY, ta_config.session_ttl)
         rc.delete(_TA_KEEPALIVE_FAILURES_KEY)
+        _beat_health("brave.ta_keepalive")
         logger.info("ta_keepalive_ok", ttl_before=ttl)
 
     except (SessionExpiredError, SessionMissingError) as exc:
@@ -2249,6 +2424,8 @@ def ta_keepalive() -> None:
         falhas = _bump_keepalive_failures(rc, ta_config.session_ttl)
         if falhas >= _KEEPALIVE_FAILURES_BEFORE_BOOTSTRAP:
             _mark_needs_bootstrap()
+        # A dead session shows on the TA session pill, not as a failing beat.
+        _beat_health("brave.ta_keepalive")
         logger.warning(
             "ta_keepalive_session_expired",
             error_type=type(exc).__name__,
@@ -2264,6 +2441,7 @@ def ta_keepalive() -> None:
             "ta_keepalive_error",
             error_type=type(exc).__name__,
         )
+        _beat_health("brave.ta_keepalive", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -2316,6 +2494,7 @@ def prune_record_events_task(self, retention_days: int = 90) -> int:
         )
         session.commit()
         deleted = result.rowcount or 0
+        _beat_health("brave.prune_record_events")
         logger.info(
             "prune_record_events_ok",
             deleted=deleted,
@@ -2330,6 +2509,7 @@ def prune_record_events_task(self, retention_days: int = 90) -> int:
             "prune_record_events_error",
             error_type=type(exc).__name__,
         )
+        _beat_health("brave.prune_record_events", exc)
         return 0
     finally:
         session.close()

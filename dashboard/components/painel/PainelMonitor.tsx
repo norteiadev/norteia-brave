@@ -2,6 +2,11 @@
 
 import { useQuery } from "@tanstack/react-query";
 
+import {
+  ENGINE_REFETCH_INTERVAL_MS,
+  engineKeys,
+  fetchEngineStatus,
+} from "@/lib/engine-api";
 import { fetchFunnels, funnelKeys, toStageBars } from "@/lib/funnels-api";
 import {
   MONITOR_REFETCH_INTERVAL_MS,
@@ -13,6 +18,7 @@ import {
  * PainelMonitor — the "Monitor & Funis" painel view (phase H).
  *
  * Folds the old dark /monitor + /funnels routes into one painel-light surface:
+ *   - one alert per failing maintenance beat (GET /api/v1/engine/status beat_errors)
  *   - volume tiles + throughput + failure/quality alerts (GET /api/v1/monitor)
  *   - the per-layer funnel bars ingested → in_progress → mar/dlq/descarte
  *     (GET /api/v1/funnels, collapsed via toStageBars)
@@ -35,12 +41,45 @@ export function PainelMonitor() {
     queryFn: () => fetchFunnels({}),
   });
 
+  const { data: engine } = useQuery({
+    queryKey: engineKeys.status,
+    queryFn: fetchEngineStatus,
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+  });
+  const beatErrors = engine?.beat_errors ?? [];
+
   const bars = funnel ? toStageBars(funnel) : [];
   const maxBar = Math.max(1, ...bars.map((b) => b.count));
   const funnelEmpty = bars.length > 0 && bars.every((b) => b.count === 0);
 
   return (
     <div className="h-full overflow-y-auto px-[22px] pb-7 pt-5">
+      {/* Failing beats — same look as the topbar's reasoned-pause banner */}
+      {beatErrors.length > 0 && (
+        <div className="mb-[14px] flex flex-col gap-[8px]">
+          {beatErrors.map((e) => (
+            <div
+              key={e.task}
+              role="alert"
+              data-testid="monitor-beat-error"
+              className="flex min-h-[34px] items-center gap-[10px] rounded-[8px] border px-[12px] py-[6px] text-[12px] font-medium"
+              style={{
+                borderColor: "var(--status-dlq)",
+                background: "var(--status-dlq)",
+                color: "white",
+              }}
+            >
+              <span>
+                Tarefa agendada {e.task} falhou ({e.error_type})
+              </span>
+              <span className="ml-auto opacity-80">
+                {new Date(e.at).toLocaleString("pt-BR")}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Volume tiles */}
       <div className="mb-[14px] grid grid-cols-2 gap-[14px] sm:grid-cols-4">
         <Tile

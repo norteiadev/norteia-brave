@@ -38,6 +38,7 @@ export function engineStatus(overrides: Partial<EngineStatus> = {}) {
     // with { mode: "LIGADO", editing_unlocked: false }.
     mode: "DESLIGADO",
     pause_reason: null,
+    beat_errors: [],
     editing_unlocked: true,
     ...overrides,
   };
