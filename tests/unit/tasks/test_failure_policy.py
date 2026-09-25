@@ -131,6 +131,25 @@ def test_inline_run_failure_reraises_without_quarantine(monkeypatch):
     quarantine.assert_not_called()
 
 
+# 1c. Exponential backoff, no jitter: default_retry_delay * 2**retries → 60/120/240s.
+def test_retry_countdown_doubles_per_attempt(monkeypatch):
+    _fail_with(monkeypatch, RuntimeError("flap"))
+    monkeypatch.setattr("brave.core.quarantine.quarantine_poison", MagicMock())
+    task = pipeline.find_contacts_task
+    real_retry = task.retry
+    countdowns = []
+
+    def spy(*a, **k):
+        countdowns.append(k["countdown"])
+        return real_retry(*a, **k)
+
+    monkeypatch.setattr(task, "retry", spy)
+
+    task.apply(args=(_RIO,))
+
+    assert countdowns[:3] == [60, 120, 240]
+
+
 # 3. ComplianceError → blocked, no retry, no quarantine, no pause.
 @pytest.mark.parametrize(("attr", "args", "_payload", "_action"), F1, ids=_IDS)
 def test_compliance_error_ends_without_retry_or_quarantine(

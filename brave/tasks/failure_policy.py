@@ -16,8 +16,9 @@ Every branch rolls the task's session back first, then:
   ComplianceError      → blocked send, logged; no retry, no quarantine, task SUCCESS.
   PermanentError       → quarantine, no retry, task SUCCESS (``quarantine=False``:
                          re-raised, task FAILURE).
-  anything else        → self.retry(exc=exc). Once retries are exhausted Celery re-raises
-                         ``exc`` itself — never MaxRetriesExceededError when exc= is given
+  anything else        → self.retry(exc=exc), backoff default_retry_delay x 2**retries
+                         (60/120/240s for the F1 tasks, no jitter). Once retries are
+                         exhausted Celery re-raises ``exc`` itself — never MaxRetriesExceededError when exc= is given
                          (celery/app/task.py) — so that is caught here: quarantine, then
                          re-raise so the task ends FAILURE.
 
@@ -80,7 +81,9 @@ def task_failure_policy(
     except Exception as exc:
         session.rollback()
         try:
-            raise task.retry(exc=exc)
+            raise task.retry(
+                exc=exc, countdown=task.default_retry_delay * 2**task.request.retries
+            )
         except Retry:
             raise
         except BaseException as retry_exc:

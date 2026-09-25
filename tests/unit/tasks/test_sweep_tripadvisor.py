@@ -160,7 +160,7 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
 
     retry_calls = []
 
-    def _recording_retry(exc=None, max_retries=None):
+    def _recording_retry(exc=None, max_retries=None, countdown=None):
         # What a worker's retry() does while retries are left: raise celery's Retry.
         # (Once exhausted it re-raises ``exc`` itself — never MaxRetriesExceededError
         # when exc= is given; tests/unit/tasks/test_failure_policy.py covers that path.)
@@ -478,7 +478,7 @@ def _run_bulk_sweep(
     mock_self = MagicMock()
     retry_calls = []
 
-    def _recording_retry(exc=None, max_retries=None):
+    def _recording_retry(exc=None, max_retries=None, countdown=None):
         retry_calls.append(exc)
         raise Retry(exc=exc)
 
