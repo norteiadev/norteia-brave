@@ -108,7 +108,7 @@ most_recent_review_at) are stored. No individual reviewer data is processed,
 retained, or transmitted. The LGPD basis applies exclusively to these aggregate
 signals — not to any individual person's data.
 
-TripAdvisorReviewSignals (brave/lanes/tripadvisor/schemas.py) enforces
+TripAdvisorReviewSignals (brave/domains/tripadvisor/schemas.py) enforces
 model_config=ConfigDict(extra="forbid"). Any field that could identify an
 individual (author, reviewer_id, review_text, profile_url, etc.) raises a
 Pydantic ValidationError and is discarded before persistence.

@@ -16,7 +16,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from brave.lanes.tripadvisor.ibge import haversine_km, load_ibge_csv
+from brave.domains.tripadvisor.ibge import haversine_km, load_ibge_csv
 
 UA = "norteia-brave-spike/0.1 (leandro.freire08@gmail.com)"
 UF_NAME = {

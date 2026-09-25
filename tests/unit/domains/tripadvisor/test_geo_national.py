@@ -25,7 +25,7 @@ import pytest
 import respx
 
 from brave.config.settings import NominatimConfig
-from brave.lanes.tripadvisor.ibge import IbgeMunicipio
+from brave.domains.tripadvisor.ibge import IbgeMunicipio
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +285,7 @@ def test_resolve_national_nearest_seat_with_uf() -> None:
 
     No per-UF input: the resolver derives uf from the nearest seat over ALL records.
     """
-    from brave.lanes.tripadvisor.ibge import resolve_municipio_national
+    from brave.domains.tripadvisor.ibge import resolve_municipio_national
 
     records = _make_records()
     # ~2 km from Brumadinho (MG) seat — but UF is NOT supplied.
@@ -297,7 +297,7 @@ def test_resolve_national_nearest_seat_with_uf() -> None:
 
 def test_resolve_national_picks_global_minimum() -> None:
     """Resolver scans ALL records (no UF filter) and returns the global nearest seat."""
-    from brave.lanes.tripadvisor.ibge import resolve_municipio_national
+    from brave.domains.tripadvisor.ibge import resolve_municipio_national
 
     records = _make_records()
     # Very close to Salvador (BA).
@@ -309,7 +309,7 @@ def test_resolve_national_picks_global_minimum() -> None:
 
 def test_resolve_national_ocean_returns_none() -> None:
     """A coordinate far (>50 km) from every seat (mid-Atlantic) returns None."""
-    from brave.lanes.tripadvisor.ibge import resolve_municipio_national
+    from brave.domains.tripadvisor.ibge import resolve_municipio_national
 
     records = _make_records()
     result = resolve_municipio_national(-15.0, -25.0, records)
@@ -318,7 +318,7 @@ def test_resolve_national_ocean_returns_none() -> None:
 
 def test_resolve_national_none_coords_returns_none() -> None:
     """None candidate coordinates return None (no derivation possible)."""
-    from brave.lanes.tripadvisor.ibge import resolve_municipio_national
+    from brave.domains.tripadvisor.ibge import resolve_municipio_national
 
     records = _make_records()
     assert resolve_municipio_national(None, -44.0, records) is None
@@ -330,7 +330,7 @@ def test_resolve_national_default_max_distance_is_50() -> None:
     """Default max_distance_km is the relaxed 50.0 radius (natural attractions sit 15-25 km out)."""
     import inspect
 
-    from brave.lanes.tripadvisor.ibge import resolve_municipio_national
+    from brave.domains.tripadvisor.ibge import resolve_municipio_national
 
     sig = inspect.signature(resolve_municipio_national)
     assert sig.parameters["max_distance_km"].default == 50.0

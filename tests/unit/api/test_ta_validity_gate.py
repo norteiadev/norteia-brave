@@ -79,7 +79,7 @@ def test_ta_start_no_session_returns_409(client, fake_redis):
 
 def test_ta_start_valid_session_returns_202(client, fake_redis):
     """source='tripadvisor' with a present session (TTL > 0) → 202."""
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
 
     fake_redis.setex(BRAVE_TA_SESSION_KEY, 3600, '{"cookies":{}}')
     resp = client.post(

@@ -631,10 +631,10 @@ def sweep_tripadvisor(
         geo_id:        TripAdvisor integer geoId for the bulk run (294280 = all Brazil).
     """
     from brave.core import engine as collection_engine
-    from brave.lanes.tripadvisor import sweep_progress
-    from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
-    from brave.lanes.tripadvisor.client import SessionExpiredError, SessionMissingError
-    from brave.lanes.tripadvisor.ibge import load_ibge_municipios
+    from brave.domains.tripadvisor import sweep_progress
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+    from brave.domains.tripadvisor.client import SessionExpiredError, SessionMissingError
+    from brave.domains.tripadvisor.ibge import load_ibge_municipios
 
     run_rio = depth != collection_engine.NASCENTE
 
@@ -2221,7 +2221,7 @@ def ta_keepalive() -> None:
     _redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
     rc = _redis_lib.from_url(_redis_url)
 
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY  # noqa: PLC0415
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY  # noqa: PLC0415
 
     ttl = rc.ttl(BRAVE_TA_SESSION_KEY)
     if ttl <= 0:
@@ -2229,7 +2229,7 @@ def ta_keepalive() -> None:
         return
 
     from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
-    from brave.lanes.tripadvisor.client import (  # noqa: PLC0415
+    from brave.domains.tripadvisor.client import (  # noqa: PLC0415
         SessionExpiredError,
         SessionMissingError,
         TripAdvisorClient,

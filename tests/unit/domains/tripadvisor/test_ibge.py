@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from brave.lanes.tripadvisor.ibge import IbgeMunicipio, load_ibge_csv, resolve_municipio
+from brave.domains.tripadvisor.ibge import IbgeMunicipio, load_ibge_csv, resolve_municipio
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -11,10 +11,9 @@ sweepable lanes that are enabled in config (delegates to
 ``manual`` is registered but never a sweep lane, so it is absent).
 
 Lazy on purpose: controllers are imported on first ``get_domain`` rather than at
-package import, so the ``brave.lanes.*`` re-export shims (which import individual
-domain submodules and therefore run this ``__init__``) never eagerly pull the
-TripAdvisor HTTP client, and an import error in one domain cannot break unrelated
-shim imports.
+package import, so importing an individual domain submodule (which runs this
+``__init__``) never eagerly pulls the TripAdvisor HTTP client, and an import error
+in one domain cannot break unrelated submodule imports.
 
 Import posture (D-18): this registry may import every domain (it is the one
 exception); the domains themselves NEVER import each other. Enforced by

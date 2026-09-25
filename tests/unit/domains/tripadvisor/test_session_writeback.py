@@ -40,15 +40,15 @@ def _make_session(
 
 
 class TestPersistRotatedCookies:
-    """Unit tests for brave.lanes.tripadvisor.session.persist_rotated_cookies."""
+    """Unit tests for brave.domains.tripadvisor.session.persist_rotated_cookies."""
 
     def test_merges_response_cookies_new_wins(self):
         """Response cookies overwrite matching stored cookies; extras are kept."""
         import fakeredis
 
         from brave.config.settings import TripAdvisorConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
-        from brave.lanes.tripadvisor.session import persist_rotated_cookies
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
+        from brave.domains.tripadvisor.session import persist_rotated_cookies
 
         redis = fakeredis.FakeRedis()
         ta_config = TripAdvisorConfig()
@@ -67,8 +67,8 @@ class TestPersistRotatedCookies:
         import fakeredis
 
         from brave.config.settings import TripAdvisorConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
-        from brave.lanes.tripadvisor.session import persist_rotated_cookies
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
+        from brave.domains.tripadvisor.session import persist_rotated_cookies
 
         redis = fakeredis.FakeRedis()
         ta_config = TripAdvisorConfig()
@@ -88,8 +88,8 @@ class TestPersistRotatedCookies:
         import fakeredis
 
         from brave.config.settings import TripAdvisorConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
-        from brave.lanes.tripadvisor.session import persist_rotated_cookies
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
+        from brave.domains.tripadvisor.session import persist_rotated_cookies
 
         redis = fakeredis.FakeRedis()
         ta_config = TripAdvisorConfig()
@@ -106,8 +106,8 @@ class TestPersistRotatedCookies:
         import fakeredis
 
         from brave.config.settings import TripAdvisorConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
-        from brave.lanes.tripadvisor.session import persist_rotated_cookies
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
+        from brave.domains.tripadvisor.session import persist_rotated_cookies
 
         redis = fakeredis.FakeRedis()
         ta_config = TripAdvisorConfig()
@@ -124,7 +124,7 @@ class TestPersistRotatedCookies:
         import fakeredis
 
         from brave.config.settings import TripAdvisorConfig
-        from brave.lanes.tripadvisor.session import persist_rotated_cookies
+        from brave.domains.tripadvisor.session import persist_rotated_cookies
 
         redis = fakeredis.FakeRedis()  # empty — no session key
         ta_config = TripAdvisorConfig()
@@ -137,7 +137,7 @@ class TestPersistRotatedCookies:
         import fakeredis
 
         from brave.config.settings import TripAdvisorConfig
-        from brave.lanes.tripadvisor.session import persist_rotated_cookies
+        from brave.domains.tripadvisor.session import persist_rotated_cookies
 
         redis = fakeredis.FakeRedis()
         ta_config = TripAdvisorConfig()
@@ -156,8 +156,8 @@ class TestPersistRotatedCookies:
         import fakeredis
 
         from brave.config.settings import TripAdvisorConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
-        from brave.lanes.tripadvisor.session import persist_rotated_cookies
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
+        from brave.domains.tripadvisor.session import persist_rotated_cookies
 
         redis = fakeredis.FakeRedis()
         ta_config = TripAdvisorConfig()
@@ -197,7 +197,7 @@ class TestClientWriteBack:
         import respx
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
 
         redis = fakeredis.FakeRedis()
         config = AppConfig().tripadvisor
@@ -209,7 +209,7 @@ class TestClientWriteBack:
         # Bypass real _get_session (reads from fakeredis, but skip geo cache issues)
         monkeypatch.setattr(client, "_get_session", lambda: session_data)
         # Bypass resolve_geo_id (Redis geo-cache lookup)
-        monkeypatch.setattr("brave.lanes.tripadvisor.geo.resolve_geo_id", lambda uf, r, c: 303380)
+        monkeypatch.setattr("brave.domains.tripadvisor.geo.resolve_geo_id", lambda uf, r, c: 303380)
 
         with respx.mock:
             respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
@@ -234,7 +234,7 @@ class TestClientWriteBack:
         import respx
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
 
         redis = fakeredis.FakeRedis()
         config = AppConfig().tripadvisor
@@ -267,7 +267,7 @@ class TestClientWriteBack:
         import respx
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
 
         redis = fakeredis.FakeRedis()
         config = AppConfig().tripadvisor
@@ -308,9 +308,9 @@ class TestClientWriteBack:
         import httpx
         import respx
 
-        import brave.lanes.tripadvisor.session as session_module
+        import brave.domains.tripadvisor.session as session_module
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
 
         redis = fakeredis.FakeRedis()
         config = AppConfig().tripadvisor
@@ -319,7 +319,7 @@ class TestClientWriteBack:
 
         client = TripAdvisorClient(config=config, redis=redis)
         monkeypatch.setattr(client, "_get_session", lambda: session_data)
-        monkeypatch.setattr("brave.lanes.tripadvisor.geo.resolve_geo_id", lambda uf, r, c: 303380)
+        monkeypatch.setattr("brave.domains.tripadvisor.geo.resolve_geo_id", lambda uf, r, c: 303380)
 
         # Make persist_rotated_cookies raise — simulates a Redis write failure at the helper level
         def _raise_on_persist(*args, **kwargs):
@@ -352,8 +352,8 @@ def test_unchanged_jar_skips_rewrite_but_slides_ttl():
     import fakeredis
 
     from brave.config.settings import TripAdvisorConfig
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
-    from brave.lanes.tripadvisor.session import persist_rotated_cookies
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.session import persist_rotated_cookies
 
     redis = fakeredis.FakeRedis()
     ta_config = TripAdvisorConfig()
@@ -376,14 +376,14 @@ async def test_shared_client_reused_and_sends_rotated_cookie_once(monkeypatch):
     import respx
 
     from brave.config.settings import AppConfig
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
 
     redis = fakeredis.FakeRedis()
     session_data = _make_session(cookies={"datadome": "old"})
     redis.setex(BRAVE_TA_SESSION_KEY, 1800, json.dumps(session_data))
     client = TripAdvisorClient(config=AppConfig().tripadvisor, redis=redis)
     monkeypatch.setattr(client, "_get_session", lambda: session_data)
-    monkeypatch.setattr("brave.lanes.tripadvisor.geo.resolve_geo_id", lambda uf, r, c: 303380)
+    monkeypatch.setattr("brave.domains.tripadvisor.geo.resolve_geo_id", lambda uf, r, c: 303380)
 
     full_page = [{"data": {"locations": [{"locationId": i} for i in range(20)]}}]
     with respx.mock:

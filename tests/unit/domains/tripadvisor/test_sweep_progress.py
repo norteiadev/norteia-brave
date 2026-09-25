@@ -13,7 +13,7 @@ from __future__ import annotations
 import fakeredis
 import pytest
 
-from brave.lanes.tripadvisor import sweep_progress
+from brave.domains.tripadvisor import sweep_progress
 
 
 @pytest.fixture

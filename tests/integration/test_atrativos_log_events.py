@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
 from brave.core.models import RecordEvent
-from brave.lanes.tripadvisor.ibge import IbgeMunicipio
+from brave.domains.tripadvisor.ibge import IbgeMunicipio
 
 # Ensure the integration DB URL is present before model/app import (mirrors the
 # sibling integration modules; the shared db_session fixture reads BRAVE_DB_URL).
@@ -106,7 +106,7 @@ async def test_ingest_one_emits_ordered_pipeline_chain(db_session: Session) -> N
       tripadvisor_synced → municipio_resolved → parent_destino_linked → validated
       → ingested → scored → routed
     """
-    from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
     location_id = 900_000 + uuid.uuid4().int % 90_000
     source_ref = f"tripadvisor:attraction:{location_id}"
@@ -178,7 +178,7 @@ async def test_ibge_unmatched_emits_single_terminal_and_surfaces_in_failure_endp
       - GET /api/v1/failures/cards        returns a card for this source_ref, and
       - GET /api/v1/failures/cards/log    returns the quarantined step (ibge_unmatched).
     """
-    from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
     location_id = 700_000 + uuid.uuid4().int % 90_000
     source_ref = f"tripadvisor:attraction:{location_id}"
@@ -271,7 +271,7 @@ async def test_dlq_routed_record_absent_from_failure_cards(
     must surface ONLY terminal quarantine failures — the DLQ record belongs to the
     review queue, not Falha.
     """
-    from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
     location_id = 800_000 + uuid.uuid4().int % 90_000
     source_ref = f"tripadvisor:attraction:{location_id}"

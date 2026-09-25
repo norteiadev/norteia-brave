@@ -33,7 +33,7 @@ def test_start_rejects_disabled_source_409(monkeypatch):
     fake = fakeredis.FakeStrictRedis()
     # Seed a valid TA session so a 409 here can ONLY be the disabled-gate, not the R2
     # session gate (which is checked later in the handler).
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
 
     fake.setex(BRAVE_TA_SESSION_KEY, 3600, '{"cookies":{}}')
 

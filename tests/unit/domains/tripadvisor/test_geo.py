@@ -1,4 +1,4 @@
-"""Offline unit tests for brave/lanes/tripadvisor/geo.py (TA-01).
+"""Offline unit tests for brave/domains/tripadvisor/geo.py (TA-01).
 
 Tests use fakeredis.FakeRedis() for Redis-backed resolution:
 - Cache hit: resolves from Redis without reading JSON
@@ -32,7 +32,7 @@ def seed_path(tmp_path: Path) -> Path:
 
 class TestLoadUfGeoids:
     def test_load_returns_dict(self, seed_path: Path):
-        from brave.lanes.tripadvisor.geo import load_uf_geoids
+        from brave.domains.tripadvisor.geo import load_uf_geoids
 
         result = load_uf_geoids(seed_path)
         assert isinstance(result, dict)
@@ -40,7 +40,7 @@ class TestLoadUfGeoids:
         assert result["RJ"] == 303506
 
     def test_values_are_ints(self, seed_path: Path):
-        from brave.lanes.tripadvisor.geo import load_uf_geoids
+        from brave.domains.tripadvisor.geo import load_uf_geoids
 
         result = load_uf_geoids(seed_path)
         for v in result.values():
@@ -50,7 +50,7 @@ class TestLoadUfGeoids:
 class TestResolveGeoId:
     def test_cache_hit_returns_cached_value(self, fake_redis, seed_path: Path):
         """Redis has the value; should return it without touching seed JSON."""
-        from brave.lanes.tripadvisor.geo import REDIS_GEO_KEY_PREFIX, resolve_geo_id
+        from brave.domains.tripadvisor.geo import REDIS_GEO_KEY_PREFIX, resolve_geo_id
 
         # Pre-populate cache with a known value
         fake_redis.set(f"{REDIS_GEO_KEY_PREFIX}BA", "99999")
@@ -63,7 +63,7 @@ class TestResolveGeoId:
 
     def test_seed_fallback_on_redis_miss(self, fake_redis, seed_path: Path):
         """Redis miss → load from seed JSON → cache and return."""
-        from brave.lanes.tripadvisor.geo import REDIS_GEO_KEY_PREFIX, resolve_geo_id
+        from brave.domains.tripadvisor.geo import REDIS_GEO_KEY_PREFIX, resolve_geo_id
 
         from brave.config.settings import AppConfig
 
@@ -78,7 +78,7 @@ class TestResolveGeoId:
 
     def test_unknown_uf_raises_value_error(self, fake_redis, seed_path: Path):
         """Unknown UF that is neither in Redis nor seed → ValueError (fail-closed)."""
-        from brave.lanes.tripadvisor.geo import resolve_geo_id
+        from brave.domains.tripadvisor.geo import resolve_geo_id
 
         from brave.config.settings import AppConfig
 
@@ -88,7 +88,7 @@ class TestResolveGeoId:
 
     def test_production_seed_has_27_keys(self):
         """The committed data/tripadvisor/uf_geoids.json must have exactly 27 UF keys."""
-        from brave.lanes.tripadvisor.geo import GEO_SEED_PATH, load_uf_geoids
+        from brave.domains.tripadvisor.geo import GEO_SEED_PATH, load_uf_geoids
 
         data = load_uf_geoids(GEO_SEED_PATH)
         assert len(data) == 27, f"Expected 27 UF keys, found {len(data)}: {sorted(data.keys())}"
@@ -118,7 +118,7 @@ class TestUfGeoidsSeed:
     })
 
     def _load(self) -> dict:
-        from brave.lanes.tripadvisor.geo import GEO_SEED_PATH, load_uf_geoids
+        from brave.domains.tripadvisor.geo import GEO_SEED_PATH, load_uf_geoids
 
         return load_uf_geoids(GEO_SEED_PATH)
 

@@ -28,10 +28,10 @@ import pytest
 from pydantic import ValidationError
 
 from brave.config.settings import ScoreConfig
-from brave.lanes.tripadvisor import sweep_progress
-from brave.lanes.tripadvisor.client import SessionExpiredError
-from brave.lanes.tripadvisor.ibge import IbgeMunicipio
-from brave.lanes.tripadvisor.schemas import TripAdvisorReviewSignals
+from brave.domains.tripadvisor import sweep_progress
+from brave.domains.tripadvisor.client import SessionExpiredError
+from brave.domains.tripadvisor.ibge import IbgeMunicipio
+from brave.domains.tripadvisor.schemas import TripAdvisorReviewSignals
 from tests.fakes.fake_nominatim import FakeGeocoderClient
 from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
 
@@ -99,7 +99,7 @@ class TestIngestBulk:
     @pytest.mark.asyncio
     async def test_ingest_bulk_writes_parentless_nascente_row(self) -> None:
         """A geocodable card → exactly one Nascente row, parent_rio_id None, derived uf."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         card = _make_card(location_id=312332)
         fake_geo = FakeGeocoderClient(
@@ -107,8 +107,8 @@ class TestIngestBulk:
         )
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -144,14 +144,14 @@ class TestIngestBulk:
     @pytest.mark.asyncio
     async def test_ingest_bulk_unresolvable_quarantines_ibge_unmatched(self) -> None:
         """Geocoder cannot resolve → ibge_unmatched quarantine, zero Nascente rows."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         card = _make_card(location_id=999)
         fake_geo = FakeGeocoderClient(fixture_national_results={})  # all misses
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.quarantine_poison") as mock_q,
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.quarantine_poison") as mock_q,
         ):
             ingest = TripAdvisorAtrativosIngest(
                 ta_client=FakeTripAdvisorClient(),
@@ -179,7 +179,7 @@ class TestIngestBulk:
     @pytest.mark.asyncio
     async def test_ingest_bulk_no_ibge_seat_within_radius_quarantines(self) -> None:
         """Geocode succeeds but no IBGE seat within 50 km → ibge_unmatched, no row."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         card = _make_card(location_id=555)
         # Geocode lands in the mid-Atlantic — far from every BR seat.
@@ -190,8 +190,8 @@ class TestIngestBulk:
         )
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.quarantine_poison") as mock_q,
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.quarantine_poison") as mock_q,
         ):
             ingest = TripAdvisorAtrativosIngest(
                 ta_client=FakeTripAdvisorClient(),
@@ -254,7 +254,7 @@ class TestProducePaginated:
     @pytest.mark.asyncio
     async def test_produce_paginated_ingests_all_pages(self) -> None:
         """2 pages × 30 cards → all ingested; progress shows pages_done/attractions/offset."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         # Two pages of 30 cards; page 1 offset 0, page 2 offset 30.
         page1 = [_make_card(location_id=10_000 + i) for i in range(30)]
@@ -270,8 +270,8 @@ class TestProducePaginated:
         sweep_progress.start(rc, pages_total=2)
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -300,7 +300,7 @@ class TestProducePaginated:
     @pytest.mark.asyncio
     async def test_produce_paginated_commits_per_page_before_record_page(self) -> None:
         """Session.commit fires once per page, BEFORE record_page (resume integrity)."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         page1 = [_make_card(location_id=30_000)]
         page2 = [_make_card(location_id=30_001)]
@@ -315,10 +315,10 @@ class TestProducePaginated:
         mock_session = MagicMock()
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
             patch(
-                "brave.lanes.tripadvisor.atrativos.sweep_progress.record_page"
+                "brave.domains.tripadvisor.atrativos.sweep_progress.record_page"
             ) as mock_record_page,
         ):
             mock_nascente = MagicMock()
@@ -351,7 +351,7 @@ class TestProducePaginated:
     @pytest.mark.asyncio
     async def test_produce_paginated_session_expiry_propagates(self) -> None:
         """SessionExpiredError from the client iterator is NOT swallowed."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         fake_geo = FakeGeocoderClient(
             fixture_national_results=_resolvable_geo_fixture(["1000"])
@@ -359,8 +359,8 @@ class TestProducePaginated:
         rc = fakeredis.FakeRedis()
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
             ingest = TripAdvisorAtrativosIngest(
@@ -379,7 +379,7 @@ class TestProducePaginated:
     @pytest.mark.asyncio
     async def test_produce_paginated_unmatched_card_increments_error_count(self) -> None:
         """A card that cannot ingest (ibge_unmatched) increments the live error_count."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         # One resolvable card + one unresolvable card on the same page.
         good = _make_card(location_id=40_000)
@@ -395,8 +395,8 @@ class TestProducePaginated:
         sweep_progress.start(rc, pages_total=1)
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
             ingest = TripAdvisorAtrativosIngest(

@@ -113,7 +113,7 @@ class TestTripAdvisorClientOffline:
         client_path = (
             Path(__file__).parent.parent.parent.parent.parent
             / "brave"
-            / "lanes"
+            / "domains"
             / "tripadvisor"
             / "client.py"
         )
@@ -131,12 +131,12 @@ class TestTripAdvisorClientOffline:
                 )
 
     def test_session_key_constant(self):
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
 
         assert BRAVE_TA_SESSION_KEY == "brave:ta:session"
 
     def test_session_expired_error_is_exception(self):
-        from brave.lanes.tripadvisor.client import SessionExpiredError
+        from brave.domains.tripadvisor.client import SessionExpiredError
 
         err = SessionExpiredError("test")
         assert isinstance(err, Exception)
@@ -147,7 +147,7 @@ class TestTripAdvisorClientOffline:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+        from brave.domains.tripadvisor.client import SessionExpiredError, TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -176,7 +176,7 @@ class TestTripAdvisorClientOffline:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+        from brave.domains.tripadvisor.client import SessionExpiredError, TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -200,7 +200,7 @@ class TestTripAdvisorClientOffline:
 
     def test_client_protocol_compliance(self):
         """TripAdvisorClient must satisfy TripAdvisorClientProtocol structurally."""
-        from brave.lanes.tripadvisor.client import _check_protocol_compliance
+        from brave.domains.tripadvisor.client import _check_protocol_compliance
 
         _check_protocol_compliance()
 
@@ -221,7 +221,7 @@ class TestTripAdvisorClientSessionInjection:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import SessionMissingError, TripAdvisorClient
+        from brave.domains.tripadvisor.client import SessionMissingError, TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -235,7 +235,7 @@ class TestTripAdvisorClientSessionInjection:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -260,7 +260,7 @@ class TestTripAdvisorClientSessionInjection:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -289,7 +289,7 @@ class TestTripAdvisorClientSessionInjection:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -307,7 +307,7 @@ class TestTripAdvisorClientSessionInjection:
         client_path = (
             Path(__file__).parent.parent.parent.parent.parent
             / "brave"
-            / "lanes"
+            / "domains"
             / "tripadvisor"
             / "client.py"
         )
@@ -335,7 +335,7 @@ class TestTripAdvisorClientSessionInjection:
 
     def test_session_missing_error_is_exception(self):
         """SessionMissingError must be an Exception subclass."""
-        from brave.lanes.tripadvisor.client import SessionMissingError
+        from brave.domains.tripadvisor.client import SessionMissingError
 
         err = SessionMissingError("test")
         assert isinstance(err, Exception)
@@ -355,7 +355,7 @@ class TestTripAdvisorClientPayloadShape:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -396,7 +396,7 @@ class TestTripAdvisorClientPayloadShape:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -446,7 +446,7 @@ class TestTripAdvisorClientPayloadShape:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -508,7 +508,7 @@ class TestTripAdvisorClientProxyAndPaging:
 
     @staticmethod
     def _seed(redis):
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
 
         redis.set(
             BRAVE_TA_SESSION_KEY,
@@ -528,8 +528,8 @@ class TestTripAdvisorClientProxyAndPaging:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor import client as client_mod
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor import client as client_mod
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor.model_copy(
             update={"proxy_url": "socks5://user:pass@proxy:1080"}
@@ -569,8 +569,8 @@ class TestTripAdvisorClientProxyAndPaging:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor import client as client_mod
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor import client as client_mod
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor.model_copy(update={"proxy_url": ""})
         redis = fakeredis.FakeRedis()
@@ -608,7 +608,7 @@ class TestTripAdvisorClientProxyAndPaging:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -681,7 +681,7 @@ def _make_ta_response_with_status(
 
 def _make_session_redis(redis, session_id: str = "TASID_VALUE") -> None:
     """Seed fakeredis with a valid Phase 13 session."""
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
 
     redis.set(
         BRAVE_TA_SESSION_KEY,
@@ -706,7 +706,7 @@ class TestTripAdvisorAttractionsFusionContract:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -744,7 +744,7 @@ class TestTripAdvisorAttractionsFusionContract:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -774,7 +774,7 @@ class TestTripAdvisorAttractionsFusionContract:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -804,7 +804,7 @@ class TestTripAdvisorAttractionsFusionContract:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         config.attractions_transient_retry_sleep_seconds = 0
@@ -852,7 +852,7 @@ class TestTripAdvisorAttractionsFusionContract:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         config.attractions_transient_retry_sleep_seconds = 0
@@ -887,7 +887,7 @@ class TestTripAdvisorAttractionsFusionContract:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         config.attractions_transient_retry_sleep_seconds = 0
@@ -924,7 +924,7 @@ class TestTripAdvisorAttractionsFusionContract:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1085,7 +1085,7 @@ class TestFetchDestinationsQid:
 
         import fakeredis
 
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
 
         redis = fakeredis.FakeRedis()
         session_data = {
@@ -1105,7 +1105,7 @@ class TestFetchDestinationsQid:
         The POST must use the override QID, not the positional one.
         """
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor.model_copy(
             update={"query_id_override": {"destinations": "override_qid_xyz"}}
@@ -1138,10 +1138,10 @@ class TestFetchDestinationsQid:
         Session has no "destinations" key, config override is empty, and
         _DESTINATIONS_QID is None. Must raise ValueError immediately.
         """
-        import brave.lanes.tripadvisor.client as client_mod
+        import brave.domains.tripadvisor.client as client_mod
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         # Ensure _DESTINATIONS_QID is None (it is by default, but patch defensively)
         monkeypatch.setattr(client_mod, "_DESTINATIONS_QID", None)
@@ -1188,7 +1188,7 @@ class TestParserNullSafety:
 
     def test_parse_null_bubble_rating_no_attribute_error(self):
         """Card with bubbleRating=None must not raise; rating=0.0, review_count=0."""
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         section = _make_null_card_section(
             card_title={"text": "Some Attraction"},
@@ -1205,7 +1205,7 @@ class TestParserNullSafety:
 
     def test_parse_null_card_title_no_attribute_error(self):
         """Card with cardTitle=None must not raise; name=''."""
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         section = _make_null_card_section(
             card_title=None,  # present-but-null
@@ -1218,7 +1218,7 @@ class TestParserNullSafety:
 
     def test_parse_null_primary_info_no_attribute_error(self):
         """Card with primaryInfo=None must not raise; category=''."""
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         section = _make_null_card_section(
             card_title={"text": "Iguazu Falls"},
@@ -1239,7 +1239,7 @@ class TestParserNullSafety:
 
 def _seed_ta_session(redis, session_id: str = "TASID_VALUE") -> None:
     """Seed fakeredis with a minimal valid TA session."""
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
 
     redis.set(
         BRAVE_TA_SESSION_KEY,
@@ -1262,7 +1262,7 @@ class TestFetchAttractionDetail:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1300,7 +1300,7 @@ class TestFetchAttractionDetail:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1351,7 +1351,7 @@ class TestFetchAttractionGeo:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1384,7 +1384,7 @@ class TestFetchAttractionGeo:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1426,7 +1426,7 @@ class TestFetchAttractionGeo:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1449,7 +1449,7 @@ class TestFetchAttractionGeo:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1480,7 +1480,7 @@ class TestFetchAttractionGeo:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+        from brave.domains.tripadvisor.client import SessionExpiredError, TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1502,7 +1502,7 @@ class TestFetchAttractionGeo:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+        from brave.domains.tripadvisor.client import SessionExpiredError, TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1579,7 +1579,7 @@ class TestFetchAttractionsPaginatedGql:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         config.page_throttle_seconds = 0.0  # no real sleeps
@@ -1638,7 +1638,7 @@ class TestFetchAttractionsPaginatedGql:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         config.page_throttle_seconds = 0.0
@@ -1672,7 +1672,7 @@ class TestFetchAttractionsPaginatedGql:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+        from brave.domains.tripadvisor.client import SessionExpiredError, TripAdvisorClient
 
         config = AppConfig().tripadvisor
         config.page_throttle_seconds = 0.0
@@ -1695,7 +1695,7 @@ class TestFetchAttractionsPaginatedGql:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1773,7 +1773,7 @@ class TestFetchRecentReview:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1812,7 +1812,7 @@ class TestFetchRecentReview:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1840,7 +1840,7 @@ class TestFetchRecentReview:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1867,7 +1867,7 @@ class TestFetchRecentReview:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1890,7 +1890,7 @@ class TestFetchRecentReview:
         import fakeredis
 
         from brave.config.settings import AppConfig
-        from brave.lanes.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+        from brave.domains.tripadvisor.client import SessionExpiredError, TripAdvisorClient
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()

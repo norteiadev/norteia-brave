@@ -1,4 +1,4 @@
-"""Unit tests for brave.lanes.tripadvisor.uf_names.state_name_to_uf (TA-ftx).
+"""Unit tests for brave.domains.tripadvisor.uf_names.state_name_to_uf (TA-ftx).
 
 Parametrized coverage:
   (a) All 27 UFs — at least one test case per UF
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from brave.lanes.tripadvisor.uf_names import _TA_STATE_CANONICAL, state_name_to_uf
+from brave.domains.tripadvisor.uf_names import _TA_STATE_CANONICAL, state_name_to_uf
 
 
 # ---------------------------------------------------------------------------

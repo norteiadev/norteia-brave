@@ -13,7 +13,7 @@ present and re-enablable — nothing Places runs now.
 
 Import posture (D-18): kernel + clients only, lazily. Nothing here imports another
 domain. The heavy client / agent imports live inside ``discover`` so the registry
-(and the ``brave.lanes`` re-export shims) can import this module cheaply.
+can import this module cheaply.
 """
 
 from __future__ import annotations

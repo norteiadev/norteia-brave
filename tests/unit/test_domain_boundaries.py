@@ -14,6 +14,11 @@ docstrings/comments never false-positive):
     ``base.py`` are the two root files allowed to reference every domain, so files
     directly at the domains root are exempt.
 
+  CHECK D — clients stay below the domains: a module under ``brave/clients/`` must
+    NOT import ``brave.domains``. The single allowlisted exception is
+    ``brave/clients/factory.py`` → ``brave.domains.tripadvisor.client`` (the TA
+    client lives in its domain because it uses the domain's session/geo modules).
+
 See docs/ultraplan-refactor-brave.md (Phase G).
 """
 
@@ -30,6 +35,10 @@ _KERNEL_FORBIDDEN_RE = re.compile(r"^\s*(?:from|import)\s+brave\.(domains|tasks|
 _CROSS_DOMAIN_RE = re.compile(
     r"^\s*(?:from|import)\s+brave\.domains\.([A-Za-z_][A-Za-z0-9_]*)"
 )
+
+# CHECK D: capture the full imported module path under `brave.domains`.
+_CLIENT_DOMAIN_RE = re.compile(r"^\s*(?:from|import)\s+(brave\.domains(?:\.[A-Za-z0-9_]+)*)")
+_CLIENT_DOMAIN_ALLOWLIST = {("clients/factory.py", "brave.domains.tripadvisor.client")}
 
 
 def _iter_py(root: Path):
@@ -104,4 +113,29 @@ def test_domains_never_import_sibling_domains() -> None:
         raise AssertionError(
             "Cross-domain import violation (generalized D-18): a domain must not "
             "import a sibling domain (kernel + clients only):\n" + report
+        )
+
+
+def test_clients_never_import_domains() -> None:
+    """CHECK D: no file under brave/clients imports brave.domains (one allowlisted import)."""
+    clients_dir = _BRAVE_DIR / "clients"
+    assert clients_dir.is_dir(), f"brave/clients not found at {clients_dir}"
+
+    violations: list[tuple[Path, int, str]] = []
+    for py_file, lines in _iter_py(clients_dir):
+        rel = py_file.relative_to(_BRAVE_DIR).as_posix()
+        for lineno, line in enumerate(lines, start=1):
+            m = _CLIENT_DOMAIN_RE.match(line)
+            if m is None or (rel, m.group(1)) in _CLIENT_DOMAIN_ALLOWLIST:
+                continue
+            violations.append((py_file, lineno, line.rstrip()))
+
+    if violations:
+        report = "\n".join(
+            f"  {p.relative_to(_REPO_ROOT)}:{n}: {ln}" for p, n, ln in violations
+        )
+        raise AssertionError(
+            "Clients→domains import violation (generalized D-18): brave.clients must "
+            "not import brave.domains (only factory.py → brave.domains.tripadvisor.client "
+            "is allowlisted):\n" + report
         )

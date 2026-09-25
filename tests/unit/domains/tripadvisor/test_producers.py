@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from brave.config.settings import ScoreConfig
-from brave.lanes.tripadvisor.ibge import IbgeMunicipio
+from brave.domains.tripadvisor.ibge import IbgeMunicipio
 from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
 
 
@@ -91,15 +91,15 @@ class TestTripAdvisorDestinosIngest:
     @pytest.mark.asyncio
     async def test_destinos_produce_writes_nascente(self) -> None:
         """produce() calls store_raw with source='tripadvisor' and origem_value=65."""
-        from brave.lanes.tripadvisor.destinos import TripAdvisorDestinosIngest
+        from brave.domains.tripadvisor.destinos import TripAdvisorDestinosIngest
 
         fake_client = _make_fake_client()
         mock_session = MagicMock()
         config = _make_config()
 
         with (
-            patch("brave.lanes.tripadvisor.destinos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.destinos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.destinos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.destinos.process_nascente_record"),
         ):
             # Mock store_raw to return a fake NascenteRecord
             mock_nascente = MagicMock()
@@ -132,15 +132,15 @@ class TestTripAdvisorDestinosIngest:
     @pytest.mark.asyncio
     async def test_destinos_produce_run_rio_false_skips_rio(self) -> None:
         """produce(run_rio=False) calls store_raw but not process_nascente_record."""
-        from brave.lanes.tripadvisor.destinos import TripAdvisorDestinosIngest
+        from brave.domains.tripadvisor.destinos import TripAdvisorDestinosIngest
 
         fake_client = _make_fake_client()
         mock_session = MagicMock()
         config = _make_config()
 
         with (
-            patch("brave.lanes.tripadvisor.destinos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.destinos.process_nascente_record") as mock_rio,
+            patch("brave.domains.tripadvisor.destinos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.destinos.process_nascente_record") as mock_rio,
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -167,7 +167,7 @@ class TestTripAdvisorAtrativosIngest:
     @pytest.mark.asyncio
     async def test_atrativo_carries_parent_rio_id(self) -> None:
         """produce() with destino_rio_map populated includes parent_rio_id in payload."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         fake_client = _make_fake_client()
         mock_session = MagicMock()
@@ -180,8 +180,8 @@ class TestTripAdvisorAtrativosIngest:
         }
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -206,7 +206,7 @@ class TestTripAdvisorAtrativosIngest:
     async def test_atrativo_parent_absent_auto_creates_destino(self) -> None:
         """produce() with empty destino_rio_map AUTO-CREATES the IBGE parent destino
         (source="ibge") and links the atrativo — NO parent_destino_absent quarantine."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         fake_client = _make_fake_client()
         mock_session = MagicMock()
@@ -215,14 +215,14 @@ class TestTripAdvisorAtrativosIngest:
         destino_rio_id = uuid.uuid4()
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record") as mock_rio,
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record") as mock_rio,
             # _ensure_destino now delegates to brave.shared.destino.ensure_destino,
             # which calls store_raw / process_nascente_record in ITS OWN namespace —
             # funnel both into the same mocks so the call assertions still hold.
             patch("brave.shared.destino.store_raw", new=mock_store_raw),
             patch("brave.shared.destino.process_nascente_record", new=mock_rio),
-            patch("brave.lanes.tripadvisor.atrativos.quarantine_poison") as mock_quarantine,
+            patch("brave.domains.tripadvisor.atrativos.quarantine_poison") as mock_quarantine,
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -270,7 +270,7 @@ class TestTripAdvisorAtrativosIngest:
     async def test_ensure_destino_creates_ibge_destino(self) -> None:
         """_ensure_destino(ibge_match) creates a source='ibge' destination and returns
         (rio_id, 'ibge:{uf}:{code}')."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         mock_session = MagicMock()
         # No MTur row for this município — `one_or_none` is used nowhere else in brave/,
@@ -281,8 +281,8 @@ class TestTripAdvisorAtrativosIngest:
         ibge_match = _IBGE_RECORDS[0]  # Salvador, BA, 2927408
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record") as mock_rio,
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record") as mock_rio,
             # _ensure_destino delegates to brave.shared.destino.ensure_destino —
             # funnel both namespaces into the same mocks.
             patch("brave.shared.destino.store_raw", new=mock_store_raw),
@@ -337,7 +337,7 @@ class TestTripAdvisorAtrativosIngest:
     @pytest.mark.asyncio
     async def test_atrativo_source_ref_format(self) -> None:
         """produce() uses source_ref='tripadvisor:attraction:{locationId}'."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         fake_client = _make_fake_client()
         mock_session = MagicMock()
@@ -349,8 +349,8 @@ class TestTripAdvisorAtrativosIngest:
         }
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -380,15 +380,15 @@ class TestProducerPauseHalt:
         import fakeredis
 
         from brave.core import engine as collection_engine
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         rc = fakeredis.FakeStrictRedis()
         collection_engine.set_mode(rc, collection_engine.PAUSADO)
 
         fake_client = _make_fake_client()
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             ingest = TripAdvisorAtrativosIngest(
                 ta_client=fake_client,
@@ -407,15 +407,15 @@ class TestProducerPauseHalt:
         import fakeredis
 
         from brave.core import engine as collection_engine
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         rc = fakeredis.FakeStrictRedis()
         collection_engine.set_mode(rc, collection_engine.LIGADO)
 
         fake_client = _make_fake_client()
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
             ingest = TripAdvisorAtrativosIngest(
@@ -435,15 +435,15 @@ class TestProducerPauseHalt:
         import fakeredis
 
         from brave.core import engine as collection_engine
-        from brave.lanes.tripadvisor.destinos import TripAdvisorDestinosIngest
+        from brave.domains.tripadvisor.destinos import TripAdvisorDestinosIngest
 
         rc = fakeredis.FakeStrictRedis()
         collection_engine.set_mode(rc, collection_engine.DESLIGADO)
 
         fake_client = _make_fake_client()
         with (
-            patch("brave.lanes.tripadvisor.destinos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.destinos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.destinos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.destinos.process_nascente_record"),
         ):
             ingest = TripAdvisorDestinosIngest(
                 ta_client=fake_client,

@@ -200,7 +200,7 @@ def main() -> None:
     from brave.clients.nominatim import NominatimGeocoderClient
     from brave.domains.tripadvisor.ibge import load_ibge_csv
     from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
-    from brave.lanes.tripadvisor.client import TripAdvisorClient
+    from brave.domains.tripadvisor.client import TripAdvisorClient
     from brave.core.models import RioRecord
     from sqlalchemy import select
 

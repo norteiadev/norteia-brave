@@ -27,7 +27,7 @@ import pytest
 from brave.config.settings import ScoreConfig
 from brave.core.score.engine import compute_score
 from brave.core.score.schemas import ScoreInput
-from brave.lanes.tripadvisor.scoring import (
+from brave.domains.tripadvisor.scoring import (
     atualidade_from_recency,
     completude_from_fields,
     corroboracao_from_reviews,

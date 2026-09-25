@@ -44,12 +44,12 @@ lng        float     Longitude (decimal degrees, negative = west)
 
 LOADER BEHAVIOR
 ---------------
-Loaded by brave.lanes.tripadvisor.ibge.load_ibge_csv(path: Path).
+Loaded by brave.domains.tripadvisor.ibge.load_ibge_csv(path: Path).
 - Called once at TripAdvisorDestinosIngest / TripAdvisorAtrativosIngest construction.
 - Returns list[IbgeMunicipio] held in memory for the duration of the sweep.
 - No per-request file I/O (T-11-02-03).
 
-Resolver: brave.lanes.tripadvisor.ibge.resolve_municipio()
+Resolver: brave.domains.tripadvisor.ibge.resolve_municipio()
 - rapidfuzz token_sort_ratio ≥ 88 (configurable via BRAVE_TA_IBGE_MATCH_THRESHOLD)
 - Haversine fallback < 15km (configurable via BRAVE_TA_IBGE_MAX_DISTANCE_KM)
 - Returns None on miss → caller quarantines as "ibge_unmatched" (TA-03)

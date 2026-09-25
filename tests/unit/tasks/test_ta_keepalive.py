@@ -23,7 +23,7 @@ import fakeredis
 import pytest
 
 from brave.core import engine as collection_engine
-from brave.lanes.tripadvisor.client import (
+from brave.domains.tripadvisor.client import (
     BRAVE_TA_SESSION_KEY,
     SessionExpiredError,
     SessionMissingError,
@@ -103,7 +103,7 @@ def _run_keepalive(monkeypatch, fake, stub) -> None:
         run_real_externals = True
 
     monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: _MockAppConfig())
-    monkeypatch.setattr("brave.lanes.tripadvisor.client.TripAdvisorClient", stub)
+    monkeypatch.setattr("brave.domains.tripadvisor.client.TripAdvisorClient", stub)
 
     from brave.tasks.pipeline import ta_keepalive  # noqa: PLC0415
 
@@ -276,7 +276,7 @@ class TestTaKeepaliveTask:
 
         monkeypatch.setattr("brave.tasks.pipeline.AppConfig", lambda: _MockAppConfig())
         monkeypatch.setattr(
-            "brave.lanes.tripadvisor.client.TripAdvisorClient", _StubRuntimeErrorClient
+            "brave.domains.tripadvisor.client.TripAdvisorClient", _StubRuntimeErrorClient
         )
 
         from brave.tasks.pipeline import ta_keepalive  # noqa: PLC0415

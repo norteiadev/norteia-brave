@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from brave.config.settings import ScoreConfig
-from brave.lanes.tripadvisor.ibge import IbgeMunicipio
+from brave.domains.tripadvisor.ibge import IbgeMunicipio
 from tests.fakes.fake_nominatim import FakeGeocoderClient
 from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
 
@@ -117,7 +117,7 @@ class TestAtrativosIngestCardFields:
         The normalized card dict from _parse_attractions_page uses underscore.
         A stale camelCase key should be silently ignored (entity.get("review_count")).
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         card = _make_card(review_count=500, reviewCount=999)  # camelCase MUST be ignored
         fake_client = _make_fake_client(card)
@@ -125,8 +125,8 @@ class TestAtrativosIngestCardFields:
         config = _make_config()
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -157,7 +157,7 @@ class TestAtrativosIngestCardFields:
         atualidade_from_recency(None) must return 0.0 (not raise) — verified by checking
         atualidade_value=0.0 in the payload and that the ingest completed successfully.
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         # Card with no mostRecentReviewDate key — simulates real AttractionsFusion card
         card = _make_card(review_count=200, rating=4.5)
@@ -168,8 +168,8 @@ class TestAtrativosIngestCardFields:
         config = _make_config()
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -202,7 +202,7 @@ class TestAtrativosIngestCardFields:
     @pytest.mark.asyncio
     async def test_ingest_one_stores_category(self) -> None:
         """category from AttractionsFusion card (primaryInfo.text) is stored in raw payload."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         card = _make_card(category="Waterfalls")
         fake_client = _make_fake_client(card)
@@ -210,8 +210,8 @@ class TestAtrativosIngestCardFields:
         config = _make_config()
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -243,7 +243,7 @@ class TestAtrativosIngestCardFields:
         name + locationId + rating + review_count + category, and _ingest_one
         adds uf + location_id — so 6/10 completude fields match → 60.0, never 40.0.
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         card = _make_card(review_count=200, rating=4.5)
         # lat/lng/address/description are absent from a listing card
@@ -252,8 +252,8 @@ class TestAtrativosIngestCardFields:
         config = _make_config()
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -286,7 +286,7 @@ class TestAtrativosIngestCardFields:
         actually reachable once the card is complete — proving the prior 40-cap
         was a field-name mismatch, not an intentional ceiling.
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         card = _make_card(
             review_count=200,
@@ -301,8 +301,8 @@ class TestAtrativosIngestCardFields:
         config = _make_config()
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -340,7 +340,7 @@ class TestAtrativosGeoEnrichment:
         Fixtures: "Cachoeira do Tabuleiro" (locationId=312332, MG) → Nominatim returns
         Conceição do Mato Dentro coords → resolve_municipio haversine 50km matches.
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         # IBGE record for Conceição do Mato Dentro (MG, spike-verified coords)
         ibge_records = [
@@ -368,8 +368,8 @@ class TestAtrativosGeoEnrichment:
         )
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -407,7 +407,7 @@ class TestAtrativosGeoEnrichment:
     @pytest.mark.asyncio
     async def test_quarantine_after_both_fail(self) -> None:
         """ibge_unmatched quarantine fires only after both name-match AND geo-enrichment fail."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         ibge_records = [IbgeMunicipio("3550308", "São Paulo", "SP", -23.55, -46.63)]
         card = _make_coordless_card()
@@ -419,7 +419,7 @@ class TestAtrativosGeoEnrichment:
         # Geocoder returns no match (all misses — both strategies fail)
         fake_geo = FakeGeocoderClient(fixture_results={})
 
-        with patch("brave.lanes.tripadvisor.atrativos.quarantine_poison") as mock_q:
+        with patch("brave.domains.tripadvisor.atrativos.quarantine_poison") as mock_q:
             ingest = TripAdvisorAtrativosIngest(
                 ta_client=fake_ta,
                 session=MagicMock(),
@@ -440,15 +440,15 @@ class TestAtrativosGeoEnrichment:
     @pytest.mark.asyncio
     async def test_no_geocoder_unchanged(self) -> None:
         """geocoder=None → existing behavior unchanged (no Phase-11/13 regression)."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         # Use the existing _IBGE_RECORDS fixture (Uberlândia matches the card name)
         card = _make_card(name="Uberlândia")
         fake_ta = _make_fake_client(card)
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -499,7 +499,7 @@ class TestAtrativosGeoFallback:
         then resolve_municipio resolves to the MG IBGE record. store_raw is called.
         """
         from brave.config.settings import TripAdvisorConfig
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         card = _make_coordless_card()  # name="Cachoeira do Tabuleiro" — no IBGE match
         fake_client = FakeTripAdvisorClient(
@@ -517,8 +517,8 @@ class TestAtrativosGeoFallback:
         ta_config = TripAdvisorConfig(page_throttle_seconds=0)
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -552,7 +552,7 @@ class TestAtrativosGeoFallback:
         Without ta_config the geo fallback is skipped entirely. The coordless card
         may quarantine as ibge_unmatched — that is correct behavior.
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         card = _make_coordless_card()
         fake_client = FakeTripAdvisorClient(
@@ -568,7 +568,7 @@ class TestAtrativosGeoFallback:
             }},
         )
 
-        with patch("brave.lanes.tripadvisor.atrativos.quarantine_poison"):
+        with patch("brave.domains.tripadvisor.atrativos.quarantine_poison"):
             ingest = TripAdvisorAtrativosIngest(
                 ta_client=fake_client,
                 session=MagicMock(),
@@ -593,7 +593,7 @@ class TestAtrativosGeoFallback:
         geo_calls is still populated (the method was called).
         """
         from brave.config.settings import TripAdvisorConfig
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         card = _make_coordless_card()
         fake_client = FakeTripAdvisorClient(
@@ -604,7 +604,7 @@ class TestAtrativosGeoFallback:
         )
         ta_config = TripAdvisorConfig(page_throttle_seconds=0)
 
-        with patch("brave.lanes.tripadvisor.atrativos.quarantine_poison") as mock_q:
+        with patch("brave.domains.tripadvisor.atrativos.quarantine_poison") as mock_q:
             ingest = TripAdvisorAtrativosIngest(
                 ta_client=fake_client,
                 session=MagicMock(),
@@ -697,7 +697,7 @@ class TestAtrativosPaginatedGql:
     @pytest.mark.asyncio
     async def test_produce_ingests_cards_across_multiple_pages(self) -> None:
         """Two pages (30 + 15 cards) → all 45 reach Nascente (not capped at one page)."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         page1 = [_ub_card(100_000 + i) for i in range(30)]
         page2 = [_ub_card(200_000 + i) for i in range(15)]
@@ -706,8 +706,8 @@ class TestAtrativosPaginatedGql:
         )
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
 
@@ -736,7 +736,7 @@ class TestAtrativosPaginatedGql:
         (once per page). Before the fix the per-UF producer committed only once at the
         very end, so nothing was visible mid-processing.
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         page1 = [_ub_card(100_000 + i) for i in range(3)]
         page2 = [_ub_card(200_000 + i) for i in range(2)]
@@ -747,8 +747,8 @@ class TestAtrativosPaginatedGql:
         session = MagicMock()
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
 
@@ -777,7 +777,7 @@ class TestAtrativosReviewEnrichment:
         The recency container also overrides the card's review_count/rating with the
         precise totalCount/rating from the reviews query.
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         loc_id = 312332
         recent_dt = datetime.now(UTC) - timedelta(days=10)  # ≤30d → atualidade 100
@@ -794,8 +794,8 @@ class TestAtrativosReviewEnrichment:
         )
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
 
@@ -824,7 +824,7 @@ class TestAtrativosReviewEnrichment:
     @pytest.mark.asyncio
     async def test_enrich_reviews_false_leaves_atualidade_zero(self) -> None:
         """enrich_reviews=False (default) → no review call; atualidade stays 0.0."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         loc_id = 312332
         client = _GqlListingClient(
@@ -840,8 +840,8 @@ class TestAtrativosReviewEnrichment:
         )
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
 
@@ -887,7 +887,7 @@ class TestAtrativosEnrichCommitGranularity:
         committed immediately for per-atrativo durability. All 5 cards resolve to the
         pre-cached Uberlândia destino, so none fail → exactly 5 commits, 0 rollbacks.
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         page1 = [_ub_card(100_000 + i) for i in range(3)]
         page2 = [_ub_card(200_000 + i) for i in range(2)]
@@ -897,8 +897,8 @@ class TestAtrativosEnrichCommitGranularity:
         session = MagicMock()
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
 
@@ -935,7 +935,7 @@ class TestAtrativosEnrichCommitGranularity:
           3. quarantine_poison(task_name="brave.ta.atrativos.produce"),
           4. commit() the poison row independently.
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         loc_id = 555_001
         client = _GqlListingClient(
@@ -961,12 +961,12 @@ class TestAtrativosEnrichCommitGranularity:
         mock_store_raw = MagicMock(side_effect=_store_raw_side_effect)
         mock_rio = MagicMock(return_value=MagicMock(id=uuid.uuid4()))
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw", new=mock_store_raw),
+            patch("brave.domains.tripadvisor.atrativos.store_raw", new=mock_store_raw),
             patch("brave.shared.destino.store_raw", new=mock_store_raw),
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record", new=mock_rio),
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record", new=mock_rio),
             patch("brave.shared.destino.process_nascente_record", new=mock_rio),
             patch(
-                "brave.lanes.tripadvisor.atrativos.quarantine_poison"
+                "brave.domains.tripadvisor.atrativos.quarantine_poison"
             ) as mock_quarantine,
         ):
             ingest = TripAdvisorAtrativosIngest(
@@ -1020,7 +1020,7 @@ class TestAtrativosEnrichCommitGranularity:
         are NOT lost when card 2 rolls back → 2 success commits + 1 poison commit, exactly one
         rollback, and card 1's commit is ordered BEFORE card 2's rollback (survival).
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         cards = [_ub_card(700_000 + i) for i in range(3)]
         client = _GqlListingClient(geo_id=_GEO_ID_MG, pages=[(0, cards)])
@@ -1035,15 +1035,15 @@ class TestAtrativosEnrichCommitGranularity:
 
         with (
             patch(
-                "brave.lanes.tripadvisor.atrativos.store_raw",
+                "brave.domains.tripadvisor.atrativos.store_raw",
                 side_effect=_store_raw_side_effect,
             ),
             patch(
-                "brave.lanes.tripadvisor.atrativos.process_nascente_record",
+                "brave.domains.tripadvisor.atrativos.process_nascente_record",
                 return_value=MagicMock(id=uuid.uuid4()),
             ),
             patch(
-                "brave.lanes.tripadvisor.atrativos.quarantine_poison"
+                "brave.domains.tripadvisor.atrativos.quarantine_poison"
             ) as mock_quarantine,
         ):
             ingest = TripAdvisorAtrativosIngest(
@@ -1079,7 +1079,7 @@ class TestAtrativosEnrichCommitGranularity:
         finds the map empty and _ensure_destino fires AGAIN → the destino (source='ibge') is
         stored twice total, proving eviction forced re-creation (no dangling parent rio).
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         cards = [_ub_card(800_001), _ub_card(800_002)]
         client = _GqlListingClient(geo_id=_GEO_ID_MG, pages=[(0, cards)])
@@ -1100,11 +1100,11 @@ class TestAtrativosEnrichCommitGranularity:
         mock_store_raw = MagicMock(side_effect=_store_raw_side_effect)
         mock_rio = MagicMock(return_value=MagicMock(id=uuid.uuid4()))
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw", new=mock_store_raw),
+            patch("brave.domains.tripadvisor.atrativos.store_raw", new=mock_store_raw),
             patch("brave.shared.destino.store_raw", new=mock_store_raw),
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record", new=mock_rio),
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record", new=mock_rio),
             patch("brave.shared.destino.process_nascente_record", new=mock_rio),
-            patch("brave.lanes.tripadvisor.atrativos.quarantine_poison"),
+            patch("brave.domains.tripadvisor.atrativos.quarantine_poison"),
         ):
             ingest = TripAdvisorAtrativosIngest(
                 ta_client=client,
@@ -1140,7 +1140,7 @@ class TestAtrativosEnrichCommitGranularity:
         A would dangle the next A-atrativo's parent rio — this guards the boundary at
         atrativos.py `set(self._destino_rio_map) - keys_before`.
         """
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         ibge = [
             IbgeMunicipio("3106200", "Belo Horizonte", "MG", -19.9167, -43.9345),
@@ -1167,14 +1167,14 @@ class TestAtrativosEnrichCommitGranularity:
 
         with (
             patch(
-                "brave.lanes.tripadvisor.atrativos.store_raw",
+                "brave.domains.tripadvisor.atrativos.store_raw",
                 side_effect=_store_raw_side_effect,
             ),
             patch(
-                "brave.lanes.tripadvisor.atrativos.process_nascente_record",
+                "brave.domains.tripadvisor.atrativos.process_nascente_record",
                 return_value=MagicMock(id=uuid.uuid4()),
             ),
-            patch("brave.lanes.tripadvisor.atrativos.quarantine_poison"),
+            patch("brave.domains.tripadvisor.atrativos.quarantine_poison"),
         ):
             ingest = TripAdvisorAtrativosIngest(
                 ta_client=client,
@@ -1220,12 +1220,12 @@ class TestAtrativosMaxPerUf:
 
     async def _run(self, max_per_uf: int | None) -> int:
         """Run produce() with the cap; return the store_raw call count (attractions ingested)."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         client = self._multi_page_client()
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_nascente = MagicMock()
             mock_nascente.id = uuid.uuid4()
@@ -1267,7 +1267,7 @@ class TestAtrativosProduceReturnsRioIds:
 
     @pytest.mark.asyncio
     async def test_run_rio_returns_ingested_rio_ids(self) -> None:
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         cards = [_make_card() for _ in range(3)]
         for i, c in enumerate(cards):
@@ -1279,9 +1279,9 @@ class TestAtrativosProduceReturnsRioIds:
         rio_ids = [uuid.uuid4() for _ in cards]
 
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
             patch(
-                "brave.lanes.tripadvisor.atrativos.process_nascente_record"
+                "brave.domains.tripadvisor.atrativos.process_nascente_record"
             ) as mock_process,
         ):
             mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
@@ -1304,13 +1304,13 @@ class TestAtrativosProduceReturnsRioIds:
     @pytest.mark.asyncio
     async def test_nascente_only_returns_empty(self) -> None:
         """run_rio=False → no Rio records created → empty id list (no enrich dispatched)."""
-        from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         card = _make_card()
         client = _make_fake_client(card)
         with (
-            patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-            patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+            patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
         ):
             mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
             ingest = TripAdvisorAtrativosIngest(
@@ -1333,7 +1333,7 @@ class TestAtrativosProduceReturnsRioIds:
 @pytest.mark.asyncio
 async def test_produce_skips_already_synced_before_any_ta_call() -> None:
     """A card already in Rio is skipped before fetch_recent_review, and does not eat the cap."""
-    from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
     known = _make_card(locationId=1)
     new = _make_card(locationId=2)
@@ -1342,8 +1342,8 @@ async def test_produce_skips_already_synced_before_any_ta_call() -> None:
     mock_session.scalars.return_value = ["tripadvisor:attraction:1"]
 
     with (
-        patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-        patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+        patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
     ):
         ingest = TripAdvisorAtrativosIngest(
             ta_client=fake_client,
@@ -1402,11 +1402,11 @@ class _LocatingAgent:
 
 async def _produce_go(card, city_name, *, places_agent=None, distritos=None):
     from brave.config.settings import TripAdvisorConfig
-    from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
     with (
-        patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-        patch("brave.lanes.tripadvisor.atrativos.quarantine_poison") as mock_q,
+        patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+        patch("brave.domains.tripadvisor.atrativos.quarantine_poison") as mock_q,
     ):
         mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
         ingest = TripAdvisorAtrativosIngest(
@@ -1466,7 +1466,7 @@ async def test_fallback_d_places_links_card_and_hands_over_the_place_id() -> Non
 
 @pytest.mark.asyncio
 async def test_unmatched_quarantine_is_stamped_with_the_resolver_version() -> None:
-    from brave.lanes.tripadvisor.atrativos import IBGE_RESOLVER_VERSION
+    from brave.domains.tripadvisor.atrativos import IBGE_RESOLVER_VERSION
 
     store, quarantine = await _produce_go(
         _make_coordless_card("Jardim de Maytreia"), None, places_agent=_LocatingAgent(None)
@@ -1479,7 +1479,7 @@ async def test_unmatched_quarantine_is_stamped_with_the_resolver_version() -> No
 @pytest.mark.asyncio
 async def test_produce_skips_card_already_unmatched_under_the_current_resolver() -> None:
     """Neither in Rio nor retry-worthy: quarantined under THIS chain → no TA call, no cap slot."""
-    from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
     poisoned = _make_card(locationId=1)
     new = _make_card(locationId=2)
@@ -1489,8 +1489,8 @@ async def test_produce_skips_card_already_unmatched_under_the_current_resolver()
     mock_session.scalars.side_effect = [[], ["1"]]
 
     with (
-        patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-        patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+        patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
     ):
         ingest = TripAdvisorAtrativosIngest(
             ta_client=fake_client,

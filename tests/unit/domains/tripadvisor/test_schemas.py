@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from brave.lanes.tripadvisor.schemas import (
+from brave.domains.tripadvisor.schemas import (
     TripAdvisorAtrativoPayload,
     TripAdvisorDestinoPayload,
     TripAdvisorReviewSignals,

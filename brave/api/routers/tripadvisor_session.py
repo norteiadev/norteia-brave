@@ -27,8 +27,8 @@ from pydantic import BaseModel, Field, model_validator
 from redis import Redis
 
 from brave.api.deps import get_redis, require_steward_or_bearer
-from brave.lanes.tripadvisor import sweep_progress as sweep_progress_state
-from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, SessionExpiredError
+from brave.domains.tripadvisor import sweep_progress as sweep_progress_state
+from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, SessionExpiredError
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -147,7 +147,7 @@ async def _run_canary(session: dict[str, Any], ta_config: Any, redis: Redis) -> 
 
     T-12-02-01: Only logs cookie_count and query_ids keys — never values.
     """
-    from brave.lanes.tripadvisor.client import TripAdvisorClient
+    from brave.domains.tripadvisor.client import TripAdvisorClient
 
     client = TripAdvisorClient(config=ta_config, redis=redis)
     try:

@@ -48,7 +48,7 @@ def _make_client(monkeypatch=None):
     import fakeredis
 
     from brave.config.settings import AppConfig
-    from brave.lanes.tripadvisor.client import TripAdvisorClient
+    from brave.domains.tripadvisor.client import TripAdvisorClient
 
     config = AppConfig().tripadvisor
     redis = fakeredis.FakeRedis()
@@ -65,7 +65,7 @@ def _make_client(monkeypatch=None):
 class TestExtractSectionsFromHtml:
     def test_extract_recovers_flexcard_sections(self):
         """The extractor recovers >= 25 FlexCard sections from the real fixture."""
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         html = _load_fixture()
         sections = TripAdvisorClient._extract_sections_from_html(html)
@@ -78,7 +78,7 @@ class TestExtractSectionsFromHtml:
 
     def test_extract_output_feeds_existing_parser(self):
         """Extractor output → _parse_attractions_page yields >= 25 valid cards."""
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         html = _load_fixture()
         sections = TripAdvisorClient._extract_sections_from_html(html)
@@ -100,13 +100,13 @@ class TestExtractSectionsFromHtml:
 
     def test_extract_empty_html_returns_empty_list(self):
         """Empty input returns [] and never raises."""
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         assert TripAdvisorClient._extract_sections_from_html("") == []
 
     def test_extract_garbage_html_returns_empty_list(self):
         """Malformed HTML with no JSON island returns [] and never raises."""
-        from brave.lanes.tripadvisor.client import TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
 
         garbage = "<html><body><div>no island here</div></body></html>"
         assert TripAdvisorClient._extract_sections_from_html(garbage) == []
@@ -120,7 +120,7 @@ class TestExtractSectionsFromHtml:
         """
         import ast
 
-        import brave.lanes.tripadvisor.client as client_mod
+        import brave.domains.tripadvisor.client as client_mod
 
         source = Path(client_mod.__file__).read_text(encoding="utf-8")
         tree = ast.parse(source)
@@ -250,7 +250,7 @@ class TestFetchAttractionsPaginated:
     @pytest.mark.parametrize("status", [403, 429])
     async def test_session_expiry_fails_fast(self, status):
         """A 403/429 raises SessionExpiredError and stops (no further GET)."""
-        from brave.lanes.tripadvisor.client import SessionExpiredError
+        from brave.domains.tripadvisor.client import SessionExpiredError
 
         client = _make_client()
         requested: list[int] = []
@@ -298,7 +298,7 @@ class TestFetchAttractionsPaginated:
     @pytest.mark.asyncio
     async def test_throttles_between_pages_not_after_last(self, monkeypatch):
         """Sleeps page_throttle_seconds between pages, never after the final page."""
-        import brave.lanes.tripadvisor.client as client_mod
+        import brave.domains.tripadvisor.client as client_mod
 
         client = _make_client()
         client._config.page_throttle_seconds = 1.5  # type: ignore[attr-defined]
@@ -329,7 +329,7 @@ class TestFetchAttractionsPaginated:
         """The new method's logs never reference cookies/user_agent/session_id/proxy."""
         import ast
 
-        import brave.lanes.tripadvisor.client as client_mod
+        import brave.domains.tripadvisor.client as client_mod
 
         source = Path(client_mod.__file__).read_text(encoding="utf-8")
         tree = ast.parse(source)
