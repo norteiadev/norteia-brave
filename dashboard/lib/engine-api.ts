@@ -112,6 +112,19 @@ export interface EngineStatus {
     reason?: string | null;
     pending: number;
   };
+  /**
+   * Maintenance beat tasks whose last run failed (cleared on the next success, kept 7
+   * days). Only the exception type — never its message. Optional: older servers omit it.
+   */
+  beat_errors?: BeatError[];
+}
+
+export interface BeatError {
+  /** Celery task name, e.g. "brave.prune_record_events". */
+  task: string;
+  /** ISO8601 UTC timestamp of the failure. */
+  at: string;
+  error_type: string;
 }
 
 export interface EngineActionResult {

@@ -306,6 +306,26 @@ def _dispatch_chain(task: Any, rio_id: str) -> None:
         )
 
 
+def _beat_health(task: str, exc: BaseException | None = None) -> None:
+    """Record (``exc``) or clear (None) a beat task's last error for the Painel.
+
+    Best-effort (brave.core.beat_health): Redis being down must not change the task's own
+    outcome.
+    """
+    import redis as _redis_lib  # noqa: PLC0415
+
+    from brave.core import beat_health  # noqa: PLC0415
+
+    try:
+        rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+        if exc is None:
+            beat_health.clear_error(rc, task)
+        else:
+            beat_health.record_error(rc, task, exc)
+    except Exception:  # noqa: BLE001
+        logger.warning("beat_health_write_failed", task=task)
+
+
 async def _using(clients: Any, coro: Any) -> Any:
     """Await ``coro`` inside ``clients``: persistent HTTP connections held for the whole
     event loop, everything the bag built closed when it ends (brave.clients.factory)."""
@@ -396,11 +416,15 @@ def repush_pending_mar() -> int:
     session, _ = _get_session()
     try:
         dispatched = republish_pending(session, publish_mar.delay)
-        if dispatched:
-            logger.info("repush_pending_mar_dispatched", count=dispatched)
-        return dispatched
+    except Exception as exc:
+        _beat_health("brave.repush_pending_mar", exc)
+        raise
     finally:
         session.close()
+    _beat_health("brave.repush_pending_mar")
+    if dispatched:
+        logger.info("repush_pending_mar_dispatched", count=dispatched)
+    return dispatched
 
 
 @shared_task(
@@ -1163,7 +1187,18 @@ _STALLED_BATCH = 50
 
 @shared_task(name="brave.redispatch_stalled_chain", time_limit=300)
 def redispatch_stalled_chain() -> int:
-    """Beat (15 min): re-dispatch the next chain task for atrativos stuck mid-chain.
+    """Beat (15 min): _redispatch_stalled_chain, its failures kept for the Painel."""
+    try:
+        count = _redispatch_stalled_chain()
+    except Exception as exc:
+        _beat_health("brave.redispatch_stalled_chain", exc)
+        raise
+    _beat_health("brave.redispatch_stalled_chain")
+    return count
+
+
+def _redispatch_stalled_chain() -> int:
+    """Re-dispatch the next chain task for atrativos stuck mid-chain.
 
     Picks up to 50 attractions at discovered / contacts_found / signals_gathered whose
     sub_state has not moved for 30 min (NULL = unknown = old enough), oldest first, and
@@ -1603,19 +1638,21 @@ def collect_description_batches_task(self) -> None:
         effective = _load_config(session)
         if not effective.run_real_externals:
             reap_stale_claims(session, None)
-            return
-        collect_batches(
-            session,
-            clients_for(effective).batch,
-            effective.score,
-            redis_client=_redis_lib.from_url(
-                os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
-            ),
-            model=effective.atrativo_voice_model_slug,
-        )
+        else:
+            collect_batches(
+                session,
+                clients_for(effective).batch,
+                effective.score,
+                redis_client=_redis_lib.from_url(
+                    os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+                ),
+                model=effective.atrativo_voice_model_slug,
+            )
+        _beat_health("brave.collect_description_batches")
     except Exception as exc:  # noqa: BLE001 — beat retries on the next tick
         session.rollback()
         logger.warning("copy_batch_collect_failed", error=str(exc))
+        _beat_health("brave.collect_description_batches", exc)
     finally:
         session.close()
 
@@ -2327,6 +2364,7 @@ def ta_keepalive() -> None:
         # the session works, and persist_rotated_cookies only writes when cookies rotate.
         rc.expire(BRAVE_TA_SESSION_KEY, ta_config.session_ttl)
         rc.delete(_TA_KEEPALIVE_FAILURES_KEY)
+        _beat_health("brave.ta_keepalive")
         logger.info("ta_keepalive_ok", ttl_before=ttl)
 
     except (SessionExpiredError, SessionMissingError) as exc:
@@ -2350,6 +2388,7 @@ def ta_keepalive() -> None:
             "ta_keepalive_error",
             error_type=type(exc).__name__,
         )
+        _beat_health("brave.ta_keepalive", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -2402,6 +2441,7 @@ def prune_record_events_task(self, retention_days: int = 90) -> int:
         )
         session.commit()
         deleted = result.rowcount or 0
+        _beat_health("brave.prune_record_events")
         logger.info(
             "prune_record_events_ok",
             deleted=deleted,
@@ -2416,6 +2456,7 @@ def prune_record_events_task(self, retention_days: int = 90) -> int:
             "prune_record_events_error",
             error_type=type(exc).__name__,
         )
+        _beat_health("brave.prune_record_events", exc)
         return 0
     finally:
         session.close()

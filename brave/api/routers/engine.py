@@ -34,6 +34,7 @@ from brave.api.deps import (
 )
 from brave.config.runtime import enabled_sources, load_effective_config
 from brave.config.settings import AppConfig
+from brave.core import beat_health
 from brave.core import engine as collection_engine
 from brave.core.mar.publication import republish_pending
 from brave.core.mar.sync import count_pending_pushes, norteia_api_health, norteia_api_up
@@ -146,6 +147,8 @@ def engine_status(
         "reason": None if health in (None, "ok") else health,
         "pending": count_pending_pushes(db),
     }
+    # Maintenance beats that failed on their last run (brave.core.beat_health).
+    status["beat_errors"] = beat_health.beat_errors(redis)
     return status
 
 

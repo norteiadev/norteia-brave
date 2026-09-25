@@ -74,6 +74,22 @@ def test_status_idle_by_default_with_counts(client):
 
 
 @pytest.mark.integration
+def test_status_lists_beat_errors(client):
+    from brave.api.deps import get_redis
+    from brave.core import beat_health
+
+    assert client.get("/api/v1/engine/status", headers=BEARER_HEADERS).json()["beat_errors"] == []
+    beat_health.record_error(get_redis(), "brave.prune_record_events", RuntimeError("x"))
+
+    errors = client.get("/api/v1/engine/status", headers=BEARER_HEADERS).json()["beat_errors"]
+
+    assert [(e["task"], e["error_type"]) for e in errors] == [
+        ("brave.prune_record_events", "RuntimeError")
+    ]
+    assert errors[0]["at"]
+
+
+@pytest.mark.integration
 def test_start_transitions_to_running(client):
     r = client.post(
         "/api/v1/engine/start", headers=STEWARD_HEADERS, json={"depth": "nascente"}
