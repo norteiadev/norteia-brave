@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import fakeredis
 import pytest
+from celery import states
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
@@ -180,3 +181,52 @@ def test_nascente_rio_depth_leaves_discovered_alone(tx_session, spies):
     assert pipeline.redispatch_stalled_chain.run() == 1
 
     assert dispatched == [("gather_signals_task", contacts)]
+
+
+# -- failed .delay: no inline .run (Q3) ----------------------------------------------
+
+
+class _Clients:
+    places = None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_a):
+        return False
+
+
+class _AdvancingAgent:
+    def __init__(self, **_k):
+        pass
+
+    async def run(self, rio):
+        rio.sub_state = "contacts_found"
+
+
+def test_failed_dispatch_leaves_the_record_and_never_quarantines_the_parent(monkeypatch):
+    rio = MagicMock(sub_state="discovered")
+    session = MagicMock()
+    session.get.return_value = rio
+    monkeypatch.setattr(pipeline, "_get_session", lambda: (session, None))
+    monkeypatch.setattr(pipeline, "_load_config", lambda _s: MagicMock())
+    monkeypatch.setattr(pipeline, "clients_for", lambda *_a, **_k: _Clients())
+    monkeypatch.setattr(
+        "brave.domains.places.contact_finder_agent.ContactFinderAgent", _AdvancingAgent
+    )
+
+    def _no_broker(*_a, **_k):
+        raise ConnectionError("broker down")
+
+    monkeypatch.setattr(pipeline.gather_signals_task, "delay", _no_broker)
+    inline = MagicMock()
+    monkeypatch.setattr(pipeline.gather_signals_task, "run", inline)
+    quarantine = MagicMock()
+    monkeypatch.setattr("brave.core.quarantine.quarantine_poison", quarantine)
+
+    result = pipeline.find_contacts_task.apply(args=(str(uuid.uuid4()),))
+
+    assert result.state == states.SUCCESS
+    inline.assert_not_called()
+    quarantine.assert_not_called()
+    assert rio.sub_state == "contacts_found"  # waits there for redispatch_stalled_chain

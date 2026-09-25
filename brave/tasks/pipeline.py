@@ -290,6 +290,22 @@ def _load_config(session: Session) -> AppConfig:
     return load_effective_config(session, overlay_redis())
 
 
+def _dispatch_chain(task: Any, rio_id: str) -> None:
+    """Enqueue the next chain task; a broker failure is logged, never run inline.
+
+    The record keeps its current sub_state; brave.redispatch_stalled_chain recovers the
+    Places chain states (discovered / contacts_found / signals_gathered). An inline .run()
+    here used to end, with the broker down, in the CALLER's quarantine ("retry failed:
+    Reject") — and in discover it cut the fan-out short.
+    """
+    try:
+        task.delay(rio_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "chain_dispatch_failed", task=task.name, rio_id=rio_id, error_type=type(exc).__name__
+        )
+
+
 async def _using(clients: Any, coro: Any) -> Any:
     """Await ``coro`` inside ``clients``: persistent HTTP connections held for the whole
     event loop, everything the bag built closed when it ends (brave.clients.factory)."""
@@ -524,14 +540,11 @@ def discover_atrativo_task(
             # ORCH-02 / D-03: fan out the FSM chain. DiscoveryAgent.produce returns None,
             # so chaining is keyed on sub_state queries (self-healing across restarts) —
             # never on a producer return value. Query every attraction this sweep landed at
-            # sub_state='discovered' and dispatch find_contacts_task per row. Dispatch-then-
-            # inline-fallback (swallow-all, from dlq.py): an operator/test with no broker still
-            # advances the chain synchronously. Replay-safe: a duplicate dispatch hits the
-            # contact_finder inline precondition guard and no-ops (D-04, finding #2).
-            # Materialize the IDs up front (as strings) BEFORE dispatching. The inline
-            # fallback (.run) opens/commits a session that can expire/detach live ORM rows;
-            # holding ORM objects across a dispatch would raise DetachedInstanceError on the
-            # next loop iteration. Selecting the scalar id column avoids that entirely.
+            # sub_state='discovered' and dispatch find_contacts_task per row. A failed
+            # .delay is logged and skipped: the record stays 'discovered' and
+            # brave.redispatch_stalled_chain picks it up — one bad dispatch never stops the
+            # fan-out. Replay-safe: a duplicate dispatch hits the contact_finder inline
+            # precondition guard and no-ops (D-04, finding #2).
             discovered_ids = session.scalars(
                 select(RioRecord.id).where(
                     RioRecord.entity_type == "attraction",
@@ -541,14 +554,10 @@ def discover_atrativo_task(
             ).all()
             # Depth gate (plan 10-02): only NASCENTE_RIO_MAR kicks the WhatsApp-gate
             # FSM chain. Under NASCENTE_RIO discovery/Rio still ran above, but the
-            # ENTIRE fan-out below — both the .delay dispatch AND the .run inline
-            # fallback — is suppressed so the chain never advances toward the gate.
+            # ENTIRE fan-out below is suppressed so the chain never advances toward the gate.
             if effective_depth != collection_engine.NASCENTE_RIO:
                 for rio_id in discovered_ids:
-                    try:
-                        find_contacts_task.delay(str(rio_id))
-                    except Exception:
-                        find_contacts_task.run(str(rio_id))
+                    _dispatch_chain(find_contacts_task, str(rio_id))
 
     finally:
         # Producer-completes lifecycle: engine_sweep_run claimed this producer before
@@ -923,14 +932,11 @@ def find_contacts_task(self, rio_id: str) -> None:
             # ORCH-02 / D-03: continue the chain only if this record actually advanced to
             # contacts_found (the ContactFinder inline guard short-circuits a duplicate/stale
             # dispatch — in which case we must NOT enqueue). Re-read sub_state after commit and
-            # dispatch gather_signals_task with the same dispatch-then-inline-fallback. Keyed on
-            # sub_state, not a return value (D-03); replay-safe via the signal_agent guard (D-04).
+            # dispatch gather_signals_task (_dispatch_chain). Keyed on sub_state, not a return
+            # value (D-03); replay-safe via the signal_agent guard (D-04).
             session.refresh(rio)
             if rio.sub_state == "contacts_found":
-                try:
-                    gather_signals_task.delay(str(rio_id))
-                except Exception:
-                    gather_signals_task.run(str(rio_id))
+                _dispatch_chain(gather_signals_task, str(rio_id))
 
     finally:
         session.close()
@@ -988,10 +994,7 @@ def gather_signals_task(self, rio_id: str) -> None:
             # liveness). Keyed on sub_state; replay-safe via the Places agent's own guard.
             session.refresh(rio)
             if rio.sub_state == "signals_gathered":
-                try:
-                    enrich_places_task.delay(str(rio_id))
-                except Exception:
-                    enrich_places_task.run(str(rio_id))
+                _dispatch_chain(enrich_places_task, str(rio_id))
 
     finally:
         session.close()
@@ -2012,13 +2015,9 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
                 )
                 session.commit()
 
-                # Dispatch-then-inline-fallback (same idiom the batch endpoint uses): the
-                # per-task commit above released the row lock, so an inline outreach_task.run
-                # can re-acquire it offline; .delay is the normal broker path.
-                try:
-                    outreach_task.delay(rio_id)
-                except Exception:
-                    outreach_task.run(rio_id)
+                # A failed .delay leaves the record at whatsapp_in_progress (logged); no
+                # inline .run — its failure would quarantine THIS task's record.
+                _dispatch_chain(outreach_task, rio_id)
 
                 logger.info("whatsapp_number_found", rio_id=rio_id)
                 return
