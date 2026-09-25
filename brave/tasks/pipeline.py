@@ -296,17 +296,7 @@ async def _using(clients: Any, coro: Any) -> Any:
         return await coro
 
 
-# ---------------------------------------------------------------------------
-# Poison quarantine helper (re-exported from brave.core.quarantine — D-18)
-# ---------------------------------------------------------------------------
-
-# quarantine_poison is defined in brave/core/quarantine.py so that lane code
-# (e.g. producers under brave/lanes/) can import it from core
-# without depending on the tasks layer.  This re-export keeps existing callers
-# working without any change.
 from datetime import UTC
-
-from brave.core.quarantine import quarantine_poison  # noqa: F401 (re-export)
 
 # ---------------------------------------------------------------------------
 # Celery tasks
@@ -1046,10 +1036,6 @@ def _enrich_ctx(session: Session) -> _EnrichCtx:
     )
 
 
-def _enrich_clients(ctx: _EnrichCtx) -> Any:
-    return clients_for(ctx.effective, ibge_lookup=ctx.ibge_lookup)
-
-
 def _enrich_agent(
     session: Session,
     ctx: _EnrichCtx,
@@ -1114,7 +1100,7 @@ def _enrich_one(session: Session, rio: RioRecord, ctx: _EnrichCtx | None = None)
     """Run PlacesEnrichmentAgent on one RioRecord (no commit — the caller owns it)."""
     if ctx is None:
         ctx = _enrich_ctx(session)
-    clients = _enrich_clients(ctx)
+    clients = clients_for(ctx.effective, ibge_lookup=ctx.ibge_lookup)
     agent = _enrich_agent(session, ctx, clients, str(rio.id))
     asyncio.run(_using(clients, agent.run(rio)))
 
@@ -1329,7 +1315,7 @@ def describe_uf(
             logger.warning("describe_uf_description_disabled", uf=uf)
             return
         ctx = _enrich_ctx(session)
-        clients = _enrich_clients(ctx)
+        clients = clients_for(ctx.effective, ibge_lookup=ctx.ibge_lookup)
         # The cascade search client's build guard: fail the UF once here instead of
         # walking the whole backlog failing every record before the agent.
         reason = clients.check_search()

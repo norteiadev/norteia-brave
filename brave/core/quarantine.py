@@ -29,7 +29,7 @@ def quarantine_poison(
     reliability DLQ = score gate routing for human review.
 
     Used by:
-      - brave/tasks/pipeline.py (Celery task failures, re-exported via re-import)
+      - brave/tasks/failure_policy.py (Celery task failures)
       - lane producers under brave/lanes/ (e.g. malformed LLM output)
 
     Args:

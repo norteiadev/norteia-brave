@@ -50,7 +50,7 @@ def test_process_nascente_task_idempotent(db_session):
 @pytest.mark.integration
 def test_quarantine_poison_creates_row(db_session):
     """quarantine_poison inserts a PoisonQuarantine row."""
-    from brave.tasks.pipeline import quarantine_poison
+    from brave.core.quarantine import quarantine_poison
 
     nascente_id = uuid.uuid4()
     quarantine_poison(
@@ -78,7 +78,7 @@ def test_poison_quarantine_not_dlq(db_session):
     The reliability DLQ (routing='dlq') and Celery poison quarantine are distinct.
     Poison → PoisonQuarantine table; DLQ → RioRecord.routing='dlq'.
     """
-    from brave.tasks.pipeline import quarantine_poison
+    from brave.core.quarantine import quarantine_poison
 
     nascente_id = uuid.uuid4()
     quarantine_poison(
