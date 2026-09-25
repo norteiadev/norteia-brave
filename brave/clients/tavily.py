@@ -2,7 +2,7 @@
 
 The cascade replaces the server-side ``web_search`` inside the copywriter with a search the
 lane runs ITSELF, so the context can be inspected before any model is called (the mention
-gate, brave.lanes.atrativos.grounding). Measured on 50 real TripAdvisor atrativos
+gate, brave.domains.places.grounding). Measured on 50 real TripAdvisor atrativos
 (docs/poc/gemini-viability.md §24): 98% of contexts mention the atrativo, 1,247 tokens each.
 
 Shape of the returned context is the one §24 measured: per result, ``title``, ``url`` and the

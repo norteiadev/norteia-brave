@@ -3,7 +3,6 @@
 route_by_score:          Score a RioRecord and set its routing column.
 process_nascente_record: Full Rio pipeline (dedup → normalize → label → route).
 reprocess_record:        Re-score an existing RioRecord (reset → re-route).
-reprocess_record_inline: Pure in-memory reprocess (no DB session required; for unit tests).
 """
 
 import uuid
@@ -406,24 +405,3 @@ def reprocess_record(
     session.flush()
 
     return rio
-
-
-def reprocess_record_inline(
-    rio_record: RioRecord,
-    config: ScoreConfig,
-) -> RioRecord:
-    """Re-score a RioRecord in-memory (no Session required).
-
-    Same logic as reprocess_record but operates on a transient/detached object.
-    Used in unit tests and Celery tasks where the session is managed externally.
-
-    Args:
-        rio_record: The RioRecord to reprocess (mutated in-place).
-        config:     ScoreConfig with reliability weights.
-
-    Returns:
-        The updated RioRecord (same object, mutated).
-    """
-    rio_record.routing = "in_progress"
-    route_by_score(None, rio_record, config)
-    return rio_record

@@ -20,9 +20,9 @@ import fakeredis
 from celery.exceptions import Retry
 
 from brave.config.settings import ScoreConfig
-from brave.lanes.tripadvisor import sweep_progress
-from brave.lanes.tripadvisor.client import SessionExpiredError, SessionMissingError
-from brave.lanes.tripadvisor.ibge import IbgeMunicipio
+from brave.domains.tripadvisor import sweep_progress
+from brave.domains.tripadvisor.client import SessionExpiredError, SessionMissingError
+from brave.domains.tripadvisor.ibge import IbgeMunicipio
 from tests.fakes.fake_nominatim import FakeGeocoderClient
 from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
 
@@ -131,7 +131,7 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
 
     # Patch load_ibge_csv to return empty list
     monkeypatch.setattr(
-        "brave.lanes.tripadvisor.ibge.load_ibge_municipios",
+        "brave.domains.tripadvisor.ibge.load_ibge_municipios",
         lambda session: [],
     )
 
@@ -151,7 +151,7 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
     mock_atrativos_ingest.produce = AsyncMock(side_effect=_stub_produce)
 
     monkeypatch.setattr(
-        "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
+        "brave.domains.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
         lambda **kw: mock_atrativos_ingest,
     )
 
@@ -322,11 +322,11 @@ class TestSweepTripAdvisorPerUfDestinoBuild:
             lambda: (mock_db_session, mock_db_engine),
         )
         monkeypatch.setattr(
-            "brave.lanes.tripadvisor.ibge.load_ibge_municipios",
+            "brave.domains.tripadvisor.ibge.load_ibge_municipios",
             lambda session: [],
         )
         monkeypatch.setattr(
-            "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
+            "brave.domains.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
             lambda **kw: _CapturingAtrativosIngest(**kw),
         )
 
@@ -468,7 +468,7 @@ def _run_bulk_sweep(
         lambda: (mock_db_session, mock_db_engine),
     )
     monkeypatch.setattr(
-        "brave.lanes.tripadvisor.ibge.load_ibge_municipios",
+        "brave.domains.tripadvisor.ibge.load_ibge_municipios",
         lambda session: _IBGE_RECORDS,
     )
 
@@ -489,8 +489,8 @@ def _run_bulk_sweep(
     raw_fn = sweep_tripadvisor.__wrapped__.__func__
 
     with (
-        patch("brave.lanes.tripadvisor.atrativos.store_raw") as mock_store_raw,
-        patch("brave.lanes.tripadvisor.atrativos.process_nascente_record"),
+        patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+        patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
     ):
         mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
         # NOTE: do NOT swallow — an UnboundLocalError regression must fail the test.
@@ -781,13 +781,13 @@ class TestSweepTripAdvisorTaConfig:
             lambda: (mock_db_session, mock_db_engine),
         )
         monkeypatch.setattr(
-            "brave.lanes.tripadvisor.ibge.load_ibge_municipios",
+            "brave.domains.tripadvisor.ibge.load_ibge_municipios",
             lambda session: [],
         )
         # Patch TripAdvisorAtrativosIngest at module level so the lazy import in
         # pipeline.py picks up the capturing class.
         monkeypatch.setattr(
-            "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
+            "brave.domains.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
             lambda **kw: _CapturingAtrativosIngest(**kw),
         )
 
@@ -898,10 +898,10 @@ class TestSweepTripAdvisorInlineEnrichment:
             lambda: (mock_db_session, MagicMock()),
         )
         monkeypatch.setattr(
-            "brave.lanes.tripadvisor.ibge.load_ibge_municipios", lambda session: []
+            "brave.domains.tripadvisor.ibge.load_ibge_municipios", lambda session: []
         )
         monkeypatch.setattr(
-            "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
+            "brave.domains.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
             lambda **kw: _StubIngest(**kw),
         )
 
@@ -984,14 +984,14 @@ class TestSweepNeverDescribes:
         monkeypatch.setattr(
             "brave.tasks.pipeline._get_session", lambda: (mock_db_session, MagicMock())
         )
-        monkeypatch.setattr("brave.lanes.tripadvisor.ibge.load_ibge_municipios", lambda session: [])
+        monkeypatch.setattr("brave.domains.tripadvisor.ibge.load_ibge_municipios", lambda session: [])
         monkeypatch.setattr(
-            "brave.lanes.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
+            "brave.domains.tripadvisor.atrativos.TripAdvisorAtrativosIngest",
             lambda **kw: _StubIngest(**kw),
         )
         monkeypatch.setattr("brave.config.settings.TripAdvisorConfig", lambda: MagicMock())
         monkeypatch.setattr(
-            "brave.lanes.tripadvisor.client.TripAdvisorClient", lambda **kw: MagicMock()
+            "brave.domains.tripadvisor.client.TripAdvisorClient", lambda **kw: MagicMock()
         )
         monkeypatch.setattr(
             "brave.clients.nominatim.NominatimGeocoderClient",

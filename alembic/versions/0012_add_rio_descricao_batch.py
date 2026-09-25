@@ -1,6 +1,6 @@
 """Add rio_records.descricao_batch_id / descricao_batch_submitted_at — batched-copy lane.
 
-Batch state for the deferred description lane (brave/lanes/atrativos/copy_batch.py) lives in
+Batch state for the deferred description lane (brave/domains/places/copy_batch.py) lives in
 REAL COLUMNS, not in the `normalized` JSONB, for two reasons:
 
   1. Lost update. A writer that reads `normalized` into a local dict, performs seconds of

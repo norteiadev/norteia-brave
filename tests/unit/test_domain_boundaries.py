@@ -5,7 +5,7 @@ style of ``test_no_test_imports_in_brave.py`` — import STATEMENTS only, so
 docstrings/comments never false-positive):
 
   CHECK A — kernel purity: ``brave/core`` and ``brave/shared`` must NEVER import
-    ``brave.domains``, ``brave.tasks`` (or ``brave.lanes``). The kernel sits below
+    ``brave.domains`` or ``brave.tasks``. The kernel sits below
     the sources; a kernel→domain import inverts the layering.
 
   CHECK B — no cross-domain imports: a module under ``brave/domains/<x>/`` must
@@ -13,6 +13,11 @@ docstrings/comments never false-positive):
     kernel + clients ONLY; the registry (``brave/domains/__init__.py``) and
     ``base.py`` are the two root files allowed to reference every domain, so files
     directly at the domains root are exempt.
+
+  CHECK D — clients stay below the domains: a module under ``brave/clients/`` must
+    NOT import ``brave.domains``. The single allowlisted exception is
+    ``brave/clients/factory.py`` → ``brave.domains.tripadvisor.client`` (the TA
+    client lives in its domain because it uses the domain's session/geo modules).
 
 See docs/ultraplan-refactor-brave.md (Phase G).
 """
@@ -24,12 +29,18 @@ _REPO_ROOT = Path(__file__).parent.parent.parent
 _BRAVE_DIR = _REPO_ROOT / "brave"
 
 # CHECK A: kernel (core/shared) must not import these top-level packages.
-_KERNEL_FORBIDDEN_RE = re.compile(r"^\s*(?:from|import)\s+brave\.(domains|tasks|lanes)\b")
+_KERNEL_FORBIDDEN_RE = re.compile(r"^\s*(?:from|import)\s+brave\.(domains|tasks)\b")
 
 # CHECK B: capture the first path segment after `brave.domains.`
 _CROSS_DOMAIN_RE = re.compile(
     r"^\s*(?:from|import)\s+brave\.domains\.([A-Za-z_][A-Za-z0-9_]*)"
 )
+
+# CHECK D: capture the full imported module path under `brave.domains`.
+_CLIENT_DOMAIN_RE = re.compile(r"^\s*(?:from|import)\s+(brave\.domains(?:\.[A-Za-z0-9_]+)*)")
+# `from brave import domains` reaches the package without naming brave.domains.
+_CLIENT_FROM_BRAVE_RE = re.compile(r"^\s*from\s+brave\s+import\s+.*\bdomains\b")
+_CLIENT_DOMAIN_ALLOWLIST = {("clients/factory.py", "brave.domains.tripadvisor.client")}
 
 
 def _iter_py(root: Path):
@@ -43,7 +54,7 @@ def _iter_py(root: Path):
 
 
 def test_kernel_never_imports_domains_or_tasks() -> None:
-    """CHECK A: no file under brave/core or brave/shared imports domains/tasks/lanes."""
+    """CHECK A: no file under brave/core or brave/shared imports domains/tasks."""
     assert _BRAVE_DIR.is_dir(), f"brave/ not found at {_BRAVE_DIR}"
 
     violations: list[tuple[Path, int, str]] = []
@@ -62,7 +73,7 @@ def test_kernel_never_imports_domains_or_tasks() -> None:
         )
         raise AssertionError(
             "Kernel purity violation (generalized D-18): brave.core / brave.shared "
-            "must never import brave.domains / brave.tasks / brave.lanes:\n" + report
+            "must never import brave.domains / brave.tasks:\n" + report
         )
 
 
@@ -104,4 +115,41 @@ def test_domains_never_import_sibling_domains() -> None:
         raise AssertionError(
             "Cross-domain import violation (generalized D-18): a domain must not "
             "import a sibling domain (kernel + clients only):\n" + report
+        )
+
+
+def test_clients_never_import_domains() -> None:
+    """CHECK D: no file under brave/clients imports brave.domains (one allowlisted import)."""
+    clients_dir = _BRAVE_DIR / "clients"
+    assert clients_dir.is_dir(), f"brave/clients not found at {clients_dir}"
+
+    violations: list[tuple[Path, int, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for py_file, lines in _iter_py(clients_dir):
+        rel = py_file.relative_to(_BRAVE_DIR).as_posix()
+        for lineno, line in enumerate(lines, start=1):
+            if _CLIENT_FROM_BRAVE_RE.match(line):
+                violations.append((py_file, lineno, line.rstrip()))
+                continue
+            m = _CLIENT_DOMAIN_RE.match(line)
+            if m is None:
+                continue
+            if (rel, m.group(1)) in _CLIENT_DOMAIN_ALLOWLIST:
+                seen.add((rel, m.group(1)))
+                continue
+            violations.append((py_file, lineno, line.rstrip()))
+
+    # A stale allowlist entry would silently permit the import if it came back elsewhere.
+    assert seen == _CLIENT_DOMAIN_ALLOWLIST, (
+        f"allowlisted clients→domains import no longer present: {_CLIENT_DOMAIN_ALLOWLIST - seen}"
+    )
+
+    if violations:
+        report = "\n".join(
+            f"  {p.relative_to(_REPO_ROOT)}:{n}: {ln}" for p, n, ln in violations
+        )
+        raise AssertionError(
+            "Clients→domains import violation (generalized D-18): brave.clients must "
+            "not import brave.domains (only factory.py → brave.domains.tripadvisor.client "
+            "is allowlisted):\n" + report
         )

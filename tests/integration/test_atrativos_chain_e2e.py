@@ -51,7 +51,7 @@ from sqlalchemy.orm import sessionmaker
 from brave.core.models import AuditLog, MarRecord, RioRecord
 from brave.core.nascente.service import store_raw
 from brave.core.rio.routing import process_nascente_record
-from brave.lanes.atrativos.schemas import AtrativoResult
+from brave.domains.places.schemas import AtrativoResult
 
 # Synthetic UF + IBGE: the fan-out query keys on (uf, sub_state='discovered'), so a
 # distinctive UF makes this test independent of any leaked BA 'discovered' rows in the

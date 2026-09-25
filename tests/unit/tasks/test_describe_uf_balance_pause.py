@@ -52,7 +52,7 @@ def _run_describe(monkeypatch, agent):
     )
 
     monkeypatch.setattr(
-        "brave.lanes.atrativos.places_enrichment.PlacesEnrichmentAgent", lambda **k: agent
+        "brave.domains.places.places_enrichment.PlacesEnrichmentAgent", lambda **k: agent
     )
     lifecycle = MagicMock()
     monkeypatch.setattr(pipeline, "_producer_done", lifecycle)

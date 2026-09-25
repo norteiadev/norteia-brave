@@ -100,7 +100,7 @@ def test_inject_valid_session_returns_ready(authed_client, fake_redis, monkeypat
     assert body.get("status") == "ready"
 
     # Redis key must be set
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
     assert fake_redis.exists(BRAVE_TA_SESSION_KEY), "Redis key must be set after valid inject"
 
 
@@ -117,7 +117,7 @@ def test_inject_malformed_body_422(authed_client, fake_redis):
     )
     assert resp.status_code == 422, f"Expected 422, got {resp.status_code}: {resp.text}"
 
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
     assert not fake_redis.exists(BRAVE_TA_SESSION_KEY), "Redis key must NOT be set on 422"
 
 
@@ -132,7 +132,7 @@ def test_inject_extra_field_forbidden_422(authed_client, fake_redis):
     resp = authed_client.post("/api/v1/tripadvisor/session", json=body)
     assert resp.status_code == 422, f"Expected 422, got {resp.status_code}: {resp.text}"
 
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
     assert not fake_redis.exists(BRAVE_TA_SESSION_KEY)
 
 
@@ -185,7 +185,7 @@ def test_inject_body_size_limit(authed_client, fake_redis):
 def test_canary_fail_deletes_key_returns_422(authed_client, fake_redis, monkeypatch):
     """Canary raises SessionExpiredError → Redis key deleted + 422 invalid_session."""
     import brave.api.routers.tripadvisor_session as ts_module
-    from brave.lanes.tripadvisor.client import SessionExpiredError, BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.client import SessionExpiredError, BRAVE_TA_SESSION_KEY
     from fastapi import HTTPException
 
     async def _failing_canary(session, ta_config, redis):
@@ -209,7 +209,7 @@ def test_canary_fail_deletes_key_returns_422(authed_client, fake_redis, monkeypa
 def test_canary_empty_result_returns_422(authed_client, fake_redis, monkeypatch):
     """Canary returns empty result list → key deleted + 422 invalid_session."""
     import brave.api.routers.tripadvisor_session as ts_module
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
     from fastapi import HTTPException
 
     async def _empty_canary(session, ta_config, redis):
@@ -234,7 +234,7 @@ def test_canary_empty_result_returns_422(authed_client, fake_redis, monkeypatch)
 def test_status_present(authed_client, fake_redis):
     """GET /session/status with session key in Redis → present=True + metadata."""
     import json
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
 
     session_data = {
         "cookies": {"datadome": "x"},
@@ -293,7 +293,7 @@ def test_inject_session_stores_session_id(authed_client, fake_redis, monkeypatch
     """POST without session_id field but with TASID cookie → session_id auto-derived."""
     import json
     import brave.api.routers.tripadvisor_session as ts_module
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
 
     async def _noop_canary(session, ta_config, redis):
         pass
@@ -322,7 +322,7 @@ def test_inject_session_explicit_session_id_wins(authed_client, fake_redis, monk
     """POST with explicit session_id wins over TASID cookie value."""
     import json
     import brave.api.routers.tripadvisor_session as ts_module
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
 
     async def _noop_canary(session, ta_config, redis):
         pass
@@ -385,7 +385,7 @@ def test_sweep_progress_idle_when_no_run(authed_client, fake_redis):
 
 def test_sweep_progress_running_snapshot(authed_client, fake_redis):
     """GET /sweep/progress after a seeded running sweep → live counters."""
-    from brave.lanes.tripadvisor import sweep_progress
+    from brave.domains.tripadvisor import sweep_progress
 
     sweep_progress.start(fake_redis, pages_total=334)
     sweep_progress.record_page(fake_redis, offset=30, ingested_delta=30)
@@ -404,7 +404,7 @@ def test_sweep_progress_running_snapshot(authed_client, fake_redis):
 
 def test_sweep_progress_no_secret_fields(authed_client, fake_redis):
     """The progress response must carry no cookie/session/datadome field (T-15-03-02)."""
-    from brave.lanes.tripadvisor import sweep_progress
+    from brave.domains.tripadvisor import sweep_progress
 
     sweep_progress.start(fake_redis, pages_total=334)
     sweep_progress.record_page(fake_redis, offset=30, ingested_delta=30)
@@ -441,7 +441,7 @@ async def test_canary_infra_error_returns_503_and_keeps_key(fake_redis, monkeypa
 
     import brave.api.routers.tripadvisor_session as ts_module
     from brave.config.settings import TripAdvisorConfig
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
 
     session = {"cookies": {"datadome": "x"}, "query_ids": {"destinations": "qid"}}
     fake_redis.set(BRAVE_TA_SESSION_KEY, json.dumps(session))
@@ -471,7 +471,7 @@ async def test_canary_session_expired_returns_422_and_deletes_key(fake_redis, mo
 
     import brave.api.routers.tripadvisor_session as ts_module
     from brave.config.settings import TripAdvisorConfig
-    from brave.lanes.tripadvisor.client import (
+    from brave.domains.tripadvisor.client import (
         BRAVE_TA_SESSION_KEY,
         SessionExpiredError,
         TripAdvisorClient,
@@ -519,7 +519,7 @@ async def test_canary_probes_fetch_attractions(fake_redis, monkeypatch):
 
     import brave.api.routers.tripadvisor_session as ts_module
     from brave.config.settings import TripAdvisorConfig
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, TripAdvisorClient
 
     session = {
         "cookies": {"datadome": "x", "TASID": "E75FBE95"},

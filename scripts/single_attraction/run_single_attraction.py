@@ -200,7 +200,7 @@ def main() -> None:
     from brave.clients.nominatim import NominatimGeocoderClient
     from brave.domains.tripadvisor.ibge import load_ibge_csv
     from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
-    from brave.lanes.tripadvisor.client import TripAdvisorClient
+    from brave.domains.tripadvisor.client import TripAdvisorClient
     from brave.core.models import RioRecord
     from sqlalchemy import select
 
@@ -276,7 +276,7 @@ def main() -> None:
             RealPlacesClient,
             load_municipio_name_ibge_lookup,
         )
-        from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+        from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
         from brave.shared.ibge_distritos import load_distritos
 
         # The agent accepts entry sub_state None (TA inline) or "signals_gathered".

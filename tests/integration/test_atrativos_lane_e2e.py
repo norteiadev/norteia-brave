@@ -63,8 +63,8 @@ from brave.core.models import (
 )
 from brave.core.nascente.service import store_raw
 from brave.core.rio.routing import process_nascente_record, reprocess_record
-from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
-from brave.lanes.atrativos.signal_agent import SignalAgent
+from brave.domains.places.discovery_agent import DiscoveryAgent
+from brave.domains.places.signal_agent import SignalAgent
 from tests.fakes.fake_llm import FakeLLMClient
 from tests.fakes.fake_norteia_api import FakeNorteiaApiClient
 from tests.fakes.fake_places import (
@@ -82,7 +82,7 @@ os.environ.setdefault(
 os.environ.setdefault("BRAVE_STEWARD_SECRET", "test-e2e-steward-secret")
 
 # The AtrativoResult schema (from DiscoveryAgent prompt extraction)
-from brave.lanes.atrativos.schemas import AtrativoResult
+from brave.domains.places.schemas import AtrativoResult
 
 
 # ---------------------------------------------------------------------------
@@ -735,7 +735,7 @@ def test_sc4_full_pipeline_borderline_reaches_gate(db_session: Session) -> None:
     rio_id = rio.id
 
     # Step 3: Run ContactFinderAgent (discovered → contacts_found)
-    from brave.lanes.atrativos.contact_finder_agent import ContactFinderAgent
+    from brave.domains.places.contact_finder_agent import ContactFinderAgent
 
     # Place details for contact finder
     fake_places_contact = FakePlacesClient(

@@ -42,7 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from brave.lanes.atrativos.copywriter import COPYWRITER_SYSTEM, _build_context  # noqa: E402
+from brave.domains.places.copywriter import COPYWRITER_SYSTEM, _build_context  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Alvos. Os três obscuros e seus fatos vêm da §15.1 (medidos com Sonnet + web_search);

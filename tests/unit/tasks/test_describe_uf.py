@@ -92,7 +92,7 @@ def harness(monkeypatch):
     agent = Agent()
     agent_builds = MagicMock(return_value=agent)
     monkeypatch.setattr(
-        "brave.lanes.atrativos.places_enrichment.PlacesEnrichmentAgent", agent_builds
+        "brave.domains.places.places_enrichment.PlacesEnrichmentAgent", agent_builds
     )
     lifecycle = MagicMock()
     monkeypatch.setattr(pipeline, "_producer_done", lifecycle)

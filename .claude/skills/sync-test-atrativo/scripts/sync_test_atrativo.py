@@ -124,7 +124,7 @@ def _promote_and_push(session, rio, config, *, validate: bool) -> None:
 def _build_agent(session, config, app_config, redis_client, *, with_description: bool):
     from brave.clients.llm import RealLLMClient
     from brave.clients.places import RealPlacesClient, load_municipio_name_ibge_lookup
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
     from brave.shared.ibge_distritos import load_distritos
 
     llm_client = (

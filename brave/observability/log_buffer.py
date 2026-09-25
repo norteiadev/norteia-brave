@@ -1,7 +1,7 @@
 """Redis-backed per-source log ring buffer.
 
 Pure functions over a sync Redis client — no FastAPI/Celery coupling,
-fakeredis-testable. Mirrors brave/lanes/tripadvisor/sweep_progress.py in
+fakeredis-testable. Mirrors brave/domains/tripadvisor/sweep_progress.py in
 security posture: no secrets, no PII (§T-ks0-01).
 
 Key layout:

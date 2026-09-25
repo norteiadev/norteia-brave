@@ -13,7 +13,7 @@ present and re-enablable — nothing Places runs now.
 
 Import posture (D-18): kernel + clients only, lazily. Nothing here imports another
 domain. The heavy client / agent imports live inside ``discover`` so the registry
-(and the ``brave.lanes`` re-export shims) can import this module cheaply.
+can import this module cheaply.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ class PlacesDomain:
                 "PlacesDomain.discover requires session=, config=, places_client= and "
                 "llm_client= (injected by the task layer)"
             )
-        from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+        from brave.domains.places.discovery_agent import DiscoveryAgent
 
         await DiscoveryAgent(places_client, llm_client, session, config).produce(uf)
 

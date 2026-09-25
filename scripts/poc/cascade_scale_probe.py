@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from search_snippets_probe import buscar_tavily  # noqa: E402
 
 # O gate e a groundedness moram na lane agora; a sonda mede com o MESMO código que roda.
-from brave.lanes.atrativos.grounding import (  # noqa: E402
+from brave.domains.places.grounding import (  # noqa: E402
     groundedness,
     menciona,
     termos_identificadores,
@@ -70,7 +70,7 @@ async def escrever(contexto: str, nome: str, municipio: str, uf: str) -> str:
     """flash-lite gratuito com o prompt de produção, sem ferramenta. A cascata inteira."""
     import httpx
 
-    from brave.lanes.atrativos.copywriter import COPYWRITER_SYSTEM, _build_context
+    from brave.domains.places.copywriter import COPYWRITER_SYSTEM, _build_context
 
     base = _build_context(nome, municipio, uf, {})
     cabeca = base.rpartition("\n")[0]

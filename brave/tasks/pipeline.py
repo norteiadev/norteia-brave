@@ -17,6 +17,7 @@ import asyncio
 import functools
 import os
 import uuid
+from datetime import UTC
 from typing import Any, NamedTuple
 
 import structlog
@@ -297,18 +298,6 @@ async def _using(clients: Any, coro: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Poison quarantine helper (re-exported from brave.core.quarantine — D-18)
-# ---------------------------------------------------------------------------
-
-# quarantine_poison is defined in brave/core/quarantine.py so that lane code
-# (e.g. producers under brave/lanes/) can import it from core
-# without depending on the tasks layer.  This re-export keeps existing callers
-# working without any change.
-from datetime import UTC
-
-from brave.core.quarantine import quarantine_poison  # noqa: F401 (re-export)
-
-# ---------------------------------------------------------------------------
 # Celery tasks
 # ---------------------------------------------------------------------------
 
@@ -487,7 +476,7 @@ def discover_atrativo_task(
         depth: Pipeline depth (nascente_rio | nascente_rio_mar). None → full.
     """
     from brave.core import engine as collection_engine
-    from brave.lanes.atrativos.discovery_agent import DiscoveryAgent
+    from brave.domains.places.discovery_agent import DiscoveryAgent
 
     effective_depth = depth or collection_engine.NASCENTE_RIO_MAR
 
@@ -631,10 +620,10 @@ def sweep_tripadvisor(
         geo_id:        TripAdvisor integer geoId for the bulk run (294280 = all Brazil).
     """
     from brave.core import engine as collection_engine
-    from brave.lanes.tripadvisor import sweep_progress
-    from brave.lanes.tripadvisor.atrativos import TripAdvisorAtrativosIngest
-    from brave.lanes.tripadvisor.client import SessionExpiredError, SessionMissingError
-    from brave.lanes.tripadvisor.ibge import load_ibge_municipios
+    from brave.domains.tripadvisor import sweep_progress
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+    from brave.domains.tripadvisor.client import SessionExpiredError, SessionMissingError
+    from brave.domains.tripadvisor.ibge import load_ibge_municipios
 
     run_rio = depth != collection_engine.NASCENTE
 
@@ -780,7 +769,7 @@ def sweep_tripadvisor(
             places_agent = None
             _distritos: list = []
             try:
-                from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+                from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
                 from brave.shared.ibge_distritos import load_distritos
 
                 _distritos = load_distritos(session)
@@ -908,7 +897,7 @@ def find_contacts_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to advance.
     """
-    from brave.lanes.atrativos.contact_finder_agent import ContactFinderAgent
+    from brave.domains.places.contact_finder_agent import ContactFinderAgent
 
     session, engine = _get_session()
     try:
@@ -968,7 +957,7 @@ def gather_signals_task(self, rio_id: str) -> None:
     Args:
         rio_id: UUID string of the RioRecord to advance.
     """
-    from brave.lanes.atrativos.signal_agent import SignalAgent
+    from brave.domains.places.signal_agent import SignalAgent
 
     session, engine = _get_session()
     try:
@@ -1046,10 +1035,6 @@ def _enrich_ctx(session: Session) -> _EnrichCtx:
     )
 
 
-def _enrich_clients(ctx: _EnrichCtx) -> Any:
-    return clients_for(ctx.effective, ibge_lookup=ctx.ibge_lookup)
-
-
 def _enrich_agent(
     session: Session,
     ctx: _EnrichCtx,
@@ -1068,7 +1053,7 @@ def _enrich_agent(
     """
     from brave.clients.null_llm import NullLLMClient
     from brave.clients.null_places import NullPlacesClient
-    from brave.lanes.atrativos.places_enrichment import PlacesEnrichmentAgent
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     effective = ctx.effective
 
@@ -1114,7 +1099,7 @@ def _enrich_one(session: Session, rio: RioRecord, ctx: _EnrichCtx | None = None)
     """Run PlacesEnrichmentAgent on one RioRecord (no commit — the caller owns it)."""
     if ctx is None:
         ctx = _enrich_ctx(session)
-    clients = _enrich_clients(ctx)
+    clients = clients_for(ctx.effective, ibge_lookup=ctx.ibge_lookup)
     agent = _enrich_agent(session, ctx, clients, str(rio.id))
     asyncio.run(_using(clients, agent.run(rio)))
 
@@ -1313,8 +1298,8 @@ def describe_uf(
     from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
     from brave.core import engine as collection_engine
-    from brave.lanes.atrativos.copy_batch import description_candidates_filter
-    from brave.lanes.atrativos.copywriter import local_hint
+    from brave.domains.places.copy_batch import description_candidates_filter
+    from brave.domains.places.copywriter import local_hint
     from brave.observability.cost_guard import pre_dispatch_check
     from brave.shared.exceptions import CostGuardError
 
@@ -1329,7 +1314,7 @@ def describe_uf(
             logger.warning("describe_uf_description_disabled", uf=uf)
             return
         ctx = _enrich_ctx(session)
-        clients = _enrich_clients(ctx)
+        clients = clients_for(ctx.effective, ibge_lookup=ctx.ibge_lookup)
         # The cascade search client's build guard: fail the UF once here instead of
         # walking the whole backlog failing every record before the agent.
         reason = clients.check_search()
@@ -1444,7 +1429,7 @@ def describe_uf(
 # When atrativo_description_batch_enabled is on, _enrich_one runs with description_enabled
 # =False (the TA sweep always does) — the copywriter never fires inline. These
 # two beat-driven tasks own the description instead: submit hourly, collect every 15 min.
-# All the logic lives in brave/lanes/atrativos/copy_batch.py; these are transport.
+# All the logic lives in brave/domains/places/copy_batch.py; these are transport.
 # ---------------------------------------------------------------------------
 
 
@@ -1466,7 +1451,7 @@ def submit_description_batch_task(self) -> None:
     """
     import redis as _redis_lib  # noqa: PLC0415
 
-    from brave.lanes.atrativos.copy_batch import submit_batch  # noqa: PLC0415
+    from brave.domains.places.copy_batch import submit_batch  # noqa: PLC0415
 
     session, engine = _get_session()
     try:
@@ -1521,7 +1506,7 @@ def collect_description_batches_task(self) -> None:
     """
     import redis as _redis_lib  # noqa: PLC0415
 
-    from brave.lanes.atrativos.copy_batch import collect_batches, reap_stale_claims  # noqa: PLC0415
+    from brave.domains.places.copy_batch import collect_batches, reap_stale_claims  # noqa: PLC0415
 
     session, engine = _get_session()
     try:
@@ -1875,8 +1860,8 @@ def discover_whatsapp_number_task(self, rio_id: str) -> None:
 
     from brave.core.atrativos.state_machine import advance_sub_state
     from brave.core.models import whatsapp_candidate_from_phone
-    from brave.lanes.atrativos.contact_finder_agent import _normalize_phone_e164
-    from brave.lanes.atrativos.number_discovery import discover_number
+    from brave.domains.places.contact_finder_agent import _normalize_phone_e164
+    from brave.domains.places.number_discovery import discover_number
 
     session, engine = _get_session()
     try:
@@ -2221,7 +2206,7 @@ def ta_keepalive() -> None:
     _redis_url = os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
     rc = _redis_lib.from_url(_redis_url)
 
-    from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY  # noqa: PLC0415
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY  # noqa: PLC0415
 
     ttl = rc.ttl(BRAVE_TA_SESSION_KEY)
     if ttl <= 0:
@@ -2229,7 +2214,7 @@ def ta_keepalive() -> None:
         return
 
     from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
-    from brave.lanes.tripadvisor.client import (  # noqa: PLC0415
+    from brave.domains.tripadvisor.client import (  # noqa: PLC0415
         SessionExpiredError,
         SessionMissingError,
         TripAdvisorClient,

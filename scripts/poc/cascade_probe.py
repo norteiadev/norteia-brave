@@ -56,7 +56,7 @@ from parametric_memory_probe import (  # noqa: E402
 )
 from search_snippets_probe import buscar_tavily  # noqa: E402
 
-from brave.lanes.atrativos.copywriter import COPYWRITER_SYSTEM, _build_context  # noqa: E402
+from brave.domains.places.copywriter import COPYWRITER_SYSTEM, _build_context  # noqa: E402
 
 CACHE = Path(__file__).with_name("cascade_probe_context.json")
 
@@ -313,7 +313,7 @@ async def roda_producao(slug: str, system: str, user: str) -> tuple[str, int, in
     """
     from anthropic import AsyncAnthropic
 
-    from brave.lanes.atrativos.copywriter import WEB_SEARCH_TOOL
+    from brave.domains.places.copywriter import WEB_SEARCH_TOOL
 
     c = AsyncAnthropic(api_key=os.environ["BRAVE_LLM_ANTHROPIC_API_KEY"])
     r = await c.messages.create(

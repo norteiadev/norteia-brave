@@ -309,7 +309,7 @@ def engine_start(
 
     # R2: TripAdvisor motor requires a live session — operator must inject a cURL first
     if source == "tripadvisor":
-        from brave.lanes.tripadvisor.client import BRAVE_TA_SESSION_KEY  # noqa: PLC0415
+        from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY  # noqa: PLC0415
         _ta_ttl = redis.ttl(BRAVE_TA_SESSION_KEY)
         # ttl > 0 → present + valid; 0 → just expired; -1 → no TTL (infinite, setex always
         # sets TTL so -1 = operator manually set via redis-cli); -2 → key absent

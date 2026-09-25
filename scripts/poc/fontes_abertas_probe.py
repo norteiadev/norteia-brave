@@ -46,7 +46,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from cascade_gemini_probe import _REC, CACHE as CACHE_TAVILY, GeminiOpenRouter, amostra_ta  # noqa: E402
 
-from brave.lanes.atrativos.grounding import _fold, afirmacoes_concretas, groundedness, menciona  # noqa: E402
+from brave.domains.places.grounding import _fold, afirmacoes_concretas, groundedness, menciona  # noqa: E402
 
 AQUI = Path(__file__).parent
 FONTES = AQUI / "fontes_abertas_probe.fontes.json"
@@ -287,7 +287,7 @@ def riqueza(texto: str, ctx: str) -> int:
 
 
 async def escrever(conc: int) -> int:
-    from brave.lanes.atrativos.copywriter import TourismCopywriter
+    from brave.domains.places.copywriter import TourismCopywriter
 
     fontes, rejeitados = limpar(json.loads(FONTES.read_text()))
     print(f"{len(rejeitados)} artigos rejeitados pelo casamento estrito:", *rejeitados, sep="\n  ")
@@ -313,7 +313,7 @@ async def escrever(conc: int) -> int:
     await asyncio.gather(*(um(a, v) for a in itens for v in VARIANTES))
 
     # Linha de base: a Tavily da §26, mesmo redator, mesmo prompt.
-    from brave.lanes.atrativos.copywriter import cascade_queries
+    from brave.domains.places.copywriter import cascade_queries
 
     for a in itens:
         b = base[a["nome"]]

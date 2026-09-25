@@ -44,7 +44,7 @@ from brave.core.models import (
     RioRecord,
     mask_phone,
 )
-from brave.lanes.atrativos.signal_agent import (
+from brave.domains.places.signal_agent import (
     TEMPORARILY_CLOSED,
     TEMPORARILY_CLOSED_REASON,
 )

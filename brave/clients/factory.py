@@ -184,7 +184,11 @@ class Clients:
 
                 return NullTripAdvisorClient()
             from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
-            from brave.lanes.tripadvisor.client import TripAdvisorClient  # noqa: PLC0415
+
+            # The one clients→domains import (allowlisted by CHECK D in
+            # tests/unit/test_domain_boundaries.py): the TA client lives in its domain
+            # because it uses the domain's ``session`` cookie write-back and ``geo``.
+            from brave.domains.tripadvisor.client import TripAdvisorClient  # noqa: PLC0415
 
             return TripAdvisorClient(config=TripAdvisorConfig(), redis=self._redis())
 

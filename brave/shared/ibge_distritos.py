@@ -2,7 +2,7 @@
 
 Shared/kernel home for the distrito enrichment resolver. It lives here — not in a
 domain package — because more than one collection lane needs it: the Places
-discovery lane (``brave.lanes.atrativos.discovery_agent``) resolves an attraction's
+discovery lane (``brave.domains.places.discovery_agent``) resolves an attraction's
 ``administrative_area_level_3`` hint, and the TripAdvisor lane reserves the same
 canonical keys. A domain must not import a sibling domain (D-18), so the resolver
 sits in ``brave.shared`` where every domain may reach it.

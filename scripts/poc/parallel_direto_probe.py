@@ -38,8 +38,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from cascade_gemini_probe import _REC, GeminiOpenRouter, amostra_ta, obediencia  # noqa: E402
 from fontes_abertas_probe import FonteFixa, limpar, riqueza  # noqa: E402
 
-from brave.lanes.atrativos.copywriter import cascade_queries  # noqa: E402
-from brave.lanes.atrativos.grounding import menciona  # noqa: E402
+from brave.domains.places.copywriter import cascade_queries  # noqa: E402
+from brave.domains.places.grounding import menciona  # noqa: E402
 
 AQUI = Path(__file__).parent
 URL = "https://api.parallel.ai/v1/search"
@@ -167,7 +167,7 @@ class GeminiEstrito(GeminiOpenRouter):
 
 
 async def escrever(modo: str, conc: int) -> int:
-    from brave.lanes.atrativos.copywriter import TourismCopywriter
+    from brave.domains.places.copywriter import TourismCopywriter
 
     busca = json.loads(cache(modo).read_text())
     llm = GeminiEstrito(thinking=False)

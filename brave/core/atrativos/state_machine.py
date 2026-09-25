@@ -9,8 +9,8 @@ D-01: Celery+Redis idempotent FSM — each transition is a separate Celery task;
 D-02: sub_state is the single source of truth; transitions write audit rows.
 
 D-18 boundary: this module lives under brave.core (Phase G kernel move). It only
-imports from brave.core and brave.observability — never from brave.lanes,
-brave.domains, or brave.tasks.
+imports from brave.core and brave.observability — never from brave.domains or
+brave.tasks.
 """
 
 from __future__ import annotations

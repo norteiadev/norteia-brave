@@ -11,7 +11,7 @@ clause keeps working unchanged:
   - ``brave.tasks.pipeline``            → TransientError, PermanentError
   - ``brave.observability.cost_guard``  → CostGuardError
   - ``brave.compliance.gate``           → ComplianceError
-  - ``brave.lanes.tripadvisor.client``  → SessionExpiredError / SessionMissingError
+  - ``brave.domains.tripadvisor.client`` → SessionExpiredError / SessionMissingError
     (defined there as subclasses of SourceSessionError to keep the exact,
     already-imported class objects — and thus every ``except`` tuple — intact)
 

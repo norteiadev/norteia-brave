@@ -14,8 +14,8 @@ import pytest
 
 from brave.api.routers.dlq import _is_whatsapp_eligible
 from brave.clients.null_llm import NullLLMClient
-from brave.lanes.atrativos.number_discovery import discover_number
-from brave.lanes.atrativos.schemas import WhatsAppNumberDiscovery
+from brave.domains.places.number_discovery import discover_number
+from brave.domains.places.schemas import WhatsAppNumberDiscovery
 from tests.fakes.fake_llm import FakeLLMClient
 
 # ---------------------------------------------------------------------------
