@@ -385,6 +385,35 @@ async def test_place_id_cache_skips_text_search() -> None:
 
 
 @pytest.mark.asyncio
+async def test_refresh_refetches_details_of_an_enriched_record() -> None:
+    """refresh=True: an already-enriched record pays one Place Details (no Text Search),
+    gets the fresh hours/review date and the refresh stamp."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJcached": _details(weekday_text=["Monday: 8-18"])},
+    )
+    rio = _make_rio(extra_normalized={
+        "google_enriched": True,
+        "place_id_cache": "ChIJcached",
+        "weekday_text": ["Monday: 9-17"],
+        "descricao_editorial": "Prosa já escrita.",
+    })
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
+    with patch("brave.domains.places.places_enrichment.write_audit"), \
+         patch("brave.domains.places.places_enrichment.record_event"), \
+         patch("brave.domains.places.places_enrichment.route_by_score") as mock_route:
+        await agent.run(rio, refresh=True)
+
+    assert fake.text_search_calls == []
+    assert fake.place_details_calls == ["ChIJcached"]
+    assert rio.normalized["weekday_text"] == ["Monday: 8-18"]
+    assert rio.normalized["places_refreshed_at"] == _NOW.isoformat()
+    assert mock_route.called
+
+
+@pytest.mark.asyncio
 async def test_idempotency_marker_noop() -> None:
     """google_enriched set AND a description already written → nothing left to do."""
     from brave.domains.places.places_enrichment import PlacesEnrichmentAgent

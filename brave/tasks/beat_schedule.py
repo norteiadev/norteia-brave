@@ -141,6 +141,9 @@ def maintenance_beat_entries() -> dict:
       - ``repush-pending-mar-15min`` → re-dispatches the norteia-api push for Mar rows
         with pushed_at NULL (API/broker was down, retries exhausted). No-op while
         externals are off or norteia-api's health ping fails.
+      - ``refresh-places-daily`` → re-fetches Place Details (by cached place_id, never a
+        Text Search) for atrativos whose Places data is older than 60 days, capped by
+        places_refresh_daily_limit. No-op while externals or Places enrichment are off.
     """
     from celery.schedules import crontab  # noqa: PLC0415
 
@@ -160,6 +163,11 @@ def maintenance_beat_entries() -> dict:
         "repush-pending-mar-15min": {
             "task": "brave.repush_pending_mar",
             "schedule": crontab(minute="*/15"),
+            "args": (),
+            "kwargs": {},
+        },        "refresh-places-daily": {
+            "task": "brave.refresh_places",
+            "schedule": crontab(hour=5, minute=0),  # 5 AM UTC, after the 4 AM prune
             "args": (),
             "kwargs": {},
         },

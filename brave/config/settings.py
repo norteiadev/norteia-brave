@@ -513,6 +513,12 @@ class AppConfig(BaseSettings):
     # from Porto Seguro seat) — a tight radius would silently skip correct matches.
     places_match_max_distance_km: float = 20.0
 
+    # places_refresh_daily_limit caps brave.refresh_places (daily beat): how many atrativos
+    # get their Place Details re-fetched per day — one Enterprise+Atmosphere SKU each
+    # (~US$25/1,000 past the 1,000/month free tier, shared with first-time enrichment).
+    # 200/day ≈ 6k calls/month. 0 turns the refresh off. Env-only.
+    places_refresh_daily_limit: int = 200
+
     model_config = SettingsConfigDict(env_prefix="")
 
     @classmethod
