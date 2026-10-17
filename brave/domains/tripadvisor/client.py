@@ -96,8 +96,9 @@ _DESTINATIONS_QID: str | None = None
 _LISTING_QID_GQL: str = "79aaeeb847e55e58"
 
 # Review-list persisted query id: powers reliability review recency (atualidade + precise
-# corroboração) via fetch_recent_review. POC-confirmed live.
-_REVIEWS_QID: str = "ef1a9f94012220d3"
+# corroboração) via fetch_recent_review. Captured live from the attraction detail page
+# 2026-10-17 — the old ef1a9f94012220d3 started answering PersistedQueryNotFound.
+_REVIEWS_QID: str = "1eeac11193438f8a"
 
 # Locale headers so TripAdvisor returns pt-BR attraction names (else it leaks English
 # names like "Camburi Beach"/"...Convent"). The HTML-SSR path already sends this; the
@@ -1067,23 +1068,28 @@ class TripAdvisorClient:
                 await asyncio.sleep(throttle)
 
     async def fetch_recent_review(self, location_id: int) -> dict | None:
-        """Fetch review recency for one attraction (qid ef1a9f94012220d3).
+        """Fetch review recency for one attraction (qid 1eeac11193438f8a).
 
         Powers ``atualidade_from_recency`` (review recency lifts the score) plus a
-        precise corroboração review_count/rating. The review list is sorted
-        SERVER_DETERMINED (newest-first), so ``reviews[0]`` is the NEWEST review.
+        precise corroboração review_count. ``sortBy=MOST_RECENT`` with no language
+        filter, so ``reviews[0]`` is the newest review in ANY language and
+        ``totalCount`` matches the listing card's count.
 
-        LGPD (CRITICAL): reads ONLY ``totalCount`` + ``reviews[0].publishedDate`` +
-        ``reviews[0].rating``. NEVER reads/logs/returns review text, title, username,
-        userProfile, photos, photoIds, or reviewTip.
+        LGPD (CRITICAL): reads ONLY ``totalCount`` + ``reviews[0].submittedDateTime``.
+        NEVER reads/logs/returns review text, title, username, userProfile, photos,
+        or reviewTip.
+
+        ``rating`` is always None: the only rating here is the newest review's own
+        stars, not the attraction aggregate — callers keep the card's aggregate.
 
         Args:
             location_id: TripAdvisor integer locationId of the attraction.
 
         Returns:
-            ``{"review_count": int, "rating": float | None, "most_recent_review_at":
+            ``{"review_count": int, "rating": None, "most_recent_review_at":
             datetime}`` on success, or ``None`` on empty reviews / any parse error
-            (never raises on data shape).
+            (never raises on data shape). A GraphQL ``errors`` envelope (e.g. a
+            retired qid → PersistedQueryNotFound) is logged as an error.
 
         Raises:
             SessionMissingError: When no session is in Redis (operator gate).
@@ -1104,15 +1110,12 @@ class TripAdvisorClient:
         payload = [
             {
                 "variables": {
+                    "clientId": "ATTRACTION_DETAIL_LIST",
                     "locationId": location_id,
-                    "filters": [],
+                    "sortBy": "MOST_RECENT",
                     "limit": 1,
                     "offset": 0,
-                    "sortType": None,
-                    "sortBy": "SERVER_DETERMINED",
-                    "language": "pt",
-                    "doMachineTranslation": False,
-                    "photosPerReviewLimit": 0,
+                    "locale": "pt-BR",
                 },
                 "extensions": {"preRegisteredQueryId": _REVIEWS_QID},
             }
@@ -1134,24 +1137,29 @@ class TripAdvisorClient:
 
         try:
             data = resp.json()
-            container = data[0]["data"]["ReviewsProxy_getReviewListPageForLocation"][0]
-            reviews = container["reviews"]
+            errors = data[0].get("errors")
+            if errors:
+                # A retired qid fails here for EVERY card — make it loud, not a silent None.
+                logger.error(
+                    "ta.reviews.graphql_error",
+                    qid=_REVIEWS_QID,
+                    errors=[e.get("message") for e in errors],
+                )
+                return None
+            result = data[0]["data"]["ReviewsProxy_getPublishedReviewsForLocation"][0]["result"]
+            reviews = result["reviews"]
             if not reviews:
                 return None
-            newest = reviews[0]
-            # LGPD: touch ONLY publishedDate + rating (+ totalCount) — no PII fields.
-            most_recent_at = datetime.strptime(
-                newest["publishedDate"], "%Y-%m-%d"
-            ).replace(tzinfo=UTC)
-            rating_raw = newest.get("rating")
-            # `float(x) or None`: a 0/absent rating collapses to None (contract).
-            rating = float(rating_raw) if rating_raw else None
+            # LGPD: touch ONLY submittedDateTime (+ totalCount) — no PII fields.
+            most_recent_at = datetime.fromisoformat(
+                reviews[0]["submittedDateTime"].replace("Z", "+00:00")
+            ).astimezone(UTC)
             return {
-                "review_count": int(container["totalCount"]),
-                "rating": rating,
+                "review_count": int(result["totalCount"]),
+                "rating": None,
                 "most_recent_review_at": most_recent_at,
             }
-        except (IndexError, KeyError, TypeError, ValueError):
+        except (IndexError, KeyError, TypeError, ValueError, AttributeError):
             return None
 
     async def resolve_geo_id(self, uf: str) -> int:

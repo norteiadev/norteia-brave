@@ -88,26 +88,38 @@ Arquivos do probe: `$CLAUDE_JOB_DIR/tmp/ta_poc_p{0,30,60}.json` (respostas cruas
 | Critério de confiabilidade | Fonte confirmada | Observação |
 |---|---|---|
 | **corroboração** | listagem `bubbleRating.reviewCount` + `.rating` (grátis, no card) **ou** `totalCount` da query de reviews (mais preciso) | Já coletável no sweep paginado |
-| **atualidade** | query de reviews → `reviews[0].publishedDate` (ordenado mais-recente) | **1 call por atrativo** |
+| **atualidade** | query de reviews → `reviews[0].submittedDateTime` (ordenado mais-recente) | **1 call por atrativo** |
 
 O card da listagem **não** serve para atualidade: seu único campo de data é `reviewSnippets[].photo.data.publishedDateTime` (data de FOTO, cobertura 23/30, muitos timestamps batch/stale `2020-02-21`). Descartado.
 
-## Query de reviews (confirmada)
+## Query de reviews (atualizada 2026-10-17)
 
-- **preRegisteredQueryId:** `ef1a9f94012220d3`
-- **Container:** `data[0].data.ReviewsProxy_getReviewListPageForLocation[0]` → keys `{preferredReviewIds, totalCount, reviews, reviewListOptions}`
-- **Variables mínimas (payload enxuto):**
+> O qid original `ef1a9f94012220d3` (`ReviewsProxy_getReviewListPageForLocation`) passou a
+> responder `PersistedQueryNotFound`. Como o parser engolia o `KeyError`, o
+> `most_recent_review_at` do TA ficou vazio em silêncio. Query abaixo capturada da página de
+> detalhes do atrativo (dropdown "Ordenar por").
+
+- **preRegisteredQueryId:** `1eeac11193438f8a`
+- **Container:** `data[0].data.ReviewsProxy_getPublishedReviewsForLocation[0]` → `{error, result}`;
+  `result` → `{totalCount, sortBy, reviews}`
+- **Variables:**
 ```json
-{"locationId": 312332, "filters": [], "limit": 1, "offset": 0,
- "sortType": null, "sortBy": "SERVER_DETERMINED", "language": "pt",
- "doMachineTranslation": false, "photosPerReviewLimit": 0}
+{"clientId": "ATTRACTION_DETAIL_LIST", "locationId": 555215, "sortBy": "MOST_RECENT",
+ "limit": 1, "offset": 0, "locale": "pt-BR"}
 ```
-- **Ordenação:** default `SERVER_DETERMINED` já retorna **newest-first** (`reviews[0]` = review mais recente). `sortBy:"MOST_RECENT"` retornou vazio (enum inválido) — usar SERVER_DETERMINED.
-- **filters:** `[{"axis":"LANGUAGE","selections":["pt"]}]` limita a pt (totalCount 34802); `filters:[]` = todas as línguas (totalCount 45813). Para atualidade/contagem global usar `filters:[]`.
+- **Ordenação:** `MOST_RECENT` = mais nova primeiro (verificado em 9 atrativos, `limit:10`).
+  `DETAILED` ("Avaliações detalhadas") é relevância e NÃO segue a data.
+- **Idioma:** `filterOptions: {"language": {"languageTag": "pt"}}` limita a pt. Sem ele, todas as
+  línguas: `totalCount` bate com o card (Pipa 5.791) e a data é mais nova (Pipa 14/10 vs 02/10 só
+  pt; d6728926 2026-07 vs 2024-10). Usar **sem** filtro.
+- **Erro de qid** chega como `[{"errors":[{"message":"PersistedQueryNotFound"}]}]` com HTTP 200 —
+  `fetch_recent_review` loga `ta.reviews.graphql_error`.
 
 ### Campos usados (LGPD — allow-list estrita)
-Do `reviews[0]`: **apenas** `publishedDate` (ou `createdDate`) + `rating`. Do container: `totalCount`.
-**NUNCA** ler/persistir `text`, `title`, `username`, `userProfile`, `photos`, `photoIds`, `reviewTip` — o objeto review os contém, mas `TripAdvisorReviewSignals` (`extra="forbid"`) já barra tudo fora de `{review_count, rating, most_recent_review_at}`.
+Do `reviews[0]`: **apenas** `submittedDateTime`. Do `result`: `totalCount`. O `rating` do review é a
+nota daquela review (não o agregado) → não é usado; o agregado vem do card da listagem.
+**NUNCA** ler/persistir `text`, `title`, `userProfile`, `photos`, `reviewTip` — `TripAdvisorReviewSignals`
+(`extra="forbid"`) já barra tudo fora de `{review_count, rating, most_recent_review_at}`.
 
 ## Cálculo de score (por que atualidade importa, mas não basta sozinha p/ Mar)
 
