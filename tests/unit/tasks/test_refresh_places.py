@@ -103,3 +103,18 @@ def test_due_query_compiles():
     pipeline._places_refresh_due(session, 10)
     params = session.scalars.call_args.args[0].compile(dialect=postgresql.dialect()).params
     assert all(k in list(params.values()) for k in ("places_refreshed_at", "place_id_cache"))
+
+
+@pytest.mark.parametrize("env, expected", [
+    ({"BRAVE_PLACES_REFRESH_API_KEY": "refresh-key"}, "BRAVE_PLACES_REFRESH_API_KEY"),
+    ({}, "BRAVE_PLACES_API_KEY"),
+])
+def test_refresh_uses_its_own_key_when_set(harness, monkeypatch, env, expected):
+    monkeypatch.delenv("BRAVE_PLACES_REFRESH_API_KEY", raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    seen = []
+    monkeypatch.setattr(pipeline, "clients_for",
+                        lambda *a, **k: seen.append(k.get("places_api_key_env")) or MagicMock())
+    pipeline.refresh_places()
+    assert seen and set(seen) == {expected}

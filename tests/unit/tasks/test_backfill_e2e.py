@@ -102,7 +102,7 @@ def test_bulk_backfill_cap_pause_and_resume(tx_session):
     )
     rc = fakeredis.FakeRedis()
 
-    # 1. Bulk: cheap listing → provisional, parent-less, unmarked records.
+    # 1. Bulk: cheap listing → provisional (UF/município from Nominatim), unmarked records.
     bulk = _ingest(tx_session, ta)
     bulk._geocoder = FakeGeocoderClient(fixture_national_results=national)
     asyncio.run(bulk.produce_paginated(294280, 1, 1, rc, run_rio=True))

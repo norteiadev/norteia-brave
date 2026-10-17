@@ -128,6 +128,19 @@ def test_real_places_gets_the_cost_guard_wired(real_env, monkeypatch):
     assert built["api_key"] == "k"
 
 
+def test_places_key_env_override(real_env, monkeypatch):
+    built = {}
+    monkeypatch.setenv("BRAVE_PLACES_API_KEY", "main")
+    monkeypatch.setenv("BRAVE_PLACES_REFRESH_API_KEY", "refresh")
+    monkeypatch.setattr("brave.clients.places.RealPlacesClient", lambda **kw: built.update(kw) or kw)
+
+    _ = clients_for(
+        _cfg(run_real_externals=True), places_api_key_env="BRAVE_PLACES_REFRESH_API_KEY"
+    ).places
+
+    assert built["api_key"] == "refresh"
+
+
 def test_context_exit_closes_only_what_it_built(real_env):
     fake_places = FakePlacesClient()
     c = Clients(

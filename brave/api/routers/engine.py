@@ -37,7 +37,12 @@ from brave.config.settings import AppConfig
 from brave.core import beat_health
 from brave.core import engine as collection_engine
 from brave.core.mar.publication import republish_pending
-from brave.core.mar.sync import count_pending_pushes, norteia_api_health, norteia_api_up
+from brave.core.mar.sync import (
+    count_pending_pushes,
+    count_rejected_pushes,
+    norteia_api_health,
+    norteia_api_up,
+)
 from brave.core.models import MarRecord, NascenteRecord, RioRecord
 
 logger = structlog.get_logger(__name__)
@@ -146,6 +151,8 @@ def engine_status(
         "up": None if health is None else health == "ok",
         "reason": None if health in (None, "ok") else health,
         "pending": count_pending_pushes(db),
+        # Permanent 4xx (push_error set): retried daily, never counted in pending (F46).
+        "rejected": count_rejected_pushes(db),
     }
     # Maintenance beats that failed on their last run (brave.core.beat_health).
     status["beat_errors"] = beat_health.beat_errors(redis)

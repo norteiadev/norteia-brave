@@ -333,6 +333,8 @@ async def test_produce_paginated_isolates_each_card_in_a_savepoint() -> None:
         patch("brave.domains.tripadvisor.atrativos.store_raw",
               side_effect=[RuntimeError("uq_canonical_key"), MagicMock()]),
         patch("brave.domains.tripadvisor.atrativos.quarantine_poison") as poison,
+        patch("brave.domains.tripadvisor.atrativos.TripAdvisorAtrativosIngest._ensure_destino",
+              return_value=_PARENT),
     ):
         ingest = _ingest(client, session=session, geocoder=geo)
         await ingest.produce_paginated(294280, 1, 1, fakeredis.FakeRedis(), run_rio=False)
@@ -406,7 +408,10 @@ async def test_bulk_stays_inside_the_uf_nominatim_reported() -> None:
     geo = FakeGeocoderClient(fixture_national_results={"9": near_border})
     from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
-    with patch("brave.domains.tripadvisor.atrativos.store_raw") as store:
+    with (
+        patch("brave.domains.tripadvisor.atrativos.store_raw") as store,
+        patch.object(TripAdvisorAtrativosIngest, "_ensure_destino", return_value=_PARENT),
+    ):
         ingest = TripAdvisorAtrativosIngest(
             ta_client=FakeTripAdvisorClient(), session=MagicMock(), config=_config(),
             ibge_records=records, geocoder=geo,

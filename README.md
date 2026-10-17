@@ -29,7 +29,14 @@ nativo** (mais rápido pra debug, exige Python/Node instalados).
 ### Docker (recomendado para o time)
 
 Sobe a stack inteira — Postgres (pgvector) + Redis + API + worker + beat + dashboard. Um dev
-novo precisa **só do Docker** instalado. Código é bind-mount com hot-reload (edite → recarrega); o worker Celery só recarrega com `BRAVE_WORKER_RELOAD=1` (padrão: celery puro, warm shutdown preserva tasks em voo).
+novo precisa **só do Docker** instalado. Código é bind-mount: API (`uvicorn --reload`) e dashboard
+(`next dev`) recarregam ao editar. O **worker Celery roda SEM reload por padrão** (celery puro): um
+restart a cada `*.py` salvo mataria um sweep longo no meio (SIGKILL após 5s) e o warm shutdown não
+preservaria as tasks em voo. Depois de mexer em código do worker, reinicie-o:
+`docker compose restart worker` (espera as tasks em voo terminarem; `docker compose kill worker`
+não espera). Para dev puro, `BRAVE_WORKER_RELOAD=1` (shell ou `.env`) liga o `watchfiles` no
+worker — nunca durante uma coleta real. No host nativo (`scripts/app.sh`) o worker também roda
+sem reload: `scripts/app.sh restart worker`.
 
 ```bash
 docker compose up            # sobe tudo (migrations + seed rodam antes via serviço `migrate`)

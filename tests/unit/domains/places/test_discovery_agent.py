@@ -598,3 +598,108 @@ async def test_run_level_errors_propagate_instead_of_poisoning(where, exc_name) 
             await agent.produce_for_destino(parent, target_count=1)
 
     poison.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# F16 — place_ids already in Rio are skipped BEFORE the paid LLM extraction
+# ---------------------------------------------------------------------------
+
+
+def _agent_with_known(known_rows: list[tuple[Any, Any, Any]], results: list[dict[str, Any]]):
+    """Agent whose session answers the batched known-place lookup with ``known_rows``."""
+    from brave.config.settings import ScoreConfig
+    from brave.domains.places.discovery_agent import DiscoveryAgent
+
+    session = _make_mock_session()
+    session.execute.return_value = known_rows
+    llm_client = MagicMock()
+    llm_client.extract = AsyncMock(side_effect=lambda **kw: _make_atrativo_result(
+        place_id=kw["prompt"].split("Place ID: ")[1].split()[0]
+    ))
+    agent = DiscoveryAgent(
+        places_client=FakePlacesClient(
+            fixture_results={
+                "atrativos em BA": results,
+                "pontos turísticos em Porto Seguro BA": results,
+            }
+        ),
+        llm_client=llm_client,
+        session=session,
+        config=ScoreConfig(),
+    )
+    return agent, session, llm_client
+
+
+def _discovery_patches():
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    mod = "brave.domains.places.discovery_agent"
+    stack.enter_context(patch(f"{mod}.ensure_destino",
+                              return_value=(uuid.uuid4(), "ibge:BA:2919207", None)))
+    store = stack.enter_context(patch(f"{mod}.store_raw"))
+    stack.enter_context(patch(f"{mod}.process_nascente_record"))
+    stack.enter_context(patch(f"{mod}.advance_sub_state"))
+    stack.enter_context(patch(f"{mod}.write_audit"))
+    return stack, store
+
+
+@pytest.mark.asyncio
+async def test_produce_skips_known_place_ids_before_the_llm() -> None:
+    """Known via canonical_key and via a TA record's google_place_id → LLM only for the new."""
+    results = [_make_places_result(place_id=p) for p in ("ChIJold1", "ChIJold2", "ChIJnew")]
+    agent, session, llm = _agent_with_known(
+        [("places:BA:ChIJold1", "ChIJold1", "ChIJold1"),
+         ("tripadvisor:attraction:9", None, "ChIJold2")],
+        results,
+    )
+    stack, store = _discovery_patches()
+    with stack:
+        await agent.produce(uf="BA")
+
+    prompts = [c.kwargs["prompt"] for c in llm.extract.call_args_list]
+    assert len(prompts) == 1 and "Place ID: ChIJnew" in prompts[0]
+    assert store.call_count == 1
+    # ONE batched lookup for the 3-result page, not one per result (the empty page: none).
+    assert session.execute.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_produce_for_destino_skips_known_place_ids_before_the_llm() -> None:
+    results = [_make_places_result(place_id=p) for p in ("ChIJold1", "ChIJnew")]
+    agent, _session, llm = _agent_with_known([("x", "ChIJold1", None)], results)
+    parent = MagicMock(id=uuid.uuid4(), source_ref="mtur:BA:2919207",
+                       canonical={"municipio": "Porto Seguro", "uf": "BA",
+                                  "ibge_code": "2919207"})
+    stack, _store = _discovery_patches()
+    with stack:
+        created = await agent.produce_for_destino(parent)
+
+    assert created == 1
+    assert all("ChIJold1" not in c.kwargs["prompt"] for c in llm.extract.call_args_list)
+
+
+@pytest.mark.integration
+def test_known_place_ids_query_against_the_db(db_session) -> None:
+    """The batched lookup matches canonical_key, place_id_cache and google_place_id."""
+    from brave.config.settings import ScoreConfig
+    from brave.core.models import RioRecord
+    from brave.core.nascente.service import store_raw
+    from brave.domains.places.discovery_agent import DiscoveryAgent
+
+    tag = uuid.uuid4().hex[:8]
+
+    def rio(key: str, normalized: dict[str, Any]) -> None:
+        nascente = store_raw(db_session, "test", key, "attraction", "BA", {"name": key})
+        db_session.add(RioRecord(nascente_id=nascente.id, entity_type="attraction", uf="BA",
+                                 routing="dlq", canonical_key=key, normalized=normalized))
+        db_session.flush()
+
+    rio(f"places:BA:A{tag}", {})  # canonical_key only
+    rio(f"tripadvisor:attraction:1{tag}", {"place_id_cache": f"B{tag}"})
+    rio(f"tripadvisor:attraction:2{tag}", {"google_place_id": f"C{tag}"})
+
+    agent = DiscoveryAgent(places_client=MagicMock(), llm_client=MagicMock(),
+                           session=db_session, config=ScoreConfig())
+    ids = [f"{c}{tag}" for c in "ABCD"]
+    assert agent._known_place_ids("BA", ids) == {f"A{tag}", f"B{tag}", f"C{tag}"}

@@ -754,8 +754,8 @@ def sweep_tripadvisor(
 
     Bulk national branch (Phase 15, TA-12): when bulk_national=True the task takes a
     DISTINCT path that paginates the all-Brazil AttractionsFusion listing (geoId 294280)
-    via TripAdvisorAtrativosIngest.produce_paginated — NO destinos producer, NO
-    destino_rio_map (parent-less bulk ingest). An unfinished run (running/stopped/
+    via TripAdvisorAtrativosIngest.produce_paginated — NO destinos producer, NO preloaded
+    destino_rio_map (each record's parent IBGE destino is ensured per município, cached). An unfinished run (running/stopped/
     stopped_needs_bootstrap) resumes at the stored next_page cursor; a done/idle one (or
     ``fresh=True``) starts at ``start_page``. It commits per-page (inside produce_paginated),
     marks the run done when the pages run out (``stopped`` on a pause/off/stop, a provider
@@ -852,7 +852,8 @@ def sweep_tripadvisor(
             if bulk_national:
                 # ---- Bulk national branch (Phase 15, TA-12) -----------------------
                 # DISTINCT path: paginate geoId 294280 via produce_paginated. No destinos
-                # producer / destino_rio_map (parent-less bulk ingest). Per-page commits
+                # producer / preloaded destino_rio_map (parents ensured per município,
+                # cached). Per-page commits
                 # happen inside produce_paginated; this branch only seeds/finishes progress
                 # and reuses the SHARED fail-fast except below on a mid-run 403/429.
                 rc = engine_rc
@@ -971,11 +972,13 @@ def sweep_tripadvisor(
                     _RioRecord.uf == uf,
                 )
             ).all()
-            # Map ibge_code → (rio_id, source_ref)
+            # Map ibge_code → (rio_id, source_ref). Only the canonical IBGE destino
+            # ("ibge:{uf}:{ibge}", see ensure_destino) may parent an atrativo: another
+            # destination row of the same município (e.g. mtur:) must not win by order.
             destino_rio_map: dict = {
                 row.municipio_id: (row.id, row.source_ref)
                 for row in destino_rows
-                if row.municipio_id
+                if row.municipio_id and row.source_ref == f"ibge:{uf}:{row.municipio_id}"
             }
 
             # The INLINE Places enrichment agent (distrito + hours/contact/price + liveness),
@@ -1375,20 +1378,41 @@ def enrich_places_task(self, rio_id: str) -> None:
         session.close()
 
 
-# Refresh before the 90-day Mar window closes on the newest review we last saw.
+# Refresh cadence (operator decision 2026-10-17): atrativos with few reviews every 60 days
+# (before the 90-day Mar window closes on the newest review we last saw); established ones
+# (review_count >= the Mar backstop's _ESTABLISHED_MIN_REVIEWS, 365-day window) every 90.
 _PLACES_REFRESH_AFTER_DAYS = 60
+_PLACES_REFRESH_ESTABLISHED_AFTER_DAYS = 90
+# The refresh runs on this key when set (a key of its own, own spend counters), else on
+# BRAVE_PLACES_API_KEY.
+_PLACES_REFRESH_KEY_ENV = "BRAVE_PLACES_REFRESH_API_KEY"
 
 
 def _places_refresh_due(session: Session, limit: int) -> list[uuid.UUID]:
-    """Atrativos with a cached place_id whose Places data is older than the refresh window,
-    oldest first. Never-stamped records (enriched before the stamp existed) age by
-    processed_at, so a just-enriched one is not re-billed. Descarte is never refreshed."""
+    """Atrativos with a cached place_id whose Places data is older than their refresh
+    window (60 days, 90 for established ones), oldest first. Never-stamped records (enriched
+    before the stamp existed) age by processed_at, so a just-enriched one is not re-billed.
+    Descarte is never refreshed."""
     from datetime import datetime, timedelta  # noqa: PLC0415
 
-    from sqlalchemy import and_, or_  # noqa: PLC0415
+    from sqlalchemy import and_, func, or_  # noqa: PLC0415
 
-    cutoff = datetime.now(UTC) - timedelta(days=_PLACES_REFRESH_AFTER_DAYS)
+    from brave.core.mar.service import _ESTABLISHED_MIN_REVIEWS  # noqa: PLC0415
+
+    now = datetime.now(UTC)
     stamp = RioRecord.normalized["places_refreshed_at"].as_string()
+
+    def aged(days: int) -> Any:
+        cutoff = now - timedelta(days=days)
+        return or_(
+            stamp < cutoff.isoformat(),
+            and_(stamp.is_(None), RioRecord.processed_at < cutoff),
+        )
+
+    established = (
+        func.coalesce(RioRecord.normalized["review_count"].as_integer(), 0)
+        >= _ESTABLISHED_MIN_REVIEWS
+    )
     stmt = (
         select(RioRecord.id)
         .where(
@@ -1396,8 +1420,8 @@ def _places_refresh_due(session: Session, limit: int) -> list[uuid.UUID]:
             RioRecord.routing.in_(("mar", "dlq")),
             RioRecord.normalized["place_id_cache"].as_string().is_not(None),
             or_(
-                stamp < cutoff.isoformat(),
-                and_(stamp.is_(None), RioRecord.processed_at < cutoff),
+                and_(established, aged(_PLACES_REFRESH_ESTABLISHED_AFTER_DAYS)),
+                and_(~established, aged(_PLACES_REFRESH_AFTER_DAYS)),
             ),
         )
         .order_by(stamp.asc().nulls_first(), RioRecord.processed_at.asc())
@@ -1437,7 +1461,15 @@ def refresh_places() -> int:
                 rio = session.get(RioRecord, rio_id, with_for_update=True)
                 if rio is None:
                     continue
-                clients = clients_for(effective, ibge_lookup=ctx.ibge_lookup)
+                clients = clients_for(
+                    effective,
+                    ibge_lookup=ctx.ibge_lookup,
+                    places_api_key_env=(
+                        _PLACES_REFRESH_KEY_ENV
+                        if os.environ.get(_PLACES_REFRESH_KEY_ENV)
+                        else "BRAVE_PLACES_API_KEY"
+                    ),
+                )
                 agent = _enrich_agent(session, ctx, clients, str(rio_id))
                 asyncio.run(_using(clients, agent.run(rio, refresh=True)))
                 in_mar = session.scalar(

@@ -13,7 +13,13 @@ how the team runs it. `scripts/app.sh` (host-native) is the fallback for faster 
 
 `docker compose up` runs all seven services: postgres (pgvector) + redis + a one-shot `migrate`
 (alembic + config seed) + api (:8000) + worker + beat + dashboard (:3000). Live source is
-bind-mounted with hot-reload; deps live in named volumes.
+bind-mounted; deps live in named volumes. api (`uvicorn --reload`) and dashboard (`next dev`)
+hot-reload. The **worker does NOT reload by default** (plain celery — a watchfiles restart on
+every `*.py` save would SIGKILL a running sweep): after changing worker code run
+`docker compose restart worker` (warm shutdown waits for in-flight tasks; `docker compose kill
+worker` doesn't wait). `BRAVE_WORKER_RELOAD=1` (shell or `.env`) opts the worker into
+`watchfiles` for pure dev — never during a real collection run. Host-native (`scripts/app.sh`)
+the worker never reloads either: `scripts/app.sh restart worker`.
 
 ```bash
 docker compose up            # foreground (whole stack; migrate runs first)

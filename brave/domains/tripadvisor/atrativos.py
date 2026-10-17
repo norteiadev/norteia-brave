@@ -491,6 +491,19 @@ class TripAdvisorAtrativosIngest:
         )
         return (parent_rio_id, parent_source_ref)
 
+    def _parent_destino(self, ibge_match: IbgeMunicipio) -> tuple[uuid.UUID, str]:
+        """(rio_id, source_ref) of the município's destino — one ensure_destino per sweep.
+
+        Cached in ``destino_rio_map`` by IBGE code, so a 10k-card bulk costs one
+        ensure_destino per distinct município, not one per card. Callers that roll back
+        evict the keys added during the failed attempt (see produce / produce_paginated).
+        """
+        entry = self._destino_rio_map.get(ibge_match.ibge_code)
+        if entry is None:
+            entry = self._ensure_destino(ibge_match)
+            self._destino_rio_map[ibge_match.ibge_code] = entry
+        return entry
+
     # -----------------------------------------------------------------------
     # Backfill of a record ALREADY in Rio (contract C2) — the bulk lane's completion step.
     # -----------------------------------------------------------------------
@@ -574,14 +587,12 @@ class TripAdvisorAtrativosIngest:
                 _merge_recency(after, recency)
         unplaced = status in ("municipio_nao_confirmado", "municipio_pendente")
         if not unplaced and not after.get("parent_rio_id"):
-            # Bulk records are parent-less, and a moved one lost its parent: link it to the
-            # destino of its (confirmed or kept) município — also when TA gave no usable geo.
+            # A moved record lost its parent (as did bulk records ingested before the bulk
+            # linked one): link it to the destino of its (confirmed or kept) município — also
+            # when TA gave no usable geo.
             current = self._ibge(rio.municipio_id)
             if current is not None:
-                entry = self._destino_rio_map.get(current.ibge_code)
-                if entry is None:
-                    entry = self._ensure_destino(current)
-                    self._destino_rio_map[current.ibge_code] = entry
+                entry = self._parent_destino(current)
                 after["parent_rio_id"], after["parent_source_ref"] = str(entry[0]), entry[1]
                 if after.get("parent_mar_id"):
                     after["parent_mar_id"] = None
@@ -1114,12 +1125,7 @@ class TripAdvisorAtrativosIngest:
         # Resolve parent destino from same-sweep map (TA-03). When the destino is
         # absent, create it on demand from the IBGE município (destino-first), cache
         # it for the rest of the sweep, then link the atrativo — NO quarantine.
-        map_entry = self._destino_rio_map.get(ibge_match.ibge_code)
-        if map_entry is None:
-            map_entry = self._ensure_destino(ibge_match)
-            self._destino_rio_map[ibge_match.ibge_code] = map_entry
-
-        parent_rio_id, parent_source_ref = map_entry
+        parent_rio_id, parent_source_ref = self._parent_destino(ibge_match)
 
         # Parent destino linked (destino-first). LGPD: engineering id only.
         timeline.append(
@@ -1280,17 +1286,15 @@ class TripAdvisorAtrativosIngest:
     # -----------------------------------------------------------------------
 
     async def _ingest_one_bulk(self, entity: dict[str, Any], *, run_rio: bool) -> bool:
-        """Ingest a single attraction WITHOUT a parent destino (bulk national path).
+        """Ingest a single attraction from the bulk national listing (no per-UF context).
 
         Resolves the operator-locked A1 blocker: the all-Brazil bulk lane
-        (geoId 294280) has no per-UF context and no parent destino. ``uf`` +
-        município are DERIVED from the attraction's national geocode
-        (``geocode_national``) + nearest-IBGE-seat resolution
-        (``resolve_municipio_national``). The parent-destino gate of
-        ``_ingest_one`` (the ``parent_destino_absent`` quarantine) is intentionally
-        DROPPED here — bulk records land in Nascente parent-less and still pass
-        reliability scoring + DLQ (the canonical gate; CONTEXT A1). ``_ingest_one`` is left
-        byte-for-byte unchanged.
+        (geoId 294280) has no per-UF context. ``uf`` + município are DERIVED from the
+        attraction's national geocode (``geocode_national``) + nearest-IBGE-seat
+        resolution (``resolve_municipio_national``). Once the município is known the
+        parent destino is ensured exactly like ``_ingest_one`` does (``_parent_destino``,
+        cached per município for the sweep) and linked as ``parent_rio_id`` /
+        ``parent_source_ref = "ibge:{UF}:{ibge7}"``.
 
         A card that cannot be geocoded OR has no IBGE seat within radius is
         quarantined as ``ibge_unmatched`` (no Nascente row) — never silently
@@ -1420,6 +1424,11 @@ class TripAdvisorAtrativosIngest:
         # carries no ta_backfilled_at and backfill_record re-derives UF/município from TA geo.
         uf = ibge_match.uf
 
+        # Link the parent destino exactly like the per-UF path (F43-b): the CMS groups by it
+        # and the push needs no fallback. Cached per município — DB only, no TA/Places call.
+        # A later backfill that moves the record clears it and re-links the new município.
+        parent_rio_id, parent_source_ref = self._parent_destino(ibge_match)
+
         # WR-01: map the camelCase card onto the snake_case keys completude expects
         # (uf, location_id, lat, lng) — lat/lng reflect the geocoded coordinates.
         completude_entity = {
@@ -1432,7 +1441,6 @@ class TripAdvisorAtrativosIngest:
         completude_value = completude_from_fields(completude_entity, cap=100)
 
         # Validate through Pydantic payload model (LGPD enforcement at parse time).
-        # Bulk path: parent linkage is deferred — parents are None (schema default).
         payload_model = TripAdvisorAtrativoPayload(
             name=name,
             uf=uf,
@@ -1445,8 +1453,8 @@ class TripAdvisorAtrativosIngest:
             corroboracao_value=corroboracao_value,
             atualidade_value=atualidade_value,
             validacao_humana_value=0.0,
-            parent_rio_id=None,
-            parent_source_ref=None,
+            parent_rio_id=str(parent_rio_id),
+            parent_source_ref=parent_source_ref,
         )
 
         source_ref = f"tripadvisor:attraction:{location_id}"
@@ -1464,7 +1472,7 @@ class TripAdvisorAtrativosIngest:
             "corroboracao_value": payload_model.corroboracao_value,
             "atualidade_value": payload_model.atualidade_value,
             "validacao_humana_value": payload_model.validacao_humana_value,
-            # Parent destino linkage deferred in the bulk lane (None).
+            # Parent destino linkage (same as the per-UF path).
             "parent_rio_id": payload_model.parent_rio_id,
             "parent_source_ref": payload_model.parent_source_ref,
             # Review signals (LGPD-aggregate only)
@@ -1536,8 +1544,8 @@ class TripAdvisorAtrativosIngest:
         Streams ``(offset, cards)`` tuples from ``fetch_attractions_paginated_gql``
         (Phase G — replaces the deprecated fragile HTML-SSR ``fetch_attractions_paginated``;
         same (offset, cards) yield shape), ingests every card via ``_ingest_one_bulk``
-        (parent-less national path — bulk stays enrich_reviews=False, no per-card review
-        calls at 10k scale),
+        (national path, parent destino cached per município — bulk stays
+        enrich_reviews=False, no per-card review calls at 10k scale),
         COMMITS once PER PAGE (Pitfall 3 — a mid-run 403 leaves durable records +
         an accurate resume point), then records progress + the live error counter.
 
@@ -1580,6 +1588,7 @@ class TripAdvisorAtrativosIngest:
             for card in cards:
                 if _source_ref(card) in synced:
                     continue  # already in Brave — skip the geocode/ingest (see produce)
+                keys_before = set(self._destino_rio_map)  # see produce(): cache coherence
                 try:
                     # SAVEPOINT per card: a flush error reverts only this card, so the poison
                     # row and the page's earlier cards survive the per-page commit.
@@ -1589,6 +1598,10 @@ class TripAdvisorAtrativosIngest:
                     raise  # stops the run (task: progress stopped + pause), as in produce()
                 except Exception as exc:  # noqa: BLE001
                     wrote_row = False
+                    # The savepoint rolled back any destino ensured for this card: evict it so
+                    # the next same-município card re-creates it instead of linking a ghost.
+                    for k in set(self._destino_rio_map) - keys_before:
+                        del self._destino_rio_map[k]
                     # Unified locationId fallback (str(... or "")) so this failure
                     # source_ref matches the success path's default and record_event_once
                     # dedups correctly (no "unknown" vs "" identity split).

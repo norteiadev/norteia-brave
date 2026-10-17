@@ -111,6 +111,8 @@ export interface EngineStatus {
     /** Why a push would fail: "unreachable" | "unhealthy:<status>" | "ingest:<status>". */
     reason?: string | null;
     pending: number;
+    /** Mar rows norteia-api refused with a permanent 4xx (retried daily, not in `pending`). */
+    rejected?: number;
   };
   /**
    * Maintenance beat tasks whose last run failed (cleared on the next success, kept 7

@@ -380,7 +380,9 @@ async def test_bulk_unmatched_card_is_placed_by_ta_geo() -> None:
         patch(f"{_MOD}.quarantine_poison") as poison,
     ):
         ingest = _ingest(client, geocoder=geo)
-        assert await ingest._ingest_one_bulk(_card(9, name="Passeio de Barco"), run_rio=False)
+        with _ensure(ingest):
+            assert await ingest._ingest_one_bulk(_card(9, name="Passeio de Barco"),
+                                                 run_rio=False)
 
     assert not poison.called
     assert client.geo_calls == [9]
@@ -398,7 +400,8 @@ async def test_bulk_unmatched_card_is_placed_by_nominatim_inside_ta_uf() -> None
     )
     with patch(f"{_MOD}.store_raw") as store:
         ingest = _ingest(client, geocoder=geo)
-        assert await ingest._ingest_one_bulk(_card(9, name="Trilha X"), run_rio=False)
+        with _ensure(ingest):
+            assert await ingest._ingest_one_bulk(_card(9, name="Trilha X"), run_rio=False)
 
     payload = store.call_args.kwargs["payload"]
     assert payload["municipio_id"] == "5106505"

@@ -275,30 +275,34 @@ class TestSweepTripAdvisorSessionFailFast:
 
 
 class TestSweepTripAdvisorPerUfDestinoBuild:
-    """Per-UF destino_rio_map is built from ALL destination RioRecords, not source-filtered."""
+    """Per-UF destino_rio_map holds only the canonical IBGE destino of each município."""
 
-    def test_per_uf_destino_rio_map_sourced_from_authoritative_rio(self, monkeypatch):
-        """destino_rio_map is keyed by municipio_id from ANY destination RioRecord (Mtur etc).
+    def test_per_uf_destino_rio_map_keeps_only_canonical_ibge_destino(self, monkeypatch):
+        """destino_rio_map is keyed by municipio_id from the "ibge:{uf}:{ibge}" destino.
 
-        Simulates a Mtur destino already in Rio for BA/Salvador (ibge 2927408).
-        Asserts atrativos ingest receives that map entry — proves the source=='tripadvisor'
-        filter is gone and the oa3 fix is wired end-to-end.
+        Another destination row of the same município (a legacy mtur: ref) is listed AFTER
+        the IBGE one and must not win by order: norteia-api only accepts the canonical ref
+        as an attraction's destino.
         """
         import uuid as _uuid
         import asyncio as _asyncio
 
         fake_redis = fakeredis.FakeRedis()
-        mtur_rio_id = _uuid.uuid4()
-        mtur_source_ref = "mtur:BA:2927408"
+        ibge_rio_id = _uuid.uuid4()
+        ibge_source_ref = "ibge:BA:2927408"
 
-        # Fake DB row simulating a Mtur destino RioRecord for Salvador/BA
+        # Destino RioRecords for Salvador/BA: the canonical IBGE one, then a legacy mtur: one
         fake_row = MagicMock()
-        fake_row.id = mtur_rio_id
-        fake_row.source_ref = mtur_source_ref
+        fake_row.id = ibge_rio_id
+        fake_row.source_ref = ibge_source_ref
         fake_row.municipio_id = "2927408"
+        legacy_row = MagicMock()
+        legacy_row.id = _uuid.uuid4()
+        legacy_row.source_ref = "mtur:BA:2927408"
+        legacy_row.municipio_id = "2927408"
 
         mock_db_session = MagicMock()
-        mock_db_session.execute.return_value = MagicMock(all=lambda: [fake_row])
+        mock_db_session.execute.return_value = MagicMock(all=lambda: [fake_row, legacy_row])
         mock_db_engine = MagicMock()
 
         captured: dict = {}
@@ -344,11 +348,11 @@ class TestSweepTripAdvisorPerUfDestinoBuild:
             pass  # Retry etc. are fine; we only check captured
 
         assert "2927408" in captured.get("map", {}), (
-            f"destino_rio_map must contain Mtur ibge key '2927408'; "
+            f"destino_rio_map must contain ibge key '2927408'; "
             f"got keys: {list(captured.get('map', {}).keys())}"
         )
-        assert captured["map"]["2927408"] == (mtur_rio_id, mtur_source_ref), (
-            "Map entry must be (rio_id, source_ref) from the authoritative destino row"
+        assert captured["map"]["2927408"] == (ibge_rio_id, ibge_source_ref), (
+            "Map entry must be (rio_id, source_ref) from the canonical IBGE destino row"
         )
 
 
@@ -500,6 +504,11 @@ def _run_bulk_sweep(
     with (
         patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
         patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
+        # The bulk links each card's parent destino (F43-b) — DB-free here.
+        patch(
+            "brave.domains.tripadvisor.atrativos.TripAdvisorAtrativosIngest._ensure_destino",
+            return_value=(uuid.uuid4(), "ibge:MG:3170107"),
+        ),
     ):
         mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
         # NOTE: do NOT swallow — an UnboundLocalError regression must fail the test.
