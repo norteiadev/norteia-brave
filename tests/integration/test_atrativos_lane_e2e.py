@@ -965,6 +965,10 @@ def test_sc7_owner_validation_reaches_mar(db_session: Session) -> None:
             "corroboracao_value": 40.0,
             "atualidade_value": 100.0,
             "validacao_humana_value": 0.0,  # No validation yet
+            # Município as every lane stamps it: build_push_payload only sends the
+            # `destino` block when it has a name for it (an empty one 422s the push).
+            "municipio_id": ibge,
+            "municipio": "Alagoinhas",
             # Phase F: a recent review date so the promote_to_mar recency backstop
             # (attraction: missing/>90d review → DLQ) does not block this owner-validated
             # atrativo. In production SignalAgent threads this from Places reviews.
@@ -1001,9 +1005,10 @@ def test_sc7_owner_validation_reaches_mar(db_session: Session) -> None:
     flag_modified(rio, "normalized")
     db_session.flush()
 
-    # Step 3: Reprocess record (same as DLQ validate endpoint logic, D-10)
+    # Step 3: Reprocess record (same as DLQ validate endpoint logic, D-10). The human promote
+    # path is the one caller allowed to leave a record at 'mar' before its MarRecord exists.
     config = ScoreConfig()
-    updated_rio = reprocess_record(db_session, rio_id, config)
+    updated_rio = reprocess_record(db_session, rio_id, config, override_verdicts=True)
     db_session.flush()
 
     assert updated_rio.routing == "mar", (

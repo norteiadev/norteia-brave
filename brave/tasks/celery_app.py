@@ -46,6 +46,13 @@ app.conf.update(
     task_reject_on_worker_lost=True,        # Re-queue if worker dies mid-task
     task_time_limit=300,                    # Hard 5-minute wall clock limit
     worker_prefetch_multiplier=1,           # One task at a time (stateful writes)
+    # With acks_late the Redis transport re-delivers any message unacked for
+    # visibility_timeout (kombu default 3600s) — exactly the 1h sweeps' time_limit, so a
+    # long sweep got a duplicate running beside it. Must stay above the longest task
+    # time_limit (guarded by tests/unit/tasks/test_celery_broker_options.py). Long producers
+    # also carry a lower broker priority (pipeline._LONG_TASK_PRIORITY) so a freed slot
+    # takes a queued ta_keepalive/repush before the next UF sweep — still ONE queue.
+    broker_transport_options={"visibility_timeout": 3 * 3600},
     # Serialization
     task_serializer="json",
     result_serializer="json",

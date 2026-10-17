@@ -25,7 +25,9 @@ Hierarchy::
     ├── CostGuardError      — daily USD budget exceeded (operational halt)
     ├── ProviderBalanceError — paid provider billing wall (no credit/quota left)
     └── SourceError         — external-source failure (fetch/scrape/session)
-        └── SourceSessionError  — source session missing or expired
+        ├── SourceSessionError  — source session missing or expired
+        ├── SourceRateLimitError — source throttled us (429); back off, session still valid
+        └── SourceSchemaError   — source answers every request in an unusable shape
 
 All classes historically subclassed ``Exception`` directly and had no relation
 to one another. Re-parenting them under ``BraveError`` is safe: ``BraveError``
@@ -113,4 +115,26 @@ class SourceSessionError(SourceError):
     Lane-specific session errors (e.g. TripAdvisor's SessionExpiredError and
     SessionMissingError) subclass this so generic callers may catch the whole
     session-failure family with ``except SourceSessionError``.
+    """
+
+
+class SourceRateLimitError(SourceError):
+    """External source throttled us (HTTP 429) after the client's own bounded backoff.
+
+    NOT a SourceSessionError: the session is still valid, so callers must back off and
+    resume later — never mark needs_bootstrap or turn the engine off. ``retry_after`` is
+    the source's Retry-After hint in seconds (default 60 when absent/unparseable).
+    """
+
+    def __init__(self, message: str = "", retry_after: float = 60.0) -> None:
+        self.retry_after = retry_after
+        super().__init__(message or f"rate limited, retry after {retry_after:.0f}s")
+
+
+class SourceSchemaError(SourceError):
+    """External source answered in a shape that fails for EVERY request, not one record.
+
+    A retired persisted-query id (GraphQL ``errors`` envelope, e.g. PersistedQueryNotFound)
+    or a response-schema change. Systemic: abort the run instead of writing each record
+    without the field (or poisoning each one). Re-injecting a session does not fix it.
     """

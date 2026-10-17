@@ -32,6 +32,7 @@ from brave.core.rio.routing import process_nascente_record
 from brave.domains.places.schemas import AtrativoResult
 from brave.observability.audit import write_audit
 from brave.shared.destino import ensure_destino
+from brave.shared.exceptions import CostGuardError, ProviderBalanceError
 from brave.shared.ibge_distritos import resolve_distrito
 
 if TYPE_CHECKING:
@@ -39,6 +40,10 @@ if TYPE_CHECKING:
     from brave.shared.ibge_distritos import IbgeDistrito
 
 logger = structlog.get_logger(__name__)
+
+# Run-level stops (billing wall, our daily cap): never a property of one query/place, so
+# they escape the per-item quarantine and reach the task's failure policy (pause).
+_RUN_LEVEL: tuple[type[BaseException], ...] = (ProviderBalanceError, CostGuardError)
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +196,8 @@ class DiscoveryAgent:
         for query in search_queries:
             try:
                 places_results = await self._places_client.text_search(query=query, uf=uf)
+            except _RUN_LEVEL:
+                raise
             except Exception as exc:
                 quarantine_poison(
                     session=self._session,
@@ -240,6 +247,8 @@ class DiscoveryAgent:
                         schema=AtrativoResult,
                         mode="tools",  # instructor Mode.TOOLS — D-09
                     )
+                except _RUN_LEVEL:
+                    raise
                 except Exception as exc:
                     quarantine_poison(
                         session=self._session,
@@ -396,6 +405,8 @@ class DiscoveryAgent:
 
             try:
                 places_results = await self._places_client.text_search(query=query, uf=uf)
+            except _RUN_LEVEL:
+                raise
             except Exception as exc:
                 quarantine_poison(
                     session=self._session,
@@ -436,6 +447,8 @@ class DiscoveryAgent:
                         schema=AtrativoResult,
                         mode="tools",
                     )
+                except _RUN_LEVEL:
+                    raise
                 except Exception as exc:
                     quarantine_poison(
                         session=self._session,

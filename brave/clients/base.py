@@ -111,11 +111,15 @@ class PlacesClientProtocol(Protocol):
         """
         ...
 
-    async def place_details(self, place_id: str) -> dict[str, Any]:
+    async def place_details(
+        self, place_id: str, *, include_reviews: bool = True
+    ) -> dict[str, Any]:
         """Fetch full details for a Google Place.
 
         Args:
             place_id: Google Places place_id (persist for caching per D-17).
+            include_reviews: False omits reviews from the request (Enterprise SKU
+                instead of Enterprise + Atmosphere); the dict then has ``reviews == []``.
 
         Returns:
             Full place detail dict including business_status, weekday_text, reviews.

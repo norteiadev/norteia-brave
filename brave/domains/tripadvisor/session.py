@@ -43,7 +43,7 @@ def persist_rotated_cookies(
     caught and logged; the triggering fetch continues normally.
 
     Algorithm:
-      1. Bail immediately when response_cookies is empty (no-op, no Redis write).
+      1. Empty response_cookies → only slide the TTL (EXPIRE), then return.
       2. Read brave:ta:session from Redis; bail if absent (session gone).
       3. Normalise Phase-11 list-form cookies to flat dict (backwards compat).
       4. Merge: response_cookies wins on collision with stored cookies.
@@ -60,8 +60,15 @@ def persist_rotated_cookies(
                           Set-Cookie headers (typically ``dict(resp.cookies)``).
         ta_config:        TripAdvisorConfig — only ``session_ttl`` is read.
     """
-    # Step 1: empty response dict → nothing to merge (early exit, no Redis write)
+    # Step 1: empty response dict → nothing to merge, but the session is in active use:
+    # still slide its TTL. Only the __vt rotation sets cookies, so without this the key
+    # expired mid-sweep (the keepalive waits behind sweeps on the single queue).
+    # EXPIRE on an absent key is a no-op — it never resurrects a deleted session.
     if not response_cookies:
+        try:
+            redis.expire(BRAVE_TA_SESSION_KEY, ta_config.session_ttl)
+        except Exception as exc:  # noqa: BLE001 — best-effort contract
+            logger.warning("ta_session_ttl_slide_error", error_type=type(exc).__name__)
         return
 
     try:

@@ -205,6 +205,7 @@ async def test_geocode_national_lgpd_no_pii(
                         "address": {
                             "municipality": "Brumadinho",
                             "state": "Minas Gerais",
+                            "ISO3166-2-lvl4": "BR-MG",
                             "country_code": "br",
                             "postcode": "35460-000",
                             "road": "Rua B",
@@ -217,7 +218,9 @@ async def test_geocode_national_lgpd_no_pii(
         result = await client.geocode_national("loc1", "Instituto Inhotim")
 
     assert result is not None
-    assert set(result.keys()) == {"lat", "lon", "osm_id", "municipio_name"}
+    # uf (public geo, from ISO3166-2-lvl4) keeps the bulk's IBGE seat inside the state.
+    assert set(result.keys()) == {"lat", "lon", "osm_id", "municipio_name", "uf"}
+    assert result["uf"] == "MG"
     assert "display_name" not in result
     assert "address" not in result
     assert "road" not in result

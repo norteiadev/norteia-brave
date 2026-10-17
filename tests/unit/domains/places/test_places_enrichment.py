@@ -17,7 +17,8 @@ Covers:
   - no confident match → TA floor kept, marker set, still re-scores
   - place_id_cache present (refresh path) → skips Text Search, only Place Details
   - idempotency via google_enriched marker → no-op
-  - cross-lane guard (place_id_cache + weekday_text) → Places-FSM record left untouched
+  - cross-lane guard (place_id_cache + weekday_text) → no Places spend, marker written
+  - Null client / Places failure → no marker; CostGuardError propagates
   - atualidade = max(TA, Google) keeps the higher TA value
   - description-only backfill (paid Places sub-step already done) → ZERO Places SKU spent
 
@@ -28,7 +29,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -436,8 +437,10 @@ async def test_idempotency_marker_noop() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cross_lane_places_fsm_record_untouched() -> None:
-    """Places-FSM record that already has a description → agent no-ops entirely."""
+async def test_cross_lane_places_fsm_record_marked_without_spend() -> None:
+    """Places-FSM record that already has a description → no Places/LLM spend, no re-score,
+    but the marker IS written (F32/F62): without it the stalled-chain sweeper re-selected the
+    record every pass (google_enriched NULL) and describe_uf never saw it."""
     from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     fake = FakePlacesClient(fixture_details={"ChIJx": _details()})
@@ -452,7 +455,8 @@ async def test_cross_lane_places_fsm_record_untouched() -> None:
     )
     mock_route = await _run(agent, rio)
 
-    assert "google_enriched" not in rio.normalized  # untouched
+    assert rio.normalized["google_enriched"] is True
+    assert fake.text_search_calls == []
     assert fake.place_details_calls == []
     assert fake_llm.generate_calls == []
     assert not mock_route.called
@@ -706,8 +710,8 @@ class _RacingPlacesClient:
     async def text_search(self, query: str, uf: str):  # noqa: ANN201
         return await self._inner.text_search(query, uf)
 
-    async def place_details(self, place_id: str):  # noqa: ANN201
-        details = await self._inner.place_details(place_id)
+    async def place_details(self, place_id: str, *, include_reviews: bool = True):  # noqa: ANN201
+        details = await self._inner.place_details(place_id, include_reviews=include_reviews)
         self._rio.normalized = {
             **self._rio.normalized,
             "descricao_editorial": "Prosa paga pelo batch.",
@@ -797,6 +801,23 @@ async def test_locate_only_accepts_a_confident_match_placed_in_the_uf() -> None:
 
 
 @pytest.mark.asyncio
+async def test_locate_flags_a_swallowed_failure_and_clears_it_on_the_next_answer() -> None:
+    """locate() never raises on a Places defect, so the TA ingest reads locate_failed to tell
+    "Places could not place it" (stamp the quarantine) from "Places failed" (retry)."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    client = MagicMock()
+    client.text_search = AsyncMock(side_effect=[RuntimeError("boom"), []])
+    agent = PlacesEnrichmentAgent(places_client=client, session=_make_session(),
+                                  config=ScoreConfig())
+    assert agent.locate_failed is False
+    assert await agent.locate("Cachoeira do Macaquinho", "GO") is None
+    assert agent.locate_failed is True
+    assert await agent.locate("Cachoeira do Macaquinho", "GO") is None
+    assert agent.locate_failed is False
+
+
+@pytest.mark.asyncio
 async def test_locate_falls_back_to_the_municipio_every_in_uf_result_agrees_on() -> None:
     """No name match, but all in-UF results cluster in one município → município only,
     never a place_id (none of them is provably the atrativo). Disagreement → None."""
@@ -883,7 +904,7 @@ async def test_temporarily_closed_is_enriched_but_parked_in_dlq() -> None:
     rio = _make_rio()
     agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
 
-    def promote(_session, r, _config):
+    def promote(_session, r, _config, **_kw):
         r.routing = "mar"
 
     with patch("brave.domains.places.places_enrichment.write_audit"), \
@@ -899,3 +920,463 @@ async def test_temporarily_closed_is_enriched_but_parked_in_dlq() -> None:
     assert ev["stage"] == "places_enriched"
     assert ev["data"]["business_status"] == "CLOSED_TEMPORARILY"
     assert "fechado temporariamente" in ev["message"]
+
+
+# ---------------------------------------------------------------------------
+# Conditional reviews: Place Details drops the reviews field (Enterprise $20/1k instead of
+# Enterprise+Atmosphere $25/1k) only when nothing in the run needs it.
+# ---------------------------------------------------------------------------
+
+_GOOGLE_REVIEW_DT = (_NOW - timedelta(days=3)).replace(microsecond=0)
+
+
+def _reviews_fake(**details_kw) -> FakePlacesClient:
+    return FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": {
+            **_details(reviews=[{"publishTime": _GOOGLE_REVIEW_DT.isoformat(), "text": "ok"}]),
+            **details_kw,
+        }},
+    )
+
+
+@pytest.mark.asyncio
+async def test_record_passing_backstop_skips_reviews_and_keeps_recency() -> None:
+    """TA date ≤30d (atualidade 100) with backstop headroom → reviews dropped from the mask;
+    the TA date, atualidade and the last known reviews_recent_count stand."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    ta_dt = (_NOW - timedelta(days=20)).replace(microsecond=0).isoformat()
+    fake = _reviews_fake()
+    rio = _make_rio(extra_normalized={
+        "most_recent_review_at": ta_dt,
+        "atualidade_value": 100.0,
+        "signal": {"business_status": "OPERATIONAL", "reviews_recent_count": 2},
+    })
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
+    with patch("brave.domains.places.places_enrichment.logger") as log:
+        await _run(agent, rio)
+
+    assert fake.place_details_include_reviews == [False]
+    assert rio.normalized["most_recent_review_at"] == ta_dt
+    assert rio.normalized["atualidade_value"] == 100.0
+    assert rio.normalized["signal"]["reviews_recent_count"] == 2
+    assert rio.normalized["weekday_text"]  # the rest of the Details call still lands
+    assert any(c.args[0] == "places_details_reviews_skipped" for c in log.info.call_args_list)
+
+    # No earlier signal block → the count is unknown (push sends null), never a fake 0.
+    rio = _make_rio(extra_normalized={"most_recent_review_at": ta_dt, "atualidade_value": 100.0})
+    await _run(PlacesEnrichmentAgent(places_client=_reviews_fake(), session=_make_session(), now=_NOW, config=ScoreConfig()), rio)
+    assert rio.normalized["signal"]["reviews_recent_count"] is None
+    # ...and the persisted block still round-trips through its schema.
+    from brave.domains.places.schemas import SignalResult
+
+    assert SignalResult.model_validate(rio.normalized["signal"]).reviews_recent_count is None
+
+
+@pytest.mark.asyncio
+async def test_record_failing_backstop_fetches_reviews_and_merges_google_date() -> None:
+    """Stale (or missing) TA date → reviews kept, Google's newer date max-merged as before."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    stale = (_NOW - timedelta(days=200)).isoformat()
+    for extra in ({"most_recent_review_at": stale}, {}):
+        fake = _reviews_fake()
+        rio = _make_rio(extra_normalized=extra)
+        await _run(PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig()), rio)
+
+        assert fake.place_details_include_reviews == [True]
+        assert rio.normalized["most_recent_review_at"] == _GOOGLE_REVIEW_DT.isoformat()
+        assert rio.normalized["signal"]["reviews_recent_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_backstop_passing_record_that_google_could_still_help_keeps_reviews() -> None:
+    """Passing the backstop TODAY is not enough to drop reviews — the step is one-shot and
+    promote_to_mar re-checks later (steward DLQ validation). Reviews are kept when:
+      - TA atualidade < 100, even with ample backstop headroom (established, 60d / 200d):
+        Google's fresh review lifts it 70/40 → 100, +4.5/+9 score pts;
+      - the TA date is near the 90d edge (85d, review_count 8: fails 10 days later);
+      - the established date is near the 365d edge (360d, review_count 25)."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    cases = (
+        {"most_recent_review_at": (_NOW - timedelta(days=60)).isoformat(), "atualidade_value": 70.0,
+         "review_count": 30},
+        {"most_recent_review_at": (_NOW - timedelta(days=200)).isoformat(), "atualidade_value": 40.0,
+         "review_count": 30},
+        {"most_recent_review_at": (_NOW - timedelta(days=85)).isoformat(), "atualidade_value": 70.0,
+         "review_count": 8},
+        {"most_recent_review_at": (_NOW - timedelta(days=360)).isoformat(), "atualidade_value": 40.0,
+         "review_count": 25},
+    )
+    for extra in cases:
+        fake = _reviews_fake()
+        rio = _make_rio(extra_normalized=extra)
+        await _run(PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig()), rio)
+
+        assert fake.place_details_include_reviews == [True], extra
+        assert rio.normalized["most_recent_review_at"] == _GOOGLE_REVIEW_DT.isoformat()
+        assert rio.normalized["atualidade_value"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_reviews_skip_requires_backstop_headroom_with_established_window() -> None:
+    """atualidade 100 alone is not enough: the backstop must still pass 60 days out, under
+    the same rule as promote_to_mar — the 365d window applies when review_count >= 20."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    def at(days: int) -> str:
+        return (_NOW - timedelta(days=days)).isoformat()
+
+    for extra, expected in (
+        ({"most_recent_review_at": at(200), "review_count": 30}, False),  # 260d ≤ 365d
+        ({"most_recent_review_at": at(200), "review_count": 5}, True),
+        ({"most_recent_review_at": at(40), "review_count": 5}, True),  # 100d > 90d
+        # Horizon boundary: 90 - 60 = 30 days is the last skippable non-established age.
+        ({"most_recent_review_at": at(30), "review_count": 5}, False),  # 90d ≤ 90d
+        ({"most_recent_review_at": at(31), "review_count": 5}, True),  # 91d > 90d
+        ({"most_recent_review_at": at(31), "review_count": 20}, False),  # 91d ≤ 365d
+        ({}, True),  # no date at all
+    ):
+        fake = _reviews_fake()
+        rio = _make_rio(extra_normalized={**extra, "atualidade_value": 100.0})
+        await _run(PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig()), rio)
+        assert fake.place_details_include_reviews == [expected], extra
+
+
+@pytest.mark.asyncio
+async def test_enrichment_never_writes_review_count() -> None:
+    """review_count drives the backstop's established window and is calibrated on TA review
+    counts — the Places enrichment leaves it exactly as the TA ingest wrote it."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    for extra, expected in (({}, None), ({"review_count": 12}, 12)):
+        rio = _make_rio(extra_normalized=extra)
+        fake = _reviews_fake()
+        await _run(PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig()), rio)
+        assert rio.normalized.get("review_count") == expected
+        assert "google_rating_count" not in rio.normalized
+
+
+@pytest.mark.asyncio
+async def test_description_in_same_run_keeps_reviews() -> None:
+    """The copywriter grounds on details['reviews'] texts → a run that writes the description
+    from these live details keeps reviews even when the backstop already passes. A
+    pre-fetched description (describe_uf path) does not need them."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    fresh = {"most_recent_review_at": (_NOW - timedelta(days=5)).isoformat(), "atualidade_value": 100.0}
+    fake = _reviews_fake()
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), llm_client=FakeLLMClient(generate_result="Prosa."),
+        now=_NOW, config=ScoreConfig(),
+    )
+    await _run(agent, _make_rio(extra_normalized=fresh))
+    assert fake.place_details_include_reviews == [True]
+
+    with patch("brave.domains.places.places_enrichment.write_audit"), \
+         patch("brave.domains.places.places_enrichment.record_event"), \
+         patch("brave.domains.places.places_enrichment.route_by_score"):
+        await agent.run(_make_rio(extra_normalized=fresh), description=("Prosa.", None, False))
+    assert fake.place_details_include_reviews == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_description_only_pass_keeps_closed_temporarily() -> None:
+    """F40: a describe pass (Places already done → no Details) must not let the re-score erase
+    the closed_temporarily verdict nor carry the record to Mar — only fresh Details re-decide it."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    top = {k: 100.0 for k in ("origem_value", "completude_value", "corroboracao_value",
+                              "atualidade_value", "validacao_humana_value")}
+    rio = _make_rio(extra_normalized={
+        **top, "google_enriched": True,
+        "most_recent_review_at": (_NOW - timedelta(days=5)).isoformat(),
+    })
+    rio.dlq_reason = "closed_temporarily"
+    agent = PlacesEnrichmentAgent(
+        places_client=_reviews_fake(), session=_make_session(),
+        llm_client=FakeLLMClient(generate_result="Prosa."), now=_NOW, config=ScoreConfig(),
+    )
+    with patch("brave.domains.places.places_enrichment.write_audit"), \
+         patch("brave.domains.places.places_enrichment.record_event"):
+        await agent.run(rio, description=("Prosa.", None, False))
+
+    assert rio.normalized["descricao_editorial"] == "Prosa."
+    assert (rio.routing, rio.dlq_reason) == ("dlq", "closed_temporarily")
+
+
+_TOP = {k: 100.0 for k in ("origem_value", "completude_value", "corroboracao_value",
+                           "atualidade_value", "validacao_humana_value")}
+
+
+@pytest.mark.asyncio
+async def test_reopened_place_leaves_closed_temporarily() -> None:
+    """The exit side of C5: fresh Details say OPERATIONAL → the closed_temporarily verdict is
+    re-decided and dropped (redecided), else the record sits in the DLQ forever."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    rio = _make_rio(extra_normalized={
+        **_TOP, "place_id_cache": "ChIJmatriz001",
+        "most_recent_review_at": (_NOW - timedelta(days=5)).isoformat(),
+    })
+    rio.dlq_reason = "closed_temporarily"
+    agent = PlacesEnrichmentAgent(
+        places_client=_reviews_fake(business_status="OPERATIONAL"), session=_make_session(),
+        now=_NOW, config=ScoreConfig(),
+    )
+    with patch("brave.domains.places.places_enrichment.write_audit"), \
+         patch("brave.domains.places.places_enrichment.record_event"):
+        await agent.run(rio)
+
+    assert rio.dlq_reason != "closed_temporarily"
+    assert rio.routing == "mar"
+
+
+@pytest.mark.asyncio
+async def test_grounded_rewrite_releases_descricao_nao_fundamentada() -> None:
+    """A later describe pass whose cascade comes back grounded (motivo None) re-decides the
+    old verdict: the record must not stay in the DLQ with a reason that no longer holds."""
+    from brave.domains.places.copywriter import CascadeResult
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    rio = _make_rio(extra_normalized={
+        **_TOP, "google_enriched": True,
+        "most_recent_review_at": (_NOW - timedelta(days=5)).isoformat(),
+    })
+    rio.dlq_reason = "descricao_nao_fundamentada"
+    agent = PlacesEnrichmentAgent(
+        places_client=_reviews_fake(), session=_make_session(),
+        llm_client=FakeLLMClient(generate_result="Prosa."), now=_NOW, config=ScoreConfig(),
+    )
+    with patch("brave.domains.places.places_enrichment.write_audit"), \
+         patch("brave.domains.places.places_enrichment.record_event"):
+        await agent.run(
+            rio, description=("Prosa.", CascadeResult(prose="Prosa.", groundedness=0.95), False)
+        )
+
+    assert rio.normalized["descricao_editorial"] == "Prosa."
+    assert rio.dlq_reason != "descricao_nao_fundamentada"
+
+
+@pytest.mark.asyncio
+async def test_ta_unplaced_record_is_not_enriched_nor_described() -> None:
+    """TA put the card in another UF (ta_uf != uf, municipio_nao_confirmado): a Places search
+    or description in the stored UF can only find a homonym, and the cascade re-decision used
+    to drop the TA verdict — the agent must not touch the record at all."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    rio = _make_rio(extra_normalized={"ta_uf": "MG", "ta_backfilled_at": _NOW.isoformat()})
+    rio.dlq_reason = "municipio_nao_confirmado"
+    fake = _reviews_fake()
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(),
+        llm_client=FakeLLMClient(generate_result="Prosa."), now=_NOW, config=ScoreConfig(),
+    )
+    assert agent.wants_description(rio) is False
+    await agent.run(rio)
+
+    assert fake.text_search_calls == [] and fake.place_details_calls == []
+    assert "google_enriched" not in rio.normalized and "descricao_editorial" not in rio.normalized
+    assert (rio.routing, rio.dlq_reason) == ("dlq", "municipio_nao_confirmado")
+
+
+@pytest.mark.asyncio
+async def test_locate_consensus_then_run_spends_one_text_search() -> None:
+    """locate() consensus (município, no place_id) → the inline run() re-matches the SAME
+    results with the seat distance guard locate lacked — a result whose município name did
+    not resolve ("") near the seat can still match (Terra Ronca: the park sits in the next
+    município) — without paying Text Search a second time. Out-of-UF places never get here:
+    RealPlacesClient.text_search drops them."""
+    from brave.core.models import Municipio
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    seat = Municipio(ibge_code="5200605", nome="Alto Paraíso de Goiás", uf="GO", lat=-14.13, lng=-47.51)
+    results = [
+        # Name matches but its município name did not resolve ("") → locate drops it.
+        {**_search_result(lat=-14.10, lng=-47.50, place_id="ChIJborder"), "municipio_ibge": ""},
+        {**_search_result(name="Pousada Qualquer", place_id="ChIJother"), "municipio_ibge": "5200605"},
+    ]
+    fake = FakePlacesClient(
+        fixture_results={"Igreja da Matriz": results},
+        fixture_details={"ChIJborder": _details()},
+    )
+    session = _make_session()
+    session.get.return_value = seat
+    agent = PlacesEnrichmentAgent(places_client=fake, session=session, now=_NOW, config=ScoreConfig())
+
+    # locate() gets the raw TA card name; run() reads the Rio's normalize_name()d one
+    # (str.title() → "Da") — the cached search must still be reused.
+    assert await agent.locate("Igreja da Matriz", "BA") == {"municipio_ibge": "5200605", "consensus": True}
+    rio = _make_rio(extra_normalized={"municipio_id": "5200605", "name": "Igreja Da Matriz"})
+    rio.normalized = {k: v for k, v in rio.normalized.items() if k not in ("lat", "lon")}
+    await _run(agent, rio)
+
+    assert len(fake.text_search_calls) == 1
+    assert fake.place_details_calls == ["ChIJborder"]
+
+    # The slot is one-shot: the next record pays its own search.
+    rio = _make_rio()
+    await _run(agent, rio)
+    assert len(fake.text_search_calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# google_enriched only after Places really answered (F10/F27) + pause errors (C4)
+# ---------------------------------------------------------------------------
+
+
+class _RaisingPlaces(FakePlacesClient):
+    """FakePlacesClient whose calls raise ``exc`` (records the call first)."""
+
+    def __init__(self, exc: BaseException, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._exc = exc
+
+    async def text_search(self, query: str, uf: str) -> list[dict]:
+        await super().text_search(query, uf)
+        raise self._exc
+
+    async def place_details(self, place_id: str, *, include_reviews: bool = True) -> dict:
+        await super().place_details(place_id, include_reviews=include_reviews)
+        raise self._exc
+
+
+@pytest.mark.asyncio
+async def test_null_client_never_marks_google_enriched() -> None:
+    """places_enrichment_enabled=False / offline → NullPlacesClient: the paid sub-step did not
+    run, so the marker must stay unset (it used to be written, making turning Places back on
+    a no-op for every record the sweep had touched)."""
+    from brave.clients.null_places import NullPlacesClient
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    rio = _make_rio()
+    agent = PlacesEnrichmentAgent(
+        places_client=NullPlacesClient(), session=_make_session(), now=_NOW, config=ScoreConfig()
+    )
+    await _run(agent, rio)
+
+    assert "google_enriched" not in rio.normalized
+
+
+@pytest.mark.asyncio
+async def test_places_failure_keeps_floor_without_marker() -> None:
+    """A Places defect (5xx after retries, 403 API not enabled, ...) keeps the TA floor and
+    leaves the record unmarked so a later pass retries it."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    fake = _RaisingPlaces(RuntimeError("PermissionDenied: Places API (New) not enabled"))
+    rio = _make_rio()
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
+    await _run(agent, rio)
+
+    assert len(fake.text_search_calls) == 1
+    assert "google_enriched" not in rio.normalized
+    assert "weekday_text" not in rio.normalized
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["run", "locate"])
+async def test_cost_guard_propagates_and_writes_nothing(where: str) -> None:
+    """The Places daily cap (CostGuardError, raised before dispatch) must reach the caller so
+    it pauses — not be read as "no Google data" and marked enriched."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+    from brave.shared.exceptions import CostGuardError
+
+    fake = _RaisingPlaces(CostGuardError("Daily Google Places budget exceeded."))
+    rio = _make_rio()
+    session = _make_session()
+    agent = PlacesEnrichmentAgent(places_client=fake, session=session, now=_NOW, config=ScoreConfig())
+
+    with pytest.raises(CostGuardError):
+        if where == "run":
+            await _run(agent, rio)
+        else:
+            await agent.locate("Igreja Matriz", "BA")
+    assert "google_enriched" not in rio.normalized
+
+
+@pytest.mark.asyncio
+async def test_retired_cached_place_id_is_cleared_for_a_re_search() -> None:
+    """Details NotFound on a cached place_id → the dead id is cleared (not marked), so the
+    next pass re-resolves by Text Search instead of failing on it forever."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    class NotFound(Exception):  # noqa: N818 — name-matched, like google.api_core.exceptions.NotFound
+        pass
+
+    fake = _RaisingPlaces(NotFound("place not found"))
+    rio = _make_rio(extra_normalized={"place_id_cache": "ChIJdead", "google_place_id": "ChIJdead"})
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
+    await _run(agent, rio)
+
+    assert fake.place_details_calls == ["ChIJdead"]
+    assert rio.normalized["place_id_cache"] is None
+    assert rio.normalized["google_place_id"] is None
+    assert "google_enriched" not in rio.normalized
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: no Text Search paid for nothing
+# ---------------------------------------------------------------------------
+
+
+class _BudgetedFake(FakePlacesClient):
+    """FakePlacesClient with RealPlacesClient's public budget check: room for ``room`` USD."""
+
+    def __init__(self, room: float, **kw) -> None:
+        super().__init__(**kw)
+        self._room = room
+        self.checked: list[float] = []
+
+    def check_budget(self, usd: float) -> None:
+        from brave.shared.exceptions import CostGuardError
+
+        self.checked.append(usd)
+        if usd > self._room:
+            raise CostGuardError("cap")
+
+
+@pytest.mark.asyncio
+async def test_pair_is_budgeted_before_the_text_search_is_paid() -> None:
+    """Room for a Text Search but not for Text Search + Details: stop BEFORE paying the
+    search — it used to be paid, then the Details tripped the cap and the search was paid
+    again on resume."""
+    from brave.clients.places import USD_DETAILS_ENTERPRISE_ATMOSPHERE, USD_TEXT_SEARCH_PRO
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+    from brave.shared.exceptions import CostGuardError
+
+    fake = _BudgetedFake(
+        room=0.04,
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": _details()},
+    )
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig()
+    )
+
+    with pytest.raises(CostGuardError):
+        await _run(agent, _make_rio())
+
+    assert fake.text_search_calls == []
+    assert fake.checked == [pytest.approx(USD_TEXT_SEARCH_PRO + USD_DETAILS_ENTERPRISE_ATMOSPHERE)]
+
+
+@pytest.mark.asyncio
+async def test_details_failure_keeps_the_place_id_the_search_found() -> None:
+    """Text Search matched (paid) but Details failed transiently: keep the id so the next
+    pass goes straight to Details; no marker (google_enriched) — it is retried."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
+    fake.place_details = AsyncMock(side_effect=RuntimeError("503 ServiceUnavailable"))
+    rio = _make_rio()
+    agent = PlacesEnrichmentAgent(
+        places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig()
+    )
+
+    await _run(agent, rio)
+
+    assert rio.normalized["place_id_cache"] == "ChIJmatriz001"
+    assert rio.normalized.get("google_enriched") is not True

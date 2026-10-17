@@ -249,7 +249,7 @@ class TestFetchAttractionsPaginated:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", [403, 429])
     async def test_session_expiry_fails_fast(self, status):
-        """A 403/429 raises SessionExpiredError and stops (no further GET)."""
+        """A 403 / DataDome-captcha 429 raises SessionExpiredError and stops (no further GET)."""
         from brave.domains.tripadvisor.client import SessionExpiredError
 
         client = _make_client()
@@ -257,7 +257,7 @@ class TestFetchAttractionsPaginated:
 
         def handler(request):
             requested.append(_offset_from_url(request.url))
-            return httpx.Response(status, text="blocked")
+            return httpx.Response(status, text="blocked captcha-delivery.com")
 
         with respx.mock:
             respx.get(url__regex=r"https://www\.tripadvisor\.com/Attractions-.*").mock(

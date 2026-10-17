@@ -519,6 +519,29 @@ class AppConfig(BaseSettings):
     # 200/day ≈ 6k calls/month. 0 turns the refresh off. Env-only.
     places_refresh_daily_limit: int = 200
 
+    # Google Places spend caps, both PER API KEY (counters named by a hash of
+    # BRAVE_PLACES_API_KEY, see cost_guard) and separate from llm.usd_daily_budget so a
+    # Places sweep cannot starve the LLM lanes. Checked BEFORE every paid Places call
+    # (RealPlacesClient) — no call made:
+    #   places_total_usd_cap — the key's credit, never resets (default = the US$300 trial
+    #     credit) → ProviderBalanceError: pause; the operator swaps the key (the new key
+    #     starts from zero) and resumes. Env-only (PLACES_TOTAL_USD_CAP).
+    #   places_daily_usd_cap — per UTC day throttle → CostGuardError: pause, auto-resumed
+    #     by the beat the next UTC day. Env-only (PLACES_DAILY_USD_CAP).
+    places_total_usd_cap: float = 300.0
+    places_daily_usd_cap: float = 300.0
+
+    # TripAdvisor backfill (brave.backfill_ta_atrativos): completes the bulk listing's
+    # records (TA geo + recency, then Places) in batches inside an engine run. Env-only.
+    #   ta_backfill_enabled — the bulk sweep chains into it when done, and the beat restarts
+    #     it after a daily-cap pause; off = only the manual trigger (endpoint/CLI) runs it.
+    #   ta_backfill_batch_size — records per link (one link ≈ batch × (2 TA calls + Places)).
+    #   ta_backfill_throttle_seconds — extra pause between records; each TA call is already
+    #     paced by BRAVE_TA_PAGE_THROTTLE_SECONDS, so 0 by default.
+    ta_backfill_enabled: bool = True
+    ta_backfill_batch_size: int = Field(default=25, ge=1)
+    ta_backfill_throttle_seconds: float = Field(default=0.0, ge=0.0)
+
     model_config = SettingsConfigDict(env_prefix="")
 
     @classmethod

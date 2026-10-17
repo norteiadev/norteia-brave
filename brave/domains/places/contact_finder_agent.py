@@ -83,8 +83,10 @@ class ContactFinderAgent:
             )
             return
 
-        # Fetch contact details from Places
-        details = await self._places_client.place_details(place_id)
+        # Fetch contact details from Places. Only phone/website are read here, so skip
+        # reviews: the reviews field alone bills Enterprise+Atmosphere ($25/1k) vs
+        # Enterprise ($20/1k). Review recency is SignalAgent's own place_details call.
+        details = await self._places_client.place_details(place_id, include_reviews=False)
 
         # Build ContactResult from Places details.
         # IN-04: RealPlacesClient.place_details returns only

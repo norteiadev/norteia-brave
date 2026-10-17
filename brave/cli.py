@@ -12,9 +12,14 @@ Commands:
                    destinos lane has no producer (Mtur seed retired — destinos come
                    from the DB reference tables).
 
+    backfill-ta    Start (or resume, after a Places key swap / budget pause) the
+                   TripAdvisor backfill as an engine run — same path as
+                   POST /api/v1/tripadvisor/backfill. Exit 2 when the motor is busy.
+
 Usage:
     python -m brave.cli run-fixture
     python -m brave.cli sweep BA [--lane destinos|atrativos|both]
+    python -m brave.cli backfill-ta
 """
 
 import os
@@ -155,6 +160,25 @@ def _run_sweep(uf: str, lane: str = "both") -> None:
                 )
 
 
+def _run_backfill_ta() -> int:
+    """Start the TA backfill run (brave.tasks.pipeline.start_backfill_run); 2 = busy."""
+    import redis as redis_lib
+
+    from brave.tasks.pipeline import _get_session, start_backfill_run
+
+    rc = redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+    session, _ = _get_session()
+    try:
+        run_id = start_backfill_run(rc, session)
+    finally:
+        session.close()
+    if run_id is None:
+        print("backfill-ta: motor ocupado — another run is active")
+        return 2
+    print(f"backfill-ta: started run_id={run_id}")
+    return 0
+
+
 def _parse_lane(args: list[str]) -> str:
     """Parse an optional `--lane <value>` from the remaining argv (plain slicing, D-05).
 
@@ -186,11 +210,14 @@ def main() -> None:
         print("Commands:")
         print("  run-fixture   Run a synthetic fixture through the full pipeline (offline)")
         print("  sweep <UF> [--lane destinos|atrativos|both]   Kick an on-demand UF sweep")
+        print("  backfill-ta   Start/resume the TripAdvisor backfill engine run")
         sys.exit(1)
 
     command = args[0]
     if command == "run-fixture":
         _run_fixture()
+    elif command == "backfill-ta":
+        sys.exit(_run_backfill_ta())
     elif command == "sweep":
         rest = args[1:]
         # The UF is the first non-flag positional after the command.

@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from brave.api.deps import get_db, get_redis, require_bearer
 from brave.compliance.quality_rating import is_quality_red
+from brave.config.settings import AppConfig
 from brave.core.models import (
     AuditLog,
     ConversationMessage,
@@ -33,6 +34,12 @@ from brave.core.models import (
     NascenteRecord,
     PoisonQuarantine,
     RioRecord,
+)
+from brave.observability.cost_guard import (
+    daily_spend,
+    places_key_id,
+    places_lane,
+    places_total_spend,
 )
 
 router = APIRouter()
@@ -229,13 +236,33 @@ _COST_GROUP_COLUMNS = {
 }
 
 
+def _places_cost(redis: Redis) -> dict:
+    """The CURRENT Places key's spend (today + since first use) and both caps (C4)."""
+    import os  # noqa: PLC0415
+
+    key = os.environ.get("BRAVE_PLACES_API_KEY", "")
+    cfg = AppConfig()
+    return {
+        "key_id": places_key_id(key),
+        "usd_today": daily_spend(redis, places_lane(key)),
+        "daily_cap_usd": cfg.places_daily_usd_cap,
+        "usd_total": places_total_spend(redis, key),
+        "total_cap_usd": cfg.places_total_usd_cap,
+    }
+
+
 @router.get("/api/v1/cost", dependencies=[Depends(require_bearer)])
 def get_cost(
     group_by: str = Query("lane"),
     since: datetime | None = Query(None),
     db: Session = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> dict:
     """Return LLM spend aggregated by lane or model over llm_generations (DASH-04, D-01).
+
+    Plus ``places``: the current Places API key's spend — today (UTC) and since its first
+    use — from its Redis cost-guard counters, and the caps they are checked against. Places writes no llm_generations rows, so it is not in
+    ``rows`` and ``since`` does not apply to it.
 
     A straight GROUP BY — no pipeline logic, no writes (D-01). For each group it
     returns the summed USD cost, the summed token usage (prompt + completion), and
@@ -266,6 +293,7 @@ def get_cost(
 
     return {
         "group_by": group_by,
+        "places": _places_cost(redis),
         "rows": [
             {
                 "key": key,

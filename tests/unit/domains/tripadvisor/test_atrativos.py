@@ -1340,7 +1340,9 @@ async def test_produce_skips_already_synced_before_any_ta_call() -> None:
     new = _make_card(locationId=2)
     fake_client = FakeTripAdvisorClient(gql_pages=[(0, [known, new])], geo_ids={"MG": _GEO_ID_MG})
     mock_session = MagicMock()
-    mock_session.scalars.return_value = ["tripadvisor:attraction:1"]
+    # Rio canonical keys; unmatched quarantines (none); Rio rows missing the backfill
+    # marker (none — card 1 is fully synced).
+    mock_session.scalars.side_effect = [["tripadvisor:attraction:1"], [], []]
 
     with (
         patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
@@ -1467,14 +1469,59 @@ async def test_fallback_d_places_links_card_and_hands_over_the_place_id() -> Non
 
 @pytest.mark.asyncio
 async def test_unmatched_quarantine_is_stamped_with_the_resolver_version() -> None:
+    """Every fallback ran with live clients (TA geo, distritos, Places) → current stamp."""
     from brave.domains.tripadvisor.atrativos import IBGE_RESOLVER_VERSION
+    from brave.shared.ibge_distritos import IbgeDistrito
 
     store, quarantine = await _produce_go(
-        _make_coordless_card("Jardim de Maytreia"), None, places_agent=_LocatingAgent(None)
+        _make_coordless_card("Jardim de Maytreia"),
+        None,
+        places_agent=_LocatingAgent(None),
+        distritos=[IbgeDistrito("520060525", "São Jorge", "5200605", "Alto Paraíso de Goiás", "GO")],
     )
 
     assert not store.called
     assert quarantine.call_args.kwargs["payload"]["resolver_version"] == IBGE_RESOLVER_VERSION
+
+
+class _NullPlacesAgent(_LocatingAgent):
+    """An agent built on the flag-off NullPlacesClient: its locate() never searched."""
+
+    def __init__(self) -> None:
+        from brave.clients.null_places import NullPlacesClient
+
+        super().__init__(None)
+        self._places_client = NullPlacesClient()
+
+
+class _FailingLocateAgent(_LocatingAgent):
+    def __init__(self) -> None:
+        super().__init__(None)
+
+    async def locate(self, nome: str, uf: str) -> dict[str, Any] | None:
+        raise RuntimeError("places 503")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "agent_factory",
+    [lambda: None, _NullPlacesAgent, _FailingLocateAgent],
+    ids=["no-agent", "null-places", "locate-failed"],
+)
+async def test_unmatched_without_a_real_places_answer_is_retryable(agent_factory) -> None:
+    """F08/F28: a miss because Places was off / missing / failing is NOT stamped with the
+    current resolver — the next sweep must retry the card once Places is back."""
+    from brave.shared.ibge_distritos import IbgeDistrito
+
+    store, quarantine = await _produce_go(
+        _make_coordless_card("Jardim de Maytreia"),
+        None,
+        places_agent=agent_factory(),
+        distritos=[IbgeDistrito("520060525", "São Jorge", "5200605", "Alto Paraíso de Goiás", "GO")],
+    )
+
+    assert not store.called
+    assert quarantine.call_args.kwargs["payload"]["resolver_version"] == 0
 
 
 @pytest.mark.asyncio
@@ -1486,8 +1533,9 @@ async def test_produce_skips_card_already_unmatched_under_the_current_resolver()
     new = _make_card(locationId=2)
     fake_client = FakeTripAdvisorClient(gql_pages=[(0, [poisoned, new])], geo_ids={"MG": _GEO_ID_MG})
     mock_session = MagicMock()
-    # 1st query: already in Rio (none); 2nd: locationIds unmatched under this resolver.
-    mock_session.scalars.side_effect = [[], ["1"]]
+    # 1st query: already in Rio (none); 2nd: locationIds unmatched under this resolver;
+    # 3rd: Rio rows awaiting the TA backfill (none).
+    mock_session.scalars.side_effect = [[], ["1"], []]
 
     with (
         patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,

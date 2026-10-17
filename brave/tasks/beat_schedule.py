@@ -5,8 +5,8 @@ Phase 2: Destinos lane — sweep_uf tasks.
 Phase 3: Atrativos lane — sweep_atrativos_by_uf fan-out added.
 Phase D: source-gated — only the lanes in ``enabled_sources(effective config)`` are
   scheduled. The 'default' (Google Places) lane owns the per-UF discover_atrativo
-  entries (the Mtur destino seed is retired; the lane ships dormant by default); the
-  'tripadvisor' lane owns the ta-keepalive entry (its only beat task — TA sweeps are
+  entries (the Mtur destino seed is retired; the lane ships dormant by default). The
+  ta-keepalive entry is a maintenance entry (lane gated at fire time — TA sweeps are
   start-only). Disabling a lane in ``config_settings``
   drops its entries on the NEXT beat restart (redbeat persists the schedule in Redis
   and only resyncs entry definitions on process start — see CLAUDE.md).
@@ -23,6 +23,7 @@ sweep_atrativos_by_uf:
 """
 
 import os
+import time
 
 import structlog
 
@@ -84,31 +85,39 @@ def _enabled_sources_best_effort() -> list[str]:
     """The enabled lanes from the effective config, computed import-safely.
 
     Reads the ``config_settings`` overlay so a durably-disabled lane is not scheduled
-    at beat startup (the correct resync point per the redbeat note above). Any failure
-    — no ``BRAVE_DB_URL``, DB down, pytest-socket blocked at import — schedules NO sweep
-    lane (maintenance entries only) and logs an error: an env fallback would re-enable
-    a lane the operator turned off. Beat import NEVER breaks. A dedicated short-lived
-    engine is used and disposed to avoid importing the FastAPI DI layer
-    (``brave.api.deps``) into the Celery process.
+    at beat startup (the correct resync point per the redbeat note above). A DB failure
+    is retried 3x with a short backoff (5s connect timeout) — redbeat DELETES the stored
+    entries a schedule omits, so one blip at a beat restart used to drop lanes until the
+    next restart. Only then (or with no ``BRAVE_DB_URL``) it schedules NO sweep lane
+    (maintenance entries only) and logs an error: an env fallback would re-enable a lane
+    the operator turned off. Beat import NEVER breaks. A dedicated short-lived engine is
+    used and disposed to avoid importing the FastAPI DI layer (``brave.api.deps``) into
+    the Celery process.
     """
+    from sqlalchemy import create_engine  # noqa: PLC0415
+    from sqlalchemy.orm import sessionmaker  # noqa: PLC0415
+
     from brave.config.runtime import enabled_sources, load_effective_config
 
-    try:
-        from sqlalchemy import create_engine  # noqa: PLC0415
-        from sqlalchemy.orm import sessionmaker  # noqa: PLC0415
-
-        db_url = os.environ.get("BRAVE_DB_URL")
-        if not db_url:
-            raise RuntimeError("BRAVE_DB_URL not set")
-        engine = create_engine(db_url)
-        try:
-            with sessionmaker(bind=engine)() as session:
-                return enabled_sources(load_effective_config(session))
-        finally:
-            engine.dispose()
-    except Exception as exc:
-        logger.error("beat_enabled_sources_unavailable", error=str(exc))
+    db_url = os.environ.get("BRAVE_DB_URL")
+    if not db_url:
+        logger.error("beat_enabled_sources_unavailable", error="BRAVE_DB_URL not set")
         return []
+    attempts = 3
+    for attempt in range(attempts):
+        try:
+            engine = create_engine(db_url, connect_args={"connect_timeout": 5})
+            try:
+                with sessionmaker(bind=engine)() as session:
+                    return enabled_sources(load_effective_config(session))
+            finally:
+                engine.dispose()
+        except Exception as exc:
+            if attempt == attempts - 1:
+                logger.error("beat_enabled_sources_unavailable", error=str(exc))
+                return []
+            time.sleep(2**attempt)
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -144,10 +153,38 @@ def maintenance_beat_entries() -> dict:
       - ``refresh-places-daily`` → re-fetches Place Details (by cached place_id, never a
         Text Search) for atrativos whose Places data is older than 60 days, capped by
         places_refresh_daily_limit. No-op while externals or Places enrichment are off.
+      - ``ta-keepalive`` → the TA session keep-alive. Unconditional here (the task skips
+        offline, without a session, or with the 'tripadvisor' lane off — read at fire
+        time), so a DB blip at beat start can no longer drop it and toggling the lane
+        needs no restart. Omitted when keepalive_interval_seconds <= 0 (a zero timedelta
+        fired every beat tick). ``expires``: a ping queued behind long sweeps past its
+        interval is dropped instead of bursting with the others when the queue drains.
+      - ``ta-backfill-resume-15min`` → brave.backfill_ta_atrativos with no run: restarts
+        a backfill our daily cap paused once the UTC day turns (see _backfill_tick);
+        a no-op otherwise.
     """
+    from datetime import timedelta  # noqa: PLC0415
+
     from celery.schedules import crontab  # noqa: PLC0415
 
-    return {
+    from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
+
+    entries: dict = {}
+    keepalive = TripAdvisorConfig().keepalive_interval_seconds
+    if keepalive > 0:
+        entries["ta-keepalive"] = {
+            "task": "brave.ta_keepalive",
+            "schedule": timedelta(seconds=keepalive),
+            "options": {"expires": keepalive},
+        }
+    return entries | {
+        "ta-backfill-resume-15min": {
+            "task": "brave.backfill_ta_atrativos",
+            "schedule": crontab(minute="*/15"),
+            "args": (),
+            "kwargs": {},
+            "options": {"expires": 900},
+        },
         "prune-record-events-daily": {
             "task": "brave.prune_record_events",
             "schedule": crontab(hour=4, minute=0),  # 4 AM UTC daily
@@ -176,5 +213,8 @@ def maintenance_beat_entries() -> dict:
 
 # Build once at import and apply to the Celery app config.
 BRAVE_BEAT_SCHEDULE: dict = build_beat_schedule(_enabled_sources_best_effort())
+# ta-keepalive is a maintenance entry now: drop the TA domain's copy, whose presence hung
+# on the DB read above (and which a zero interval turned into a fire-every-tick loop).
+BRAVE_BEAT_SCHEDULE.pop("ta-keepalive", None)
 BRAVE_BEAT_SCHEDULE.update(maintenance_beat_entries())
 app.conf.beat_schedule = BRAVE_BEAT_SCHEDULE

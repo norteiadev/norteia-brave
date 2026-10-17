@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.dialects import postgresql
 
-from brave.shared.exceptions import ProviderBalanceError
+from brave.shared.exceptions import CostGuardError, ProviderBalanceError
 from brave.tasks import pipeline
 
 
@@ -82,6 +82,13 @@ def test_balance_wall_stops_the_run(harness):
     harness.fail_with = ProviderBalanceError("places")
     with pytest.raises(ProviderBalanceError):
         pipeline.refresh_places()
+
+
+def test_places_cost_cap_stops_the_run(harness):
+    harness.fail_with = CostGuardError("places daily cap")
+    with pytest.raises(CostGuardError):
+        pipeline.refresh_places()
+    assert harness.session.rollback.call_count == 1
 
 
 def test_one_bad_record_does_not_abort(harness):

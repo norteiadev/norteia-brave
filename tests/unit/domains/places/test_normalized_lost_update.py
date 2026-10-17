@@ -45,8 +45,8 @@ class _RacingPlacesClient:
     async def text_search(self, query: str, uf: str):  # noqa: ANN201
         return await self._inner.text_search(query, uf)
 
-    async def place_details(self, place_id: str):  # noqa: ANN201
-        details = await self._inner.place_details(place_id)
+    async def place_details(self, place_id: str, *, include_reviews: bool = True):  # noqa: ANN201
+        details = await self._inner.place_details(place_id, include_reviews=include_reviews)
         self._rio.normalized = {**self._rio.normalized, **_PAID}
         return details
 
@@ -67,12 +67,35 @@ def _make_rio(sub_state: str) -> MagicMock:
     return rio
 
 
+_OPEN_HOURS = SIGNAL_FIXTURE_OPEN["weekday_text"]
+
+
 @pytest.mark.asyncio
-async def test_signal_agent_does_not_erase_a_description_committed_mid_call() -> None:
-    """SignalAgent must merge its delta onto the CURRENT column, under a row lock."""
+@pytest.mark.parametrize(
+    ("fixture", "routing", "dlq_reason", "sub_state", "business_status"),
+    [
+        (SIGNAL_FIXTURE_OPEN, "in_progress", None, "signals_gathered", "OPERATIONAL"),
+        # Stale: no reviews → no_recent_reviews DLQ exit (still persists its signals).
+        (
+            {**SIGNAL_FIXTURE_OPEN, "reviews": []},
+            "dlq", "no_recent_reviews", None, "OPERATIONAL",
+        ),
+        (
+            {**SIGNAL_FIXTURE_OPEN, "business_status": "CLOSED_TEMPORARILY"},
+            "dlq", "closed_temporarily", None, "CLOSED_TEMPORARILY",
+        ),
+    ],
+    ids=["scored", "no_recent_reviews", "closed_temporarily"],
+)
+async def test_signal_agent_does_not_erase_a_description_committed_mid_call(
+    fixture: dict, routing: str, dlq_reason: str | None, sub_state: str | None,
+    business_status: str,
+) -> None:
+    """SignalAgent must merge its delta onto the CURRENT column, under a row lock — on every
+    non-descarte exit, not just the scored one."""
     from brave.domains.places.signal_agent import SignalAgent
 
-    inner = FakePlacesClient(fixture_details={_PLACE_ID: SIGNAL_FIXTURE_OPEN})
+    inner = FakePlacesClient(fixture_details={_PLACE_ID: fixture})
     rio = _make_rio("contacts_found")
     session = MagicMock()
     agent = SignalAgent(places_client=_RacingPlacesClient(inner, rio), session=session, now=_NOW, config=ScoreConfig())
@@ -87,10 +110,12 @@ async def test_signal_agent_does_not_erase_a_description_committed_mid_call() ->
     assert rio.normalized["descricao_editorial"] == "Prosa paga pelo batch."
     assert rio.normalized["completude_value"] == 90.0
     # ...and this run's own signals still landed.
-    assert rio.normalized["weekday_text"] == SIGNAL_FIXTURE_OPEN["weekday_text"]
-    assert rio.normalized["atualidade_value"] == 100.0
-    assert rio.normalized["signal"]["business_status"] == "OPERATIONAL"
-    assert rio.sub_state == "signals_gathered"
+    assert rio.normalized["weekday_text"] == _OPEN_HOURS
+    assert rio.normalized["signal"]["business_status"] == business_status
+    assert rio.normalized["atualidade_value"] == (0.0 if dlq_reason == "no_recent_reviews" else 100.0)
+    assert rio.routing == routing
+    assert rio.dlq_reason == dlq_reason
+    assert rio.sub_state == sub_state
     # Merging a value read WITHOUT a lock only narrows the window; it does not close it.
     session.refresh.assert_called_once_with(rio, ["normalized"], with_for_update=True)
 

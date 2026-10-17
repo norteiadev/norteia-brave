@@ -171,12 +171,25 @@ class TestTripAdvisorClientOffline:
                 await client.fetch_destinations(uf="BA")
 
     @pytest.mark.asyncio
-    async def test_session_expired_on_429(self, monkeypatch):
-        """httpx returning 429 from a GraphQL call must raise SessionExpiredError."""
+    async def test_rate_limited_on_429_not_session_expired(self, monkeypatch):
+        """A plain 429 is throttling: backoff retries, then SourceRateLimitError (F06).
+
+        It must NOT be SessionExpiredError — that path flags needs_bootstrap and turns the
+        whole engine OFF although the cookies are still valid.
+        """
         import fakeredis
 
+        import brave.domains.tripadvisor.client as client_mod
         from brave.config.settings import AppConfig
         from brave.domains.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+        from brave.shared.exceptions import SourceRateLimitError
+
+        sleeps: list[float] = []
+
+        async def fake_sleep(seconds):
+            sleeps.append(seconds)
+
+        monkeypatch.setattr(client_mod.asyncio, "sleep", fake_sleep)
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -192,11 +205,69 @@ class TestTripAdvisorClientOffline:
         monkeypatch.setattr(client, "_get_session", lambda: stub_session)
 
         with respx.mock:
+            route = respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
+                return_value=httpx.Response(
+                    429, json={"error": "rate_limited"}, headers={"Retry-After": "7"}
+                )
+            )
+            with pytest.raises(SourceRateLimitError) as exc_info:
+                await client.fetch_destinations(uf="BA")
+
+        assert not isinstance(exc_info.value, SessionExpiredError)
+        assert exc_info.value.retry_after == 7.0
+        assert route.call_count == 3  # 1 + 2 backoff retries
+        assert sleeps == [7.0, 7.0]  # Retry-After honored (above the 2s/4s backoff)
+
+    @pytest.mark.asyncio
+    async def test_429_then_200_recovers_inside_the_client(self, monkeypatch):
+        """One transient 429 is absorbed by the backoff — the fetch succeeds."""
+        import fakeredis
+
+        import brave.domains.tripadvisor.client as client_mod
+        from brave.config.settings import AppConfig
+        from brave.domains.tripadvisor.client import TripAdvisorClient
+
+        async def fake_sleep(seconds):
+            return None
+
+        monkeypatch.setattr(client_mod.asyncio, "sleep", fake_sleep)
+        client = TripAdvisorClient(config=AppConfig().tripadvisor, redis=fakeredis.FakeRedis())
+        monkeypatch.setattr(
+            client, "_get_session", lambda: {"cookies": {"datadome": "abc"}, "user_agent": ""}
+        )
+        geo_ok = [{"data": {"gtmData": {"locationData": {
+            "countryId": 294280, "cityName": "Uberlândia", "stateName": "State of Minas Gerais",
+            "stateId": 303370, "locationHierarchy": "1:2:3",
+        }}}}]
+        with respx.mock:
             respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
-                return_value=httpx.Response(429, json={"error": "rate_limited"})
+                side_effect=[httpx.Response(429), httpx.Response(200, json=geo_ok)]
+            )
+            geo = await client.fetch_attraction_geo(312332)
+
+        assert geo is not None and geo["city_name"] == "Uberlândia"
+
+    @pytest.mark.asyncio
+    async def test_datadome_captcha_429_is_a_dead_session(self, monkeypatch):
+        """A 429 carrying the DataDome challenge is a blocked session → SessionExpiredError."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.domains.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+
+        client = TripAdvisorClient(config=AppConfig().tripadvisor, redis=fakeredis.FakeRedis())
+        monkeypatch.setattr(
+            client, "_get_session", lambda: {"cookies": {"datadome": "abc"}, "user_agent": ""}
+        )
+        with respx.mock:
+            route = respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
+                return_value=httpx.Response(
+                    429, text='<script src="https://ct.captcha-delivery.com/c.js"></script>'
+                )
             )
             with pytest.raises(SessionExpiredError):
-                await client.fetch_destinations(uf="BA")
+                await client.fetch_attraction_geo(312332)
+        assert route.call_count == 1  # no backoff for a captcha wall
 
     def test_client_protocol_compliance(self):
         """TripAdvisorClient must satisfy TripAdvisorClientProtocol structurally."""
@@ -1421,12 +1492,19 @@ class TestFetchAttractionGeo:
         assert item["variables"]["isGeoPage"] is True
 
     @pytest.mark.asyncio
-    async def test_malformed_response_returns_none(self, monkeypatch):
-        """Response missing gtmData key → returns None, no exception."""
+    @pytest.mark.parametrize(
+        "body",
+        [[{"data": {}}], [{"data": {"gtmData": {}}}], [], {"x": 1}],
+        ids=["no-gtmData", "no-locationData", "empty-list", "not-a-list"],
+    )
+    async def test_shape_change_raises_schema_error(self, monkeypatch, body):
+        """A renamed gtmData/locationData fails for EVERY card: SourceSchemaError (the
+        backfill stops, marks nothing) — returning None stamped ta_backfilled_at on all."""
         import fakeredis
 
         from brave.config.settings import AppConfig
         from brave.domains.tripadvisor.client import TripAdvisorClient
+        from brave.shared.exceptions import SourceSchemaError
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1437,11 +1515,55 @@ class TestFetchAttractionGeo:
 
         with respx.mock:
             respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
-                return_value=httpx.Response(200, json=[{"data": {}}])
+                return_value=httpx.Response(200, json=body)
             )
-            result = await client.fetch_attraction_geo(999)
+            with pytest.raises(SourceSchemaError):
+                await client.fetch_attraction_geo(999)
 
-        assert result is None, f"Expected None on malformed response, got {result!r}"
+    @pytest.mark.asyncio
+    async def test_non_json_200_raises_schema_error(self, monkeypatch):
+        """A 200 that is not JSON (challenge/proxy page) is no answer: never None."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.domains.tripadvisor.client import TripAdvisorClient
+        from brave.shared.exceptions import SourceSchemaError
+
+        client = TripAdvisorClient(config=AppConfig().tripadvisor, redis=fakeredis.FakeRedis())
+        stub_session = {"cookies": {"datadome": "abc"}, "user_agent": "", "acquired_at": "x"}
+        monkeypatch.setattr(client, "_get_session", lambda: stub_session)
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
+                return_value=httpx.Response(200, text="<html>challenge</html>")
+            )
+            with pytest.raises(SourceSchemaError):
+                await client.fetch_attraction_geo(1)
+            with pytest.raises(SourceSchemaError):
+                await client.fetch_recent_review(1)
+
+    @pytest.mark.asyncio
+    async def test_null_city_is_a_valid_answer(self, monkeypatch):
+        """TA often names only the state: cityName null → city_name None, not an error."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.domains.tripadvisor.client import TripAdvisorClient
+
+        client = TripAdvisorClient(config=AppConfig().tripadvisor, redis=fakeredis.FakeRedis())
+        stub_session = {"cookies": {"datadome": "abc"}, "user_agent": "", "acquired_at": "x"}
+        monkeypatch.setattr(client, "_get_session", lambda: stub_session)
+        body = [{"data": {"gtmData": {"locationData": {
+            "cityName": None, "stateName": "State of Bahia", "stateId": 303251,
+            "countryId": 294280, "locationHierarchy": ":1:294280:303251:",
+        }}}}]
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
+                return_value=httpx.Response(200, json=body)
+            )
+            geo = await client.fetch_attraction_geo(1)
+        assert geo is not None and geo["city_name"] is None
+        assert geo["state_name"] == "State of Bahia"
 
     @pytest.mark.asyncio
     async def test_non_brazil_guard_returns_none(self, monkeypatch):
@@ -1497,12 +1619,19 @@ class TestFetchAttractionGeo:
                 await client.fetch_attraction_geo(312332)
 
     @pytest.mark.asyncio
-    async def test_429_raises_session_expired(self, monkeypatch):
-        """429 response → raises SessionExpiredError."""
+    async def test_429_raises_rate_limited(self, monkeypatch):
+        """429 response (after backoff) → SourceRateLimitError, not a session error."""
         import fakeredis
 
+        import brave.domains.tripadvisor.client as client_mod
         from brave.config.settings import AppConfig
-        from brave.domains.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+        from brave.domains.tripadvisor.client import TripAdvisorClient
+        from brave.shared.exceptions import SourceRateLimitError, SourceSessionError
+
+        async def fake_sleep(seconds):
+            return None
+
+        monkeypatch.setattr(client_mod.asyncio, "sleep", fake_sleep)
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1515,8 +1644,10 @@ class TestFetchAttractionGeo:
             respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
                 return_value=httpx.Response(429, json={"error": "rate_limited"})
             )
-            with pytest.raises(SessionExpiredError):
+            with pytest.raises(SourceRateLimitError) as exc_info:
                 await client.fetch_attraction_geo(312332)
+        assert not isinstance(exc_info.value, SourceSessionError)
+        assert exc_info.value.retry_after == 60.0  # no Retry-After → default
 
 
 # ---------------------------------------------------------------------------
@@ -1870,12 +2001,23 @@ class TestFetchRecentReview:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_malformed_response_returns_none(self, monkeypatch):
-        """A missing container → None, never raises."""
+    @pytest.mark.parametrize(
+        "body",
+        [
+            [{"data": {}}],  # operation renamed
+            [{"data": {"ReviewsProxy_getPublishedReviewsForLocation": [{"res": {}}]}}],
+            [{"data": {"ReviewsProxy_getPublishedReviewsForLocation": [{"result": {"items": []}}]}}],
+        ],
+        ids=["operation", "result", "reviews"],
+    )
+    async def test_unknown_shape_raises_schema_error(self, monkeypatch, body):
+        """A renamed operation/result/reviews is NOT "no reviews": None stamped every record
+        TA-complete without recency (C1). Only an explicit empty list is None."""
         import fakeredis
 
         from brave.config.settings import AppConfig
         from brave.domains.tripadvisor.client import TripAdvisorClient
+        from brave.shared.exceptions import SourceSchemaError
 
         config = AppConfig().tripadvisor
         redis = fakeredis.FakeRedis()
@@ -1886,20 +2028,21 @@ class TestFetchRecentReview:
 
         with respx.mock:
             respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
-                return_value=httpx.Response(200, json=[{"data": {}}])
+                return_value=httpx.Response(200, json=body)
             )
-            result = await client.fetch_recent_review(999)
-
-        assert result is None
+            with pytest.raises(SourceSchemaError):
+                await client.fetch_recent_review(999)
 
     @pytest.mark.asyncio
-    async def test_graphql_errors_envelope_logs_error_and_returns_none(self, monkeypatch):
-        """A retired qid (PersistedQueryNotFound) → None AND an error log, not a silent miss."""
+    async def test_graphql_errors_envelope_raises_schema_error(self, monkeypatch):
+        """A retired qid (PersistedQueryNotFound) fails for EVERY card → SourceSchemaError
+        + an error log. A None stored each record without recency, for good (F09)."""
         import fakeredis
         from structlog.testing import capture_logs
 
         from brave.config.settings import AppConfig
         from brave.domains.tripadvisor.client import TripAdvisorClient
+        from brave.shared.exceptions import SourceSchemaError
 
         config = AppConfig().tripadvisor
         client = TripAdvisorClient(config=config, redis=fakeredis.FakeRedis())
@@ -1913,9 +2056,9 @@ class TestFetchRecentReview:
                     200, json=[{"errors": [{"message": "PersistedQueryNotFound"}]}]
                 )
             )
-            result = await client.fetch_recent_review(312332)
+            with pytest.raises(SourceSchemaError):
+                await client.fetch_recent_review(312332)
 
-        assert result is None
         errors = [e for e in logs if e["event"] == "ta.reviews.graphql_error"]
         assert errors and errors[0]["log_level"] == "error"
         assert errors[0]["errors"] == ["PersistedQueryNotFound"]

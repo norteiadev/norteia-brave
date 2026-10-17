@@ -84,7 +84,7 @@ def test_bucket_each_row_lands_in_exactly_one_bucket():
     ]
     candidates, excluded = _bucket_promote_bulk_candidates(rows, 65.0, True)
     assert candidates == [ok]
-    assert excluded == {"below_score": 1, "no_description": 1, "recency": 2}
+    assert excluded == {"verdict": 0, "below_score": 1, "no_description": 1, "recency": 2}
 
 
 def test_bucket_require_description_false_keeps_undescribed():
@@ -92,6 +92,30 @@ def test_bucket_require_description_false_keeps_undescribed():
     candidates, excluded = _bucket_promote_bulk_candidates([row], 65.0, False)
     assert candidates == [row]
     assert excluded["no_description"] == 0
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "municipio_nao_confirmado",
+        "closed_temporarily",
+        "descricao_nao_fundamentada",
+        "steward_sent_to_review",
+        "community_error_report",
+    ],
+)
+def test_bucket_never_bulk_promotes_a_deliberate_verdict(reason):
+    """A high-score, described, recent DLQ row with a deliberate verdict (wrong município,
+    temporarily closed, ...) is excluded: promote() would re-score past it and push it."""
+    row = _atr(score=95.0)
+    row.dlq_reason = reason
+    plain = _atr(score=95.0)
+    plain.dlq_reason = "score=60.00 below threshold_mar=80.0"
+
+    candidates, excluded = _bucket_promote_bulk_candidates([row, plain], 65.0, True)
+
+    assert candidates == [plain]
+    assert excluded["verdict"] == 1
 
 
 def test_bucket_null_score_is_below_score():
@@ -132,7 +156,7 @@ def test_dry_run_reports_counts_and_never_mutates():
         out = promote_bulk_atrativos(PromoteBulkBody(uf="ba", limit=1), db, queued.append)
     assert out == {
         "candidates": 2,
-        "excluded": {"below_score": 1, "no_description": 0, "recency": 0},
+        "excluded": {"verdict": 0, "below_score": 1, "no_description": 0, "recency": 0},
         "would_promote": 1,
     }
     promote.assert_not_called()

@@ -148,6 +148,29 @@ async def test_signal_agent_closed_temporarily_parks_in_dlq() -> None:
     assert rio.dlq_reason == "closed_temporarily"
 
 
+@pytest.mark.asyncio
+async def test_signal_agent_reopened_place_leaves_closed_temporarily() -> None:
+    """The exit side of C5: a fresh OPERATIONAL business_status re-decides the verdict
+    (redecided), else the reopened attraction stays dlq/closed_temporarily forever."""
+    from brave.domains.places.signal_agent import SignalAgent
+
+    fake_places = FakePlacesClient(
+        fixture_details={"ChIJtest001": {**SIGNAL_FIXTURE_OPEN, "place_id": "ChIJtest001",
+                                         "business_status": "OPERATIONAL"}},
+    )
+    rio = _make_rio(routing="dlq")
+    rio.dlq_reason = "closed_temporarily"
+    rio.normalized.update(origem_value=100.0, completude_value=100.0, validacao_humana_value=100.0)
+
+    agent = SignalAgent(
+        places_client=fake_places, session=_make_mock_session(), now=_NOW, config=ScoreConfig()
+    )
+    with patch("brave.domains.places.signal_agent.write_audit"):
+        await agent.run(rio)
+
+    assert rio.dlq_reason != "closed_temporarily"
+
+
 # ---------------------------------------------------------------------------
 # Tests: Open place happy path
 # ---------------------------------------------------------------------------
@@ -401,3 +424,229 @@ async def test_signal_agent_no_recent_reviews_never_reaches_whatsapp_gate() -> N
 
     assert rio.sub_state is None
     assert rio.sub_state != "aguardando_consulta_whatsapp"
+
+
+# ---------------------------------------------------------------------------
+# One rule with the Mar backstop (_attraction_review_recent) over the merged
+# TA + Google recency view; the merged date/count is persisted on both paths.
+# ---------------------------------------------------------------------------
+
+
+async def _run_signal(rio: MagicMock, fixture: dict) -> MagicMock:
+    """Run SignalAgent on rio with fixture; returns the route_by_score mock."""
+    from brave.domains.places.signal_agent import SignalAgent
+
+    fake_places = FakePlacesClient(fixture_details={"ChIJtest001": fixture})
+    agent = SignalAgent(
+        places_client=fake_places, session=_make_mock_session(), now=_NOW, config=ScoreConfig()
+    )
+    with patch("brave.domains.places.signal_agent.write_audit"), \
+         patch("brave.domains.places.signal_agent.route_by_score") as mock_route:
+        await agent.run(rio)
+    return mock_route
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_fresh_ta_date_passes_without_google_reviews() -> None:
+    """A fresh TripAdvisor date already in normalized passes with zero Google reviews."""
+    ta_dt = (_NOW - timedelta(days=10)).replace(microsecond=0)
+    rio = _make_rio()
+    rio.normalized["most_recent_review_at"] = ta_dt.isoformat()
+
+    mock_route = await _run_signal(rio, _open_fixture([]))
+
+    assert rio.sub_state == "signals_gathered"
+    assert rio.dlq_reason != "no_recent_reviews"
+    assert mock_route.called
+    assert rio.normalized["most_recent_review_at"] == ta_dt.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_established_place_gets_365d_window() -> None:
+    """Newest Google review 200d old + TA review_count 30 → established, passes."""
+    old_dt = (_NOW - timedelta(days=200)).replace(microsecond=0)
+    fixture = _open_fixture([{"publishTime": old_dt.isoformat(), "rating": 5, "text": "ok"}])
+    rio = _make_rio()
+    rio.normalized["review_count"] = 30
+
+    mock_route = await _run_signal(rio, fixture)
+
+    assert rio.sub_state == "signals_gathered"
+    assert mock_route.called
+    assert rio.normalized["most_recent_review_at"] == old_dt.isoformat()
+    assert rio.normalized["review_count"] == 30
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_stale_low_volume_dlq_persists_recency() -> None:
+    """200d + no TA review_count → DLQ no_recent_reviews, merged date still written; no
+    review_count is invented (the established window stays TA-calibrated)."""
+    old_dt = (_NOW - timedelta(days=200)).replace(microsecond=0)
+    fixture = _open_fixture([{"publishTime": old_dt.isoformat(), "rating": 4, "text": "old"}])
+    rio = _make_rio()
+
+    mock_route = await _run_signal(rio, fixture)
+
+    assert rio.routing == "dlq"
+    assert rio.dlq_reason == "no_recent_reviews"
+    assert rio.sub_state is None
+    assert not mock_route.called
+    assert rio.normalized["most_recent_review_at"] == old_dt.isoformat()
+    assert "review_count" not in rio.normalized
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_older_google_date_never_regresses_existing() -> None:
+    """An existing newer date (TA) is kept over an older Google review; atualidade too."""
+    ta_dt = (_NOW - timedelta(days=5)).replace(microsecond=0)
+    google_dt = (_NOW - timedelta(days=60)).replace(microsecond=0)
+    rio = _make_rio()
+    rio.normalized["most_recent_review_at"] = ta_dt.isoformat()
+    rio.normalized["review_count"] = 42
+    rio.normalized["atualidade_value"] = 100.0
+    fixture = _open_fixture([{"publishTime": google_dt.isoformat(), "rating": 5, "text": "ok"}])
+
+    await _run_signal(rio, fixture)
+
+    assert rio.sub_state == "signals_gathered"
+    assert rio.normalized["most_recent_review_at"] == ta_dt.isoformat()
+    assert rio.normalized["review_count"] == 42  # TA's count untouched
+    assert rio.normalized["atualidade_value"] == 100.0  # Google alone would give 50
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_no_recency_data_at_all_routes_to_dlq() -> None:
+    """No date anywhere (and no count) → DLQ; nothing None is written over normalized."""
+    rio = _make_rio()
+
+    await _run_signal(rio, _open_fixture([]))
+
+    assert rio.routing == "dlq"
+    assert rio.dlq_reason == "no_recent_reviews"
+    assert "most_recent_review_at" not in rio.normalized
+    assert "review_count" not in rio.normalized
+
+
+# ---------------------------------------------------------------------------
+# Every non-descarte exit persists the signals delta from the (already paid)
+# place_details call — not only the scored path. Antigravity finding #3.
+# ---------------------------------------------------------------------------
+
+_HOURS = ["Segunda-feira: 08:00–17:00"]
+_ADDRESS = "Praça Central, Porto Seguro - BA"
+
+
+async def _run_signal_with_session(rio: MagicMock, fixture: dict) -> tuple[MagicMock, MagicMock]:
+    """Like _run_signal, but also returns the session (to assert the locked refresh)."""
+    from brave.domains.places.signal_agent import SignalAgent
+
+    session = _make_mock_session()
+    agent = SignalAgent(
+        places_client=FakePlacesClient(fixture_details={"ChIJtest001": fixture}),
+        session=session,
+        now=_NOW,
+        config=ScoreConfig(),
+    )
+    with patch("brave.domains.places.signal_agent.write_audit"), \
+         patch("brave.domains.places.signal_agent.route_by_score") as mock_route:
+        await agent.run(rio)
+    return mock_route, session
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_no_recent_reviews_persists_signals() -> None:
+    """Stale (120d, no TA count) → DLQ no_recent_reviews, but hours/address/signal/atualidade
+    from the paid call land on normalized — so the record is NOT 'sem horário' for WhatsApp."""
+    from brave.api.routers.dlq import _is_whatsapp_eligible
+
+    stale_dt = (_NOW - timedelta(days=120)).replace(microsecond=0)
+    fixture = {
+        **_open_fixture([{"publishTime": stale_dt.isoformat(), "rating": 4, "text": "old"}]),
+        "weekday_text": _HOURS,
+        "formatted_address": _ADDRESS,
+    }
+    rio = _make_rio()
+
+    mock_route, session = await _run_signal_with_session(rio, fixture)
+
+    assert rio.routing == "dlq"
+    assert rio.dlq_reason == "no_recent_reviews"
+    assert rio.sub_state is None
+    assert not mock_route.called
+    n = rio.normalized
+    assert n["weekday_text"] == _HOURS
+    assert n["address"] == _ADDRESS
+    assert n["signal"]["business_status"] == "OPERATIONAL"
+    assert n["signal"]["weekday_text"] == _HOURS
+    assert n["signal"]["reviews_recent_count"] == 0
+    assert n["atualidade_value"] == 50.0  # 91–180d bucket
+    assert n["corroboracao_value"] == 0.0
+    assert n["most_recent_review_at"] == stale_dt.isoformat()
+    assert "reviews" not in n and "old" not in str(n)  # no review text persisted (LGPD)
+    assert _is_whatsapp_eligible(n) is False  # Google already gave the hours
+    session.refresh.assert_called_once_with(rio, ["normalized"], with_for_update=True)
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_no_reviews_at_all_still_persists_hours_and_signal() -> None:
+    """Zero reviews anywhere → DLQ; hours/signal/address still persisted, no None date."""
+    fixture = {**_open_fixture([]), "weekday_text": _HOURS, "formatted_address": _ADDRESS}
+    rio = _make_rio()
+
+    _, session = await _run_signal_with_session(rio, fixture)
+
+    assert rio.dlq_reason == "no_recent_reviews"
+    assert rio.normalized["weekday_text"] == _HOURS
+    assert rio.normalized["address"] == _ADDRESS
+    assert rio.normalized["signal"]["business_status"] == "OPERATIONAL"
+    assert "most_recent_review_at" not in rio.normalized
+    session.refresh.assert_called_once_with(rio, ["normalized"], with_for_update=True)
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_closed_temporarily_persists_signals_and_recency() -> None:
+    """CLOSED_TEMPORARILY → DLQ closed_temporarily (unchanged), with the paid signals and the
+    merged recency persisted — same as PlacesEnrichmentAgent's temporarily-closed path."""
+    recent_dt = (_NOW - timedelta(days=10)).replace(microsecond=0)
+    fixture = {
+        "place_id": "ChIJtest001",
+        "business_status": "CLOSED_TEMPORARILY",
+        "weekday_text": _HOURS,
+        "formatted_address": _ADDRESS,
+        "reviews": [{"publishTime": recent_dt.isoformat(), "rating": 5, "text": "ok"}],
+    }
+    rio = _make_rio()
+
+    mock_route, session = await _run_signal_with_session(rio, fixture)
+
+    assert rio.routing == "dlq"
+    assert rio.dlq_reason == "closed_temporarily"
+    assert rio.sub_state is None
+    assert not mock_route.called
+    n = rio.normalized
+    assert n["signal"]["business_status"] == "CLOSED_TEMPORARILY"
+    assert n["weekday_text"] == _HOURS
+    assert n["address"] == _ADDRESS
+    assert n["atualidade_value"] == 100.0
+    assert n["most_recent_review_at"] == recent_dt.isoformat()
+    session.refresh.assert_called_once_with(rio, ["normalized"], with_for_update=True)
+
+
+@pytest.mark.asyncio
+async def test_signal_agent_closed_permanently_writes_nothing() -> None:
+    """Regression pin: the hard descarte still persists nothing onto normalized."""
+    fixture = {
+        "place_id": "ChIJtest001",
+        "business_status": "CLOSED_PERMANENTLY",
+        "weekday_text": _HOURS,
+        "formatted_address": _ADDRESS,
+        "reviews": [],
+    }
+    rio = _make_rio()
+    before = dict(rio.normalized)
+
+    _, session = await _run_signal_with_session(rio, fixture)
+
+    assert rio.routing == "descarte"
+    assert rio.normalized == before
+    session.refresh.assert_not_called()

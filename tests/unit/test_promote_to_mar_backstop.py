@@ -250,13 +250,11 @@ def _steward_promote(rio):
     from brave.config.settings import ScoreConfig
     from brave.core.dlq.service import validate_and_promote_rio
 
-    repo = MagicMock()
-    repo.get.return_value = rio
-    with patch.object(routing, "_rio_repo", repo), patch.object(
-        routing, "record_event"
-    ), patch.object(ms, "_mar_repo") as mar_repo:
+    session = MagicMock()
+    session.get.return_value = rio  # reprocess_record's FOR UPDATE re-read
+    with patch.object(routing, "record_event"), patch.object(ms, "_mar_repo") as mar_repo:
         mar_repo.get_active_by_source_ref.return_value = None
-        return validate_and_promote_rio(MagicMock(), rio, ScoreConfig())
+        return validate_and_promote_rio(session, rio, ScoreConfig())
 
 
 def test_ta_attraction_with_fresh_review_date_reaches_mar() -> None:

@@ -7,14 +7,17 @@ integration tests that commit); every row carries a unique source_ref.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.clients.null_norteia_api import NullNorteiaApiClient
 from brave.config.settings import ScoreConfig
+from brave.core.mar import sync
 from brave.core.mar.publication import (
     Promotion,
     promote,
@@ -209,3 +212,261 @@ def test_republish_pending_enqueues_every_row() -> None:
 
     assert republish_pending(session, queued.append) == 2
     assert queued == [str(a), str(d)]
+
+
+# ---------------------------------------------------------------------------
+# Outbox outcome: retraction (F47), permanent 4xx (F46/F65), refresh (F48)
+# ---------------------------------------------------------------------------
+
+_ALL = 1_000_000  # the shared test DB keeps committed rows from other runs: never cap
+
+
+def _status_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "http://api.test/api/internal/territorial/destinations")
+    return httpx.HTTPStatusError(
+        "boom", request=request, response=httpx.Response(status, text="nope", request=request)
+    )
+
+
+def _pending_ids(session: Session, **kw) -> set:
+    return {rid for rid, _ in sync.pending_push_rows(session, _ALL, **kw)}
+
+
+def _later() -> datetime:
+    return datetime.now(UTC) + timedelta(hours=1)
+
+
+def test_rio_leaving_mar_retracts_the_published_row(db_session: Session) -> None:
+    rio = _in_mar(db_session)
+    api = _FakeApi()
+    publish(db_session, rio.id, api)
+
+    rio.routing, rio.dlq_reason = "dlq", "community_error_report"
+    db_session.commit()
+    assert rio.id in _pending_ids(db_session, now=_later())
+
+    assert publish(db_session, rio.id, api).status == "retracted"
+
+    assert api.calls[-1][1]["visibility"] == "hidden"
+    assert api.calls[-1][1]["source_ref"] == api.calls[0][1]["source_ref"]
+    mar = _active_mar(db_session, rio.id)
+    assert mar.retracted_at is not None
+    assert rio.id not in _pending_ids(db_session, now=_later())
+    assert publish(db_session, rio.id, api).status == "not_in_mar"  # no second hide
+    assert len(api.calls) == 2
+
+
+def test_never_pushed_row_is_retracted_without_a_call(db_session: Session) -> None:
+    rio = _in_mar(db_session)
+    rio.routing = "descarte"
+    db_session.commit()
+    api = _FakeApi()
+
+    assert publish(db_session, rio.id, api).status == "retracted"
+
+    assert api.calls == []
+    assert rio.id not in _pending_ids(db_session, now=_later())
+
+
+def test_revalidated_retracted_row_is_shown_again(db_session: Session) -> None:
+    rio = _in_mar(db_session)
+    api = _FakeApi()
+    publish(db_session, rio.id, api)
+    rio.routing = "dlq"
+    db_session.commit()
+    publish(db_session, rio.id, api)  # hidden
+
+    promote(db_session, rio, actor="steward", enqueue=lambda _rid: None, config=CONFIG)
+    assert rio.id in _pending_ids(db_session, now=_later())
+    assert publish(db_session, rio.id, api).status == "pushed"
+
+    assert api.calls[-1][1]["visibility"] == "published"
+    assert _active_mar(db_session, rio.id).retracted_at is None
+
+
+def test_superseded_unpushed_row_still_hides_the_visible_copy(db_session: Session) -> None:
+    """v1 is visible on the API; a write supersedes it into v2 (pushed_at NULL) whose POST
+    fails; then the Rio leaves Mar. pushed_at NULL used to read as "never sent" → stamped
+    retracted with no POST, and the closed record stayed public for good."""
+    from brave.core.rio.routing import route_by_score
+
+    rio = _in_mar(db_session)
+    api = _FakeApi()
+    publish(db_session, rio.id, api)
+    rio.normalized = {**rio.normalized, "name": "Nome Novo"}
+    route_by_score(db_session, rio, CONFIG)
+    db_session.commit()
+    assert publish(db_session, rio.id, _FakeApi(exc=ApiDown("down"))).status == "api_down"
+    assert _active_mar(db_session, rio.id).pushed_at is None  # v2, never accepted
+
+    rio.routing, rio.dlq_reason = "dlq", "closed_temporarily"
+    db_session.commit()
+    assert publish(db_session, rio.id, api).status == "retracted"
+
+    assert api.calls[-1][1]["visibility"] == "hidden"
+
+
+def test_rescore_repush_leaves_the_api_visibility_alone(db_session: Session) -> None:
+    """A community hide on the API must survive Brave's next re-push of the record."""
+    from brave.core.rio.routing import route_by_score
+
+    rio = _in_mar(db_session)
+    api = _FakeApi()
+    publish(db_session, rio.id, api)
+    rio.normalized = {**rio.normalized, "name": "Outro Nome"}
+    route_by_score(db_session, rio, CONFIG)
+    db_session.commit()
+
+    assert publish(db_session, rio.id, api).status == "pushed"
+
+    assert all("visibility" not in payload for _, payload in api.calls)
+
+
+def test_retracted_row_superseded_on_revalidation_is_still_shown(db_session: Session) -> None:
+    """The re-show signal (retracted_at) survives a supersession: else the new row pushed
+    without visibility and the API copy stayed hidden."""
+    rio = _in_mar(db_session)
+    api = _FakeApi()
+    publish(db_session, rio.id, api)
+    rio.routing = "dlq"
+    db_session.commit()
+    publish(db_session, rio.id, api)  # hidden
+
+    rio.normalized = {**rio.normalized, "name": "Nome Revisado"}  # changes the snapshot
+    promote(db_session, rio, actor="steward", enqueue=lambda _rid: None, config=CONFIG)
+    assert publish(db_session, rio.id, api).status == "pushed"
+
+    assert api.calls[-1][1]["visibility"] == "published"
+    assert api.calls[-1][1]["tourist_name"] == "Nome Revisado"
+
+
+def test_permanent_4xx_is_recorded_not_retried_and_leaves_the_dispatch(
+    db_session: Session,
+) -> None:
+    rio = _in_mar(db_session)
+
+    result = publish(db_session, rio.id, _FakeApi(exc=_status_error(422)))
+
+    assert result.status == "rejected"  # no raise → the Celery task does not retry it
+    mar = _active_mar(db_session, rio.id)
+    assert mar.push_error.startswith("422") and mar.pushed_at is None
+    # Out of the dispatch (it would hog the cap) until the day-long retry window passes.
+    assert rio.id not in _pending_ids(db_session, now=_later())
+    assert rio.id in _pending_ids(db_session, now=datetime.now(UTC) + timedelta(hours=25))
+    assert sync.count_rejected_pushes(db_session) >= 1
+
+
+@pytest.mark.parametrize("status", [500, 429, 401])
+def test_transient_http_errors_still_raise_for_the_retry(db_session: Session, status) -> None:
+    rio = _in_mar(db_session)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        publish(db_session, rio.id, _FakeApi(exc=_status_error(status)))
+
+    assert _active_mar(db_session, rio.id).push_error is None
+
+
+def test_attempted_row_is_not_redispatched_within_the_window(db_session: Session) -> None:
+    rio = _in_mar(db_session)
+    publish(db_session, rio.id, _FakeApi(exc=ApiDown("down")))  # attempted, still unpushed
+
+    assert rio.id not in _pending_ids(db_session)  # its retry chain is still running
+    assert rio.id in _pending_ids(db_session, now=_later())
+
+
+def test_update_after_promotion_reaches_the_api(db_session: Session) -> None:
+    from brave.core.rio.routing import route_by_score
+
+    rio = _in_mar(db_session)
+    api = _FakeApi()
+    publish(db_session, rio.id, api)
+    old_mar_id = _active_mar(db_session, rio.id).id
+
+    rio.normalized = {**rio.normalized, "name": "Nome Corrigido"}
+    route_by_score(db_session, rio, CONFIG)  # every enrichment writer ends here
+    db_session.commit()
+    assert rio.id in _pending_ids(db_session, now=_later())
+
+    assert publish(db_session, rio.id, api).status == "pushed"
+
+    assert api.calls[-1][1]["tourist_name"] == "Nome Corrigido"
+    mar = _active_mar(db_session, rio.id)
+    assert mar.id != old_mar_id and mar.pushed_at is not None  # superseded (D-03)
+    assert rio.id not in _pending_ids(db_session, now=_later())
+
+
+def test_rescore_without_payload_change_is_not_reposted(db_session: Session) -> None:
+    from brave.core.rio.routing import route_by_score
+
+    rio = _in_mar(db_session)
+    api = _FakeApi()
+    publish(db_session, rio.id, api)
+
+    rio.normalized = {**rio.normalized, "descricao_attempts": 1}  # internal-only key
+    route_by_score(db_session, rio, CONFIG)
+    db_session.commit()
+
+    assert publish(db_session, rio.id, api).status == "unchanged"
+    assert len(api.calls) == 1
+    assert rio.id not in _pending_ids(db_session, now=_later())
+
+
+# ---------------------------------------------------------------------------
+# validate_and_promote_rio guards: descarte (F50), row lock (F49)
+# ---------------------------------------------------------------------------
+
+
+def test_descarte_is_never_promoted(db_session: Session) -> None:
+    rio = _make_rio(db_session)
+    rio.routing, rio.dlq_reason = "descarte", "closed_place"
+    db_session.commit()
+    queued: list[str] = []
+
+    p = promote(db_session, rio, actor="steward", enqueue=queued.append, config=CONFIG)
+
+    assert p.routing == "descarte" and p.mar_id is None and queued == []
+    assert p.held_reason == "closed_place"
+    assert _active_mar(db_session, rio.id) is None
+    assert "validacao_humana_value" not in rio.normalized or (
+        rio.normalized["validacao_humana_value"] == 0.0
+    )
+
+
+def test_promote_waits_for_a_locked_writer_and_keeps_its_write(db_engine) -> None:
+    """A task holding the row FOR UPDATE commits google_enriched; the concurrent promote
+    must not write its stale copy of normalized over it (lost update, F49)."""
+    import threading
+
+    from sqlalchemy.orm import sessionmaker
+
+    factory = sessionmaker(bind=db_engine)
+    setup = factory()
+    rio_id = _make_rio(setup).id
+    setup.close()
+
+    writer = factory()
+    locked = writer.get(RioRecord, rio_id, with_for_update=True)
+    promoter = factory()
+    rio = promoter.get(RioRecord, rio_id)  # unlocked read, before the writer commits
+    _ = rio.normalized
+
+    done = threading.Event()
+
+    def _promote() -> None:
+        promote(promoter, rio, actor="steward", enqueue=lambda _rid: None, config=CONFIG)
+        done.set()
+
+    t = threading.Thread(target=_promote)
+    t.start()
+    assert not done.wait(0.5)  # blocked on the writer's row lock
+    locked.normalized = {**locked.normalized, "google_enriched": True}
+    writer.commit()
+    t.join(10)
+    writer.close()
+    promoter.close()
+
+    check = factory()
+    final = check.get(RioRecord, rio_id).normalized
+    check.close()
+    assert final["google_enriched"] is True
+    assert final["validacao_humana_value"] == 100.0

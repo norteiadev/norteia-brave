@@ -103,6 +103,9 @@ class Clients:
             return RealPlacesClient(
                 api_key=os.environ.get("BRAVE_PLACES_API_KEY", ""),
                 ibge_lookup=self._ibge_lookup() if self._ibge_lookup else None,
+                redis_client=self._redis(),
+                daily_usd_cap=self._cfg.places_daily_usd_cap,
+                total_usd_cap=self._cfg.places_total_usd_cap,
             )
 
         return self._get("places", build)

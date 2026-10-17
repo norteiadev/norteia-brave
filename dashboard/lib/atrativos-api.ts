@@ -247,7 +247,12 @@ export interface PromoteBulkRequest {
 
 export interface PromoteBulkDryRunResult {
   candidates: number;
-  excluded: { below_score: number; no_description: number; recency: number };
+  excluded: {
+    verdict?: number; // deliberate DLQ verdict (município não confirmado, fechado...)
+    below_score: number;
+    no_description: number;
+    recency: number;
+  };
   would_promote: number;
 }
 

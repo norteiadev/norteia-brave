@@ -14,8 +14,10 @@ place_id (Places Text Search), fetches Place Details, and persists:
   - ``most_recent_review_at``: the most-recent review date across TA + Google — lets the
                              promote_to_mar 90-day recency backstop pass (a recent Google
                              review confirms the place is operating → eligible for Mar).
-  - ``place_id_cache``     : the resolved place_id, so a later 90-day refresh sweep skips
-                             Text Search (only the Place Details SKU is re-spent).
+  - ``place_id_cache``     : the resolved place_id, so a re-run (or a future refresh — none
+                             exists yet) skips Text Search (only the Details SKU is re-spent).
+  - ``google_fetched_at``  : when the Google content above was fetched — the age a ToS TTL
+                             gate / refresh needs (Places content may only be cached ≤30 days).
 
 Liveness posture (operator decision): a recent Google review is a POSITIVE boost; its
 ABSENCE does NOT route to DLQ (the TA signals are kept). The one hard rule is
@@ -25,6 +27,10 @@ Place Details for a place we matched by name + proximity).
 Graceful degradation (mirrors DescriptionEnrichmentAgent): no confident match, empty
 Text Search, or ANY external failure keeps the TA floor (no Google keys written), still
 advances sub_state + re-scores — a scraper/API defect can never strand the record.
+``google_enriched`` is written ONLY after Places really answered (a match or a conclusive
+no-match): an external failure, the offline NullPlacesClient, or a budget/balance stop
+(CostGuardError / ProviderBalanceError — propagated so the caller pauses) leave it unset,
+so a later pass (the TA backfill, the FSM sweeper) retries the record.
 
 D-18 boundary: no imports from other domains or brave.tasks.
 """
@@ -33,16 +39,25 @@ from __future__ import annotations
 
 import math
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from celery.exceptions import SoftTimeLimitExceeded
 from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
 
-from brave.clients.places import _normalize_name
+from brave.clients.null_places import NullPlacesClient
+from brave.clients.places import (
+    USD_DETAILS_ENTERPRISE,
+    USD_DETAILS_ENTERPRISE_ATMOSPHERE,
+    USD_TEXT_SEARCH_PRO,
+    _normalize_name,
+)
 from brave.config.settings import ScoreConfig
+from brave.core.mar.service import _attraction_review_recent
 from brave.core.models import AtrativoBusca, Municipio
+from brave.core.rio.normalize import normalize_name
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import route_by_score
 from brave.domains.places.copywriter import (
@@ -58,7 +73,7 @@ from brave.domains.places.signal_agent import (
     TEMPORARILY_CLOSED_REASON,
     _compute_atualidade,
     _is_recent_review,
-    _newest_review_dt,
+    _merged_recency,
 )
 from brave.observability.audit import write_audit
 from brave.observability.record_events import record_event
@@ -85,6 +100,14 @@ _COMPLETUDE_WITH_DESCRIPTION: float = 90.0
 _MAX_DESCRIPTION_ATTEMPTS: int = 3
 
 logger = structlog.get_logger(__name__)
+
+# Never swallowed by the "a Places defect keeps the TA floor" catch-alls: each one means
+# "stop and pause the caller", not "this record had no Google data".
+_PROPAGATE: tuple[type[BaseException], ...] = (
+    ProviderBalanceError,
+    CostGuardError,
+    SoftTimeLimitExceeded,
+)
 
 # rapidfuzz token_set_ratio cutoff for a Text Search result name vs the atrativo name.
 # Below this the candidate is rejected — never write a wrong-place's hours/reviews onto a
@@ -120,6 +143,11 @@ _GEOGRAPHIC_TYPE_MARKER: str = "political"
 # Ronca, ~40 km); the same-name mismatches it must reject were all 190+ km away.
 _SEAT_RADIUS_KM: float = 80.0
 
+# Headroom the record must keep on the Mar recency backstop before Place Details may drop
+# reviews: a TA record (score ~55) reaches promote_to_mar only after a steward validates it
+# from the DLQ, and the backstop re-runs then with the real clock. Scale of that delay.
+_REVIEWS_SKIP_HORIZON_DAYS: int = 60
+
 # PT-BR wording of Places' business_status for the atrativo's Log tab.
 _CLOSED_LABELS: dict[str, str] = {
     "CLOSED_PERMANENTLY": "fechado permanentemente",
@@ -138,17 +166,6 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     d_lambda = math.radians(lon2 - lon1)
     a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
     return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-
-def _parse_iso(raw: Any) -> datetime | None:
-    """Parse an ISO-8601 string into a UTC-aware datetime, or None."""
-    if not raw or not isinstance(raw, str):
-        return None
-    try:
-        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return None
-    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
 def _best_match(
@@ -186,9 +203,9 @@ def _best_match(
             continue
         # No target coords → no distance guard, and a name alone matched a church in Vitória
         # for one in Pirenópolis, and the river "Rio Preto" for "Cachoeira Saltos do Rio
-        # Preto" (token_set_ratio scores a contained name 100). Then only a candidate Places
-        # puts in a município of the target's UF qualifies (the client resolves
-        # municipio_ibge within the UF, "" otherwise).
+        # Preto" (token_set_ratio scores a contained name 100). Then only a candidate whose
+        # município resolved to an IBGE code qualifies ("" = name unresolved; the client
+        # already dropped places Google puts in another UF, with or without coords here).
         if not have_target_coords and r.get("municipio_ibge") == "":
             continue
         loc = r.get("location") or {}
@@ -204,6 +221,12 @@ def _best_match(
             best_score = score
             best = r
     return best
+
+
+def ta_unplaced(rio: RioRecord) -> bool:
+    """TA's own geo puts the card in another UF than the stored one (``ta_uf`` != ``uf``)."""
+    ta_uf = (rio.normalized or {}).get("ta_uf")
+    return bool(ta_uf and rio.uf and ta_uf != rio.uf)
 
 
 class PlacesEnrichmentAgent:
@@ -274,13 +297,22 @@ class PlacesEnrichmentAgent:
             if llm_client is not None
             else None
         )
+        # locate()'s Text Search results when it fell back to a município consensus, keyed by
+        # (nome, uf). The inline run() that follows re-matches them WITH the coords/seat
+        # distance guard locate lacked (a result whose município name did not resolve can
+        # still match near the seat; out-of-UF places never reach here — the client drops
+        # them), instead of paying a second identical Text Search. One slot, in memory only —
+        # Google content is never persisted beyond place_id (Places ToS).
+        self._consensus_search: tuple[tuple[str, str], list[dict[str, Any]]] | None = None
+        self.locate_failed = False  # set by locate(); see there
 
     async def locate(self, nome: str, uf: str) -> dict[str, Any] | None:
         """Find WHERE an atrativo is when no other source could place it in a município.
 
         One Text Search, the same confident-match guards as run() (no coords to compare,
-        so name + not-a-geographic-entity), and only results Places placed in a município
-        of THIS UF (``municipio_ibge`` resolves within the UF only). Returns the matched
+        so name + not-a-geographic-entity), and only results whose município resolved to
+        an IBGE code of THIS UF (the client drops places Google puts in another UF and
+        leaves ``municipio_ibge`` "" when the name did not resolve). Returns the matched
         result — place_id, location, municipio_ibge — or None. Never raises: a Places
         failure just means the card stays unmatched.
 
@@ -291,12 +323,17 @@ class PlacesEnrichmentAgent:
         the name guard rejected: all 7 clustered correctly (e.g. "Jardim de Maytreia" vs
         "Mirante Jardim de Maytrea", score 83.7). Disagreeing results → None.
         """
+        self._consensus_search = None
+        # Read by the TA ingest: a swallowed failure is "Places not consulted", so the
+        # ibge_unmatched quarantine is not stamped as a final verdict (retried next sweep).
+        self.locate_failed = False
         try:
             results = await self._places_client.text_search(nome, uf)
-        except ProviderBalanceError:
+        except _PROPAGATE:
             raise
         except Exception:  # noqa: BLE001 — a Places defect never breaks the ingest
             logger.warning("places_locate_failed", uf=uf)
+            self.locate_failed = True
             return None
         in_uf = [
             r
@@ -308,6 +345,9 @@ class PlacesEnrichmentAgent:
             return match
         municipios = {r["municipio_ibge"] for r in in_uf}
         if len(municipios) == 1:
+            # Keyed on the ingest's normalize_name: run() reads the Rio's normalized name
+            # (title-cased), locate() gets the raw TA card name ("Cachoeira do Abismo").
+            self._consensus_search = ((normalize_name(nome), uf), results)
             return {"municipio_ibge": municipios.pop(), "consensus": True}
         return None
 
@@ -317,6 +357,7 @@ class PlacesEnrichmentAgent:
         return bool(
             self._description_enabled
             and self._copywriter is not None
+            and not ta_unplaced(rio)
             and not normalized.get("descricao_editorial")
             and bool(normalized.get("name"))
             and rio.routing != "descarte"
@@ -392,6 +433,12 @@ class PlacesEnrichmentAgent:
              most_recent_review_at + place_id_cache/google_place_id.
           5. Mark google_enriched, flag_modified, re-score (route_by_score).
         """
+        if ta_unplaced(rio):
+            # TA put the card in another UF and nothing placed it there: a Text Search /
+            # description in the stored UF can only find a homonym, and a cascade pass would
+            # re-decide (drop) the TA municipio_nao_confirmado verdict. The backfill re-places it.
+            logger.info("places_enrich_skipped_ta_unplaced", rio_id=str(rio.id), uf=rio.uf)
+            return
         # Step 1: the PAID Places sub-step is one-shot — either this agent already ran
         # (google_enriched marker) or the Places-FSM SignalAgent already spent the
         # Details SKU (cross-lane: place_id_cache + weekday_text). The DESCRIPTION
@@ -423,6 +470,14 @@ class PlacesEnrichmentAgent:
                 max_attempts=_MAX_DESCRIPTION_ATTEMPTS,
             )
         if places_done and not wants_description:
+            if not normalized.get("google_enriched"):
+                # Cross-lane: the SignalAgent already paid the Details SKU. Without the marker
+                # the stalled-chain sweeper re-selects this record every pass (google_enriched
+                # NULL) and describe_uf never sees it.
+                persist_normalized(
+                    self._session, rio, normalized, {**normalized, "google_enriched": True}
+                )
+                self._session.flush()
             return
 
         nome: str = normalized.get("name") or ""
@@ -441,10 +496,44 @@ class PlacesEnrichmentAgent:
         # degrades to the TA floor — a Places defect can never strand the record.
         details: dict[str, Any] = {}
         place_id: str = normalized.get("place_id_cache") or ""
-        if not places_done:
+        consensus, self._consensus_search = self._consensus_search, None
+        # Reviews are the only field that lifts Place Details from Enterprise ($20/1k) to
+        # Enterprise+Atmosphere ($25/1k). They are kept by default — Google's review date is
+        # what carries many atrativos past the Mar recency backstop — and dropped only when
+        # Google's reviews cannot change anything this one-shot step decides:
+        #   - atualidade is already 100 (TA date ≤30d) — Google's max can't lift the score;
+        #   - the record still passes the backstop _REVIEWS_SKIP_HORIZON_DAYS from now —
+        #     promote_to_mar re-runs it at promotion time, typically after a steward's DLQ
+        #     validation, and a skipped Google date is never fetched again;
+        #   - no description is written here from these live details (the copywriter
+        #     grounds on the review texts).
+        include_reviews = not (
+            float(normalized.get("atualidade_value") or 0.0) >= 100.0
+            and _attraction_review_recent(
+                normalized, now=ref_date + timedelta(days=_REVIEWS_SKIP_HORIZON_DAYS)
+            )
+            and not (wants_description and description is None)
+        )
+        # True only once Places really answered for this record: a conclusive no-match or a
+        # non-empty Details. Gates the google_enriched marker (Step 5).
+        places_consulted = False
+        offline = isinstance(self._places_client, NullPlacesClient)
+        if not places_done and not offline:
             try:
+                details_usd = (
+                    USD_DETAILS_ENTERPRISE_ATMOSPHERE if include_reviews else USD_DETAILS_ENTERPRISE
+                )
+                check_budget = getattr(self._places_client, "check_budget", None)
+                if check_budget is not None and not place_id and nome and consensus is None:
+                    # Budget for the PAIR before paying the first: a cap that trips on the
+                    # Details would leave a Text Search paid for nothing (paid again on resume).
+                    check_budget(USD_TEXT_SEARCH_PRO + details_usd)
                 if not place_id and nome:
-                    results = await self._places_client.text_search(nome, uf)
+                    results = (
+                        consensus[1]
+                        if consensus is not None and consensus[0] == (normalize_name(nome), uf)
+                        else await self._places_client.text_search(nome, uf)
+                    )
                     ref_lat, ref_lng, radius = lat, lng, self._max_distance_km
                     if (lat is None or lng is None) and municipio_ibge:
                         # No coords of its own: measure from the município seat instead,
@@ -462,12 +551,33 @@ class PlacesEnrichmentAgent:
                     # Stamped on the attempt, not the success: a place Google no longer
                     # serves must not be re-billed by every daily refresh.
                     new_normalized["places_refreshed_at"] = ref_date.isoformat()
-                    details = await self._places_client.place_details(place_id)
-            except ProviderBalanceError:
+                    details = await self._places_client.place_details(
+                        place_id, include_reviews=include_reviews
+                    )
+                    places_consulted = bool(details)
+                    if not include_reviews:
+                        logger.info("places_details_reviews_skipped", rio_id=str(rio.id), uf=uf)
+                else:
+                    # No confident match (or no name to search): a conclusive answer — paying
+                    # the Text Search again would return the same thing.
+                    places_consulted = True
+            except _PROPAGATE:
                 raise
-            except Exception:  # noqa: BLE001 — Places failure keeps the TA floor
+            except Exception as exc:  # noqa: BLE001 — Places failure keeps the TA floor
                 logger.warning("places_enrich_failed_kept_floor", rio_id=str(rio.id))
                 details = {}
+                if "NotFound" in type(exc).__name__ and normalized.get("place_id_cache"):
+                    # Google retired the cached id: clear it (persist_normalized merges, so
+                    # None, not pop) so the next pass re-resolves by Text Search instead of
+                    # failing on the dead id forever.
+                    new_normalized["place_id_cache"] = None
+                    new_normalized["google_place_id"] = None
+                elif place_id and not normalized.get("place_id_cache") and (
+                    "NotFound" not in type(exc).__name__
+                ):
+                    # The (paid) Text Search matched but Details failed transiently: keep the
+                    # id so the next pass goes straight to Details instead of re-searching.
+                    new_normalized["place_id_cache"] = place_id
 
         if details:
             business_status: str = details.get("business_status", "UNKNOWN")
@@ -537,21 +647,17 @@ class PlacesEnrichmentAgent:
             existing_atualidade = float(new_normalized.get("atualidade_value", 0.0))
             new_normalized["atualidade_value"] = max(existing_atualidade, google_atualidade)
 
-            # most_recent_review_at = the later of (existing TA date, newest Google date).
-            google_newest = _newest_review_dt(reviews)
-            existing_newest = _parse_iso(new_normalized.get("most_recent_review_at"))
-            newest = max(
-                (d for d in (google_newest, existing_newest) if d is not None),
-                default=None,
-            )
-            if newest is not None:
-                new_normalized["most_recent_review_at"] = newest.isoformat()
+            # most_recent_review_at = the later of (existing TA date, newest Google date) —
+            # the same merge as SignalAgent. Reviews skipped → no Google date → the existing
+            # one stands (atualidade too: the skip requires it already at 100).
+            new_normalized.update(_merged_recency(new_normalized, reviews))
 
             # place_id_cache: internal FSM lookup key (refresh finds by id, not text).
             # google_place_id: the same id exposed as a clean platform-facing canonical
             # field → flows to norteia-api (both lanes write it — see routing.normalize).
             new_normalized["place_id_cache"] = place_id
             new_normalized["google_place_id"] = place_id
+            new_normalized["google_fetched_at"] = ref_date.isoformat()
 
             # Structured operational fields (discrete keys, NEVER in the description prose).
             phone = details.get("international_phone_number")
@@ -570,13 +676,18 @@ class PlacesEnrichmentAgent:
             # Places-FSM parity: build_push_payload reads business_status and
             # reviews_recent_count off normalized["signal"] (the SignalResult block the
             # SignalAgent writes) — without it the TA lane pushes both as null.
+            # No reviews fetched ≠ zero recent reviews: keep the last known count, or leave
+            # it unknown (the push sends null) rather than claim 0.
+            reviews_recent_count = (
+                sum(1 for r in reviews if _is_recent_review(r, ref_date))
+                if include_reviews
+                else (normalized.get("signal") or {}).get("reviews_recent_count")
+            )
             new_normalized["signal"] = SignalResult(
                 business_status=business_status,
                 weekday_text=weekday_text,
                 atualidade_value=new_normalized["atualidade_value"],
-                reviews_recent_count=sum(
-                    1 for r in reviews if _is_recent_review(r, ref_date)
-                ),
+                reviews_recent_count=reviews_recent_count,
             ).model_dump()
 
             # Distrito from Places addressComponents (admin_area_level_3 → resolve_distrito),
@@ -663,7 +774,10 @@ class PlacesEnrichmentAgent:
 
         # Step 5: mark enriched (idempotency), mutate normalized, re-score. sub_state is
         # left untouched — a dlq record stays in the plain DLQ (sub_state=None) queue.
-        new_normalized["google_enriched"] = True
+        # Marked only when Places really answered (or already had): a failure / offline
+        # client leaves it unset so the paid sub-step is retried on a later pass.
+        if places_done or places_consulted:
+            new_normalized["google_enriched"] = True
         # Merge, never overwrite — see persist_normalized. From here on the merged value is
         # what the audit row, the timeline event and the re-score must read.
         new_normalized = persist_normalized(self._session, rio, normalized, new_normalized)
@@ -685,7 +799,16 @@ class PlacesEnrichmentAgent:
         self._session.flush()
 
         # Re-score: atualidade/completude may have changed → borderline record can move mar↔dlq.
-        route_by_score(self._session, rio, self._config)
+        # Verdicts stay sticky (C5) unless THIS pass re-judged them — fresh Details re-decide
+        # temporarily-closed, a cascade run re-decides the description verdicts (re-applied
+        # below when they still hold). A description-only pass (no Details) used to erase
+        # closed_temporarily and could carry the record to Mar.
+        redecided: set[str] = set()
+        if details:
+            redecided.add(TEMPORARILY_CLOSED_REASON)
+        if cascade is not None:
+            redecided |= {"descricao_nao_fundamentada", "municipio_nao_confirmado"}
+        route_by_score(self._session, rio, self._config, redecided=redecided)
         # Ungrounded prose goes to the human queue, not to Mar: the draft sits in
         # descricao_rascunho for a steward, and the reason overrides the score one so the DLQ
         # says what to look at. The invariant does not depend on this routing — the draft is

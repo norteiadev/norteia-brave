@@ -13,6 +13,8 @@ Every branch rolls the task's session back first, then:
 
   ProviderBalanceError → pause the motor with the reason (``pause_action`` feeds the
                          Painel's Continuar); no retry, no quarantine, task SUCCESS.
+  CostGuardError       → same, reason ``daily_budget`` (our cap — LLM or Places; raised
+                         before dispatch, so a retry would only hit the same wall).
   ComplianceError      → blocked send, logged; no retry, no quarantine, task SUCCESS.
   PermanentError       → quarantine, no retry, task SUCCESS (``quarantine=False``:
                          re-raised, task FAILURE).
@@ -33,7 +35,12 @@ from typing import Any
 import structlog
 from celery.exceptions import Retry
 
-from brave.shared.exceptions import ComplianceError, PermanentError, ProviderBalanceError
+from brave.shared.exceptions import (
+    ComplianceError,
+    CostGuardError,
+    PermanentError,
+    ProviderBalanceError,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -59,17 +66,21 @@ def task_failure_policy(
         yield
     except (Retry, *passthrough):
         raise
-    except ProviderBalanceError as exc:
+    except (ProviderBalanceError, CostGuardError) as exc:
         session.rollback()
         import redis as _redis_lib  # noqa: PLC0415
 
         from brave.core import engine as collection_engine  # noqa: PLC0415
 
         rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
-        collection_engine.pause_with_reason(
-            rc, "provider_balance", exc.provider, action=pause_action
-        )
-        logger.warning("task_provider_balance", task=task_name, provider=exc.provider)
+        if isinstance(exc, ProviderBalanceError):
+            collection_engine.pause_with_reason(
+                rc, "provider_balance", exc.provider, action=pause_action
+            )
+            logger.warning("task_provider_balance", task=task_name, provider=exc.provider)
+        else:
+            collection_engine.pause_with_reason(rc, "daily_budget", action=pause_action)
+            logger.warning("task_daily_budget", task=task_name)
     except ComplianceError as exc:
         session.rollback()
         logger.warning("task_compliance_blocked", task=task_name, error=str(exc))

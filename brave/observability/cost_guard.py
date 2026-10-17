@@ -32,20 +32,51 @@ every lane a second full budget). The floor is a last-resort backstop, not the m
 See PITFALLS §8: cost guard is enforcing, not advisory.
 """
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 from redis import Redis
 
 from brave.config.settings import LLMConfig
-from brave.shared.exceptions import CostGuardError
+from brave.shared.exceptions import CostGuardError, ProviderBalanceError
 
 # CostGuardError is defined in the central hierarchy (brave/shared/exceptions.py)
 # and imported above. Re-exported here (it is raised below) so existing importers
 # keep working unchanged.
 
 
-def _daily_key(now: datetime | None = None) -> str:
+# Google Places spend has its OWN counters + caps, PER API KEY (places_lane / record_places_spend):
+# ~10k atrativos x (Text Search + Details) is hundreds of USD per pass, which would starve
+# the LLM lanes' usd_daily_budget in minutes if both shared one counter. Per key because the
+# real budget is a credit per Google account: when it runs out the operator swaps
+# BRAVE_PLACES_API_KEY and resumes — the new key starts from zero on both counters.
+#   - daily (AppConfig.places_daily_usd_cap): brave:cost:places:{key_id}:daily:{date}, a
+#     throttle that resets at 00:00 UTC → CostGuardError (the beat may auto-resume next day);
+#   - total (AppConfig.places_total_usd_cap): brave:cost:places:total:{key_id}, no TTL — the
+#     key's credit as we count it. Reaching it is the same wall as Google's billing one →
+#     ProviderBalanceError (operator swaps the key; never auto-resumed).
+PLACES_LANE = "places"
+
+
+def places_key_id(api_key: str) -> str:
+    """Short, non-reversible id of a Places API key: names its counters, never the key."""
+    return hashlib.sha256(api_key.encode()).hexdigest()[:12] if api_key else "nokey"
+
+
+def places_lane(api_key: str) -> str:
+    """The daily-counter lane of one Places API key."""
+    return f"{PLACES_LANE}:{places_key_id(api_key)}"
+
+
+def _places_total_key(api_key: str) -> str:
+    return f"brave:cost:{PLACES_LANE}:total:{places_key_id(api_key)}"
+
+
+def _daily_key(now: datetime | None = None, lane: str = "") -> str:
     """Return the Redis key for the current UTC day's USD cost counter.
+
+    ``lane`` "" = the shared LLM/search counter ("brave:cost:daily:{date}", unchanged);
+    any other lane gets its own "brave:cost:{lane}:daily:{date}".
 
     ``now`` pins the instant: a test seam so key and TTL agree, and the way reconcile_spend
     names the day a reservation was BOOKED on. Production reads of "today" pass nothing.
@@ -57,7 +88,8 @@ def _daily_key(now: datetime | None = None) -> str:
     now = now or datetime.now(UTC)
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
-    return f"brave:cost:daily:{now.astimezone(UTC).date().isoformat()}"
+    prefix = f"brave:cost:{lane}:daily" if lane else "brave:cost:daily"
+    return f"{prefix}:{now.astimezone(UTC).date().isoformat()}"
 
 
 def _seconds_until_midnight(now: datetime | None = None) -> int:
@@ -70,7 +102,7 @@ def _seconds_until_midnight(now: datetime | None = None) -> int:
     return max(1, int((tomorrow - now).total_seconds()))
 
 
-def _incr(redis_client: Redis, usd_amount: float) -> float:
+def _incr(redis_client: Redis, usd_amount: float, lane: str = "") -> float:
     """Apply a signed USD delta to TODAY's counter, floored at zero, TTL guaranteed.
 
     Floor: a refund whose reservation is not on this key (Redis flushed, or a settle that
@@ -82,7 +114,7 @@ def _incr(redis_client: Redis, usd_amount: float) -> float:
     with no expiry never resets. Every write re-checks, so the counter always dies with its
     day.
     """
-    key = _daily_key()
+    key = _daily_key(lane=lane)
     new_total = float(redis_client.incrbyfloat(key, usd_amount))
     if new_total < 0.0:
         # Correct RELATIVELY (add back exactly what we saw below zero) instead of SET 0: a
@@ -126,7 +158,7 @@ def pre_dispatch_check(redis_client: Redis, config: LLMConfig, projected_usd: fl
         )
 
 
-def record_spend(redis_client: Redis, usd_amount: float) -> float:
+def record_spend(redis_client: Redis, usd_amount: float, lane: str = "") -> float:
     """Record LLM spend (or a RESERVATION of it) in the Redis daily counter.
 
     Uses INCRBYFLOAT for atomic float increment.
@@ -142,11 +174,71 @@ def record_spend(redis_client: Redis, usd_amount: float) -> float:
         redis_client: Redis client (real or fakeredis).
         usd_amount:   Amount spent/reserved in USD (e.g., 0.0015). Must be >= 0 —
                       refunds go through :func:`reconcile_spend`, which floors the counter.
+        lane:         "" = the shared LLM counter; PLACES_LANE = the Places counter.
 
     Returns:
         The new total daily counter value after increment.
     """
-    return _incr(redis_client, max(0.0, usd_amount))
+    return _incr(redis_client, max(0.0, usd_amount), lane)
+
+
+def daily_spend(redis_client: Redis, lane: str = "") -> float:
+    """Today's (UTC) recorded USD on ``lane``'s counter — 0.0 when nothing was spent yet."""
+    raw = redis_client.get(_daily_key(lane=lane))
+    return float(raw) if raw is not None else 0.0
+
+
+def places_total_spend(redis_client: Redis, api_key: str) -> float:
+    """USD recorded against one Places API key since it was first used (no expiry)."""
+    raw = redis_client.get(_places_total_key(api_key))
+    return float(raw) if raw is not None else 0.0
+
+
+def record_places_spend(redis_client: Redis, usd_amount: float, api_key: str) -> None:
+    """Record one paid Places call on its key's daily AND total counters."""
+    usd = max(0.0, usd_amount)
+    record_spend(redis_client, usd, places_lane(api_key))
+    redis_client.incrbyfloat(_places_total_key(api_key), usd)
+
+
+def pre_dispatch_check_places(
+    redis_client: Redis,
+    cap_usd: float,
+    projected_usd: float,
+    *,
+    api_key: str | None = None,
+    total_cap_usd: float | None = None,
+) -> None:
+    """Raise BEFORE a paid Places call that would push the spend past a cap — no call made.
+
+    Daily cap → CostGuardError; the key's total cap (credit) → ProviderBalanceError. Without
+    ``api_key`` only the legacy key-less daily counter is checked (scripts/tests).
+
+    Unlike the LLM check (``>=`` on the counter alone) the call's own SKU price is projected:
+    a Places call's price is known upfront, so the cap is never overshot by a single call.
+    ponytail: check-then-record is not atomic — concurrent workers can overshoot the cap by
+    (workers - 1) calls (~US$0.03 each); a Lua reserve script if that ever matters.
+    """
+    # Total first: when both are hit, the credit wall (operator action) must win over the
+    # daily one (which the beat would auto-resume tomorrow, only to hit the credit again).
+    if (
+        api_key is not None
+        and total_cap_usd is not None
+        and places_total_spend(redis_client, api_key) + projected_usd > total_cap_usd
+    ):
+        raise ProviderBalanceError(
+            "google_places",
+            f"Google Places credit cap reached for API key {places_key_id(api_key)} — swap "
+            "BRAVE_PLACES_API_KEY in .env (a new key starts its own counter), RECREATE the "
+            "worker and api containers (docker compose up -d worker api; a restart keeps the "
+            "old env) and resume.",
+        )
+    lane = places_lane(api_key) if api_key is not None else PLACES_LANE
+    if daily_spend(redis_client, lane) + projected_usd > cap_usd:
+        raise CostGuardError(
+            "Daily Google Places budget exceeded. Halting dispatch. "
+            "Reset happens automatically at midnight UTC."
+        )
 
 
 def reconcile_spend(

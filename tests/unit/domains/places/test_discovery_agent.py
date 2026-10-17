@@ -561,3 +561,40 @@ def test_produce_for_destino_parent_link_in_normalized() -> None:
     rio_record = rio_records[0]
     assert rio_record.normalized is not None
     assert rio_record.normalized.get("parent_mar_id") == parent_mar_id_str
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["search", "extract"])
+@pytest.mark.parametrize("exc_name", ["CostGuardError", "ProviderBalanceError"])
+async def test_run_level_errors_propagate_instead_of_poisoning(where, exc_name) -> None:
+    """A billing wall / our daily cap stops the run (the task pauses); it is never written
+    as a per-query or per-place poison row while the sweep carries on."""
+    from brave.config.settings import ScoreConfig
+    from brave.domains.places.discovery_agent import DiscoveryAgent
+    from brave.shared import exceptions
+
+    exc = getattr(exceptions, exc_name)("places")
+    places = MagicMock()
+    places.text_search = AsyncMock(
+        side_effect=exc if where == "search" else None,
+        return_value=[_make_places_result()],
+    )
+    llm_client = MagicMock()
+    llm_client.extract = AsyncMock(side_effect=exc)
+    agent = DiscoveryAgent(
+        places_client=places, llm_client=llm_client, session=_make_mock_session(),
+        config=ScoreConfig(),
+    )
+
+    with patch(
+        "brave.domains.places.discovery_agent.ensure_destino",
+        return_value=(uuid.uuid4(), "ibge:BA:2919207", None),
+    ), patch("brave.domains.places.discovery_agent.quarantine_poison") as poison:
+        with pytest.raises(type(exc)):
+            await agent.produce(uf="BA")
+        with pytest.raises(type(exc)):
+            parent = MagicMock()
+            parent.canonical = {"municipio": "Porto Seguro", "uf": "BA", "ibge_code": "2927408"}
+            await agent.produce_for_destino(parent, target_count=1)
+
+    poison.assert_not_called()

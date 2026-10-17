@@ -65,7 +65,7 @@ def test_absent_hours_omit_the_key():
     payload = build_push_payload(_mar({}), rio_record=None)
 
     assert "opening_hours" not in payload
-    assert payload["place"]["opening_hours"] is None
+    assert "place" not in payload  # nothing Google to say → no all-null place block (F93)
 
 
 def test_price_level_enum_name_becomes_the_legacy_integer():
@@ -84,7 +84,7 @@ def test_price_level_free_is_zero_not_dropped():
 def test_unknown_price_level_is_null_instead_of_a_422():
     payload = build_push_payload(_mar({"price_level": "PRICE_LEVEL_UNSPECIFIED"}), rio_record=None)
 
-    assert payload["place"]["price_level"] is None
+    assert "price_level" not in payload.get("place", {})
 
 
 def test_numeric_price_level_is_dropped_not_forwarded():
@@ -94,7 +94,7 @@ def test_numeric_price_level_is_dropped_not_forwarded():
     for raw in (3, 5, "3"):
         payload = build_push_payload(_mar({"price_level": raw}), rio_record=None)
 
-        assert payload["place"]["price_level"] is None
+        assert "price_level" not in payload.get("place", {})
 
 
 def test_address_and_signal_fields_reach_the_payload():

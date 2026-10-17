@@ -3,7 +3,7 @@
 Uses google-maps-places 0.9.x SDK (not raw httpx; not the legacy googlemaps client).
 Implements PlacesClientProtocol:
   - text_search(query, uf) → list[dict]
-  - place_details(place_id) → dict
+  - place_details(place_id, *, include_reviews=True) → dict
 
 Guard: raises RuntimeError if AppConfig().run_real_externals is False.
 This prevents accidental real API calls in CI / default test suite.
@@ -12,6 +12,11 @@ D-04 / COMP-03: Returns raw Places data. Callers (DiscoveryAgent, SignalAgent)
 are responsible for persisting ONLY place_id from the raw response.
 
 tenacity: 3 retries with exponential backoff for transient errors (429, 5xx).
+
+Budget (C4): with a redis_client, every paid call is checked against the API key's
+daily cap (AppConfig.places_daily_usd_cap → CostGuardError) and total credit cap
+(AppConfig.places_total_usd_cap → ProviderBalanceError) BEFORE dispatch — no call made —
+and recorded by SKU on that key's counters after it succeeds (see cost_guard).
 
 Usage (production — only when run_real_externals=True):
     from brave.clients.places import RealPlacesClient
@@ -31,6 +36,7 @@ if TYPE_CHECKING:
 import structlog
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from brave.observability.cost_guard import pre_dispatch_check_places, record_places_spend
 from brave.shared.exceptions import ProviderBalanceError
 
 logger = structlog.get_logger(__name__)
@@ -53,7 +59,13 @@ _TEXT_SEARCH_FIELD_MASK = (
     "places.addressComponents"
 )
 
-_GET_PLACE_FIELD_MASK = (
+# Place Details SKU is billed by the HIGHEST tier field in the mask:
+#   Enterprise ($20/1k)              — regularOpeningHours, internationalPhoneNumber,
+#                                      websiteUri, priceLevel
+#   Enterprise + Atmosphere ($25/1k) — + reviews (reviews ALONE triggers the bump)
+# Callers that already know a record's review recency (e.g. from TripAdvisor) can ask
+# for the reviews-free mask and save the Atmosphere surcharge.
+_GET_PLACE_FIELD_MASK_NO_REVIEWS = (
     "id,"
     "displayName,"
     "formattedAddress,"
@@ -62,11 +74,19 @@ _GET_PLACE_FIELD_MASK = (
     "addressComponents,"
     "businessStatus,"
     "regularOpeningHours,"
-    "reviews,"
     "internationalPhoneNumber,"
     "websiteUri,"
     "priceLevel"
 )
+
+_GET_PLACE_FIELD_MASK = _GET_PLACE_FIELD_MASK_NO_REVIEWS + ",reviews"
+
+# Approximate USD per call by SKU (source: Google Maps Platform pricing, validated 2026-10-14).
+# Text Search bills Pro because its mask asks for location/types/addressComponents; Details
+# bills by the highest-tier field (see the masks above). Feeds the Places daily cost guard.
+USD_TEXT_SEARCH_PRO: float = 0.032
+USD_DETAILS_ENTERPRISE: float = 0.020
+USD_DETAILS_ENTERPRISE_ATMOSPHERE: float = 0.025
 
 
 # ---------------------------------------------------------------------------
@@ -216,15 +236,21 @@ def _raise_if_places_balance_wall(exc: Exception) -> None:
 
     ResourceExhausted covers BOTH a per-minute rate burst and the daily quota/billing wall —
     the two are not distinguishable by exception type. It stays retryable in ``_is_retryable``
-    (tenacity backoff absorbs a minute burst); only once retries are exhausted and this is the
-    exception still leaving text_search/place_details do we treat it as a balance wall.
-    A 403 PermissionDenied whose message mentions billing is an immediate balance wall — no
-    retry would ever fix it.
+    (tenacity backoff absorbs a minute burst). Called only by the public methods, OUTSIDE the
+    @retry'd SDK call — classifying inside it raised ProviderBalanceError on the FIRST 429,
+    which the retry predicate rejects, so a single burst paused the whole engine.
+    Once retries are exhausted Google's message names the limit ("... per minute" vs
+    "... per day"): a minute limit is still transient and leaves as the SDK error (the caller
+    keeps the record unmarked for a later pass); any other quota is treated as the wall.
+    Any 403 PermissionDenied / 401 Unauthenticated is a provider wall too — billing off, but
+    also the typical swapped-key mistakes (Places API (New) not enabled on the new project /
+    SERVICE_DISABLED, API_KEY_INVALID, a referer/IP-restricted key). None of them fixes itself:
+    swallowed per record, a whole backfill would run to "done" with Places silently skipped.
     """
     exc_name = type(exc).__name__
-    if "ResourceExhausted" in exc_name:
+    if "ResourceExhausted" in exc_name and "per minute" not in str(exc).lower():
         raise ProviderBalanceError("google_places", str(exc))
-    if "PermissionDenied" in exc_name and "billing" in str(exc).lower():
+    if "PermissionDenied" in exc_name or "Unauthenticated" in exc_name:
         raise ProviderBalanceError("google_places", str(exc))
 
 
@@ -244,12 +270,19 @@ class RealPlacesClient:
 
     Args:
         api_key: Google Places API key (required).
+        redis_client: Redis for the Places cost guard. None → no budget (scripts).
+        daily_usd_cap: AppConfig.places_daily_usd_cap — the key's daily cap.
+        total_usd_cap: AppConfig.places_total_usd_cap — the key's credit (no reset).
     """
 
     def __init__(
         self,
         api_key: str,
         ibge_lookup: dict[tuple[str, str], str] | None = None,
+        *,
+        redis_client: Any = None,
+        daily_usd_cap: float = 300.0,
+        total_usd_cap: float = 300.0,
     ) -> None:
         from brave.config.settings import AppConfig
 
@@ -270,6 +303,9 @@ class RealPlacesClient:
         self._client = None  # Lazy init — avoid import-time SDK setup
         # D-02: in-process name→IBGE lookup built from loaded Mtur table
         self._ibge_lookup: dict[tuple[str, str], str] = ibge_lookup or {}
+        self._redis_client = redis_client
+        self._daily_usd_cap = daily_usd_cap
+        self._total_usd_cap = total_usd_cap
 
     def _get_client(self) -> Any:
         """Lazy-initialize the google-maps-places SDK client."""
@@ -288,12 +324,45 @@ class RealPlacesClient:
 
         return self._client
 
+    def check_budget(self, usd: float) -> None:
+        """Raise (CostGuardError / ProviderBalanceError) when ``usd`` more would cross a cap.
+
+        Public so a caller about to chain several paid calls (Text Search → Details) can
+        check their SUM first instead of paying the first and stopping at the second.
+        """
+        if self._redis_client is not None:
+            pre_dispatch_check_places(
+                self._redis_client, self._daily_usd_cap, usd,
+                api_key=self._api_key, total_cap_usd=self._total_usd_cap,
+            )
+
+    def _record_spend(self, usd: float) -> None:
+        if self._redis_client is not None:
+            record_places_spend(self._redis_client, usd, self._api_key)
+
+    # The raw SDK calls carry the retry; the public methods classify only what survives it.
     @retry(
         retry=retry_if_exception(_is_retryable),  # WR-01: transient only
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
+    async def _search_text_once(self, request: Any) -> Any:
+        return await self._get_client().search_text(
+            request, metadata=[("x-goog-fieldmask", _TEXT_SEARCH_FIELD_MASK)]
+        )
+
+    @retry(
+        retry=retry_if_exception(_is_retryable),  # WR-01: transient only
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    async def _get_place_once(self, request: Any, field_mask: str) -> Any:
+        return await self._get_client().get_place(
+            request, metadata=[("x-goog-fieldmask", field_mask)]
+        )
+
     async def text_search(self, query: str, uf: str) -> list[dict[str, Any]]:
         """Search for places matching a text query within a UF.
 
@@ -306,10 +375,10 @@ class RealPlacesClient:
 
         Returns:
             List of place dicts, each containing at minimum:
-              place_id, name, formatted_address, types, location.
+              place_id, name, formatted_address, types, location. Places that Google
+              puts in ANOTHER state are dropped; ``municipio_ibge`` "" means the
+              município name did not resolve within the UF.
         """
-        client = self._get_client()
-
         from google.maps.places_v1.types import SearchTextRequest  # type: ignore[import]
 
         request = SearchTextRequest(
@@ -318,22 +387,28 @@ class RealPlacesClient:
             language_code="pt-BR",
         )
 
+        self.check_budget(USD_TEXT_SEARCH_PRO)
         try:
-            response = await client.search_text(
-                request,
-                metadata=[("x-goog-fieldmask", _TEXT_SEARCH_FIELD_MASK)],
-            )
+            response = await self._search_text_once(request)
         except Exception as exc:
             logger.error("places_text_search_error", query=query, uf=uf, error=str(exc))
             _raise_if_places_balance_wall(exc)
             raise
+        self._record_spend(USD_TEXT_SEARCH_PRO)
 
         results: list[dict[str, Any]] = []
         for place in response.places:
             # D-02: extract municipio from addressComponents and resolve IBGE
-            municipio_nome, _uf_short = _extract_municipio_from_components(
+            municipio_nome, uf_short = _extract_municipio_from_components(
                 place.address_components or []
             )
+            # The query names the UF only as a hint: Places still returns namesakes in other
+            # states. Drop those here, for every caller — municipio_ibge resolves against the
+            # REQUESTED UF, so an out-of-UF place in a homonym município (Bom Jesus/RS for
+            # uf=PI) would otherwise get the PI code. No level_1 component → kept (fail open).
+            uf_short = (uf_short or "").upper()
+            if len(uf_short) == 2 and uf_short != uf.upper():
+                continue
             ibge_key = (_normalize_name(municipio_nome), uf.upper())
             municipio_ibge = self._ibge_lookup.get(ibge_key, "")
             # distrito name text (admin_area_level_3) — name-matched downstream
@@ -359,27 +434,24 @@ class RealPlacesClient:
         logger.info("places_text_search_ok", query=query, uf=uf, count=len(results))
         return results
 
-    @retry(
-        retry=retry_if_exception(_is_retryable),  # WR-01: transient only
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        reraise=True,
-    )
-    async def place_details(self, place_id: str) -> dict[str, Any]:
+    async def place_details(
+        self, place_id: str, *, include_reviews: bool = True
+    ) -> dict[str, Any]:
         """Fetch full details for a Google Place.
 
         Requests fields required by ContactFinderAgent and SignalAgent:
           business_status, weekday_text, reviews, website,
-          formatted_phone_number, international_phone_number.
+          international_phone_number, price_level, types.
 
         Args:
             place_id: Google Places place_id (from text_search result).
+            include_reviews: False drops ``reviews`` from the field mask — reviews alone
+                push the call from Enterprise ($20/1k) to Enterprise + Atmosphere
+                ($25/1k). The returned dict keeps its shape with ``reviews == []``.
 
         Returns:
             Full place detail dict.
         """
-        client = self._get_client()
-
         from google.maps.places_v1.types import GetPlaceRequest  # type: ignore[import]
 
         # D-01 fix: use _GET_PLACE_FIELD_MASK (no "places." prefix for get_place)
@@ -392,22 +464,26 @@ class RealPlacesClient:
             name=f"places/{place_id}",
             language_code="pt-BR",
         )
+        field_mask = (
+            _GET_PLACE_FIELD_MASK if include_reviews else _GET_PLACE_FIELD_MASK_NO_REVIEWS
+        )
 
+        usd = USD_DETAILS_ENTERPRISE_ATMOSPHERE if include_reviews else USD_DETAILS_ENTERPRISE
+        self.check_budget(usd)
         try:
-            place = await client.get_place(
-                request,
-                metadata=[("x-goog-fieldmask", _GET_PLACE_FIELD_MASK)],
-            )
+            place = await self._get_place_once(request, field_mask)
         except Exception as exc:
             logger.error("places_place_details_error", place_id=place_id, error=str(exc))
             _raise_if_places_balance_wall(exc)
             raise
+        self._record_spend(usd)
 
         # Normalize reviews to the shape SignalAgent expects
         # D-01 fix: review.publish_time is a proto Timestamp — use ToDatetime() for safe
         # conversion; bare .isoformat() raises AttributeError in some proto-plus versions.
+        # include_reviews=False: reviews were not requested — keep the key, empty list.
         reviews: list[dict[str, Any]] = []
-        for review in place.reviews or []:
+        for review in (place.reviews or []) if include_reviews else ():
             if review.publish_time:
                 try:
                     publish_time_str = review.publish_time.ToDatetime(
@@ -459,9 +535,12 @@ class RealPlacesClient:
             "location": location,
             "distrito_hint": distrito_hint,
             "price_level": price_level,
+            "types": list(place.types or []),
         }
 
-        logger.info("places_place_details_ok", place_id=place_id)
+        logger.info(
+            "places_place_details_ok", place_id=place_id, include_reviews=include_reviews
+        )
         return result
 
 

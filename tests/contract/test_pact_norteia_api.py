@@ -18,24 +18,26 @@ Interactions must be defined before entering serve(). Each interaction creates a
 Pact, serves it, makes the call, then writes. We use one Pact per test function to avoid
 interaction state pollution across tests.
 
-Contract interactions:
+Contract interactions (bodies built by build_push_payload — F53):
   1. "a valid destination Mar push" — POST /destinations with full Pact shape → 200
   2. "idempotent re-push of same source_ref" — same endpoint + payload → 200 (upsert)
-  3. "a valid attraction Mar push" — POST /attractions with entity_type=attraction → 200
+  3. attraction pushes, one per lane shape (TA per-UF enriched, TA bulk, Places) → 200
 
-After the three tests run, the combined Pact JSON file is written.
+After the tests run, the combined Pact JSON file is written.
 """
 
 import asyncio
 import json
 import pathlib
+from types import SimpleNamespace
 
 import pytest
 
-from brave.clients.norteia_api import NorteiaApiClient
-
 # pact-python 3.4.0 — Pact is at the top-level package, not pact.v3
 from pact import Pact  # type: ignore[import-untyped]
+
+from brave.clients.norteia_api import NorteiaApiClient
+from brave.core.mar.service import build_push_payload
 
 # ---------------------------------------------------------------------------
 # Pact output directory
@@ -45,87 +47,140 @@ PACT_DIR = pathlib.Path(__file__).parent / "pacts"
 PACT_DIR.mkdir(exist_ok=True)
 
 # ---------------------------------------------------------------------------
-# Fixture payloads (matching the Pact contract shape — D-16)
+# Fixture payloads — BUILT BY build_push_payload, never hand-written (F53)
 # ---------------------------------------------------------------------------
 
 # Flat ingestion contract (norteia-api is the source of truth for shape). Territory
 # resolves by municipio_ibge → municipalities.ibge_code; the parent destino rides in
 # `destino` for resolve-or-create; Google Places enrichment rides in `place` (lands in
 # the separate attraction_place_details table). Provenance is flattened per-criterion.
-DESTINATION_PAYLOAD = {
-    "source": "ibge",
-    "source_ref": "ibge:BA:2927408",
-    "tourist_name": "Porto Seguro",
-    "municipio_ibge": "2927408",
-    "reliability_score": 87.5,
-    "provenance": {
-        "origem": 30.0,
-        "completude": 20.0,
-        "corroboracao": 16.0,
-        "atualidade": 12.0,
-        "validacao_humana": 9.5,
-    },
-    # Mapa do Turismo Brasileiro. Frozen here because the API has to declare a rule for
-    # it: an unvalidated key is dropped by $request->validated() with no error, so the
-    # contract is the only place a missing rule shows up as a failure.
-    "participates_mtur": True,
+#
+# The bodies below come from the real build_push_payload over in-memory Mar/Rio stubs, one
+# per lane shape, so a regression in the producer changes the frozen contract instead of
+# passing next to a stale literal. The stubs mirror what each lane leaves in the canonical.
+
+_BREAKDOWN = {
+    "origem": 30.0, "completude": 20.0, "corroboracao": 20.0,
+    "atualidade": 12.0, "validacao_humana": 8.0,
 }
 
-ATTRACTION_PAYLOAD = {
-    "source": "tripadvisor",
-    "source_ref": "tripadvisor:BA:atr001",
-    "name": "Cachoeira da Fumaca",
-    "type": "cachoeira",
-    "municipio_ibge": "2925303",
-    "description": "Uma das quedas d'agua mais altas do Brasil, no coracao da Chapada.",
-    "latitude": -12.6,
-    "longitude": -41.4,
-    "address": "Vale do Capao, s/n, Palmeiras - BA",
-    # Phone split: a BR celular → whatsapp; any other (fixo) → telefone.
-    "whatsapp": "+5573999990001",
-    "telefone": "+557332330001",
-    "website": "https://example.com",
-    # Language-neutral day→hours map → attractions.opening_hours. Built from the raw
-    # Google lines below by brave/shared/opening_hours.py; labels are the frontend's job.
-    "opening_hours": {"mon_fri": "08:00-18:00", "sat": "08:00-12:00", "sun": "closed"},
-    "reliability_score": 90.0,
-    "provenance": {
-        "origem": 30.0,
-        "completude": 20.0,
-        "corroboracao": 20.0,
-        "atualidade": 12.0,
-        "validacao_humana": 8.0,
-    },
-    # Parent destino (resolve-or-create by source_ref on the API side).
-    "destino": {
-        "source_ref": "ibge:BA:2925303",
-        "source": "ibge",
-        "tourist_name": "Porto Seguro",
-        "municipio_ibge": "2925303",
-    },
-    # Google Places enrichment → attraction_place_details table.
-    "place": {
-        "place_id": "ChIJexample_place_id",
-        "business_status": "OPERATIONAL",
-        # Raw Google weekdayDescriptions, untouched (the API stores them verbatim).
-        "opening_hours": [
-            "Monday: 8:00 AM – 6:00 PM",
-            "Tuesday: 8:00 AM – 6:00 PM",
-            "Wednesday: 8:00 AM – 6:00 PM",
-            "Thursday: 8:00 AM – 6:00 PM",
-            "Friday: 8:00 AM – 6:00 PM",
-            "Saturday: 8:00 AM – 12:00 PM",
-            "Sunday: Closed",
-        ],
-        "price_level": 2,
-        "reviews_recent_count": 12,
-        "distrito_name": "Arraial D'Ajuda",
-        "distrito_code": "292530307",
-        "distrito_municipio_ibge": "2925303",
-        "subdistrito_name": None,
-        "subdistrito_code": None,
+_RAW_HOURS = [
+    "Monday: 8:00 AM – 6:00 PM",
+    "Tuesday: 8:00 AM – 6:00 PM",
+    "Wednesday: 8:00 AM – 6:00 PM",
+    "Thursday: 8:00 AM – 6:00 PM",
+    "Friday: 8:00 AM – 6:00 PM",
+    "Saturday: 8:00 AM – 12:00 PM",
+    "Sunday: Closed",
+]
+
+
+def _payload(entity_type: str, source_ref: str, canonical: dict, uf: str, score: float) -> dict:
+    mar = SimpleNamespace(
+        entity_type=entity_type,
+        source_ref=source_ref,
+        canonical=canonical,
+        provenance={"score_breakdown": _BREAKDOWN},
+        reliability_score=score,
+    )
+    return build_push_payload(mar, SimpleNamespace(uf=uf))
+
+
+# Destino IBGE (ensure_destino → Mar).
+DESTINATION_PAYLOAD = _payload(
+    "destination",
+    "ibge:BA:2927408",
+    {"name": "Porto Seguro", "municipio": "Porto Seguro", "ibge_code": "2927408",
+     # Mapa do Turismo Brasileiro. Frozen because the API has to declare a rule for it:
+     # an unvalidated key is dropped by $request->validated() with no error.
+     "participates_mtur": True},
+    "BA",
+    87.5,
+)
+
+# TripAdvisor per-UF lane, fully enriched (Places + description + distrito).
+ATTRACTION_PAYLOAD = _payload(
+    "attraction",
+    "tripadvisor:attraction:2408107",
+    {
+        "name": "Cachoeira da Fumaca",
+        "category": "Cachoeiras",  # C6: the card category becomes `type`
+        "municipio": "Palmeiras",
+        "municipio_id": "2923308",
+        "parent_source_ref": "ibge:BA:2923308",
+        "descricao_editorial": "Uma das quedas d'agua mais altas do Brasil, no coracao da Chapada.",
+        "lat": -12.6,
+        "lon": -41.4,
+        "address": "Vale do Capao, s/n, Palmeiras - BA",
+        "phone": "+55 73 99999-0001",  # celular → whatsapp
+        "website": "https://example.com",
+        "google_place_id": "ChIJexample_place_id",
+        "weekday_text": _RAW_HOURS,
+        "price_level": "PRICE_LEVEL_MODERATE",
+        "signal": {"business_status": "OPERATIONAL", "reviews_recent_count": 12},
+        "distrito_name": "Caete-Acu",
+        "distrito_code": "292330810",
+        "distrito_municipio_ibge": "2923308",
         "distrito_source": "places_admin_area_level_3",
     },
+    "BA",
+    90.0,
+)
+
+# TripAdvisor bulk_national lane, not yet enriched: no parent_source_ref (the destino falls
+# back to the Rio's UF — never "ibge:attraction:…"), no Google data (no `place` block).
+ATTRACTION_BULK_PAYLOAD = _payload(
+    "attraction",
+    "tripadvisor:attraction:311069",
+    {
+        "name": "Praia do Espelho",
+        "category": "Praias",
+        "municipio": "Porto Seguro",
+        "municipio_id": "2925303",
+        "parent_source_ref": None,
+    },
+    "BA",
+    86.0,
+)
+
+# Places discovery lane: lane tipo, landline → telefone, instagram at the top level.
+ATTRACTION_PLACES_PAYLOAD = _payload(
+    "attraction",
+    "places:BA:ChIJplaces_lane",
+    {
+        "name": "Museu de Arte da Bahia",
+        "tipo": "museu",
+        "municipio": "Salvador",
+        "municipio_id": "2927408",
+        "parent_source_ref": "ibge:BA:2927408",
+        "phone": "+55 71 3117-6900",
+        "instagram": "@museudeartedabahia",
+        "website": "https://mab.example",
+        "google_place_id": "ChIJplaces_lane",
+    },
+    "BA",
+    91.0,
+)
+
+# Every key norteia-api's IngestAttractionRequest / IngestDestinationRequest validates. A key
+# outside this set is silently DROPPED by $request->validated() — no 422, just lost data.
+_API_ATTRACTION_KEYS = {
+    "source_ref", "source", "name", "type", "municipio_ibge", "description", "latitude",
+    "longitude", "address", "instagram", "whatsapp", "telefone", "website", "opening_hours",
+    "accessibility", "how_to_get_there", "tips", "safety_alerts", "local_infrastructure",
+    "curiosities", "reliability_score", "provenance", "visibility", "published_at",
+    "destino", "place",
+}
+_API_DESTINO_KEYS = {"source_ref", "source", "tourist_name", "municipio_ibge",
+                     "reliability_score", "provenance"}
+_API_PLACE_KEYS = {
+    "place_id", "business_status", "opening_hours", "price_level", "reviews_recent_count",
+    "distrito_code", "distrito_name", "distrito_municipio_ibge", "subdistrito_name",
+    "subdistrito_code", "distrito_source",
+}
+_API_DESTINATION_KEYS = {
+    "source_ref", "source", "tourist_name", "slug", "municipio_ibge", "description",
+    "reliability_score", "provenance", "participates_mtur", "visibility", "published_at",
 }
 
 
@@ -198,19 +253,28 @@ def test_push_destination_idempotent_contract():
 
 
 # ---------------------------------------------------------------------------
-# Test 3: Valid attraction Mar push
+# Test 3: Valid attraction Mar push — one interaction per lane shape
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.enable_socket  # pact-python mock server binds to localhost
-def test_push_attraction_contract():
+@pytest.mark.parametrize(
+    ("description", "payload"),
+    [
+        ("a valid attraction Mar push", ATTRACTION_PAYLOAD),
+        ("a TripAdvisor bulk attraction Mar push (no place, UF-derived destino)",
+         ATTRACTION_BULK_PAYLOAD),
+        ("a Places-lane attraction Mar push", ATTRACTION_PLACES_PAYLOAD),
+    ],
+)
+def test_push_attraction_contract(description, payload):
     """Pact: norteia-brave POSTs attraction Mar payload → 200 with id + source_ref."""
     pact = Pact("norteia-brave", "norteia-api")
     (
-        pact.upon_receiving("a valid attraction Mar push")
+        pact.upon_receiving(description)
         .with_request("POST", "/api/internal/territorial/attractions")
         .with_header("Authorization", "Bearer test-service-token")
-        .with_body(ATTRACTION_PAYLOAD)
+        .with_body(payload)
         .will_respond_with(200)
         .with_body({"id": 99, "created": True})
     )
@@ -220,7 +284,7 @@ def test_push_attraction_contract():
 
         async def _run():
             async with client as c:
-                return await c.push_attraction(ATTRACTION_PAYLOAD)
+                return await c.push_attraction(payload)
 
         result = asyncio.run(_run())
 
@@ -228,6 +292,31 @@ def test_push_attraction_contract():
 
     assert "id" in result
     assert result["created"] is True
+
+
+@pytest.mark.parametrize(
+    "payload", [ATTRACTION_PAYLOAD, ATTRACTION_BULK_PAYLOAD, ATTRACTION_PLACES_PAYLOAD]
+)
+def test_every_produced_attraction_key_is_one_the_api_validates(payload):
+    assert set(payload) <= _API_ATTRACTION_KEYS
+    assert set(payload.get("destino", {})) <= _API_DESTINO_KEYS
+    assert set(payload.get("place", {})) <= _API_PLACE_KEYS
+    assert None not in payload.get("place", {}).values()  # F93: no null place keys
+
+
+def test_every_produced_destination_key_is_one_the_api_validates():
+    assert set(DESTINATION_PAYLOAD) <= _API_DESTINATION_KEYS
+
+
+def test_lane_shapes_carry_the_contract_fixes():
+    assert ATTRACTION_PAYLOAD["type"] == "cachoeira"
+    assert ATTRACTION_BULK_PAYLOAD["type"] == "praia"
+    assert ATTRACTION_BULK_PAYLOAD["destino"]["source_ref"] == "ibge:BA:2925303"  # F43
+    assert "place" not in ATTRACTION_BULK_PAYLOAD  # F93
+    assert ATTRACTION_PLACES_PAYLOAD["telefone"] and not ATTRACTION_PLACES_PAYLOAD["whatsapp"]
+    assert ATTRACTION_PLACES_PAYLOAD["instagram"] == "@museudeartedabahia"
+    for p in (DESTINATION_PAYLOAD, ATTRACTION_PAYLOAD, ATTRACTION_BULK_PAYLOAD):
+        assert "visibility" not in p  # F47: a re-push never undoes an API-side hide
 
 
 # ---------------------------------------------------------------------------

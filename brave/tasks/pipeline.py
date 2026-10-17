@@ -336,6 +336,115 @@ async def _using(clients: Any, coro: Any) -> Any:
         return await coro
 
 
+# Broker priority of the long producers (sweeps, describe, backfill). Single queue, but the
+# Redis transport splits it by priority and always pops the lower number first: a slot freed
+# by a finished sweep takes a queued ta_keepalive / repush / chain task (default 0) before
+# the next queued UF sweep, instead of leaving the session keep-alive hours behind 19 UFs.
+_LONG_TASK_PRIORITY = 6
+
+# Seconds left before the soft limit when a producer stops cooperatively and enqueues its
+# continuation. The soft limit itself lands wherever the main thread is (a per-card except
+# can swallow it) and the hard kill skips every finally.
+_TIME_BUDGET_MARGIN = 240
+
+_BUDGET_SPENT = object()  # _bounded's "time budget ran out" sentinel
+
+# Consecutive 429 back-offs (SourceRateLimitError) a producer chain takes before it stops.
+# Each one re-enqueues the continuation after the source's Retry-After; a page/record of
+# progress resets the count.
+_MAX_RATE_LIMIT_BACKOFFS = 5
+
+
+def _inline_places_agent(
+    session: Session, effective: AppConfig, clients: Any, *, uf: str = ""
+) -> tuple[list, Any]:
+    """(distritos, the inline PlacesEnrichmentAgent or None) for the TA sweep / backfill.
+
+    Never the description: description_enabled=False + a Null LLM, whatever the flags —
+    descriptions come later from brave.describe_uf or the batch lane. Places off → no
+    agent at all: a Null-client agent only re-scored (Rio already did) yet marked the
+    record google_enriched, so turning Places on later never enriched it (F10). A
+    client-construction failure (e.g. a missing key) also yields None and logs — it must
+    never crash the ingest.
+    """
+    from brave.shared.ibge_distritos import load_distritos
+
+    try:
+        distritos = load_distritos(session)
+    except Exception:  # noqa: BLE001 — the reference table is an enrichment input only
+        logger.warning("inline_enrichment_build_failed", uf=uf)
+        return [], None
+    if not effective.places_enrichment_enabled:
+        logger.info("places_enrichment_disabled", uf=uf)
+        return distritos, None
+    try:
+        from brave.clients.null_llm import NullLLMClient
+        from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+        return distritos, PlacesEnrichmentAgent(
+            places_client=clients.places,
+            session=session,
+            config=effective.score,
+            llm_client=NullLLMClient(),
+            distritos=distritos,
+            voice_model_slug=effective.atrativo_voice_model_slug,
+            description_enabled=False,
+            enable_web_search=effective.run_real_externals,
+            max_distance_km=effective.places_match_max_distance_km,
+        )
+    except Exception:  # noqa: BLE001 — enrichment build must not crash the sweep
+        logger.warning("inline_enrichment_build_failed", uf=uf)
+        return distritos, None
+
+
+def _time_budget(task: Any) -> float | None:
+    """Seconds a producer may work before handing off to a continuation (None = unbounded).
+
+    Only a worker execution has a time limit; a direct call (the inline bulk script, tests)
+    runs unbounded.
+    """
+    request = getattr(task, "request", None)
+    if request is None or getattr(request, "called_directly", True) is not False:
+        return None
+    soft = getattr(task, "soft_time_limit", None)
+    return max(soft - _TIME_BUDGET_MARGIN, soft / 2) if soft else None
+
+
+async def _bounded(coro: Any, budget: float | None) -> Any:
+    """Await ``coro``; _BUDGET_SPENT when it was cancelled at ``budget`` seconds.
+
+    Cancellation lands on an await, never between a page's commit and its record_page
+    (both sync), so the resume cursor always points past durable rows only; the record in
+    flight is rolled back by the caller and redone by the continuation.
+    """
+    if budget is None:
+        return await coro
+    try:
+        async with asyncio.timeout(budget) as cm:
+            return await coro
+    except TimeoutError:
+        if cm.expired():
+            return _BUDGET_SPENT
+        raise
+
+
+def _hand_over(
+    task: Any, *args: Any, run_id: str | None, countdown: float | None = None, **kwargs: Any
+) -> bool:
+    """Enqueue ``task`` as this producer's continuation, handing it the run's inflight token.
+
+    True = the successor owns the token (the caller skips _producer_done); False = the
+    enqueue failed and the caller ends the producer normally. ``countdown`` delays it (a
+    429 back-off).
+    """
+    try:
+        task.apply_async(args=args, kwargs={**kwargs, "run_id": run_id}, countdown=countdown)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("producer_handover_failed", task=task.name, error_type=type(exc).__name__)
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Celery tasks
 # ---------------------------------------------------------------------------
@@ -383,8 +492,10 @@ def process_nascente(self, nascente_id: str) -> None:
             existing = session.scalar(
                 select(RioRecord).where(RioRecord.canonical_key == canonical_key)
             )
-            if existing is not None:
+            if existing is not None and existing.nascente_id == nascente.id:
                 return  # Already processed — idempotent no-op
+            # A newer Nascente version of an existing Rio falls through: process_nascente_record
+            # merges it (supersede, F16).
 
             process_nascente_record(session, nascente, config)
             session.commit()
@@ -494,6 +605,7 @@ def reprocess_record_task(self, rio_id: str) -> None:
     acks_late=True,
     reject_on_worker_lost=True,
     time_limit=600,  # Places API can be slow — 10 min limit
+    priority=_LONG_TASK_PRIORITY,
 )
 def discover_atrativo_task(
     self, uf: str, depth: str | None = None, *, run_id: str | None = None
@@ -524,6 +636,7 @@ def discover_atrativo_task(
     effective_depth = depth or collection_engine.NASCENTE_RIO_MAR
 
     session, engine = _get_session()
+    ok = False  # set as the policy-wrapped body's last line; a swallowed failure leaves it
     try:
         with task_failure_policy(
             self,
@@ -585,11 +698,12 @@ def discover_atrativo_task(
             if effective_depth != collection_engine.NASCENTE_RIO:
                 for rio_id in discovered_ids:
                     _dispatch_chain(find_contacts_task, str(rio_id))
+            ok = True
 
     finally:
         # Producer-completes lifecycle: engine_sweep_run claimed this producer before
         # .delay; the LAST producer completes the run (single outermost finally).
-        _producer_done(run_id)
+        _producer_done(run_id, failed=not ok)
         session.close()
 
 
@@ -603,9 +717,11 @@ def discover_atrativo_task(
     # 1h: Places enrichment runs INLINE per record (place_details + TA review fetch), so a
     # whole-UF sweep serializes far more work than the old 600s. The copywriter no longer
     # runs here (brave.describe_uf owns descriptions). Per-record commit inside produce()
-    # keeps progress durable if this limit is ever hit.
+    # keeps progress durable; a worker execution stops _TIME_BUDGET_MARGIN before the soft
+    # limit and enqueues its continuation (the national bulk is ~3h, far past one slot).
     time_limit=3600,
     soft_time_limit=3540,
+    priority=_LONG_TASK_PRIORITY,
 )
 def sweep_tripadvisor(
     self,
@@ -618,6 +734,8 @@ def sweep_tripadvisor(
     geo_id: int = 294280,
     max_per_uf: int | None = None,
     run_id: str | None = None,
+    fresh: bool = False,
+    backoffs: int = 0,
 ) -> None:
     """TripAdvisor sweep for one UF — atrativos only, parent destinos from authoritative Rio records (Mtur/IBGE) (oa3).
 
@@ -637,14 +755,20 @@ def sweep_tripadvisor(
     Bulk national branch (Phase 15, TA-12): when bulk_national=True the task takes a
     DISTINCT path that paginates the all-Brazil AttractionsFusion listing (geoId 294280)
     via TripAdvisorAtrativosIngest.produce_paginated — NO destinos producer, NO
-    destino_rio_map (parent-less bulk ingest). It reads the resume offset from
-    sweep_progress so a re-run continues from the page after the last completed offset
-    (NOT page 1), seeds the live progress hash, commits per-page (inside produce_paginated),
-    marks the run done when the pages run out (``stopped`` on a pause/off/stop or a provider
-    billing wall), and on a mid-run 403/429 SessionExpiredError reuses
-    the SHARED fail-fast block plus a GUARDED sweep_progress.stop_needs_bootstrap. The
-    slice (small max_pages) and the full 334-page run share this ONE page-range-parameterized
-    code path. The per-UF (bulk_national=False) path is left byte-for-byte unchanged.
+    destino_rio_map (parent-less bulk ingest). An unfinished run (running/stopped/
+    stopped_needs_bootstrap) resumes at the stored next_page cursor; a done/idle one (or
+    ``fresh=True``) starts at ``start_page``. It commits per-page (inside produce_paginated),
+    marks the run done when the pages run out (``stopped`` on a pause/off/stop, a provider
+    billing wall or any other exit), and on a mid-run 403/429 SessionExpiredError reuses
+    the SHARED fail-fast block plus a GUARDED sweep_progress.stop_needs_bootstrap. When the
+    time budget runs out it enqueues itself for the remaining pages (resume from the hash,
+    no retry consumed); once done it starts brave.backfill_ta_atrativos in the same run
+    (ta_backfill_enabled). The slice (small max_pages) and the full 334-page run share this
+    ONE page-range-parameterized code path.
+
+    Lifecycle: like every producer, the dispatcher (engine_sweep_run, or
+    scripts/ta_bulk_sweep.py with its own engine run) claims it and passes ``run_id``; the
+    terminal execution pays the claim back, a continuation inherits it.
 
     Args:
         uf:            Two-letter Brazilian state code (e.g. "BA", "RJ").
@@ -655,12 +779,22 @@ def sweep_tripadvisor(
                        Ignored when a prior run recorded progress (resume takes precedence).
         max_pages:     Cap on pages to fetch this bulk run (slice-first). None → full 334.
         geo_id:        TripAdvisor integer geoId for the bulk run (294280 = all Brazil).
+        fresh:         Bulk only: ignore a stored unfinished run and start at start_page.
+        backoffs:      Consecutive 429 back-offs this chain already took (internal).
+
+    A TA 429 (SourceRateLimitError) is not a dead session: the producer re-enqueues itself
+    after Retry-After (up to _MAX_RATE_LIMIT_BACKOFFS in a row) instead of turning the motor
+    off. A retired query id (SourceSchemaError) fails every card: the producer stops at
+    once (no retry, no per-card poison) and the run ends "parcial".
     """
+    from celery.exceptions import SoftTimeLimitExceeded
+
     from brave.core import engine as collection_engine
     from brave.domains.tripadvisor import sweep_progress
     from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
     from brave.domains.tripadvisor.client import SessionExpiredError, SessionMissingError
     from brave.domains.tripadvisor.ibge import load_ibge_municipios
+    from brave.shared.exceptions import SourceRateLimitError, SourceSchemaError
 
     run_rio = depth != collection_engine.NASCENTE
 
@@ -676,9 +810,9 @@ def sweep_tripadvisor(
     # the SHARED fail-fast except with rc still None; the guarded `if rc is not None`
     # keeps it from touching the bulk panel (T-15-07-04).
     rc = None
-    # The standalone bulk run claims itself (it is not dispatched by engine_sweep_run);
-    # None = not counted against any run, so its finally must not call producer_done.
-    bulk_run_id = None
+    ok = False  # the producer did its work (a policy-swallowed failure leaves it False)
+    chained = False  # a continuation owns the inflight token: no producer_done here
+    pages_cap = pages_before = None  # bulk: this execution's page window (429 hand-over)
     try:
         with task_failure_policy(
             self,
@@ -686,7 +820,9 @@ def sweep_tripadvisor(
             "brave.sweep_tripadvisor",
             payload={"uf": uf},
             pause_action="sweep",
-            passthrough=(SessionMissingError, SessionExpiredError),
+            passthrough=(
+                SessionMissingError, SessionExpiredError, SourceRateLimitError, SourceSchemaError
+            ),
         ):
             effective = _load_config(session)
             config = effective.score
@@ -720,28 +856,32 @@ def sweep_tripadvisor(
                 # happen inside produce_paginated; this branch only seeds/finishes progress
                 # and reuses the SHARED fail-fast except below on a mid-run 403/429.
                 rc = engine_rc
-                # Standalone bulk runs are dispatched directly (scripts/ta_bulk_sweep.py), not
-                # via engine_sweep_run, so the task claims itself — per execution, paired with
-                # the producer_done in the finally (a Celery retry re-claims on its re-run).
-                bulk_run_id = collection_engine.claim_producer(rc, run_id)
-
-                # Resume: when a prior run recorded progress, continue from the page AFTER
-                # the last completed offset (offset//30 + 2). Otherwise start a fresh run at
-                # the operator-supplied start_page (default page 1 / offset 0).
-                _progress = sweep_progress.get_progress(rc)
-                if _progress["pages_done"] > 0:
-                    _resume_offset = sweep_progress.get_resume_offset(rc)
-                    _effective_start_page = (_resume_offset // 30) + 2
-                else:
-                    _effective_start_page = start_page
-                    _resume_offset = (start_page - 1) * 30
-
+                # Resume from the stored cursor unless the run finished (done/idle) or the
+                # operator forces a fresh start. pages_done is not the signal: start() used
+                # to zero it, so a resumed run halted before its first page fell back to
+                # page 1, and a done run made every later bulk an empty range (F05).
+                resume_page = None if fresh else sweep_progress.get_resume_page(rc)
+                _effective_start_page = resume_page or start_page
                 sweep_progress.start(
                     rc,
                     pages_total=334,
-                    resume_from_offset=_resume_offset,
+                    resume_from_offset=(_effective_start_page - 1) * 30,
+                    resume=resume_page is not None,
+                    start_page=_effective_start_page,
                 )
+                pages_cap = max_pages or 334
+                pages_before = sweep_progress.get_progress(rc)["pages_done"]
 
+                # ta_config + distritos arm the per-card TA-geo fallback for cards the
+                # name-only geocode misses (else they never reach Rio — nor the backfill).
+                from brave.shared.ibge_distritos import load_distritos  # noqa: PLC0415
+
+                try:
+                    bulk_distritos = load_distritos(session)
+                except Exception:  # noqa: BLE001 — an enrichment input only
+                    logger.warning("ta_bulk_distritos_load_failed")
+                    session.rollback()
+                    bulk_distritos = []
                 bulk_ingest = TripAdvisorAtrativosIngest(
                     ta_client=ta_client,
                     session=session,
@@ -749,31 +889,66 @@ def sweep_tripadvisor(
                     ibge_records=ibge_records,
                     destino_rio_map=None,
                     geocoder=geocoder,
+                    ta_config=ta_config,
+                    distritos=bulk_distritos,
                 )
                 try:
-                    halted = asyncio.run(
+                    outcome = asyncio.run(
                         _using(
                             clients,
-                            bulk_ingest.produce_paginated(
-                                geo_id,
-                                _effective_start_page,
-                                max_pages or 334,
-                                rc,
-                                run_rio=run_rio,
-                                run_id=bulk_run_id,
+                            _bounded(
+                                bulk_ingest.produce_paginated(
+                                    geo_id,
+                                    _effective_start_page,
+                                    pages_cap,
+                                    rc,
+                                    run_rio=run_rio,
+                                    run_id=run_id,
+                                ),
+                                _time_budget(self),
                             ),
                         )
                     )
-                except ProviderBalanceError:
-                    sweep_progress.stop(rc)  # the failure policy then pauses the motor
+                except SoftTimeLimitExceeded:
+                    outcome = _BUDGET_SPENT  # the signal beat the cooperative budget
+                except BaseException:
+                    # Whatever ends the run here — billing wall, retry, quarantine, FAILURE —
+                    # the panel must not keep reading "running". The session handler below
+                    # re-marks it stopped_needs_bootstrap; the resume cursor is intact.
+                    sweep_progress.stop(rc)
                     raise
+                if outcome is _BUDGET_SPENT:
+                    # The page in flight is rolled back (its cards redo on the continuation).
+                    session.rollback()
+                    done_now = sweep_progress.get_progress(rc)["pages_done"] - pages_before
+                    remaining = pages_cap - done_now
+                    if remaining > 0:
+                        chained = _hand_over(
+                            sweep_tripadvisor, uf, depth, run_id=run_id,
+                            bulk_national=True, max_pages=remaining, geo_id=geo_id,
+                        )
+                        if not chained:
+                            sweep_progress.stop(rc)
+                        logger.info("ta_bulk_budget_handover", remaining=remaining, chained=chained)
+                    else:
+                        sweep_progress.mark_done(rc)
+                        # Every page is in: chain the backfill exactly like a normal finish.
+                        if run_rio and run_id is not None and effective.ta_backfill_enabled is True:
+                            chained = _hand_over(backfill_ta_atrativos, run_id=run_id)
+                    ok = chained or remaining <= 0
+                    return
                 # A pause/off/stop is not "done": the pages did not run out.
-                if halted:
+                if outcome:
                     sweep_progress.stop(rc)
                 else:
                     sweep_progress.mark_done(rc)
+                    # The bulk listing leaves every card without geo, recency and Places:
+                    # the backfill completes them, in the same engine run (token handover).
+                    if run_rio and run_id is not None and effective.ta_backfill_enabled is True:
+                        chained = _hand_over(backfill_ta_atrativos, run_id=run_id)
                 # Terminal commit (produce_paginated already commits per page).
                 session.commit()
+                ok = True
                 return
 
             # Build destino_rio_map: keyed by municipio_id (IBGE code) → (rio_id, source_ref)
@@ -803,47 +978,10 @@ def sweep_tripadvisor(
                 if row.municipio_id
             }
 
-            # Build the INLINE Places enrichment agent (distrito + hours/contact/price +
-            # liveness — never the description, see below), run per-record inside produce()
-            # after Rio routing — like the other completude steps. Constructed once per sweep
-            # behind run_real_externals + the operator flags; the Null clients keep the TA floor + advance the record offline
-            # (ZERO external spend). Replaces the old post-produce enrich_description/_places
-            # dispatch, which the 600s time_limit could kill before it ran.
-            # Build resiliently: a client-construction failure (e.g. a missing key) disables
-            # inline enrichment for this sweep and logs — it must never crash the ingest.
-            places_agent = None
-            _distritos: list = []
-            try:
-                from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
-                from brave.shared.ibge_distritos import load_distritos
-
-                _distritos = load_distritos(session)
-                if effective.places_enrichment_enabled:
-                    _places_client = clients.places
-                else:
-                    from brave.clients.null_places import NullPlacesClient
-                    _places_client = NullPlacesClient()
-
-                # The sweep NEVER writes descriptions, whatever the flags: description_enabled
-                # =False makes PlacesEnrichmentAgent skip the whole description block cleanly.
-                # Descriptions come later, per UF, from brave.describe_uf (engine action
-                # "describe") or the batch lane (submit/collect_description_batch).
-                from brave.clients.null_llm import NullLLMClient
-
-                places_agent = PlacesEnrichmentAgent(
-                    places_client=_places_client,
-                    session=session,
-                    config=config,
-                    llm_client=NullLLMClient(),
-                    distritos=_distritos,
-                    voice_model_slug=effective.atrativo_voice_model_slug,
-                    description_enabled=False,
-                    enable_web_search=effective.run_real_externals,
-                    max_distance_km=effective.places_match_max_distance_km,
-                )
-            except Exception:  # noqa: BLE001 — enrichment build must not crash the sweep
-                logger.warning("inline_enrichment_build_failed", uf=uf)
-                places_agent = None
+            # The INLINE Places enrichment agent (distrito + hours/contact/price + liveness),
+            # run per-record inside produce() after Rio routing. Replaces the old post-produce
+            # enrich dispatch, which the 600s time_limit could kill before it ran.
+            _distritos, places_agent = _inline_places_agent(session, effective, clients, uf=uf)
 
             # Run atrativos producer using destino_rio_map.
             # ta_config=ta_config wires the TripAdvisorConfig instance so the
@@ -865,20 +1003,38 @@ def sweep_tripadvisor(
             # redis=engine_rc lets the per-UF producer honor a mid-run Motor Pausado/
             # Desligado (engine.should_halt_producer) — otherwise the fanned-out producer
             # keeps paginating + inserting atrativos/synthesized destinos after a pause.
-            ingested_rio_ids = _asyncio.run(
-                _using(
-                    clients,
-                    atrativos_ingest.produce(
-                        uf,
-                        run_rio=run_rio,
-                        enrich_reviews=True,
-                        redis=engine_rc,
-                        max_per_uf=max_per_uf,
-                    ),
+            try:
+                outcome = _asyncio.run(
+                    _using(
+                        clients,
+                        _bounded(
+                            atrativos_ingest.produce(
+                                uf,
+                                run_rio=run_rio,
+                                enrich_reviews=True,
+                                redis=engine_rc,
+                                max_per_uf=max_per_uf,
+                            ),
+                            _time_budget(self),
+                        ),
+                    )
                 )
-            )
+            except SoftTimeLimitExceeded:
+                outcome = _BUDGET_SPENT
+            if outcome is _BUDGET_SPENT:
+                # Per-record commits are durable; the continuation skips them (already
+                # synced) and carries on with the rest of the UF on the same run token.
+                # ponytail: a UF that cannot commit one record per budget would loop; add a
+                # hand-over counter if that is ever observed.
+                session.rollback()
+                chained = _hand_over(
+                    sweep_tripadvisor, uf, depth, run_id=run_id, max_per_uf=max_per_uf
+                )
+                ok = chained
+                return
 
             session.commit()
+            ok = True
 
             # Enrichment now runs INLINE inside produce() (per record, via places_agent) — no
             # post-produce dispatch. This survives a task-kill (per-record commit) where the old
@@ -913,14 +1069,45 @@ def sweep_tripadvisor(
         )
         return  # No retry, no quarantine — operator must re-inject session
 
+    except SourceRateLimitError as exc:
+        # 429 after the client's own backoff: the session is fine — wait Retry-After and
+        # continue on the same run token (the hash/already-synced resume picks up).
+        session.rollback()
+        kwargs: dict[str, Any] = {"max_per_uf": max_per_uf}
+        progressed = False
+        if rc is not None:
+            done_now = sweep_progress.get_progress(rc)["pages_done"] - (pages_before or 0)
+            progressed = done_now > 0
+            kwargs = {
+                "bulk_national": True,
+                "geo_id": geo_id,
+                "max_pages": max((pages_cap or 334) - done_now, 1),
+            }
+        tries = 1 if progressed else backoffs + 1
+        if tries <= _MAX_RATE_LIMIT_BACKOFFS:
+            chained = _hand_over(
+                sweep_tripadvisor, uf, depth, run_id=run_id,
+                countdown=exc.retry_after, backoffs=tries, **kwargs,
+            )
+        if rc is not None and not chained:
+            sweep_progress.stop(rc)
+        logger.warning(
+            "sweep_tripadvisor_rate_limited", uf=uf, retry_after=exc.retry_after,
+            backoffs=tries, chained=chained,
+        )
+
+    except SourceSchemaError as exc:
+        # Systemic (retired query id / schema change): every further call fails the same.
+        session.rollback()
+        if rc is not None:
+            sweep_progress.stop(rc)
+        logger.error("sweep_tripadvisor_schema_error", uf=uf, error_type=type(exc).__name__)
+
     finally:
-        # Producer-completes lifecycle: engine_sweep_run claimed the per-UF producer before
-        # .delay (Retry-guarded: only the terminal run counts). The bulk branch claimed
-        # itself this execution, so it always pays that claim back.
-        if not bulk_national:
-            _producer_done(run_id)
-        elif bulk_run_id is not None:
-            _producer_done(bulk_run_id, retrying_counts=True)
+        # Producer-completes lifecycle: the dispatcher claimed this producer before .delay
+        # (Retry-guarded: only the terminal run counts); a continuation inherits the token.
+        if not chained:
+            _producer_done(run_id, failed=not ok)
         session.close()
 
 
@@ -1228,13 +1415,14 @@ def refresh_places() -> int:
     record held by the 90-day backstop can become promotable again, and CLOSED_* goes to
     descarte. A record already in Mar has its Mar row superseded with the fresh data and
     re-published (an unchanged payload is skipped by publish). A record that leaves Mar's
-    routing keeps its Mar row: there is no unpublish path.
+    routing is retracted from the API by the publish outbox (F47).
 
-    No-op while externals or Places enrichment are off. A balance wall stops the run.
+    No-op while externals or Places enrichment are off. A balance wall or the Places cost
+    cap stops the run (no call is made past the cap).
     """
     from brave.core.mar.service import promote_to_mar  # noqa: PLC0415
     from brave.core.models import MarRecord  # noqa: PLC0415
-    from brave.shared.exceptions import ProviderBalanceError  # noqa: PLC0415
+    from brave.shared.exceptions import CostGuardError, ProviderBalanceError  # noqa: PLC0415
 
     session, _ = _get_session()
     refreshed = 0
@@ -1262,7 +1450,7 @@ def refresh_places() -> int:
                 refreshed += 1
                 if republish:
                     _dispatch_chain(publish_mar, str(rio_id))
-            except ProviderBalanceError:
+            except (ProviderBalanceError, CostGuardError):
                 session.rollback()
                 raise
             except Exception as exc:  # noqa: BLE001 — one bad record never aborts the run
@@ -1516,6 +1704,7 @@ async def _describe_chunk(
     reject_on_worker_lost=True,
     time_limit=3600,
     soft_time_limit=3540,
+    priority=_LONG_TASK_PRIORITY,
 )
 def describe_uf(
     uf: str,
@@ -1557,6 +1746,7 @@ def describe_uf(
     )
     session, engine = _get_session()
     chained = False
+    ok = False  # every early return below left the UF undescribed
     try:
         effective = _load_config(session)
         if not _description_on(effective):
@@ -1664,12 +1854,454 @@ def describe_uf(
         ):
             describe_uf.delay(uf, remaining, after_id=str(ids[-1]), run_id=run_id)
             chained = True
+        ok = True
     finally:
         # Only the terminal run of the chain decrements: a self-chained successor carries
         # the inflight token engine_sweep_run counted for this UF.
         if not chained:
-            _producer_done(run_id)
+            _producer_done(run_id, failed=not ok)
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# TripAdvisor backfill (C3): completes the records the bulk national listing left
+# without geo, review recency and Places — in batches, inside an engine run.
+# ---------------------------------------------------------------------------
+
+# Live progress for the Painel / GET /api/v1/tripadvisor/backfill/progress. Counts and
+# state only (no record data, no session material).
+_BACKFILL_PROGRESS_KEY = "brave:ta:backfill:progress"
+
+
+def _backfill_progress(rc: Any, *, incr: str | None = None, **fields: Any) -> None:
+    """Best-effort write of the backfill progress hash: a Redis blip never stops a batch."""
+    from datetime import datetime  # noqa: PLC0415
+
+    try:
+        if incr:
+            rc.hincrby(_BACKFILL_PROGRESS_KEY, incr, 1)
+        fields["updated_at"] = datetime.now(UTC).isoformat()
+        rc.hset(
+            _BACKFILL_PROGRESS_KEY,
+            mapping={k: "" if v is None else str(v) for k, v in fields.items()},
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("ta_backfill_progress_write_failed")
+
+
+def backfill_pending_filter(places_on: bool) -> list:
+    """Candidates: TA atrativos not discarded whose TA part (C1 ta_backfilled_at) is
+    missing, or — with Places on — whose Places part (google_enriched) is not done.
+
+    A record TA placed in another UF (ta_uf != uf, municipio_nao_confirmado) is not a
+    Places candidate: backfill_record skips Places for it, so it would be re-selected on
+    every run for nothing.
+    """
+    from sqlalchemy import and_, or_  # noqa: PLC0415
+
+    pending = RioRecord.normalized["ta_backfilled_at"].as_string().is_(None)
+    if places_on:
+        ta_uf = RioRecord.normalized["ta_uf"].as_string()
+        pending = or_(
+            pending,
+            and_(
+                RioRecord.normalized["google_enriched"].as_string().is_distinct_from("true"),
+                or_(ta_uf.is_(None), ta_uf == RioRecord.uf),
+            ),
+        )
+    return [
+        RioRecord.entity_type == "attraction",
+        RioRecord.canonical_key.like("tripadvisor:attraction:%"),
+        RioRecord.routing.is_distinct_from("descarte"),
+        pending,
+    ]
+
+
+# Consecutive per-record failures that stop a backfill link as systemic (see _backfill_batch).
+_BACKFILL_MAX_CONSECUTIVE_FAILURES = 10
+# SourceSchemaError in a row (distinct records) that read as a retired query id / changed
+# shape. One alone is a bad record (a delisted/merged locationId answering locationData null
+# or a partial ``errors``): skipped like any failure, or it would block every later id.
+_BACKFILL_MAX_CONSECUTIVE_SCHEMA_ERRORS = 3
+
+
+def _commit_or_rollback(session: Session) -> None:
+    """Keep what the record in flight already completed (its TA side); never raise."""
+    try:
+        session.commit()
+    except Exception:  # noqa: BLE001
+        session.rollback()
+
+
+async def _backfill_batch(
+    session: Session,
+    ingest: Any,
+    ids: list[uuid.UUID],
+    rc: Any,
+    state: dict[str, Any],
+    deadline: float | None,
+    throttle: float,
+) -> None:
+    """Backfill ``ids`` in order, one commit per record, in ONE event loop.
+
+    ``state["cursor"]`` advances past every record that reached an outcome (a per-record
+    failure is logged and skipped — the next run retries it, the keyset never loops). A
+    stop leaves the cursor BEFORE the record in flight so the next link redoes it:
+    ``state["stop"]`` = halted (engine pause/off/stop) | budget (time) | session (TA
+    session) | rate_limit (TA 429, ``state["retry_after"]``) | schema
+    (_BACKFILL_MAX_CONSECUTIVE_SCHEMA_ERRORS in a row: retired query id; a lone one is a
+    per-record failure) | balance (provider billing wall) | cost (our daily cap) | errors
+    (_BACKFILL_MAX_CONSECUTIVE_FAILURES records failed in a row: proxy down, TA 5xx — a
+    systemic fault, not N bad records; the failed ones stay before the cursor).
+
+    balance/cost come from the Places step, after the TA side of the record in flight is
+    done: backfill_record undid only the Places savepoint, so that TA side is COMMITTED
+    (the next run redoes only Places — no second pair of TA calls, no lost place_id).
+    """
+    import time as _time  # noqa: PLC0415
+
+    from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
+
+    from brave.core import engine as collection_engine  # noqa: PLC0415
+    from brave.shared.exceptions import (  # noqa: PLC0415
+        CostGuardError,
+        SourceRateLimitError,
+        SourceSchemaError,
+        SourceSessionError,
+    )
+
+    failures: list[uuid.UUID] = []  # the current run of consecutive per-record failures
+    schema_errors = 0  # how many of the latest failures in a row were SourceSchemaError
+    for i, rio_id in enumerate(ids):
+        if collection_engine.should_halt_producer(rc):
+            state["stop"] = "halted"
+            return
+        if deadline is not None and _time.monotonic() > deadline:
+            state["stop"] = "budget"
+            return
+        if i and throttle > 0:
+            await asyncio.sleep(throttle)
+        # Destinos _ensure_destino caches during THIS record are evicted if it rolls back,
+        # else the next same-município record links to a parent row that no longer exists.
+        destino_cache = getattr(ingest, "_destino_rio_map", None)
+        destinos_before = set(destino_cache or ())
+        try:
+            # FOR UPDATE: the agents merge onto the row's current normalized under this lock.
+            rio = session.get(RioRecord, rio_id, with_for_update=True)
+            status = await ingest.backfill_record(rio) if rio is not None else "missing"
+            session.commit()
+        except SoftTimeLimitExceeded:
+            session.rollback()
+            state["stop"] = "budget"
+            return
+        except SourceSessionError:
+            session.rollback()
+            state["stop"] = "session"
+            return
+        except SourceRateLimitError as exc:
+            session.rollback()
+            state["stop"], state["retry_after"] = "rate_limit", exc.retry_after
+            return
+        except ProviderBalanceError as exc:
+            _commit_or_rollback(session)
+            state["stop"], state["provider"] = "balance", exc.provider
+            return
+        except CostGuardError:
+            _commit_or_rollback(session)
+            state["stop"] = "cost"
+            return
+        except Exception as exc:  # noqa: BLE001 — one bad record must not stop the backfill
+            session.rollback()
+            for k in set(destino_cache or ()) - destinos_before:
+                del destino_cache[k]  # type: ignore[index]
+            logger.warning("ta_backfill_record_failed", rio_id=str(rio_id), exc_info=True)
+            _backfill_progress(rc, incr="failed", cursor=rio_id)
+            failures.append(rio_id)
+            schema_errors = schema_errors + 1 if isinstance(exc, SourceSchemaError) else 0
+            if schema_errors >= _BACKFILL_MAX_CONSECUTIVE_SCHEMA_ERRORS:
+                state["stop"] = "schema"  # every record fails alike: a retired query id
+                return
+            if len(failures) >= _BACKFILL_MAX_CONSECUTIVE_FAILURES:
+                # Systemic: stop with the cursor before the first of the run, so the next
+                # run retries all of them instead of the keyset skipping them for good.
+                state["stop"] = "errors"
+                return
+            continue
+        _backfill_progress(rc, incr="processed", cursor=rio_id, last_status=status)
+        for done_id in (*failures, rio_id):  # isolated failures are skipped as before
+            state["cursor"] = str(done_id)
+            state["done"] = state.get("done", 0) + 1
+        failures.clear()
+        schema_errors = 0
+    # A trailing run shorter than the limit: skipped like isolated failures (keyset moves on).
+    for done_id in failures:
+        state["cursor"] = str(done_id)
+        state["done"] = state.get("done", 0) + 1
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name="brave.backfill_ta_atrativos",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=1800,
+    soft_time_limit=1740,
+    priority=_LONG_TASK_PRIORITY,
+)
+def backfill_ta_atrativos(
+    self, run_id: str | None = None, after_id: str | None = None, backoffs: int = 0
+) -> str:
+    """One backfill link: up to ta_backfill_batch_size candidates after ``after_id``.
+
+    Per record, TripAdvisorAtrativosIngest.backfill_record (C2): TA geo → UF/município +
+    parent destino, TA review recency, then the inline Places agent (built exactly like
+    the per-UF sweep's — none when Places is off). Ordered by id (keyset), one commit per
+    record, ta_backfill_throttle_seconds between records, honors the engine halt.
+
+    A full batch (or one cut by the time budget) enqueues the next link and hands it the
+    run's inflight token; an empty/short batch ends the run. Stops that need the operator
+    end the chain cleanly, with the cursor before the record in flight:
+      - TA session → needs_bootstrap + R1 (motor DESLIGADO), like the sweep;
+      - TA 429 → the next link waits Retry-After (up to _MAX_RATE_LIMIT_BACKOFFS in a row
+        without progress), the session stays;
+      - retired TA query id (SourceSchemaError on _BACKFILL_MAX_CONSECUTIVE_SCHEMA_ERRORS
+        records in a row) → the run stops (re-inject won't help); a lone one is skipped;
+      - provider billing wall, or the Places key's credit cap (both ProviderBalanceError)
+        → pause_with_reason("provider_balance", action="backfill"): swap the key, resume;
+      - our daily cap (CostGuardError) → pause_with_reason("daily_budget", ...); the
+        beat restarts it once the UTC day turns (_backfill_tick) if still PAUSADO;
+      - _BACKFILL_MAX_CONSECUTIVE_FAILURES in a row (proxy down, TA 5xx) → stopped
+        "errors", the failed records left before the cursor; the run closes partial.
+    No record is marked done on any of these (C1 markers are set only by backfill_record
+    on success). Resume = start_backfill_run (POST /api/v1/tripadvisor/backfill, CLI
+    ``brave backfill-ta``), which re-selects whatever is still pending.
+
+    ``run_id=None`` is the beat tick (see _backfill_tick), never a backfill link.
+    """
+    if run_id is None:
+        return _backfill_tick()
+
+    import time as _time  # noqa: PLC0415
+
+    import redis as _redis_lib  # noqa: PLC0415
+    from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
+
+    from brave.config.runtime import enabled_sources  # noqa: PLC0415
+    from brave.core import engine as collection_engine  # noqa: PLC0415
+
+    rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+    session, _ = _get_session()
+    chained = False
+    ok = False
+    outcome = "done"
+    try:
+        with task_failure_policy(
+            self,
+            session,
+            "brave.backfill_ta_atrativos",
+            payload={"after_id": after_id},
+            pause_action="backfill",
+        ):
+            effective = _load_config(session)
+            if after_id is None:
+                from datetime import datetime  # noqa: PLC0415
+
+                rc.delete(_BACKFILL_PROGRESS_KEY)
+                _backfill_progress(
+                    rc, state="running", run_id=run_id, processed=0, failed=0,
+                    started_at=datetime.now(UTC).isoformat(),
+                )
+            # Offline the Null TA client would "conclusively" find nothing and mark every
+            # record backfilled — never run without the real lane.
+            if not effective.run_real_externals or "tripadvisor" not in enabled_sources(effective):
+                logger.warning("ta_backfill_disabled", run_id=run_id)
+                _backfill_progress(rc, state="stopped", reason="disabled")
+                return "disabled"
+
+            places_on = bool(effective.places_enrichment_enabled)
+            if places_on:  # which key THIS worker spends — a .env swap needs a recreate
+                from brave.observability.cost_guard import places_key_id  # noqa: PLC0415
+
+                _backfill_progress(
+                    rc, places_key_id=places_key_id(os.environ.get("BRAVE_PLACES_API_KEY", ""))
+                )
+            batch = max(1, int(effective.ta_backfill_batch_size))
+            stmt = select(RioRecord.id).where(*backfill_pending_filter(places_on))
+            if after_id:
+                stmt = stmt.where(RioRecord.id > uuid.UUID(after_id))
+            ids = list(session.scalars(stmt.order_by(RioRecord.id).limit(batch)).all())
+            session.rollback()  # no idle-in-transaction connection while the batch runs
+            if not ids:
+                _backfill_progress(rc, state="done")
+                ok = True
+                return "done"
+
+            from brave.clients.places import load_municipio_name_ibge_lookup  # noqa: PLC0415
+            from brave.config.settings import TripAdvisorConfig  # noqa: PLC0415
+            from brave.domains.tripadvisor.atrativos import (  # noqa: PLC0415
+                TripAdvisorAtrativosIngest,
+            )
+            from brave.domains.tripadvisor.ibge import load_ibge_municipios  # noqa: PLC0415
+
+            clients = clients_for(
+                effective, ibge_lookup=lambda: load_municipio_name_ibge_lookup(session)
+            )
+            distritos, places_agent = _inline_places_agent(session, effective, clients)
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=clients.tripadvisor,
+                session=session,
+                config=effective.score,
+                ibge_records=load_ibge_municipios(session),
+                geocoder=clients.geocoder,
+                ta_config=TripAdvisorConfig(),
+                places_agent=places_agent,
+                distritos=distritos,
+            )
+            budget = _time_budget(self)
+            state: dict[str, Any] = {"cursor": after_id, "stop": None}
+            partial = False
+            try:
+                asyncio.run(
+                    _using(
+                        clients,
+                        _backfill_batch(
+                            session, ingest, ids, rc, state,
+                            None if budget is None else _time.monotonic() + budget,
+                            float(effective.ta_backfill_throttle_seconds),
+                        ),
+                    )
+                )
+            except SoftTimeLimitExceeded:
+                session.rollback()
+                state["stop"] = "budget"
+
+            stop = state["stop"]
+            if stop == "session":
+                _mark_needs_bootstrap()
+                collection_engine.set_mode(rc, collection_engine.DESLIGADO)  # R1, as the sweep
+                _backfill_progress(rc, state="stopped_needs_bootstrap", reason="session")
+            elif stop == "balance":
+                collection_engine.pause_with_reason(
+                    rc, "provider_balance", state.get("provider"), action="backfill"
+                )
+                _backfill_progress(rc, state="paused", reason="provider_balance")
+            elif stop == "cost":
+                collection_engine.pause_with_reason(rc, "daily_budget", action="backfill")
+                _backfill_progress(rc, state="paused", reason="daily_budget")
+            elif stop == "rate_limit":
+                tries = 1 if state.get("done") else backoffs + 1
+                if tries <= _MAX_RATE_LIMIT_BACKOFFS:
+                    chained = _hand_over(
+                        backfill_ta_atrativos, run_id=run_id, after_id=state["cursor"],
+                        countdown=state["retry_after"], backoffs=tries,
+                    )
+                if not chained:
+                    _backfill_progress(rc, state="stopped", reason="rate_limit")
+                    partial = True
+            elif stop == "schema":
+                logger.error("ta_backfill_schema_error", run_id=run_id)
+                _backfill_progress(rc, state="stopped", reason="schema")
+                partial = True
+            elif stop == "errors":
+                logger.error("ta_backfill_consecutive_failures", run_id=run_id)
+                _backfill_progress(rc, state="stopped", reason="errors")
+                partial = True
+            elif stop == "halted":
+                _backfill_progress(rc, state="stopped", reason="halted")
+                # A plain Painel pause (e.g. to promote-bulk) would end the run with no pause
+                # reason → mode DESLIGADO, and nothing resumes the backfill. Record one with
+                # action "backfill" so Continuar restarts it. Desligar/Stop are left alone.
+                if (
+                    collection_engine.get_mode(rc) == collection_engine.PAUSADO
+                    and collection_engine.get_pause_reason(rc) is None
+                ):
+                    collection_engine.pause_with_reason(rc, "manual", action="backfill")
+            elif stop == "budget" or len(ids) == batch:
+                chained = _hand_over(
+                    backfill_ta_atrativos, run_id=run_id, after_id=state["cursor"]
+                )
+                if not chained:
+                    _backfill_progress(rc, state="stopped", reason="handover_failed")
+                    partial = True
+            else:
+                _backfill_progress(rc, state="done")
+            outcome = stop or ("chained" if chained else "done")
+            logger.info("ta_backfill_batch", run_id=run_id, records=len(ids), outcome=outcome)
+            # A stop that leaves records pending without a resume path closes the run as
+            # partial, never "concluido" (the sweep does the same on SourceSchemaError).
+            ok = not partial
+    finally:
+        if not chained:
+            _producer_done(run_id, failed=not ok)
+        session.close()
+    return outcome
+
+
+def start_backfill_run(rc: Any, session: Any) -> str | None:
+    """Start an engine run (action "backfill") and dispatch its first link.
+
+    Returns the run_id, or None when a run is already active (the caller answers 409 /
+    "motor ocupado"). A broker failure aborts the run (row → falha) and re-raises. The
+    run turns the motor LIGADO (that also clears a pause reason: this IS the resume path
+    after a key swap / budget wall) and locks card editing while it writes records.
+    """
+    from brave.core import engine as collection_engine  # noqa: PLC0415
+
+    run_id = collection_engine.start(
+        rc, session, action="backfill", depth="backfill", source="ta_backfill",
+        ufs=["BR"], lane="atrativos",
+    )
+    if run_id is None:
+        return None
+    claimed = collection_engine.claim_producer(rc, run_id)
+    try:
+        backfill_ta_atrativos.delay(run_id=claimed)
+    except Exception:
+        collection_engine.abort(rc, session, run_id)
+        raise
+    collection_engine.progress(rc, run_id, uf="BR")
+    collection_engine.dispatch_finished(rc, session, run_id)
+    return run_id
+
+
+def _backfill_tick() -> str:
+    """Beat: restart a backfill our daily cap paused, once the UTC day has turned.
+
+    Never starts anything else: no pause, a pause for another reason/action (a billing
+    wall needs the operator to swap the key), an active run, the flag off, or no TA
+    session → no-op. The cap resets per UTC day, so the pause's ``at`` date is the gate.
+    """
+    from datetime import datetime  # noqa: PLC0415
+
+    import redis as _redis_lib  # noqa: PLC0415
+
+    from brave.core import engine as collection_engine  # noqa: PLC0415
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY  # noqa: PLC0415
+
+    rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+    pause = collection_engine.get_pause_reason(rc) or {}
+    if pause.get("reason") != "daily_budget" or pause.get("action") != "backfill":
+        return "idle"
+    # Only the pause itself is resumed: an operator Desligar since then (set_mode clears the
+    # reason too) is never overridden by the beat.
+    if collection_engine.get_mode(rc) != collection_engine.PAUSADO:
+        return "idle"
+    if str(pause.get("at") or "")[:10] >= datetime.now(UTC).date().isoformat():
+        return "waiting_budget"
+    ttl = rc.ttl(BRAVE_TA_SESSION_KEY)  # -1 = no TTL (set by hand) still counts as present
+    if collection_engine.get_state(rc) != collection_engine.IDLE or (ttl != -1 and ttl <= 0):
+        return "busy"
+    session, _ = _get_session()
+    try:
+        if not _load_config(session).ta_backfill_enabled:
+            return "disabled"
+        run_id = start_backfill_run(rc, session)
+    finally:
+        session.close()
+    logger.info("ta_backfill_auto_resumed", run_id=run_id)
+    return "resumed" if run_id else "busy"
 
 
 # ---------------------------------------------------------------------------
@@ -2302,7 +2934,15 @@ def engine_sweep_run(
     effective_depth = depth or collection_engine.NASCENTE_RIO_MAR
     nascente_only = effective_depth == collection_engine.NASCENTE
 
+    if max_per_uf is not None and run_id is not None:
+        _record_run_cap(run_id, max_per_uf)
+
     dispatched = 0
+    # Redelivery guard (acks_late + reject_on_worker_lost): a worker restart mid-loop
+    # re-runs this task from the first UF. Members already in the run's set are skipped,
+    # so no UF gets a second concurrent producer (same TA session, Places paid twice).
+    # A legacy run_id=None call has no run to be idempotent against: no guard.
+    dispatched_key = f"brave:engine:dispatched:{run_id}" if run_id else None
     try:
         for uf in targets:
             if collection_engine.get_state(rc) != collection_engine.RUNNING:
@@ -2338,19 +2978,38 @@ def engine_sweep_run(
                     )
                 ]
             stale = False
-            for _producer, _args, _kwargs in producers:
+            fresh_dispatches = 0
+            for _i, (_producer, _args, _kwargs) in enumerate(producers):
+                member = f"{uf}:{_i}"  # the plan is deterministic per (uf, depth, lane)
+                if dispatched_key:
+                    if not rc.sadd(dispatched_key, member):
+                        continue  # redelivered run: this producer already went out
+                    rc.expire(dispatched_key, 2 * 86400)
                 # Producer-completes lifecycle: claim this producer BEFORE dispatch so the
                 # run stays RUNNING/syncing until its terminal finally calls producer_done
                 # with the same run_id. None = this orchestrator's run is no longer the
                 # current one (a newer start replaced it) — stop dispatching for it.
                 claimed = collection_engine.claim_producer(rc, run_id)
                 if claimed is None:
+                    if dispatched_key:
+                        rc.srem(dispatched_key, member)
                     stale = True
                     break
-                _producer.delay(*_args, **_kwargs, run_id=claimed)
+                try:
+                    _producer.delay(*_args, **_kwargs, run_id=claimed)
+                except Exception:
+                    # Give the claim back: nobody would ever pay it, and the run would sit
+                    # RUNNING forever (409 on every start).
+                    _lifecycle(collection_engine.producer_done, rc, claimed)
+                    if dispatched_key:
+                        rc.srem(dispatched_key, member)
+                    raise
+                fresh_dispatches += 1
             if stale:
                 logger.info("engine_stale_run_drain", at_uf=uf, dispatched=dispatched)
                 break
+            if producers and not fresh_dispatches:
+                continue  # every producer of this UF was dispatched before the redelivery
             collection_engine.progress(rc, run_id, uf=uf)
             dispatched += 1
             logger.info(
@@ -2380,7 +3039,27 @@ def engine_sweep_run(
     return {"dispatched": dispatched, "lane": lane, "depth": effective_depth, "source": source}
 
 
-def _lifecycle(verb: Any, rc: Any, run_id: str | None) -> bool:
+def _record_run_cap(run_id: str, max_per_uf: int) -> None:
+    """Store the run's per-UF cap on its runs_history row (reprocess repeats it). Best-effort."""
+    from brave.core.models import RunHistory  # noqa: PLC0415
+
+    try:
+        session, _ = _get_session()
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        run = session.get(RunHistory, uuid.UUID(run_id))
+        if run is not None:
+            run.max_per_uf = max_per_uf
+            session.commit()
+    except Exception as exc:  # noqa: BLE001 — never break the dispatch loop
+        session.rollback()
+        logger.warning("engine_run_cap_write_failed", run_id=run_id, error_type=type(exc).__name__)
+    finally:
+        session.close()
+
+
+def _lifecycle(verb: Any, rc: Any, run_id: str | None, **kwargs: Any) -> bool:
     """Call an engine lifecycle verb (producer_done / dispatch_finished) with a fresh DB
     session for the runs_history finalize. BEST-EFFORT: a Redis/DB hiccup must never
     break the task's own result or error handling — it is logged and reads as False.
@@ -2392,7 +3071,7 @@ def _lifecycle(verb: Any, rc: Any, run_id: str | None) -> bool:
         logger.warning("engine_lifecycle_no_db", error=str(exc))
         session = None
     try:
-        return verb(rc, session, run_id)
+        return verb(rc, session, run_id, **kwargs)
     except Exception as exc:  # noqa: BLE001 — best-effort; never break the task
         logger.warning("engine_lifecycle_failed", verb=verb.__name__, error=str(exc))
         return False
@@ -2401,15 +3080,15 @@ def _lifecycle(verb: Any, rc: Any, run_id: str | None) -> bool:
             session.close()
 
 
-def _producer_done(run_id: str | None, *, retrying_counts: bool = False) -> None:
+def _producer_done(run_id: str | None, *, failed: bool = False) -> None:
     """Producer-completes lifecycle — called ONCE in a producer's outermost finally.
 
     A Celery Retry unwinding through the finally is NOT a terminal outcome: self.retry()
     raises Retry, Celery re-queues, and the RE-RUN hits the finally again. The claim
     fires ONCE per logical dispatch (orchestrator), so producer_done must fire once per
-    TERMINAL outcome — skip it while a Retry is in flight. ``retrying_counts`` is for a
-    producer that claims itself per execution (the standalone bulk branch): every
-    execution pays its own claim back.
+    TERMINAL outcome — skip it while a Retry is in flight. ``failed``: the producer ended
+    without doing its work (its own ``ok`` flag — a policy-swallowed PermanentError ends
+    SUCCESS), so the run finishes "parcial" instead of "concluido".
     """
     import sys  # noqa: PLC0415
 
@@ -2418,13 +3097,34 @@ def _producer_done(run_id: str | None, *, retrying_counts: bool = False) -> None
 
     from brave.core import engine as collection_engine  # noqa: PLC0415
 
-    if not retrying_counts and isinstance(sys.exc_info()[1], Retry):
+    if isinstance(sys.exc_info()[1], Retry):
         return
     try:
         rc = _r.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
     except Exception:  # noqa: BLE001 — best-effort; never break the producer
         return
-    _lifecycle(collection_engine.producer_done, rc, run_id)
+    _lifecycle(collection_engine.producer_done, rc, run_id, failed=failed)
+
+
+def _ta_lane_enabled() -> bool:
+    """The 'tripadvisor' lane is on in the effective config, read at fire time.
+
+    The keep-alive beat entry is unconditional (beat_schedule.maintenance_beat_entries), so
+    turning the lane on/off needs no beat restart. A DB failure reads as ON: one cheap ping
+    costs less than a lost session.
+    """
+    from brave.config.runtime import enabled_sources  # noqa: PLC0415
+
+    try:
+        session, _ = _get_session()
+    except Exception:  # noqa: BLE001
+        return True
+    try:
+        return "tripadvisor" in enabled_sources(_load_config(session))
+    except Exception:  # noqa: BLE001
+        return True
+    finally:
+        session.close()
 
 
 @shared_task(
@@ -2462,6 +3162,10 @@ def ta_keepalive() -> None:
     if not app_config.run_real_externals:
         logger.debug("ta_keepalive_skipped_offline")
         _beat_health("brave.ta_keepalive")  # a skip is not a failure: clear a stale one
+        return
+    if not _ta_lane_enabled():
+        logger.debug("ta_keepalive_skipped_lane_off")
+        _beat_health("brave.ta_keepalive")
         return
 
     import redis as _redis_lib  # noqa: PLC0415

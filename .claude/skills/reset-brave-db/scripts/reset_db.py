@@ -3,9 +3,15 @@
 
 Truncates every data table in the Brave Postgres — keeping the SCHEMA and the
 `alembic_version` row intact — and flushes the engine/cache `brave:*` keys from
-Redis. By default, also purges the Celery broker queue (the `celery` task list
-key and `_kombu*` binding/unacked metadata) so stale queued tasks don't re-fire
-after a reset and hit reset-away rio_ids.
+Redis. By default, also purges the Celery broker (the `celery` task list, the
+`unacked*` in-flight bookkeeping and `_kombu*` bindings) so stale queued tasks
+don't re-fire after a reset and hit reset-away rio_ids.
+
+The Redis flush PRESERVES (see PRESERVED_KEYS / PRESERVED_PREFIXES): the redbeat
+schedule + leader lock (redbeat_key_prefix="brave" puts them under brave:*), the
+TripAdvisor session, the daily cost-guard spend (--reset-cost to zero it), each Google
+Places key's credit counter (--reset-places-credit to zero it) and the geocode caches
+(--flush-geo-cache to drop them).
 
 This is the fast "start the collection over from cold" reset: no migrations are
 re-run, so the DB stays at the current Alembic head.
@@ -24,6 +30,10 @@ Scope flags:
   --no-redis          leave Redis untouched (Postgres only); also skips broker purge
   --no-broker-purge   skip Celery broker queue purge (Postgres + brave:* flush still run)
   --redis-pattern     key glob to delete (default "brave:*"); never does FLUSHALL
+  --reset-cost        also zero today's cost-guard spend (brave:cost:* daily) — a second budget
+  --reset-places-credit  also zero the Places keys' credit counters (brave:cost:places:total:*)
+  --flush-geo-cache   also drop the geocode caches (brave:geo:*, brave:ta:geo:*)
+  --discard-inflight-batches  wipe even if Anthropic description batches are in flight
   -y / --yes          skip the confirmation prompt (required in non-interactive use)
 
 Examples:
@@ -53,6 +63,59 @@ PROTECTED_TABLES = {"alembic_version"}
 # atrativo_buscas holds PAID Parallel searches (docs/poc/gemini-viability.md §29), keyed by
 # canonical_key with no FK: descriptions are regenerated from it, so a wipe must not re-bill.
 REFERENCE_TABLES = {"municipios", "distritos", "uf_geoids", "local_businesses", "atrativo_buscas"}
+
+# brave:* keys that are NOT pipeline data and survive the Redis flush.
+# - redbeat (celery_app.py redbeat_key_prefix="brave"): deleting brave:lock makes the
+#   running beat's next lock.extend raise LockNotOwnedError and beat dies (no restart
+#   host-native); deleting brave:schedule/statics silently drops every periodic entry
+#   until beat restarts.
+# - TA session: an operator-pasted credential; a data reset must not force a re-login.
+PRESERVED_KEYS = {
+    "brave:schedule", "brave:statics", "brave:lock",
+    "brave:ta:session", "brave:ta:needs_bootstrap", "brave:ta:keepalive_failures",
+}
+# Money / paid-or-slow caches — kept unless the matching flag asks otherwise.
+COST_PREFIX = "brave:cost:"  # cost_guard daily spend: wiping it grants a 2nd budget same UTC day
+# Each Places key's credit spent so far (no TTL): wiping it lets an exhausted key spend its
+# whole credit again — never part of --reset-cost, only its own explicit flag.
+PLACES_CREDIT_PREFIX = "brave:cost:places:total:"
+GEO_CACHE_PREFIXES = ("brave:geo:", "brave:ta:geo:")  # 30d Nominatim (1.1s/call) + TA geo cache
+
+# Kombu redis transport keys for acks_late messages a worker has reserved: purging only
+# `celery` leaves them, and kombu restores them after visibility_timeout against the
+# wiped base.
+BROKER_KEYS = ("celery", "unacked", "unacked_index", "unacked_mutex")
+
+
+def _is_preserved(key: str, *, reset_cost: bool, flush_geo_cache: bool,
+                  reset_places_credit: bool = False) -> bool:
+    if key in PRESERVED_KEYS:
+        return True
+    if key.startswith(PLACES_CREDIT_PREFIX):
+        return not reset_places_credit
+    if not reset_cost and key.startswith(COST_PREFIX):
+        return True
+    return not flush_geo_cache and key.startswith(GEO_CACHE_PREFIXES)
+
+
+def flush_brave_keys(r, pattern: str, *, reset_cost: bool = False,
+                     flush_geo_cache: bool = False,
+                     reset_places_credit: bool = False) -> tuple[int, int]:
+    """Delete keys matching ``pattern`` except the preserved ones. Returns (deleted, kept)."""
+    found = [k.decode() if isinstance(k, bytes) else k for k in r.scan_iter(match=pattern, count=500)]
+    doomed = [k for k in found
+              if not _is_preserved(k, reset_cost=reset_cost, flush_geo_cache=flush_geo_cache,
+                                   reset_places_credit=reset_places_credit)]
+    deleted = r.delete(*doomed) if doomed else 0
+    return deleted, len(found) - len(doomed)
+
+
+def purge_broker(r) -> tuple[int, int]:
+    """Delete the Celery queue + unacked bookkeeping and ``_kombu*`` bindings.
+
+    Returns (broker keys deleted, kombu keys deleted)."""
+    kombu_keys = list(r.scan_iter(match="_kombu*", count=100))
+    return r.delete(*BROKER_KEYS), (r.delete(*kombu_keys) if kombu_keys else 0)
 
 
 def _repo_root() -> str:
@@ -101,6 +164,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-seed", action="store_true",
                     help="skip re-seeding config_settings defaults after the wipe")
     ap.add_argument("--redis-pattern", default="brave:*", help='key glob to delete (default "brave:*")')
+    ap.add_argument("--reset-cost", action="store_true",
+                    help="also zero today's cost-guard spend (brave:cost:* daily); default "
+                         "keeps it. Never touches the Places key credit (see below)")
+    ap.add_argument("--reset-places-credit", action="store_true",
+                    help="also zero each Google Places key's credit counter "
+                         "(brave:cost:places:total:*) — the exhausted key may spend again")
+    ap.add_argument("--flush-geo-cache", action="store_true",
+                    help="also drop the geocode caches (brave:geo:*, brave:ta:geo:*)")
+    ap.add_argument("--discard-inflight-batches", action="store_true",
+                    help="wipe even when rio_records has in-flight description batches")
     ap.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
     args = ap.parse_args(argv)
 
@@ -130,6 +203,23 @@ def main(argv: list[str] | None = None) -> int:
             t: c.execute(text(f'select count(*) from "{t}"')).scalar() for t in all_tables
         }
     targets = [t for t in all_tables if t not in keep]
+
+    # Anthropic description batches already submitted (paid) are tracked only by
+    # rio_records.descricao_batch_id: truncating it means their results are never
+    # collected. Refuse unless the operator explicitly accepts losing them.
+    if "rio_records" in targets:
+        with engine.connect() as c:
+            inflight = c.execute(text(
+                "select count(*) from rio_records where descricao_batch_id is not null"
+            )).scalar()
+        if inflight and not args.discard_inflight_batches:
+            print(
+                f"REFUSING: {inflight} rio_records have an in-flight description batch "
+                "(descricao_batch_id). Let collect-description-batches finish, or pass "
+                "--discard-inflight-batches to lose those paid results.",
+                file=sys.stderr,
+            )
+            return 4
 
     # Show the plan.
     print(f"Postgres : {_mask(db_url)}")
@@ -200,24 +290,23 @@ def main(argv: list[str] | None = None) -> int:
             print("\nWARN: redis client not importable — skipping Redis flush.", file=sys.stderr)
             return 0
         r = _redis.from_url(redis_url)
-        keys = [k for k in r.scan_iter(match=args.redis_pattern, count=500)]
-        deleted = r.delete(*keys) if keys else 0
-        remaining = sum(1 for _ in r.scan_iter(match=args.redis_pattern, count=500))
-        print(f"\nRedis flush ({args.redis_pattern}): {len(keys)} found, {deleted} deleted, {remaining} remaining.")
+        deleted, kept = flush_brave_keys(
+            r, args.redis_pattern, reset_cost=args.reset_cost, flush_geo_cache=args.flush_geo_cache,
+            reset_places_credit=args.reset_places_credit,
+        )
+        print(f"\nRedis flush ({args.redis_pattern}): {deleted} deleted, {kept} preserved "
+              "(redbeat schedule/lock, TA session"
+              + ("" if args.reset_cost else ", cost guard")
+              + ("" if args.reset_places_credit else ", Places key credit")
+              + ("" if args.flush_geo_cache else ", geo caches") + ").")
 
-        # Celery broker queue purge — scoped to the broker keys only.
-        # Safety: only deletes "celery" (the task queue list) and "_kombu*"
-        # (Kombu binding/unacked metadata). Never FLUSHALL, never brave:* again.
-        # Gate: skip when --no-redis is set (already skipped above) OR when
-        # --no-broker-purge is set explicitly.
+        # Celery broker purge — scoped to the broker keys only (BROKER_KEYS + _kombu*).
+        # Never FLUSHALL, never brave:* again. Skipped with --no-redis or --no-broker-purge.
         if not args.no_broker_purge:
-            celery_keys = list(r.scan_iter(match="celery", count=100))
-            kombu_keys = list(r.scan_iter(match="_kombu*", count=100))
-            n_celery = r.delete(*celery_keys) if celery_keys else 0
-            n_kombu = r.delete(*kombu_keys) if kombu_keys else 0
+            n_broker, n_kombu = purge_broker(r)
             print(
-                f"Celery broker purge (celery + _kombu*): "
-                f"{n_celery} task(s), {n_kombu} kombu key(s) deleted."
+                f"Celery broker purge (celery + unacked* + _kombu*): "
+                f"{n_broker} broker key(s), {n_kombu} kombu key(s) deleted."
             )
             print("  Stale queued tasks cleared — restart workers to begin fresh.")
 

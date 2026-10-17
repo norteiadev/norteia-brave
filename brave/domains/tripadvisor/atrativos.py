@@ -36,13 +36,16 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime
+from contextlib import nullcontext
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from sqlalchemy import select
+from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from brave.clients.null_places import NullPlacesClient
 from brave.config.settings import ScoreConfig, TripAdvisorConfig
 from brave.core import engine as collection_engine
 from brave.core.models import (
@@ -53,10 +56,12 @@ from brave.core.models import (
 )
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
-from brave.core.rio.routing import process_nascente_record
+from brave.core.rio.persist import persist_normalized
+from brave.core.rio.routing import STICKY_DLQ_REASONS, process_nascente_record, route_by_score
 from brave.domains.tripadvisor import sweep_progress
 from brave.domains.tripadvisor.ibge import (
     IbgeMunicipio,
+    haversine_km,
     resolve_municipio,
     resolve_municipio_national,
 )
@@ -69,7 +74,13 @@ from brave.domains.tripadvisor.scoring import (
 from brave.domains.tripadvisor.uf_names import state_name_to_uf
 from brave.observability.record_events import record_event_once
 from brave.shared.destino import ensure_destino
-from brave.shared.exceptions import ProviderBalanceError
+from brave.shared.exceptions import (
+    CostGuardError,
+    ProviderBalanceError,
+    SourceRateLimitError,
+    SourceSchemaError,
+    SourceSessionError,
+)
 from brave.shared.ibge_distritos import resolve_distrito_in_uf
 
 if TYPE_CHECKING:
@@ -89,10 +100,42 @@ TA_ATRATIVO_ORIGEM_VALUE = 65.0
 # A card quarantined under THIS version is skipped by later sweeps (its per-card TA calls
 # would only fail again and eat a max_per_uf slot); one quarantined under an older chain
 # is retried once. Bump it whenever the chain learns a new way to place a card.
+# The stamp is written only when the WHOLE chain really ran (TA geo with a live config,
+# distritos loaded, Nominatim answered, Places consulted with a live client); otherwise the
+# quarantine carries resolver_version=0 and the next sweep retries the card.
 # 2 = + distrito by TA cityName + Google Places Text Search.
 # 3 = + Places município consensus when no result matches the name.
-IBGE_RESOLVER_VERSION = 3
+# 4 = v3 stamps were also written when Places was off/failing — release them once.
+IBGE_RESOLVER_VERSION = 4
 _IBGE_UNMATCHED_TASK = "brave.ta.atrativos.ibge_unmatched"
+
+# Run-level failures: not a property of the card, so they must escape the per-card
+# try/quarantine and stop the sweep (the task layer pauses / needs_bootstrap / backs off).
+# Swallowing them poisoned every remaining card of the UF while the task "succeeded".
+_PAUSE_ERRORS: tuple[type[BaseException], ...] = (
+    ProviderBalanceError,
+    CostGuardError,
+    SourceSessionError,
+    SourceRateLimitError,
+    SourceSchemaError,
+    SoftTimeLimitExceeded,
+)
+
+# Marker of the TA-side backfill (contract C1): set once TA geo + review recency ran.
+TA_BACKFILLED_KEY = "ta_backfilled_at"
+
+# Inside the right UF, a record whose own coords lie within this radius of TA's city seat
+# keeps its município: TA's cityName is its parent geo (the town next door), the coords'
+# nearest seat is the finer label. Farther than this, the coords are a homonym's point.
+_SAME_UF_KEEP_KM = 50.0
+
+# Written for the place where the bulk put a card; stale once TA geo moves it (_apply_ta_geo).
+_MOVED_STALE_KEYS = (
+    "place_id_cache", "google_place_id", "distrito_name", "distrito_code",
+    "distrito_municipio_ibge", "weekday_text", "phone", "website", "address", "price_level",
+    "signal", "google_fetched_at", "most_recent_review_at", "descricao_editorial",
+    "descricao_rascunho", "descricao_gate", "descricao_groundedness",
+)
 
 logger = structlog.get_logger(__name__)
 # Logging discipline (T-15-06-02 / T-12-04-01): the bulk methods log ONLY
@@ -103,6 +146,43 @@ logger = structlog.get_logger(__name__)
 def _source_ref(entity: dict[str, Any]) -> str:
     """Nascente source_ref / Rio canonical_key of a TA card (same key _ingest_one writes)."""
     return f"tripadvisor:attraction:{entity.get('locationId', '')}"
+
+
+def _parse_dt(raw: Any) -> datetime | None:
+    """ISO-8601 → aware datetime, or None."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _places_live(agent: Any) -> bool:
+    """False when the agent's Places client is the Null one (flag off): no real search."""
+    return not isinstance(getattr(agent, "_places_client", None), NullPlacesClient)
+
+
+def _merge_recency(after: dict[str, Any], recency: dict[str, Any]) -> None:
+    """Fold a fetch_recent_review result into ``after`` — max-merge, never regress.
+
+    The newest review date wins (TA's or one Google already wrote); atualidade and
+    review_count only go up.
+    """
+    old_dt = _parse_dt(after.get("most_recent_review_at"))
+    newest = max(
+        (d for d in (old_dt, recency.get("most_recent_review_at")) if d is not None),
+        default=None,
+    )
+    if newest is not None:
+        if newest != old_dt:
+            after["most_recent_review_at"] = newest.isoformat()
+        after["atualidade_value"] = max(
+            float(after.get("atualidade_value") or 0.0), atualidade_from_recency(newest)
+        )
+    if recency.get("review_count") is not None:
+        after["review_count"] = max(int(after.get("review_count") or 0), int(recency["review_count"]))
 
 
 # ---------------------------------------------------------------------------
@@ -227,41 +307,55 @@ class TripAdvisorAtrativosIngest:
                 break
             reached_cap = False
             synced = self._already_synced(cards, run_rio=run_rio)
+            # Per-UF enrich path: a card already in Rio but never TA-backfilled (a bulk record
+            # with a provisional UF/município, or one ingested before the marker existed) is
+            # COMPLETED via backfill_record instead of skipped. The bulk path
+            # (produce_paginated) keeps skipping every Rio row, so its page resume is intact.
+            backfill = self._backfill_candidates(cards) if (enrich_reviews and run_rio) else {}
             for entity in cards:
+                ref = _source_ref(entity)
                 # Already in Brave: the TA signals were consumed by the score on the first
                 # sync — skip before any per-card TA call. Not counted toward max_per_uf,
                 # so the cap measures NEW atrativos.
-                if _source_ref(entity) in synced:
+                if ref in synced and ref not in backfill:
                     skipped += 1
                     continue
-                # Snapshot the destino cache keys BEFORE the attempt so that, on the
-                # enrich path, a rollback can evict any destino cached by _ensure_destino
-                # during THIS (now discarded) iteration — otherwise the map would point
-                # the next same-município atrativo at a parent rio whose rows no longer
-                # exist. Snapshot only when enrich_reviews (per-atrativo rollback path).
-                keys_before = set(self._destino_rio_map) if enrich_reviews else None
+                # Snapshot the destino cache keys BEFORE the attempt so that a rollback
+                # (per-atrativo on the enrich path, the card's savepoint otherwise) can evict
+                # any destino cached by _ensure_destino during THIS (now discarded) iteration —
+                # otherwise the map would point the next same-município atrativo at a parent
+                # rio whose rows no longer exist.
+                keys_before = set(self._destino_rio_map)
                 try:
-                    _rio_id = await self._ingest_one(
-                        uf, entity, run_rio=run_rio, enrich_reviews=enrich_reviews
-                    )
-                    if _rio_id is not None:
-                        ingested_ids.append(_rio_id)
+                    if ref in backfill:
+                        await self.backfill_record(backfill[ref])
+                    else:
+                        # Non-enrich path commits per page: a SAVEPOINT per card reverts only
+                        # this card on a flush error (e.g. IntegrityError), leaving the
+                        # transaction healthy for the poison row and the page's other cards.
+                        with nullcontext() if enrich_reviews else self._session.begin_nested():
+                            _rio_id = await self._ingest_one(
+                                uf, entity, run_rio=run_rio, enrich_reviews=enrich_reviews
+                            )
+                        if _rio_id is not None:
+                            ingested_ids.append(_rio_id)
                     if enrich_reviews:
                         # Per-atrativo durability: persist this atrativo's rows now.
                         self._session.commit()
-                except ProviderBalanceError:
-                    # A balance wall must escape produce() entirely — not be quarantined
-                    # as a bad record. Caught by the R1-sibling block in pipeline.py.
+                except _PAUSE_ERRORS:
+                    # Run-level (balance/budget wall, dead or throttled session, retired qid,
+                    # soft time limit) — escape produce() entirely; quarantining it would
+                    # poison every remaining card. pipeline.py rolls back + pauses.
                     raise
                 except Exception as exc:  # noqa: BLE001
                     if enrich_reviews:
                         # Isolate the failed atrativo: discard its partial writes and
                         # clear any aborted-transaction state before writing poison.
                         self._session.rollback()
-                        # Cache coherence: evict destinos cached this iteration but now
-                        # rolled back, so the next same-município atrativo re-creates them.
-                        for k in set(self._destino_rio_map) - keys_before:  # type: ignore[operator]
-                            del self._destino_rio_map[k]
+                    # Cache coherence: evict destinos cached this iteration but now rolled
+                    # back, so the next same-município atrativo re-creates them.
+                    for k in set(self._destino_rio_map) - keys_before:
+                        del self._destino_rio_map[k]
                     # Unified locationId fallback (str(... or "")) so this failure
                     # source_ref matches the success path's default and record_event_once
                     # dedups correctly (no "unknown" vs "" identity split).
@@ -319,13 +413,16 @@ class TripAdvisorAtrativosIngest:
         logger.info("ta_atrativos_producer_done", uf=uf, processed=processed, skipped=skipped)
         return ingested_ids
 
-    def _already_synced(self, cards: list[dict[str, Any]], *, run_rio: bool) -> set[str]:
+    def _already_synced(
+        self, cards: list[dict[str, Any]], *, run_rio: bool, bulk: bool = False
+    ) -> set[str]:
         """source_refs of this page's cards already in Brave — one query per page.
 
         With run_rio the record must be in Rio (canonical_key == Nascente source_ref);
         a Nascente-only record (earlier nascente-depth sweep) is re-ingested so it
         reaches Rio. A card quarantined as ibge_unmatched under the CURRENT resolver chain
-        is skipped too (it would fail the same way); older quarantines are retried.
+        is skipped too (it would fail the same way); older quarantines are retried. The
+        bulk also skips cards its own (shorter, Places-less) chain already missed.
         """
         ids = [str(c["locationId"]) for c in cards if c.get("locationId")]
         if not ids:
@@ -334,15 +431,33 @@ class TripAdvisorAtrativosIngest:
         col = RioRecord.canonical_key if run_rio else NascenteRecord.source_ref
         synced = set(self._session.scalars(select(col).where(col.in_(refs))))
         loc = PoisonQuarantine.payload["locationId"].as_string()
+        final = PoisonQuarantine.payload["resolver_version"].as_integer() == IBGE_RESOLVER_VERSION
+        if bulk:
+            final = or_(
+                final,
+                PoisonQuarantine.payload["bulk_resolver_version"].as_integer()
+                == IBGE_RESOLVER_VERSION,
+            )
         unmatched = self._session.scalars(
             select(loc).where(
-                PoisonQuarantine.task_name == _IBGE_UNMATCHED_TASK,
-                loc.in_(ids),
-                PoisonQuarantine.payload["resolver_version"].as_integer()
-                == IBGE_RESOLVER_VERSION,
+                PoisonQuarantine.task_name == _IBGE_UNMATCHED_TASK, loc.in_(ids), final
             )
         )
         return synced | {f"tripadvisor:attraction:{i}" for i in unmatched}
+
+    def _backfill_candidates(self, cards: list[dict[str, Any]]) -> dict[str, RioRecord]:
+        """This page's Rio rows still missing the TA backfill marker (never descarte)."""
+        refs = [_source_ref(c) for c in cards if c.get("locationId")]
+        if not refs:
+            return {}
+        rows = self._session.scalars(
+            select(RioRecord).where(
+                RioRecord.canonical_key.in_(refs),
+                RioRecord.normalized[TA_BACKFILLED_KEY].as_string().is_(None),
+                RioRecord.routing != "descarte",
+            )
+        )
+        return {r.canonical_key: r for r in rows}
 
     def _ensure_destino(self, ibge_match: IbgeMunicipio) -> tuple[uuid.UUID, str]:
         """Create the parent destino for an IBGE município on demand (destino-first).
@@ -375,6 +490,280 @@ class TripAdvisorAtrativosIngest:
             uf=ibge_match.uf,
         )
         return (parent_rio_id, parent_source_ref)
+
+    # -----------------------------------------------------------------------
+    # Backfill of a record ALREADY in Rio (contract C2) — the bulk lane's completion step.
+    # -----------------------------------------------------------------------
+
+    async def backfill_record(self, rio: RioRecord) -> str:
+        """Complete one TA atrativo already in Rio: TA geo + review recency, then Places.
+
+        Idempotent, keyed on the C1 markers: the TA part runs only while
+        ``normalized['ta_backfilled_at']`` is missing, the Places part only while
+        ``google_enriched`` is not True and a places agent is configured. The caller owns
+        the transaction (commit per record). Nothing is swallowed: run-level errors
+        (session / rate limit / retired qid, ProviderBalanceError, CostGuardError,
+        SoftTimeLimitExceeded) reach the caller so it can pause, and the marker of the step
+        that failed is NOT set, so the record is retried. The Places step runs in a
+        SAVEPOINT: when it raises, only its writes are undone and the TA side (marker
+        included) is left for the caller to commit.
+
+        Returns "+"-joined steps run ("ta", "places"), "noop", "municipio_nao_confirmado"
+        when TA puts the card in another UF and no resolver could place it there (routed to
+        the DLQ; Places is skipped — a search in the stored, wrong UF could only match a
+        homonym), or "municipio_pendente" for the same case when a resolver was off or
+        failing (DLQ too, but no marker: the next backfill retries it).
+        """
+        steps: list[str] = []
+        if not (rio.normalized or {}).get(TA_BACKFILLED_KEY):
+            steps.append(await self._backfill_ta(rio))
+        normalized = rio.normalized or {}
+        ta_uf = normalized.get("ta_uf")
+        if ta_uf and rio.uf and ta_uf != rio.uf:
+            if not normalized.get(TA_BACKFILLED_KEY):
+                return "municipio_pendente"
+            return "municipio_nao_confirmado"
+        if self._places_agent is not None and normalized.get("google_enriched") is not True:
+            with self._session.begin_nested():
+                await self._places_agent.run(rio)
+            steps.append("places")
+        return "+".join(steps) or "noop"
+
+    async def _throttle(self) -> None:
+        if self._ta_config is not None and self._ta_config.page_throttle_seconds > 0:
+            await asyncio.sleep(self._ta_config.page_throttle_seconds)
+
+    def _ibge(self, code: str | None) -> IbgeMunicipio | None:
+        return next((r for r in self._ibge_records if r.ibge_code == code), None) if code else None
+
+    def _resolve_ta_city(
+        self, city: str | None, uf: str
+    ) -> tuple[IbgeMunicipio | None, IbgeDistrito | None]:
+        """TA cityName → município of ``uf`` (by name), else the parent of a distrito."""
+        if not city:
+            return None, None
+        match = resolve_municipio(city, uf, self._ibge_records)
+        if match is None and self._distritos:
+            distrito = resolve_distrito_in_uf(city, uf, self._distritos)
+            if distrito is not None:
+                match = self._ibge(distrito.ibge_code)
+                if match is not None:
+                    return match, distrito
+        return match, None
+
+    async def _backfill_ta(self, rio: RioRecord) -> str:
+        """TA geo → UF/município/parent destino; TA reviews → recency. Sets the marker.
+
+        The marker is withheld only for "municipio_pendente" (C1: a verdict reached while a
+        resolver was off or failing is not "conclusively empty").
+        """
+        before = dict(rio.normalized or {})
+        after = dict(before)
+        uf_before = rio.uf
+        status = "ta"
+        loc_id_raw = (rio.canonical_key or "").removeprefix("tripadvisor:attraction:")
+        if loc_id_raw.isdigit():  # else nothing to fetch, ever — mark it done
+            loc_id = int(loc_id_raw)
+            await self._throttle()
+            geo = await self._client.fetch_attraction_geo(loc_id)
+            await self._throttle()
+            recency = await self._client.fetch_recent_review(loc_id)
+            if geo is not None:
+                status = await self._apply_ta_geo(rio, loc_id_raw, geo, after)
+            if recency is not None:
+                _merge_recency(after, recency)
+        unplaced = status in ("municipio_nao_confirmado", "municipio_pendente")
+        if not unplaced and not after.get("parent_rio_id"):
+            # Bulk records are parent-less, and a moved one lost its parent: link it to the
+            # destino of its (confirmed or kept) município — also when TA gave no usable geo.
+            current = self._ibge(rio.municipio_id)
+            if current is not None:
+                entry = self._destino_rio_map.get(current.ibge_code)
+                if entry is None:
+                    entry = self._ensure_destino(current)
+                    self._destino_rio_map[current.ibge_code] = entry
+                after["parent_rio_id"], after["parent_source_ref"] = str(entry[0]), entry[1]
+                if after.get("parent_mar_id"):
+                    after["parent_mar_id"] = None
+        if status != "municipio_pendente":
+            after[TA_BACKFILLED_KEY] = datetime.now(UTC).isoformat()
+        persist_normalized(self._session, rio, before, after)
+        if (
+            not unplaced
+            and rio.dlq_reason == "municipio_nao_confirmado"
+            and before.get("ta_uf") not in (None, uf_before)
+        ):
+            # Our own earlier verdict (TA said another UF): the card is placed now.
+            rio.dlq_reason = None
+        # Re-score without erasing deliberate verdicts (C5): this step only moved geo/recency.
+        route_by_score(self._session, rio, self._config)
+        # Hold the unplaced card — but never over a descarte (C5: it may have been discarded
+        # since the batch was selected) nor over another deliberate verdict (steward review,
+        # community report, closed_temporarily): ta_uf != uf already keeps Places off it.
+        if (
+            unplaced
+            and rio.routing != "descarte"
+            and (
+                rio.dlq_reason not in STICKY_DLQ_REASONS
+                or rio.dlq_reason == "municipio_nao_confirmado"
+            )
+        ):
+            rio.routing = "dlq"
+            rio.dlq_reason = "municipio_nao_confirmado"
+        logger.info("ta_backfill_record", rio_id=str(rio.id), uf=rio.uf, status=status)
+        return status
+
+    async def _apply_ta_geo(
+        self, rio: RioRecord, location_id: str, geo: dict[str, Any], after: dict[str, Any]
+    ) -> str:
+        """Re-derive the record's UF/município from TA's own geo; write the deltas to ``after``.
+
+        The bulk placed the card by a name-only national geocode (a homonym in another state
+        is possible); TA's stateName is authoritative for the UF. Its cityName is TA's PARENT
+        geo (often the touristic town next door), so inside the right UF it only overrides a
+        município the record has no evidence of its own for: no place_id, and no coords — or
+        coords farther than _SAME_UF_KEEP_KM from TA's city seat (a homonym's point).
+        """
+        ta_uf = state_name_to_uf(geo.get("state_name") or "")
+        if ta_uf is None:
+            return "ta"
+        after["ta_uf"] = ta_uf
+        current = self._ibge(rio.municipio_id)
+        current_ok = current is not None and current.uf == ta_uf
+        match, distrito = self._resolve_ta_city(geo.get("city_name"), ta_uf)
+        if current_ok and match is not None and match.ibge_code != current.ibge_code:
+            lat, lon = after.get("lat"), after.get("lon")
+            near = (
+                lat is not None
+                and lon is not None
+                and haversine_km(float(lat), float(lon), match.lat, match.lng) <= _SAME_UF_KEEP_KM
+            )
+            if after.get("place_id_cache") or near:
+                match, distrito = current, None
+        coords: tuple[float, float] | None = None
+        place_id: str | None = None
+        if match is None and not current_ok:
+            # The stored município is in the wrong UF: pay for the in-UF fallbacks.
+            name = after.get("name") or ""
+            match, coords, place_id, nominatim_ok, places_ok = await self._locate_in_uf(
+                location_id, name, ta_uf
+            )
+            if match is None:
+                city = geo.get("city_name")
+                conclusive = not name or (
+                    nominatim_ok and places_ok and (not city or bool(self._distritos))
+                )
+                logger.warning("ta_backfill_municipio_unconfirmed", rio_id=str(rio.id), uf=ta_uf,
+                               conclusive=conclusive)
+                return "municipio_nao_confirmado" if conclusive else "municipio_pendente"
+        if match is None:
+            match = current
+        assert match is not None
+        if current is None or match.ibge_code != current.ibge_code:
+            rio.uf = match.uf
+            rio.municipio_id = match.ibge_code
+            after["municipio"] = match.nome
+            after["municipio_id"] = match.ibge_code
+            # Everything written for where the bulk put the card belongs to ANOTHER place:
+            # coords, the Google match and all it wrote (hours/contact/status/its review
+            # date), and a description anchored on the old município. persist_normalized
+            # merges, so None (not pop). The paid Places step is re-opened; the TA recency
+            # fetched in this same pass is merged back right after.
+            after["lat"], after["lon"] = coords or (None, None)
+            for key in _MOVED_STALE_KEYS:
+                if after.get(key) is not None:
+                    after[key] = None
+            if after.get("atualidade_value"):
+                after["atualidade_value"] = 0.0
+            if after.get("descricao_attempts"):
+                after["descricao_attempts"] = 0
+            if after.get("google_enriched"):
+                after["google_enriched"] = False
+            if after.get("parent_rio_id"):
+                after["parent_rio_id"] = None
+                after["parent_source_ref"] = None
+            # completude counted the dropped coords/address and the description (which
+            # raised it to 90): recount it like the ingest did, from the card + what is left.
+            card = getattr(self._session.get(NascenteRecord, rio.nascente_id), "payload", None)
+            after["completude_value"] = completude_from_fields(
+                {
+                    **(card if isinstance(card, dict) else {}),
+                    "name": after.get("name"),
+                    "uf": rio.uf,
+                    "location_id": location_id,
+                    "lat": after["lat"],
+                    "lng": after["lon"],
+                    "address": after.get("address"),
+                    "description": None,
+                },
+                cap=100,
+            )
+        if place_id:
+            after["place_id_cache"] = place_id
+        if distrito is not None:
+            after.update(
+                distrito_name=distrito.nome,
+                distrito_code=distrito.distrito_code,
+                distrito_municipio_ibge=distrito.ibge_code,
+            )
+        return "ta"
+
+    async def _locate_in_uf(
+        self, location_id: str, name: str, uf: str
+    ) -> tuple[IbgeMunicipio | None, tuple[float, float] | None, str | None, bool, bool]:
+        """Nominatim (free) then one Places Text Search, both inside ``uf``.
+
+        Returns (município, coords, place_id, nominatim_ok, places_ok). The two flags say
+        whether each resolver really answered: Nominatim without a swallowed failure (an
+        unconfigured geocoder is not part of the chain), Places with a live client, no
+        failure and no ``locate_failed``. A miss is a verdict only when both answered. A
+        provider defect degrades to None; run-level errors propagate.
+        """
+        nominatim_ok = True
+        if self._geocoder is not None and name:
+            try:
+                geo = await self._geocoder.geocode(location_id, name, uf)
+            except _PAUSE_ERRORS:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("nominatim_geocode_failed", location_id=location_id, uf=uf,
+                               error=type(exc).__name__)
+                geo = None
+                nominatim_ok = False
+            if geo is not None:
+                match = resolve_municipio(
+                    geo.get("municipio_name") or name,
+                    uf,
+                    self._ibge_records,
+                    candidate_lat=geo["lat"],
+                    candidate_lng=geo["lon"],
+                    max_distance_km=50.0,
+                )
+                if match is not None:
+                    return match, (geo["lat"], geo["lon"]), None, True, True
+        places_ok = False
+        if self._places_agent is not None and name:
+            try:
+                place = await self._places_agent.locate(name, uf)
+                places_ok = _places_live(self._places_agent) and not getattr(
+                    self._places_agent, "locate_failed", False
+                )
+            except _PAUSE_ERRORS:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("places_locate_failed", uf=uf, error=type(exc).__name__)
+                place = None
+            if place is not None:
+                match = self._ibge(place.get("municipio_ibge"))
+                if match is not None:
+                    ploc = place.get("location") or {}
+                    coords = (
+                        (ploc["lat"], ploc["lng"])
+                        if ploc.get("lat") is not None and ploc.get("lng") is not None
+                        else None
+                    )
+                    return match, coords, place.get("place_id") or None, nominatim_ok, True
+        return None, None, None, nominatim_ok, places_ok
 
     async def _ingest_one(
         self,
@@ -433,6 +822,9 @@ class TripAdvisorAtrativosIngest:
         # most_recent_review_at: NOT in the AttractionsFusion listing card. Off by
         # default (bulk / Nascente-only) → None. Under enrich_reviews (per-UF sweep),
         # fetch_recent_review supplies the newest review date (+ precise count/rating).
+        # True once the review call answered (a date, or conclusively none): the per-UF
+        # record is then TA-complete and gets the backfill marker (C1) below.
+        recency_fetched = False
 
         if enrich_reviews:
             try:
@@ -444,6 +836,7 @@ class TripAdvisorAtrativosIngest:
                 if self._ta_config is not None and self._ta_config.page_throttle_seconds > 0:
                     await asyncio.sleep(self._ta_config.page_throttle_seconds)
                 recency = await self._client.fetch_recent_review(loc_id_int)
+                recency_fetched = True
                 if recency is not None:
                     most_recent_dt = recency.get("most_recent_review_at")
                     # Prefer the precise review container over the card's aggregate.
@@ -489,8 +882,21 @@ class TripAdvisorAtrativosIngest:
         # Promote geocoded lat/lng into working variables so completude and the
         # persisted payload carry real coordinates (WR-01 fix: previously these
         # were discarded and lat/lng remained None even after a successful geocode).
+        nominatim_failed = False
         if ibge_match is None and self._geocoder is not None:
-            geo = await self._geocoder.geocode(location_id, name, uf)
+            try:
+                geo = await self._geocoder.geocode(location_id, name, uf)
+            except _PAUSE_ERRORS:
+                raise
+            except Exception as exc:  # noqa: BLE001 — a Nominatim 429/ban must not skip B/C/D
+                logger.warning(
+                    "nominatim_geocode_failed",
+                    location_id=location_id,
+                    uf=uf,
+                    error=type(exc).__name__,
+                )
+                geo = None
+                nominatim_failed = True
             if geo is not None:
                 lat = geo["lat"]
                 lng = geo["lon"]
@@ -588,8 +994,20 @@ class TripAdvisorAtrativosIngest:
         # payload as place_id_cache, so the inline enrichment reuses it instead of paying
         # for a second search.
         located_place_id: str | None = None
+        # True only when Places REALLY answered: a live client (not the flag-off Null one)
+        # and no failure. A None from a Null/failed search is not "Places could not place it".
+        places_consulted = False
         if ibge_match is None and self._places_agent is not None:
-            place = await self._places_agent.locate(name, uf)
+            try:
+                place = await self._places_agent.locate(name, uf)
+                places_consulted = _places_live(self._places_agent) and not getattr(
+                    self._places_agent, "locate_failed", False
+                )
+            except _PAUSE_ERRORS:
+                raise
+            except Exception as exc:  # noqa: BLE001 — a Places defect never breaks the ingest
+                logger.warning("places_locate_failed", uf=uf, error=type(exc).__name__)
+                place = None
             if place is not None:
                 ibge_match = next(
                     (r for r in self._ibge_records if r.ibge_code == place["municipio_ibge"]),
@@ -634,6 +1052,14 @@ class TripAdvisorAtrativosIngest:
         completude_value = completude_from_fields(completude_entity, cap=100)  # atrativo cap=100
 
         if ibge_match is None:
+            # Stamp the current chain only when every fallback really ran; a card that missed
+            # because a fallback was off or failing gets 0 and is retried by the next sweep.
+            chain_complete = (
+                self._ta_config is not None
+                and bool(self._distritos)
+                and not nominatim_failed
+                and places_consulted
+            )
             quarantine_poison(
                 session=self._session,
                 nascente_id=None,
@@ -643,7 +1069,7 @@ class TripAdvisorAtrativosIngest:
                     "uf": uf,
                     "locationId": location_id,
                     "name": name,
-                    "resolver_version": IBGE_RESOLVER_VERSION,
+                    "resolver_version": IBGE_RESOLVER_VERSION if chain_complete else 0,
                 },
             )
             # TERMINAL Log-tab event alongside the poison chip (kept). Idempotent
@@ -666,6 +1092,10 @@ class TripAdvisorAtrativosIngest:
                 },
             )
             return
+
+        # Fallback B may resolve in ANOTHER UF (TA stateName of a cross-border card): the
+        # record's UF follows its município, never the sweep's (A/C/D resolve within uf).
+        uf = ibge_match.uf
 
         # Município resolved — public-geo (IBGE code + name).
         timeline.append(
@@ -818,6 +1248,21 @@ class TripAdvisorAtrativosIngest:
                 nascente=nascente,
                 config=self._config,
             )
+            # The per-UF card is TA-complete (UF from TA's own UF listing, recency answered):
+            # mark it so the backfill (C1/C2) does not redo its TA calls. Only on THIS card's
+            # row — a dedup may have returned another record.
+            if (
+                recency_fetched
+                and rio.canonical_key == source_ref
+                and not (rio.normalized or {}).get(TA_BACKFILLED_KEY)
+            ):
+                before = dict(rio.normalized or {})
+                persist_normalized(
+                    self._session,
+                    rio,
+                    before,
+                    {**before, TA_BACKFILLED_KEY: datetime.now(UTC).isoformat()},
+                )
             # Inline enrichment (description + distrito + hours/contact/price + liveness),
             # run here — like geo/review/município above — so the stored score reflects it
             # and a later task-kill can't strand it (the old post-produce dispatch could).
@@ -892,12 +1337,51 @@ class TripAdvisorAtrativosIngest:
             if geo is not None:
                 lat = geo["lat"]
                 lng = geo["lon"]
-                ibge_match = resolve_municipio_national(
-                    lat,
-                    lng,
-                    self._ibge_records,
-                    max_distance_km=50.0,
-                )
+                geo_uf = geo.get("uf")
+                if geo_uf:
+                    # Stay inside the state Nominatim placed the point in (ISO3166-2): the
+                    # nearest seat of ANY state put border attractions in the wrong UF.
+                    ibge_match = resolve_municipio(
+                        geo.get("municipio_name") or "",
+                        geo_uf,
+                        self._ibge_records,
+                        candidate_lat=lat,
+                        candidate_lng=lng,
+                        max_distance_km=50.0,
+                    ) or resolve_municipio_national(  # no município name → nearest in-UF seat
+                        lat,
+                        lng,
+                        [r for r in self._ibge_records if r.uf == geo_uf],
+                        max_distance_km=50.0,
+                    )
+                else:
+                    ibge_match = resolve_municipio_national(
+                        lat,
+                        lng,
+                        self._ibge_records,
+                        max_distance_km=50.0,
+                    )
+
+        # Fallback (only for cards the name-only geocode could not place — no Rio row means
+        # the backfill never sees them): TA's own geo names the UF (+ often the city or a
+        # distrito), then Nominatim inside that UF. One TA call, paced like every TA call.
+        distrito: IbgeDistrito | None = None
+        chain_complete = False
+        if ibge_match is None and self._ta_config is not None and location_id.isdigit():
+            await self._throttle()
+            ta_geo = await self._client.fetch_attraction_geo(int(location_id))
+            ta_uf = state_name_to_uf((ta_geo or {}).get("state_name") or "")
+            chain_complete = True  # TA answered; a miss below is final for the bulk chain
+            if ta_uf is not None:
+                city = (ta_geo or {}).get("city_name")
+                ibge_match, distrito = self._resolve_ta_city(city, ta_uf)
+                if ibge_match is None:
+                    ibge_match, coords, _pid, nominatim_ok, _ = await self._locate_in_uf(
+                        location_id, name, ta_uf
+                    )
+                    if coords is not None:
+                        lat, lng = coords
+                    chain_complete = nominatim_ok and (not city or bool(self._distritos))
 
         if ibge_match is None:
             # No geocode OR no IBGE seat within radius → quarantine (never dropped).
@@ -905,10 +1389,15 @@ class TripAdvisorAtrativosIngest:
             quarantine_poison(
                 session=self._session,
                 nascente_id=None,
-                task_name="brave.ta.atrativos.ibge_unmatched",
+                task_name=_IBGE_UNMATCHED_TASK,
                 error=f"ibge_unmatched: could not geo-resolve attraction locationId={location_id}",
-                # LGPD: locationId only — never name/address.
-                payload={"locationId": location_id},
+                # LGPD: locationId only — never name/address. bulk_resolver_version stamps
+                # a card the whole bulk chain (TA geo + Nominatim in its UF) missed, so later
+                # bulk runs skip it; the per-UF sweep (which adds Places) still retries it.
+                payload={
+                    "locationId": location_id,
+                    "bulk_resolver_version": IBGE_RESOLVER_VERSION if chain_complete else 0,
+                },
             )
             # TERMINAL Log-tab event alongside the poison chip. Idempotent
             # (record_event_once) so a persistently-unmatched card does not re-emit its
@@ -926,7 +1415,9 @@ class TripAdvisorAtrativosIngest:
             )
             return False
 
-        # Derive UF from the matched IBGE record — NOT from any input arg.
+        # Derive UF from the matched IBGE record — NOT from any input arg. PROVISIONAL: the
+        # geocode was by name alone (a homonym in another state is possible), so the record
+        # carries no ta_backfilled_at and backfill_record re-derives UF/município from TA geo.
         uf = ibge_match.uf
 
         # WR-01: map the camelCase card onto the snake_case keys completude expects
@@ -997,6 +1488,12 @@ class TripAdvisorAtrativosIngest:
                 "subdistrito_code": None,
             },
         }
+        if distrito is not None:  # placed by TA's cityName naming a distrito (fallback)
+            payload["canonical"].update(
+                distrito_name=distrito.nome,
+                distrito_code=distrito.distrito_code,
+                distrito_municipio_ibge=distrito.ibge_code,
+            )
 
         # Phase F: MASKED WhatsApp-candidate seam. TripAdvisor AttractionsFusion cards
         # carry NO phone (LGPD-aggregate-only lane, "NO WHATSAPP OUTREACH") so this is a
@@ -1079,14 +1576,17 @@ class TripAdvisorAtrativosIngest:
                 return True
             ingested = 0
             errors = 0
-            synced = self._already_synced(cards, run_rio=run_rio)
+            synced = self._already_synced(cards, run_rio=run_rio, bulk=True)
             for card in cards:
                 if _source_ref(card) in synced:
                     continue  # already in Brave — skip the geocode/ingest (see produce)
                 try:
-                    wrote_row = await self._ingest_one_bulk(card, run_rio=run_rio)
-                except ProviderBalanceError:
-                    raise  # a balance wall stops the run (task: progress stopped + pause), as in produce()
+                    # SAVEPOINT per card: a flush error reverts only this card, so the poison
+                    # row and the page's earlier cards survive the per-page commit.
+                    with self._session.begin_nested():
+                        wrote_row = await self._ingest_one_bulk(card, run_rio=run_rio)
+                except _PAUSE_ERRORS:
+                    raise  # stops the run (task: progress stopped + pause), as in produce()
                 except Exception as exc:  # noqa: BLE001
                     wrote_row = False
                     # Unified locationId fallback (str(... or "")) so this failure

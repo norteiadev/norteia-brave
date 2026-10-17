@@ -245,6 +245,8 @@ def engine_start(
     `depth` is the cost-checkpoint contract and is **required** — there is no
     implicit default, so the engine never silently spends.
 
+    `action: "backfill"` starts the TA backfill run (POST /api/v1/tripadvisor/backfill).
+
     `action: "describe"` (default "sweep") runs the description producer per UF
     (brave.describe_uf) instead of a sweep: no depth, no source, no TA session —
     but 409 unless the inline copywriter is actually on (real externals, description
@@ -256,8 +258,16 @@ def engine_start(
     lane = body.get("lane", "both")
 
     action = body.get("action", "sweep")
-    if action not in ("sweep", "describe"):
-        raise HTTPException(status_code=422, detail="action must be 'sweep' or 'describe'")
+    if action not in ("sweep", "describe", "backfill"):
+        raise HTTPException(
+            status_code=422, detail="action must be 'sweep', 'describe' or 'backfill'"
+        )
+    if action == "backfill":
+        # The Painel's Continuar after a backfill pause (Places key swap / budget wall):
+        # the paused run already ended, so resuming = a new backfill run, same guards.
+        from brave.api.routers.tripadvisor_session import start_backfill  # noqa: PLC0415
+
+        return start_backfill(redis=redis, db=db)
 
     if action == "describe":
         cfg = _effective_config(db, redis)

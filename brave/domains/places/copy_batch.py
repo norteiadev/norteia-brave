@@ -20,16 +20,14 @@ Everything the copywriter owns (system prompt, web_search tool dict, context bui
 dash-strip) is imported, never duplicated — the inline and batched paths must stay
 byte-identical or the two spends are not comparable.
 
-KNOWN GAP — a late description does NOT reach norteia-api on its own.
-``collect_batches`` ends exactly where the inline path ends: ``route_by_score`` and nothing
-more. It does NOT push. In this project the DLQ/steward gate is the canonical gate, and the
-only push dispatchers are the steward ``/approve`` route and the WhatsApp finalize gate;
-auto-pushing here would publish an attraction to norteia-api with zero human validation —
-including one that the newly-written description just lifted over the score threshold.
-The consequence the operator must know: a record ALREADY ACTIVE in Mar whose description
-lands afterwards keeps ``description: null`` in norteia-api until something re-pushes it
-(a steward action, or a future deliberate re-push job). This is a known gap, not a bug to be
-papered over with an automatic push.
+A late description DOES reach norteia-api, without a push from here. ``collect_batches``
+ends exactly where the inline path ends: re-score, nothing more. It never promotes — in this
+project the DLQ/steward gate is the canonical gate, and auto-promoting here would publish an
+attraction with zero human validation (including one the new description just lifted over
+the score threshold). For a record ALREADY ACTIVE in Mar, the re-score stamps
+``processed_at`` and the Mar outbox (brave.core.mar.sync / publication.publish, every 15
+min) re-derives its snapshot and pushes the description (F48) — no human gate is skipped,
+the record was validated when it was promoted.
 
 State lives in COLUMNS, not JSONB: ``rio_records.descricao_batch_id`` +
 ``descricao_batch_submitted_at`` (migration 0012). Two reasons: a JSONB stamp shares the fate
@@ -207,12 +205,26 @@ def description_candidates_filter() -> tuple[Any, ...]:
     budget included), plus the ``descricao_batch_id IS NULL`` guard — the column, not a
     JSONB key, is what makes resubmission (and therefore double spend) impossible.
     Shared by the batch submit below and the per-UF describe_uf producer.
+
+    A TripAdvisor record waits for its TA backfill (C1 ``ta_backfilled_at``): until then
+    its UF/município are the bulk's name-only guess, and a description anchored there is
+    paid for a possibly wrong place (or burns an attempt as municipio_nao_confirmado).
     """
     attempts = RioRecord.normalized["descricao_attempts"].as_integer()
     expiries = RioRecord.normalized[_EXPIRIES_KEY].as_integer()
     return (
         RioRecord.entity_type == "attraction",
         RioRecord.routing != "descarte",
+        or_(
+            ~func.coalesce(RioRecord.canonical_key, "").like("tripadvisor:attraction:%"),
+            RioRecord.normalized["ta_backfilled_at"].as_string().isnot(None),
+        ),
+        # TA put the card in another UF and nothing placed it there (ta_uf != uf): prose
+        # anchored on the stored município would describe a homonym (see ta_unplaced).
+        or_(
+            RioRecord.normalized["ta_uf"].as_string().is_(None),
+            RioRecord.normalized["ta_uf"].as_string() == RioRecord.uf,
+        ),
         RioRecord.descricao_batch_id.is_(None),
         RioRecord.normalized["name"].as_string().isnot(None),
         RioRecord.normalized["descricao_editorial"].as_string().is_(None),
@@ -395,8 +407,8 @@ def apply_result(
     are not billed by Anthropic and must not (three expiries would otherwise permanently
     exclude a record from descriptions) — they burn a bounded _EXPIRIES_KEY counter instead.
 
-    Ends at route_by_score, exactly like the inline path. It does NOT push — see the module
-    docstring for the gap that leaves.
+    Ends at the re-score, exactly like the inline path. It does NOT push — the Mar outbox
+    picks up a record already in Mar (see the module docstring).
     """
     if rio.descricao_batch_id != batch_id:
         # Already applied, or reaped and possibly resubmitted. Either way: not ours to write.
@@ -623,7 +635,7 @@ def collect_batches(
     retention, a rotated key) must not abort collection for every other batch. Progress is
     persisted per entry as it goes, never accumulated in memory to be returned at the end.
 
-    No push is dispatched from here — see the module docstring.
+    No push is dispatched from here — the Mar outbox does it (see the module docstring).
     """
     reap_stale_claims(session, client, now=now)
 

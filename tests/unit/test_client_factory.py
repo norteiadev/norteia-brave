@@ -112,6 +112,22 @@ def test_real_llm_gets_redis_session_and_lane(real_env, monkeypatch):
     assert built["redis_client"] is not None
 
 
+def test_real_places_gets_the_cost_guard_wired(real_env, monkeypatch):
+    """Without redis_client the C4 caps are a silent no-op (no check, no spend recorded)."""
+    built = {}
+    monkeypatch.setenv("BRAVE_PLACES_API_KEY", "k")
+    monkeypatch.setattr("brave.clients.places.RealPlacesClient", lambda **kw: built.update(kw) or kw)
+
+    _ = clients_for(
+        _cfg(run_real_externals=True, places_daily_usd_cap=1.5, places_total_usd_cap=42.0)
+    ).places
+
+    assert built["redis_client"] is not None
+    assert built["daily_usd_cap"] == 1.5
+    assert built["total_usd_cap"] == 42.0
+    assert built["api_key"] == "k"
+
+
 def test_context_exit_closes_only_what_it_built(real_env):
     fake_places = FakePlacesClient()
     c = Clients(

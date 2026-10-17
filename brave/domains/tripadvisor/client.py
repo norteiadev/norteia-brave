@@ -31,6 +31,7 @@ Offline usage: inject NullTripAdvisorClient or FakeTripAdvisorClient instead.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import uuid
@@ -43,7 +44,12 @@ from urllib.parse import unquote
 import httpx
 import structlog
 
-from brave.shared.exceptions import SourceSessionError
+from brave.shared.exceptions import (
+    SourceRateLimitError,
+    SourceSchemaError,
+    SourceSessionError,
+    TransientError,
+)
 
 if TYPE_CHECKING:
     from brave.config.settings import TripAdvisorConfig
@@ -106,9 +112,41 @@ _REVIEWS_QID: str = "1eeac11193438f8a"
 # listing variables (pt-BR context signals).
 _TA_ACCEPT_LANGUAGE: str = "pt-BR,pt;q=0.9,en;q=0.8"
 
+# HTTP 429 is throttling, not a dead session: retry the SAME request this many times with
+# exponential backoff (honoring Retry-After, capped), then raise SourceRateLimitError so the
+# task backs off and resumes — no needs_bootstrap, no engine OFF. A 429 that carries a
+# DataDome captcha challenge is a blocked session and stays SessionExpiredError, like 403.
+_RATE_LIMIT_RETRIES: int = 2
+_RATE_LIMIT_MAX_SLEEP_SECONDS: float = 60.0
+_RATE_LIMIT_DEFAULT_RETRY_AFTER: float = 60.0
+
+
+def _retry_after_seconds(resp: httpx.Response) -> float | None:
+    """The 429's Retry-After hint in seconds, or None (absent / HTTP-date form)."""
+    try:
+        return max(float(resp.headers.get("Retry-After", "")), 0.0)
+    except ValueError:
+        return None
+
+
+def _is_datadome_challenge(resp: httpx.Response) -> bool:
+    """A captcha wall (blocked session), not plain throttling."""
+    return "x-datadome" in resp.headers or "captcha-delivery.com" in resp.text
+
+
+def _graphql_errors(data: Any) -> list[str] | None:
+    """Messages of a GraphQL ``errors`` envelope (``[{"errors": [...]}]``), else None."""
+    first = data[0] if isinstance(data, list) and data else data
+    errors = first.get("errors") if isinstance(first, dict) else None
+    if not errors:
+        return None
+    return [str(e.get("message") if isinstance(e, dict) else e) for e in errors]
+
 
 class SessionExpiredError(SourceSessionError):
-    """Raised when a GraphQL request returns 403 or 429.
+    """Raised when a request returns 403 (or a 429 carrying a DataDome captcha).
+
+    A plain 429 is throttling → SourceRateLimitError (brave/shared/exceptions.py), never this.
 
     Indicates the DataDome session cookies have expired or the queryId has
     rotated. Operator must re-inject a fresh session.
@@ -187,6 +225,54 @@ class TripAdvisorClient:
         self._hc.cookies.clear()
         self._hc.cookies.update(cookies)
         yield self._hc
+
+    async def _send(
+        self,
+        method: str,
+        url: str,
+        cookies: dict[str, str],
+        proxy: str | None,
+        what: str,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """One TA request with the shared status handling of every transport.
+
+        403 (or a DataDome-captcha 429) → SessionExpiredError. A plain 429 is retried with
+        exponential backoff, then → SourceRateLimitError. Any other non-2xx →
+        httpx.HTTPStatusError. On 2xx the response cookies are written back AND the session
+        TTL slides even when nothing rotated, so a long sweep cannot outlive its Redis key
+        while the session is in active use.
+        """
+        from brave.domains.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
+
+        base = max(self._config.page_throttle_seconds, 1.0)
+        for attempt in range(_RATE_LIMIT_RETRIES + 1):
+            async with self._http(cookies, proxy) as hc:
+                resp = await getattr(hc, method)(url, **kwargs)
+            if resp.status_code == 429 and not _is_datadome_challenge(resp):
+                hint = _retry_after_seconds(resp)
+                if attempt < _RATE_LIMIT_RETRIES:
+                    await asyncio.sleep(
+                        min(max(hint or 0.0, base * 2**attempt), _RATE_LIMIT_MAX_SLEEP_SECONDS)
+                    )
+                    continue
+                # T-15-04-01: status/attempts only — never cookies/UA/session/proxy.
+                logger.warning("ta_rate_limited", what=what, attempts=attempt + 1)
+                raise SourceRateLimitError(
+                    f"TripAdvisor {what} returned 429 after {attempt + 1} attempts",
+                    retry_after=hint or _RATE_LIMIT_DEFAULT_RETRY_AFTER,
+                )
+            if resp.status_code in (403, 429):
+                raise SessionExpiredError(
+                    f"TripAdvisor {what} returned {resp.status_code} — "
+                    "DataDome session expired or queryId rotated. Re-inject required."
+                )
+            resp.raise_for_status()
+            # Best-effort (it already swallows internally): a write-back error never aborts.
+            with contextlib.suppress(Exception):
+                persist_rotated_cookies(self._redis, dict(resp.cookies), self._config)
+            return resp
+        raise AssertionError("unreachable")  # pragma: no cover
 
     # ------------------------------------------------------------------
     # Session management
@@ -412,7 +498,6 @@ class TripAdvisorClient:
             SessionExpiredError: On 403 or 429 HTTP status (DataDome block / rate limit).
         """
         from brave.domains.tripadvisor.geo import resolve_geo_id  # noqa: PLC0415
-        from brave.domains.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
 
         geo_id = resolve_geo_id(uf, self._redis, self._config)
         session = self._get_session()
@@ -455,30 +540,11 @@ class TripAdvisorClient:
                     "extensions": {"preRegisteredQueryId": query_id},
                 }
             ]
-            async with self._http(cookies, proxy) as hc:
-                resp = await hc.post(
-                    _TA_GRAPHQL_URL,
-                    json=payload,
-                    headers=headers,
-                )
-
-            if resp.status_code in (403, 429):
-                raise SessionExpiredError(
-                    f"TripAdvisor GraphQL returned {resp.status_code} — "
-                    "DataDome session expired or queryId rotated. Re-inject required."
-                )
-
-            resp.raise_for_status()
-            # Write-back: merge rotated cookies into Redis session (260629-p2v).
-            # Best-effort — errors must not abort the fetch (belt-and-suspenders
-            # guard in addition to persist_rotated_cookies's own internal try/except).
-            rotated = dict(resp.cookies)
-            if rotated:
-                cookies = {**cookies, **rotated}  # update local var for next page
-                try:
-                    persist_rotated_cookies(self._redis, rotated, self._config)
-                except Exception:  # noqa: BLE001
-                    pass  # persist_rotated_cookies already swallows, but guard defensively
+            resp = await self._send(
+                "post", _TA_GRAPHQL_URL, cookies, proxy, "GraphQL", json=payload, headers=headers
+            )
+            # Write-back to Redis happened in _send (260629-p2v); keep the local jar fresh.
+            cookies = {**cookies, **dict(resp.cookies)}
             data = resp.json()
             # Handle both list-wrapped and dict response shapes
             if isinstance(data, list) and data:
@@ -522,7 +588,6 @@ class TripAdvisorClient:
             SessionMissingError: When no session is in Redis (operator gate).
             SessionExpiredError: On 403 or 429 HTTP status.
         """
-        from brave.domains.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
 
         session = self._get_session()
         # T-13-01-02: qid is hardcoded — NOT read from session["query_ids"]["attractions"].
@@ -608,27 +673,9 @@ class TripAdvisorClient:
         max_retries = self._config.attractions_transient_max_retries
         for attempt in range(max_retries + 1):
             payload = _build_payload()  # regenerate pageview_uid per attempt
-            async with self._http(cookies, proxy) as hc:
-                resp = await hc.post(
-                    _TA_GRAPHQL_URL,
-                    json=payload,
-                    headers=headers,
-                )
-
-            if resp.status_code in (403, 429):
-                raise SessionExpiredError(
-                    f"TripAdvisor GraphQL returned {resp.status_code} — "
-                    "DataDome session expired or queryId rotated. Re-inject required."
-                )
-
-            resp.raise_for_status()
-            # Write-back: merge rotated cookies into Redis session (260629-p2v).
-            rotated = dict(resp.cookies)
-            if rotated:
-                try:
-                    persist_rotated_cookies(self._redis, rotated, self._config)
-                except Exception:  # noqa: BLE001
-                    pass  # best-effort guard
+            resp = await self._send(
+                "post", _TA_GRAPHQL_URL, cookies, proxy, "GraphQL", json=payload, headers=headers
+            )
             data = resp.json()
 
             # Safe extraction of Result[0] from the real response path.
@@ -683,7 +730,6 @@ class TripAdvisorClient:
             SessionMissingError: When no session is in Redis.
             SessionExpiredError: On 403 or 429 HTTP status.
         """
-        from brave.domains.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
 
         session = self._get_session()
         cookies = session.get("cookies", {})
@@ -698,19 +744,9 @@ class TripAdvisorClient:
                 "extensions": {"preRegisteredQueryId": "444040f131735091"},
             }
         ]
-        async with self._http(cookies, proxy) as hc:
-            resp = await hc.post(_TA_GRAPHQL_URL, json=payload, headers=headers)
-        if resp.status_code in (403, 429):
-            raise SessionExpiredError(
-                f"TripAdvisor detail returned {resp.status_code} — session expired."
-            )
-        resp.raise_for_status()
-        rotated = dict(resp.cookies)
-        if rotated:
-            try:
-                persist_rotated_cookies(self._redis, rotated, self._config)
-            except Exception:  # noqa: BLE001
-                pass
+        resp = await self._send(
+            "post", _TA_GRAPHQL_URL, cookies, proxy, "detail", json=payload, headers=headers
+        )
         try:
             data = resp.json()
             locations = data[0]["data"]["locations"]
@@ -738,7 +774,6 @@ class TripAdvisorClient:
             SessionMissingError: When no session is in Redis.
             SessionExpiredError: On 403 or 429 HTTP status.
         """
-        from brave.domains.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
 
         session = self._get_session()
         cookies = session.get("cookies", {})
@@ -757,41 +792,57 @@ class TripAdvisorClient:
                 "extensions": {"preRegisteredQueryId": "d3d4987463b78a39"},
             }
         ]
-        async with self._http(cookies, proxy) as hc:
-            resp = await hc.post(_TA_GRAPHQL_URL, json=payload, headers=headers)
-        if resp.status_code in (403, 429):
-            raise SessionExpiredError(
-                f"TripAdvisor geo returned {resp.status_code} — session expired."
-            )
-        resp.raise_for_status()
-        rotated = dict(resp.cookies)
-        if rotated:
-            try:
-                persist_rotated_cookies(self._redis, rotated, self._config)
-            except Exception:  # noqa: BLE001
-                pass
+        resp = await self._send(
+            "post", _TA_GRAPHQL_URL, cookies, proxy, "geo", json=payload, headers=headers
+        )
         try:
             data = resp.json()
-            loc_data = data[0]["data"]["gtmData"]["locationData"]
-            # Non-Brazil guard: filter out any non-Brazilian attraction
-            if loc_data.get("countryId") != 294280:
-                return None
-            # city_geo_id: last non-empty element in locationHierarchy path
-            hierarchy = loc_data.get("locationHierarchy", "")
-            parts = [p for p in hierarchy.split(":") if p]
-            try:
-                city_geo_id = int(parts[-1]) if parts else 0
-            except (ValueError, IndexError):
-                city_geo_id = 0
-            return {
-                "location_id": location_id,
-                "city_name": loc_data["cityName"],
-                "state_name": loc_data["stateName"],
-                "city_geo_id": city_geo_id,
-                "state_geo_id": int(loc_data["stateId"]),
-            }
-        except (IndexError, KeyError, TypeError, ValueError):
+        except ValueError:
+            data = None  # a 200 that is not JSON (challenge page, proxy error) — see below
+        errors = _graphql_errors(data)
+        if errors:
+            # A retired qid fails for EVERY attraction — systemic, not "this card has no geo".
+            logger.error("ta.geo.graphql_error", errors=errors)
+            raise SourceSchemaError(f"TripAdvisor geo query failed: {errors}")
+        try:
+            loc_data = data[0]["data"]["gtmData"]["locationData"]  # type: ignore[index]
+        except (IndexError, KeyError, TypeError):
+            loc_data = None
+        if not isinstance(loc_data, dict):
+            # Non-JSON or a renamed gtmData/locationData is a shape change that fails for
+            # EVERY card: returning None let the backfill stamp ta_backfilled_at on all of
+            # them with the bulk's provisional UF, for good. Abort instead (C1).
+            logger.error("ta.geo.schema_error", location_id=location_id)
+            raise SourceSchemaError("TripAdvisor geo query answered in an unknown shape")
+        # Non-Brazil guard: None only for a real, different integer countryId. A missing or
+        # retyped field (rename, "294280" as a string) is a shape change for EVERY card —
+        # read as "abroad" it stamped ta_backfilled_at on all of them with the bulk's
+        # provisional UF (C1). A lone odd card is skipped by the backfill, not fatal.
+        country_id = loc_data.get("countryId")
+        if not isinstance(country_id, int) or isinstance(country_id, bool):
+            logger.error("ta.geo.schema_error", location_id=location_id, field="countryId")
+            raise SourceSchemaError("TripAdvisor geo answered without an integer countryId")
+        if country_id != 294280:
             return None
+        # city_geo_id: last non-empty element in locationHierarchy path
+        hierarchy = loc_data.get("locationHierarchy") or ""
+        parts = [p for p in hierarchy.split(":") if p]
+        try:
+            city_geo_id = int(parts[-1]) if parts else 0
+        except (ValueError, IndexError):
+            city_geo_id = 0
+        try:
+            state_geo_id = int(loc_data.get("stateId") or 0)
+        except (TypeError, ValueError):
+            state_geo_id = 0
+        # cityName/stateName may legitimately be null (TA often names only a region).
+        return {
+            "location_id": location_id,
+            "city_name": loc_data.get("cityName"),
+            "state_name": loc_data.get("stateName"),
+            "city_geo_id": city_geo_id,
+            "state_geo_id": state_geo_id,
+        }
 
     async def fetch_attractions_paginated(
         self, geo_id: int, start_page: int = 1, max_pages: int = _TA_MAX_PAGE
@@ -840,8 +891,6 @@ class TripAdvisorClient:
                 f"geo_id must be an int (SSRF guard); got {type(geo_id).__name__}"
             )
 
-        from brave.domains.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
-
         session = self._get_session()
         cookies = session.get("cookies", {})
         user_agent = session.get("user_agent", "")
@@ -870,32 +919,9 @@ class TripAdvisorClient:
                 break  # defensive — clamp already guarantees this
             url = _TA_HTML_URL.format(geo_id=geo_id, offset=offset)
 
-            async with self._http(cookies, proxy) as hc:
-                resp = await hc.get(url, headers=headers)
-
-            if resp.status_code in (403, 429):
-                # T-15-04-01: log offset/status only — never cookies/UA/session/proxy.
-                logger.warning(
-                    "ta_paginated_session_expired",
-                    offset=offset,
-                    page=page,
-                    status=resp.status_code,
-                )
-                raise SessionExpiredError(
-                    f"TripAdvisor HTML returned {resp.status_code} — "
-                    "DataDome session expired or blocked. Re-inject required."
-                )
-
-            resp.raise_for_status()
-            # Write-back: merge rotated cookies into Redis session (260629-p2v).
-            # Update local cookies var so next page uses the fresh jar.
-            rotated = dict(resp.cookies)
-            if rotated:
-                cookies = {**cookies, **rotated}  # update local var for next page
-                try:
-                    persist_rotated_cookies(self._redis, rotated, self._config)
-                except Exception:  # noqa: BLE001
-                    pass  # best-effort guard
+            resp = await self._send("get", url, cookies, proxy, "HTML", headers=headers)
+            # Write-back happened in _send (260629-p2v); next page uses the fresh jar.
+            cookies = {**cookies, **dict(resp.cookies)}
             sections = self._extract_sections_from_html(resp.text)
             cards = self._parse_attractions_page(sections)
             logger.info(
@@ -938,11 +964,15 @@ class TripAdvisorClient:
 
         Yields:
             ``(offset, cards)`` per page — ``offset = (page-1)*30``, ``cards`` the
-            normalized attraction-dict list. STOPS when a page yields 0 cards.
+            normalized attraction-dict list. STOPS when a status-ok page yields 0 cards
+            or the offset reaches the reported ``totalResults``.
 
         Raises:
             SessionMissingError: When no session is in Redis (operator gate).
-            SessionExpiredError: On 403 or 429 HTTP status (no retry, stops).
+            SessionExpiredError: On 403 / DataDome-captcha 429 (no retry, stops).
+            SourceRateLimitError: On a 429 that outlived the in-client backoff.
+            SourceSchemaError: On a GraphQL ``errors`` envelope / unreadable Result.
+            TransientError: When a page keeps soft-failing (status.success == false).
             TypeError: When ``geo_id`` is not an int (raised before any POST).
         """
         # SSRF guard (mirror fetch_attractions_paginated): reject a non-int geo_id
@@ -951,8 +981,6 @@ class TripAdvisorClient:
             raise TypeError(
                 f"geo_id must be an int (SSRF guard); got {type(geo_id).__name__}"
             )
-
-        from brave.domains.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
 
         session = self._get_session()
         # session_id is a TASID cookie value — NEVER logged (T-13-01-01).
@@ -1014,43 +1042,51 @@ class TripAdvisorClient:
         start = max(1, start_page)
         last_page = min(start + max_pages, _TA_MAX_PAGE + 1)
 
+        max_retries = self._config.attractions_transient_max_retries
+        total_results: int | None = None  # TA's listing size, once a page reported it
         for page in range(start, last_page):
             offset = (page - 1) * 30
             if offset > _TA_MAX_OFFSET:
                 break  # defensive — clamp already guarantees this
+            if total_results is not None and offset >= total_results:
+                break  # past the listing's end — no request needed
 
-            payload = _build_payload(offset)
-            async with self._http(cookies, proxy) as hc:
-                resp = await hc.post(_TA_GRAPHQL_URL, json=payload, headers=headers)
-
-            if resp.status_code in (403, 429):
-                logger.warning(
-                    "ta_paginated_gql_session_expired",
-                    offset=offset,
-                    page=page,
-                    status=resp.status_code,
+            # Only a status-ok page with no cards ends the listing. A GraphQL `errors`
+            # envelope (retired qid) or an unreadable Result is systemic → SourceSchemaError;
+            # the intermittent soft-fail (200 + status.success == false, 260701-has) is retried
+            # like fetch_attractions, then → TransientError. Breaking on either used to end a
+            # 334-page bulk at page N as "done", silently dropping every page after it.
+            for attempt in range(max_retries + 1):
+                payload = _build_payload(offset)  # fresh pageviewUid per attempt
+                resp = await self._send(
+                    "post", _TA_GRAPHQL_URL, cookies, proxy, "GraphQL",
+                    json=payload, headers=headers,
                 )
-                raise SessionExpiredError(
-                    f"TripAdvisor GraphQL returned {resp.status_code} — "
-                    "DataDome session expired or queryId rotated. Re-inject required."
-                )
-
-            resp.raise_for_status()
-            # Write-back: merge rotated cookies into Redis + local jar (260629-p2v).
-            rotated = dict(resp.cookies)
-            if rotated:
-                cookies = {**cookies, **rotated}  # update local var for next page
+                # Write-back happened in _send (260629-p2v); keep the local jar fresh.
+                cookies = {**cookies, **dict(resp.cookies)}
+                data = resp.json()
+                errors = _graphql_errors(data)
+                if errors:
+                    logger.error("ta.listing.graphql_error", offset=offset, errors=errors)
+                    raise SourceSchemaError(f"TripAdvisor listing query failed: {errors}")
                 try:
-                    persist_rotated_cookies(self._redis, rotated, self._config)
-                except Exception:  # noqa: BLE001
-                    pass  # best-effort guard
-
-            data = resp.json()
-            # Same FlexCard shape as fetch_attractions — guard IndexError/KeyError/TypeError.
-            try:
-                sections = data[0]["data"]["Result"][0]["sections"] or []
-            except (IndexError, KeyError, TypeError):
-                sections = []
+                    result0 = data[0]["data"]["Result"][0]
+                except (IndexError, KeyError, TypeError) as exc:
+                    raise SourceSchemaError(
+                        f"TripAdvisor listing response has no Result (offset={offset})"
+                    ) from exc
+                status = result0.get("status") if isinstance(result0, dict) else None
+                if not (isinstance(status, dict) and status.get("success") is False):
+                    break
+                if attempt == max_retries:
+                    raise TransientError(
+                        f"TripAdvisor listing soft-failed {attempt + 1}x at offset={offset}"
+                    )
+                await asyncio.sleep(self._config.attractions_transient_retry_sleep_seconds)
+            sections = (result0.get("sections") if isinstance(result0, dict) else None) or []
+            reported_total = result0.get("totalResults") if isinstance(result0, dict) else None
+            if isinstance(reported_total, int) and reported_total > 0:
+                total_results = reported_total
             cards = self._parse_attractions_page(sections)
             logger.info(
                 "ta_paginated_gql_page",
@@ -1087,15 +1123,15 @@ class TripAdvisorClient:
 
         Returns:
             ``{"review_count": int, "rating": None, "most_recent_review_at":
-            datetime}`` on success, or ``None`` on empty reviews / any parse error
-            (never raises on data shape). A GraphQL ``errors`` envelope (e.g. a
-            retired qid → PersistedQueryNotFound) is logged as an error.
+            datetime}`` on success, or ``None`` on empty reviews / a per-card parse error.
 
         Raises:
             SessionMissingError: When no session is in Redis (operator gate).
-            SessionExpiredError: On 403 or 429 HTTP status.
+            SessionExpiredError: On 403 / DataDome-captcha 429.
+            SourceRateLimitError: On a 429 that outlived the in-client backoff.
+            SourceSchemaError: On a GraphQL ``errors`` envelope (e.g. a retired qid →
+                PersistedQueryNotFound) or a response without ``data`` — systemic.
         """
-        from brave.domains.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
 
         session = self._get_session()
         cookies = session.get("cookies", {})
@@ -1120,36 +1156,37 @@ class TripAdvisorClient:
                 "extensions": {"preRegisteredQueryId": _REVIEWS_QID},
             }
         ]
-        async with self._http(cookies, proxy) as hc:
-            resp = await hc.post(_TA_GRAPHQL_URL, json=payload, headers=headers)
-
-        if resp.status_code in (403, 429):
-            raise SessionExpiredError(
-                f"TripAdvisor reviews returned {resp.status_code} — session expired."
-            )
-        resp.raise_for_status()
-        rotated = dict(resp.cookies)
-        if rotated:
-            try:
-                persist_rotated_cookies(self._redis, rotated, self._config)
-            except Exception:  # noqa: BLE001
-                pass  # best-effort guard
+        resp = await self._send(
+            "post", _TA_GRAPHQL_URL, cookies, proxy, "reviews", json=payload, headers=headers
+        )
 
         try:
             data = resp.json()
-            errors = data[0].get("errors")
-            if errors:
-                # A retired qid fails here for EVERY card — make it loud, not a silent None.
-                logger.error(
-                    "ta.reviews.graphql_error",
-                    qid=_REVIEWS_QID,
-                    errors=[e.get("message") for e in errors],
-                )
-                return None
+        except ValueError:
+            data = None  # a non-JSON 200 is no answer either: abort, never "no reviews"
+        errors = _graphql_errors(data)
+        if errors or not (isinstance(data, list) and data and isinstance(data[0], dict)
+                          and "data" in data[0]):
+            # A retired qid / schema change fails for EVERY card. Returning None stored each
+            # record with no recency for good (the record looked synced) — abort instead.
+            logger.error("ta.reviews.graphql_error", qid=_REVIEWS_QID, errors=errors)
+            raise SourceSchemaError(f"TripAdvisor reviews query failed (qid {_REVIEWS_QID})")
+        try:
             result = data[0]["data"]["ReviewsProxy_getPublishedReviewsForLocation"][0]["result"]
             reviews = result["reviews"]
-            if not reviews:
-                return None
+        except (IndexError, KeyError, TypeError):
+            reviews = None
+        if not isinstance(reviews, list):
+            # A renamed operation/result/reviews answers like "no reviews" for EVERY card:
+            # each record was stamped TA-complete with no recency (C1). Only an explicit
+            # empty list is "conclusively none".
+            logger.error("ta.reviews.schema_error", qid=_REVIEWS_QID, location_id=location_id)
+            raise SourceSchemaError(
+                f"TripAdvisor reviews answered in an unknown shape (qid {_REVIEWS_QID})"
+            )
+        if not reviews:
+            return None
+        try:
             # LGPD: touch ONLY submittedDateTime (+ totalCount) — no PII fields.
             most_recent_at = datetime.fromisoformat(
                 reviews[0]["submittedDateTime"].replace("Z", "+00:00")

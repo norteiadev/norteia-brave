@@ -5,8 +5,8 @@ Covers:
   - on-read window aggregation (_window_counts): synced from Mar, failed from
     Rio dlq/descarte + PoisonQuarantine.
   - list_runs envelope shape is exact + uf is filtered over the JSON ufs array.
-  - reprocess_run re-dispatches the scope via the offline inline fallback (broker
-    down → task.run inline) without raising, audits, and 404s on an unknown run.
+  - reprocess_run starts a NEW engine run with the run's depth/lane/source/cap (409
+    while a run is active), audits, and 404s on an unknown run.
 """
 
 from __future__ import annotations
@@ -138,65 +138,65 @@ def test_list_runs_paginates_after_uf_filter():
 
 
 # ---------------------------------------------------------------------------
-# reprocess_run — offline inline fallback + audit + 404
+# reprocess_run — a NEW engine run with the original scope (F14) + audit + 404
 # ---------------------------------------------------------------------------
 
 
-class _BrokerDownTask:
-    """A producer task whose .delay() fails (no broker) so _dispatch runs inline."""
-
-    def __init__(self):
-        self.ran: list[str] = []
-
-    def delay(self, uf):
-        raise RuntimeError("broker unavailable")
-
-    def run(self, uf):
-        self.ran.append(uf)
-
-
-def test_reprocess_default_source_runs_inline(monkeypatch):
-    """reprocess for a default-source run dispatches discover inline (no raise).
-
-    The Mtur destino seed is retired — the destinos lane has no producer, so only
-    discover_atrativo_task re-dispatches for the default (Places) source.
-    """
+@pytest.fixture
+def engine_calls(monkeypatch):
+    """Capture engine_sweep_run.delay; enabled sources = both lanes."""
+    from brave.config import runtime
+    from brave.config.settings import AppConfig
     from brave.tasks import pipeline
 
-    discover = _BrokerDownTask()
-    monkeypatch.setattr(pipeline, "discover_atrativo_task", discover)
+    calls: list[dict] = []
+    monkeypatch.setattr(pipeline.engine_sweep_run, "delay", lambda **kw: calls.append(kw))
+    cfg = AppConfig(sources={"default": True, "tripadvisor": True})
+    monkeypatch.setattr(runtime, "load_effective_config", lambda session, redis=None: cfg)
+    return calls
 
+
+def test_reprocess_keeps_depth_cap_and_gets_a_run_id(engine_calls):
+    """A capped nascente TA test run is reprocessed as exactly that — not a full sweep
+    with paid Places per card (the old loose .delay(uf) dropped depth/cap/run_id)."""
+    import fakeredis
+
+    from brave.core import engine as collection_engine
+
+    rc = fakeredis.FakeRedis()
     db = MagicMock()
-    run = _run(ufs=["BA", "SE"], source="default", lane="both")
+    run = _run(ufs=["BA", "SE"], source="tripadvisor", depth="nascente", lane="atrativos")
+    run.max_per_uf = 5
     db.get.return_value = run
 
-    result = runs_router.reprocess_run(run_id=run.id, db=db)
+    result = runs_router.reprocess_run(run_id=run.id, db=db, redis=rc)
 
     assert result["status"] == "accepted"
-    assert result["ufs"] == ["BA", "SE"]
-    # the atrativos producer ran inline for each UF
-    assert discover.ran == ["BA", "SE"]
-    # audited + committed
-    db.commit.assert_called()
+    assert engine_calls == [{
+        "ufs": ["BA", "SE"], "lane": "atrativos", "run_id": result["new_run_id"],
+        "max_per_uf": 5, "depth": "nascente", "source": "tripadvisor",
+    }]
+    assert collection_engine.get_status(rc)["state"] == "running"
+    db.commit.assert_called()  # audited
 
 
-def test_reprocess_tripadvisor_source_runs_inline(monkeypatch):
-    """reprocess for a tripadvisor run dispatches sweep_tripadvisor inline only."""
-    from brave.tasks import pipeline
+def test_reprocess_while_a_run_is_active_is_409(engine_calls):
+    import fakeredis
 
-    ta = _BrokerDownTask()
-    discover = _BrokerDownTask()
-    monkeypatch.setattr(pipeline, "sweep_tripadvisor", ta)
-    monkeypatch.setattr(pipeline, "discover_atrativo_task", discover)
+    from brave.core import engine as collection_engine
 
+    rc = fakeredis.FakeRedis()
+    collection_engine.start(
+        rc, None, action="sweep", depth="nascente_rio", source="tripadvisor",
+        ufs=["SP"], lane="atrativos",
+    )
     db = MagicMock()
-    run = _run(ufs=["BA"], source="tripadvisor", lane="both")
-    db.get.return_value = run
+    db.get.return_value = _run(source="tripadvisor")
 
-    result = runs_router.reprocess_run(run_id=run.id, db=db)
-    assert result["status"] == "accepted"
-    assert ta.ran == ["BA"]
-    assert discover.ran == []  # default-lane producers not used for TA source
+    with pytest.raises(Exception) as exc:
+        runs_router.reprocess_run(run_id=uuid.uuid4(), db=db, redis=rc)
+    assert getattr(exc.value, "status_code", None) == 409
+    assert engine_calls == []
 
 
 def test_reprocess_unknown_run_404():
@@ -204,24 +204,21 @@ def test_reprocess_unknown_run_404():
     db = MagicMock()
     db.get.return_value = None
     with pytest.raises(Exception) as exc:
-        runs_router.reprocess_run(run_id=uuid.uuid4(), db=db)
+        runs_router.reprocess_run(run_id=uuid.uuid4(), db=db, redis=MagicMock())
     assert getattr(exc.value, "status_code", None) == 404
 
 
-def test_reprocess_descricao_source_redescribes_inline(monkeypatch):
-    """reprocess for a describe run re-dispatches describe_uf, never Places discovery."""
-    from brave.tasks import pipeline
-
-    describe = _BrokerDownTask()
-    discover = _BrokerDownTask()
-    monkeypatch.setattr(pipeline, "describe_uf", describe)
-    monkeypatch.setattr(pipeline, "discover_atrativo_task", discover)
+def test_reprocess_descricao_source_redescribes(engine_calls):
+    """A describe run re-describes (action=describe), never the Places discovery lane."""
+    import fakeredis
 
     db = MagicMock()
     run = _run(ufs=["SP"], source="descricao", depth="descricao", lane="atrativos")
+    run.max_per_uf = None
     db.get.return_value = run
 
-    result = runs_router.reprocess_run(run_id=run.id, db=db)
-    assert result["status"] == "accepted"
-    assert describe.ran == ["SP"]
-    assert discover.ran == []
+    result = runs_router.reprocess_run(run_id=run.id, db=db, redis=fakeredis.FakeRedis())
+    assert engine_calls == [{
+        "ufs": ["SP"], "lane": "atrativos", "run_id": result["new_run_id"],
+        "max_per_uf": None, "action": "describe",
+    }]

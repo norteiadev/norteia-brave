@@ -732,6 +732,68 @@ describe("PainelTopbar", () => {
       );
     });
 
+    it("Continuar resumes a paused backfill (Places key swapped)", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      let startBody: unknown = null;
+      server.use(
+        engineStatus({
+          mode: "PAUSADO",
+          pause_reason: { reason: "provider_balance", provider: "google_places", action: "backfill", at: "2026-10-17T00:00:00Z" },
+        }),
+        taSessionStatus(),
+        http.post(START_URL, async ({ request }) => {
+          startBody = await request.json();
+          return HttpResponse.json({ status: "started", run_id: "r1" }, { status: 202 });
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      await user.click(await screen.findByTestId("painel-pause-continuar"));
+
+      await waitFor(() => expect(startBody).toEqual({ action: "backfill" }));
+    });
+
+    it("Continuar after a manual pause mid-backfill restarts the backfill", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      let startBody: unknown = null;
+      server.use(
+        engineStatus({
+          mode: "PAUSADO",
+          pause_reason: { reason: "manual", provider: null, action: "backfill", at: "2026-10-17T00:00:00Z" },
+        }),
+        taSessionStatus(),
+        http.post(START_URL, async ({ request }) => {
+          startBody = await request.json();
+          return HttpResponse.json({ status: "started", run_id: "r1" }, { status: 202 });
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      expect(await screen.findByTestId("painel-pause-banner")).toHaveTextContent(
+        "Motor pausado: backfill interrompido",
+      );
+      await user.click(screen.getByTestId("painel-pause-continuar"));
+      await waitFor(() => expect(startBody).toEqual({ action: "backfill" }));
+    });
+
+    it("Continuar after a Places wall tells the operator to recreate the worker", async () => {
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+      server.use(
+        engineStatus({
+          mode: "PAUSADO",
+          pause_reason: { reason: "provider_balance", provider: "google_places", action: "backfill", at: "2026-10-17T00:00:00Z" },
+        }),
+        taSessionStatus(),
+      );
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      await user.click(await screen.findByTestId("painel-pause-continuar"));
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("docker compose up -d worker api"));
+    });
+
     it("Continuar resumes a paused sweep with the last-known depth", async () => {
       vi.spyOn(window, "confirm").mockReturnValue(true);
       let startBody: unknown = null;

@@ -29,7 +29,7 @@ nativo** (mais rápido pra debug, exige Python/Node instalados).
 ### Docker (recomendado para o time)
 
 Sobe a stack inteira — Postgres (pgvector) + Redis + API + worker + beat + dashboard. Um dev
-novo precisa **só do Docker** instalado. Código é bind-mount com hot-reload (edite → recarrega).
+novo precisa **só do Docker** instalado. Código é bind-mount com hot-reload (edite → recarrega); o worker Celery só recarrega com `BRAVE_WORKER_RELOAD=1` (padrão: celery puro, warm shutdown preserva tasks em voo).
 
 ```bash
 docker compose up            # sobe tudo (migrations + seed rodam antes via serviço `migrate`)
@@ -44,6 +44,11 @@ docker compose down          # para (mantém dados);  down -v também apaga os v
 - Portas configuráveis: `BRAVE_API_PORT`, `BRAVE_DASH_PORT`, `BRAVE_PG_PORT`, `BRAVE_REDIS_PORT`
   (útil se já houver Postgres/Redis no host — ex.: `BRAVE_PG_PORT=5433 docker compose up`).
 - Reset da base no Docker: `docker compose exec api /app/.venv/bin/python .claude/skills/reset-brave-db/scripts/reset_db.py --yes`
+- Trocar a chave Google Places (crédito esgotado → backfill pausado `provider_balance`): edite
+  `BRAVE_PLACES_API_KEY` no `.env` e **recrie** os containers — `docker compose up -d worker api`.
+  `docker compose restart` não relê o `env_file`: o worker segue na chave velha e re-pausa na hora.
+  Confira em `GET /api/v1/tripadvisor/backfill/progress` (`places_key_id` do worker) contra
+  `GET /api/v1/cost` (`places.key_id` da API) e só então clique Continuar.
 
 ### Host nativo
 
