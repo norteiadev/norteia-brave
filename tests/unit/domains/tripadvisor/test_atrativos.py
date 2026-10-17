@@ -774,8 +774,9 @@ class TestAtrativosReviewEnrichment:
     async def test_enrich_reviews_true_populates_atualidade(self) -> None:
         """enrich_reviews=True → most_recent_review_at from fetch_recent_review; atualidade > 0.
 
-        The recency container also overrides the card's review_count/rating with the
-        precise totalCount/rating from the reviews query.
+        The recency container overrides the card's review_count with the precise
+        totalCount; its rating is None (per-review stars, not the aggregate), so the
+        card's aggregate rating survives.
         """
         from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
@@ -787,7 +788,7 @@ class TestAtrativosReviewEnrichment:
             recent={
                 loc_id: {
                     "review_count": 321,
-                    "rating": 4.6,
+                    "rating": None,
                     "most_recent_review_at": recent_dt,
                 }
             },
@@ -817,9 +818,9 @@ class TestAtrativosReviewEnrichment:
             f"atualidade must lift from the fetched recency (≤30d → 100.0); "
             f"got {payload.get('atualidade_value')}"
         )
-        # Precise review container overrides the card aggregate.
+        # Precise totalCount overrides the card count; the card's aggregate rating stays.
         assert payload["review_count"] == 321
-        assert payload["rating"] == 4.6
+        assert payload["rating"] == 4.0
 
     @pytest.mark.asyncio
     async def test_enrich_reviews_false_leaves_atualidade_zero(self) -> None:

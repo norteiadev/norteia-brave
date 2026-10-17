@@ -265,20 +265,22 @@ class TripAdvisorClientProtocol(Protocol):
         ...
 
     async def fetch_recent_review(self, location_id: int) -> dict | None:
-        """Fetch review recency for one attraction (qid ef1a9f94012220d3).
+        """Fetch review recency for one attraction (qid 1eeac11193438f8a).
 
-        Powers ``atualidade_from_recency`` plus a precise corroboração count/rating.
-        Reviews are newest-first (SERVER_DETERMINED), so ``reviews[0]`` is newest.
+        Powers ``atualidade_from_recency`` plus a precise corroboração count.
+        ``sortBy=MOST_RECENT``, all languages, so ``reviews[0]`` is newest.
 
-        LGPD: reads ONLY ``totalCount`` + ``reviews[0].publishedDate`` +
-        ``reviews[0].rating`` — never review text/title/username/userProfile/photos.
+        LGPD: reads ONLY ``totalCount`` + ``reviews[0].submittedDateTime`` —
+        never review text/title/username/userProfile/photos.
 
         Args:
             location_id: TripAdvisor integer locationId.
 
         Returns:
-            ``{"review_count": int, "rating": float | None, "most_recent_review_at":
-            datetime}`` on success, or ``None`` on empty reviews / any parse error.
+            ``{"review_count": int, "rating": None, "most_recent_review_at":
+            datetime}`` on success (rating is None — the only one available is the
+            newest review's own stars, not the aggregate), or ``None`` on empty
+            reviews / any parse error.
 
         Raises:
             SessionMissingError: When no session is in Redis (real client).

@@ -1726,7 +1726,7 @@ class TestFetchAttractionsPaginatedGql:
 
 
 # ---------------------------------------------------------------------------
-# TestFetchRecentReview — review recency (qid ef1a9f94012220d3), reliability + LGPD
+# TestFetchRecentReview — review recency (qid 1eeac11193438f8a), reliability + LGPD
 # ---------------------------------------------------------------------------
 
 
@@ -1737,28 +1737,32 @@ class TestFetchRecentReview:
     def _review_response(
         *,
         total_count: int = 1234,
-        rating=5,
-        published_date: str = "2026-06-15",
+        submitted: str = "2026-06-15T18:47:52.277Z",
     ) -> list:
-        """Build a review-list envelope with newest-first reviews[0] + PII decoys."""
+        """Build a getPublishedReviewsForLocation envelope with newest reviews[0] + PII decoys."""
         return [
             {
                 "data": {
-                    "ReviewsProxy_getReviewListPageForLocation": [
+                    "ReviewsProxy_getPublishedReviewsForLocation": [
                         {
-                            "totalCount": total_count,
-                            "reviews": [
-                                {
-                                    "rating": rating,
-                                    "publishedDate": published_date,
-                                    # PII decoys — MUST NOT be read/returned (LGPD).
-                                    "text": "SECRET_REVIEW_BODY",
-                                    "title": "SECRET_TITLE",
-                                    "username": "SECRET_USER",
-                                    "userProfile": {"userId": "SECRET_UID"},
-                                    "photoIds": [1, 2, 3],
-                                }
-                            ],
+                            "error": None,
+                            "result": {
+                                "totalCount": total_count,
+                                "sortBy": "MOST_RECENT",
+                                "reviews": [
+                                    {
+                                        "rating": 5,
+                                        "submittedDateTime": submitted,
+                                        # PII decoys — MUST NOT be read/returned (LGPD).
+                                        "text": "SECRET_REVIEW_BODY",
+                                        "title": "SECRET_TITLE",
+                                        "userProfile": {
+                                            "userId": "SECRET_UID",
+                                            "username": "SECRET_USER",
+                                        },
+                                    }
+                                ],
+                            },
                         }
                     ]
                 }
@@ -1797,14 +1801,19 @@ class TestFetchRecentReview:
             )
             result = await client.fetch_recent_review(312332)
 
+        # rating None: the per-review stars are not the aggregate (card keeps its own).
         assert result == {
             "review_count": 1234,
-            "rating": 5.0,
-            "most_recent_review_at": datetime(2026, 6, 15, tzinfo=UTC),
+            "rating": None,
+            "most_recent_review_at": datetime(2026, 6, 15, 18, 47, 52, 277000, tzinfo=UTC),
         }
-        assert captured_body[0]["extensions"]["preRegisteredQueryId"] == "ef1a9f94012220d3"
-        assert captured_body[0]["variables"]["locationId"] == 312332
-        assert captured_body[0]["variables"]["limit"] == 1
+        assert captured_body[0]["extensions"]["preRegisteredQueryId"] == "1eeac11193438f8a"
+        variables = captured_body[0]["variables"]
+        assert variables["locationId"] == 312332
+        assert variables["limit"] == 1
+        # Newest-first in ANY language: MOST_RECENT, no language filter.
+        assert variables["sortBy"] == "MOST_RECENT"
+        assert "filterOptions" not in variables
 
     @pytest.mark.asyncio
     async def test_result_contains_no_pii_keys_or_values(self, monkeypatch):
@@ -1849,9 +1858,8 @@ class TestFetchRecentReview:
             client, "_get_session", lambda: {"cookies": {"datadome": "abc"}, "user_agent": ""}
         )
 
-        empty = [
-            {"data": {"ReviewsProxy_getReviewListPageForLocation": [{"totalCount": 0, "reviews": []}]}}
-        ]
+        empty = self._review_response(total_count=0)
+        empty[0]["data"]["ReviewsProxy_getPublishedReviewsForLocation"][0]["result"]["reviews"] = []
 
         with respx.mock:
             respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
@@ -1883,6 +1891,34 @@ class TestFetchRecentReview:
             result = await client.fetch_recent_review(999)
 
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_graphql_errors_envelope_logs_error_and_returns_none(self, monkeypatch):
+        """A retired qid (PersistedQueryNotFound) → None AND an error log, not a silent miss."""
+        import fakeredis
+        from structlog.testing import capture_logs
+
+        from brave.config.settings import AppConfig
+        from brave.domains.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        client = TripAdvisorClient(config=config, redis=fakeredis.FakeRedis())
+        monkeypatch.setattr(
+            client, "_get_session", lambda: {"cookies": {"datadome": "abc"}, "user_agent": ""}
+        )
+
+        with respx.mock, capture_logs() as logs:
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
+                return_value=httpx.Response(
+                    200, json=[{"errors": [{"message": "PersistedQueryNotFound"}]}]
+                )
+            )
+            result = await client.fetch_recent_review(312332)
+
+        assert result is None
+        errors = [e for e in logs if e["event"] == "ta.reviews.graphql_error"]
+        assert errors and errors[0]["log_level"] == "error"
+        assert errors[0]["errors"] == ["PersistedQueryNotFound"]
 
     @pytest.mark.asyncio
     async def test_403_raises_session_expired(self, monkeypatch):
