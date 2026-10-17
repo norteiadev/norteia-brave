@@ -1188,6 +1188,96 @@ def enrich_places_task(self, rio_id: str) -> None:
         session.close()
 
 
+# Refresh before the 90-day Mar window closes on the newest review we last saw.
+_PLACES_REFRESH_AFTER_DAYS = 60
+
+
+def _places_refresh_due(session: Session, limit: int) -> list[uuid.UUID]:
+    """Atrativos with a cached place_id whose Places data is older than the refresh window,
+    oldest first. Never-stamped records (enriched before the stamp existed) age by
+    processed_at, so a just-enriched one is not re-billed. Descarte is never refreshed."""
+    from datetime import datetime, timedelta  # noqa: PLC0415
+
+    from sqlalchemy import and_, or_  # noqa: PLC0415
+
+    cutoff = datetime.now(UTC) - timedelta(days=_PLACES_REFRESH_AFTER_DAYS)
+    stamp = RioRecord.normalized["places_refreshed_at"].as_string()
+    stmt = (
+        select(RioRecord.id)
+        .where(
+            RioRecord.entity_type == "attraction",
+            RioRecord.routing.in_(("mar", "dlq")),
+            RioRecord.normalized["place_id_cache"].as_string().is_not(None),
+            or_(
+                stamp < cutoff.isoformat(),
+                and_(stamp.is_(None), RioRecord.processed_at < cutoff),
+            ),
+        )
+        .order_by(stamp.asc().nulls_first(), RioRecord.processed_at.asc())
+        .limit(limit)
+    )
+    return list(session.scalars(stmt).all())
+
+
+@shared_task(name="brave.refresh_places", time_limit=1800)
+def refresh_places() -> int:
+    """Beat (daily): re-fetch Place Details for atrativos whose Google data is aging.
+
+    One Details call per record off place_id_cache — never a Text Search. Hours,
+    business_status and most_recent_review_at are rewritten and the record re-scored, so a
+    record held by the 90-day backstop can become promotable again, and CLOSED_* goes to
+    descarte. A record already in Mar has its Mar row superseded with the fresh data and
+    re-published (an unchanged payload is skipped by publish). A record that leaves Mar's
+    routing keeps its Mar row: there is no unpublish path.
+
+    No-op while externals or Places enrichment are off. A balance wall stops the run.
+    """
+    from brave.core.mar.service import promote_to_mar  # noqa: PLC0415
+    from brave.core.models import MarRecord  # noqa: PLC0415
+    from brave.shared.exceptions import ProviderBalanceError  # noqa: PLC0415
+
+    session, _ = _get_session()
+    refreshed = 0
+    try:
+        ctx = _enrich_ctx(session)
+        effective = ctx.effective
+        limit = effective.places_refresh_daily_limit
+        if not (effective.run_real_externals and effective.places_enrichment_enabled and limit > 0):
+            return 0
+        for rio_id in _places_refresh_due(session, limit):
+            try:
+                rio = session.get(RioRecord, rio_id, with_for_update=True)
+                if rio is None:
+                    continue
+                clients = clients_for(effective, ibge_lookup=ctx.ibge_lookup)
+                agent = _enrich_agent(session, ctx, clients, str(rio_id))
+                asyncio.run(_using(clients, agent.run(rio, refresh=True)))
+                in_mar = session.scalar(
+                    select(MarRecord.id).where(
+                        MarRecord.rio_id == rio_id, MarRecord.superseded_by_id.is_(None)
+                    )
+                )
+                republish = bool(in_mar and rio.routing == "mar" and promote_to_mar(session, rio))
+                session.commit()
+                refreshed += 1
+                if republish:
+                    _dispatch_chain(publish_mar, str(rio_id))
+            except ProviderBalanceError:
+                session.rollback()
+                raise
+            except Exception as exc:  # noqa: BLE001 — one bad record never aborts the run
+                session.rollback()
+                logger.warning("places_refresh_record_failed", rio_id=str(rio_id), error=str(exc))
+    except Exception as exc:
+        _beat_health("brave.refresh_places", exc)
+        raise
+    finally:
+        session.close()
+    _beat_health("brave.refresh_places")
+    logger.info("places_refresh_done", refreshed=refreshed)
+    return refreshed
+
+
 # Places chain: the task that moves a record OUT of each sub_state. Only `discovered` has
 # another way back in (the daily discover re-query); a record left at contacts_found or
 # signals_gathered by a failed .delay or an exhausted task waits here for the sweeper.

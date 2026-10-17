@@ -363,10 +363,14 @@ class PlacesEnrichmentAgent:
         self,
         rio: RioRecord,
         description: tuple[str | None, CascadeResult | None, bool] | None = None,
+        *,
+        refresh: bool = False,
     ) -> None:
         """Enrich one atrativo with Google Places signals (hours + review liveness).
 
         ``description`` is an already-fetched write_description() result; None → fetch here.
+        ``refresh`` re-runs the PAID sub-step on an already-enriched record (brave.refresh_places):
+        with place_id_cache set that is one Place Details call, never a Text Search.
 
         Runs for a TA atrativo REGARDLESS of routing — a dlq'd record (TA scores
         ~55 < 80 and only reaches Mar via steward validation) still gets Google hours,
@@ -396,7 +400,7 @@ class PlacesEnrichmentAgent:
         # empty → the copywriter grounds on web_search alone). wants_description
         # mirrors the description sub-step's own condition below.
         normalized = rio.normalized or {}
-        places_done = bool(
+        places_done = not refresh and bool(
             normalized.get("google_enriched")
             or (normalized.get("place_id_cache") and normalized.get("weekday_text"))
         )
@@ -455,6 +459,9 @@ class PlacesEnrichmentAgent:
                     if match is not None:
                         place_id = match.get("place_id") or ""
                 if place_id:
+                    # Stamped on the attempt, not the success: a place Google no longer
+                    # serves must not be re-billed by every daily refresh.
+                    new_normalized["places_refreshed_at"] = ref_date.isoformat()
                     details = await self._places_client.place_details(place_id)
             except ProviderBalanceError:
                 raise
