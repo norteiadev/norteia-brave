@@ -134,7 +134,7 @@ _MOVED_STALE_KEYS = (
     "place_id_cache", "google_place_id", "distrito_name", "distrito_code",
     "distrito_municipio_ibge", "weekday_text", "phone", "website", "address", "price_level",
     "signal", "google_fetched_at", "most_recent_review_at", "descricao_editorial",
-    "descricao_rascunho", "descricao_gate", "descricao_groundedness",
+    "descricao_rascunho", "descricao_gate", "descricao_groundedness", "descricao_verificacao",
 )
 
 logger = structlog.get_logger(__name__)

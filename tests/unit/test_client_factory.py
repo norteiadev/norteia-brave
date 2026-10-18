@@ -77,6 +77,7 @@ def test_externals_on_missing_key_raises(real_env, monkeypatch):
             run_real_externals=True,
             atrativo_description_cascade_enabled=True,
             atrativo_cascade_model="deepseek/deepseek-chat",
+            atrativo_verifier_model="deepseek/deepseek-chat",
             parallel_api_key="",
         )
     )
@@ -98,6 +99,24 @@ def test_gemini_model_without_price_is_refused(real_env):
     assert c.check_search() == "cascade model 'gemini-0-unpriced' has no Gemini price"
     with pytest.raises(RuntimeError, match="no Gemini price"):
         c.search()
+
+
+def test_verifier_model_is_checked_like_the_cascade_model(real_env):
+    """An unusable verifier model would fail every written text — refused at build, even
+    with the env flag off (the Painel overlay can switch the verifier on)."""
+    cfg = dict(
+        run_real_externals=True,
+        atrativo_description_cascade_enabled=True,
+        atrativo_cascade_model="gemini-2.5-flash",
+        atrativo_verifier_model="gemini-0-unpriced",
+        parallel_api_key="k",
+        llm=LLMConfig(openrouter_api_key="or", gemini_api_key="g"),
+    )
+    assert clients_for(_cfg(**cfg)).check_search() == (
+        "verifier model 'gemini-0-unpriced' has no Gemini price"
+    )
+    off = clients_for(_cfg(**cfg, atrativo_description_verifier_enabled=False))
+    assert off.check_search() == "verifier model 'gemini-0-unpriced' has no Gemini price"
 
 
 def test_real_llm_gets_redis_session_and_lane(real_env, monkeypatch):
@@ -148,6 +167,7 @@ def test_context_exit_closes_only_what_it_built(real_env):
             run_real_externals=True,
             atrativo_description_cascade_enabled=True,
             atrativo_cascade_model="deepseek/deepseek-chat",
+            atrativo_verifier_model="deepseek/deepseek-chat",
             parallel_api_key="k",
         ),
         places=fake_places,

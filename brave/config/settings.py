@@ -505,6 +505,18 @@ class AppConfig(BaseSettings):
     # so "google/gemini-2.5-flash" is the rollback without a deploy. Env-only.
     atrativo_cascade_model: str = "gemini-2.5-flash"
 
+    # atrativo_description_verifier_enabled adds the post-write verifier to the CASCADE
+    # copywriter (brave.domains.places.verifier, rubric CF v1.2 in
+    # docs/copywriter-verificacao.md): one more model call per written text labels each claim
+    # against the sources; REPROVA parks the draft in the DLQ (descricao_nao_fundamentada),
+    # CORRIGE drops the flagged sentences and re-verifies once. No effect in web_search mode
+    # nor on the batch lane. Overlay key ``atrativo_description_verifier_enabled``
+    # (brave.config.runtime). Default on.
+    atrativo_description_verifier_enabled: bool = True
+    # ATRATIVO_VERIFIER_MODEL — the verifier's slug; same routing rules as the cascade model
+    # (bare "gemini-*" → AI Studio direct, "vendor/model" → OpenRouter). Env-only.
+    atrativo_verifier_model: str = "gemini-2.5-flash"
+
     # places_match_max_distance_km: Text-Search match radius (km) between the atrativo's
     # coordinates and a candidate Google place. The name threshold (rapidfuzz ≥85) is the
     # PRIMARY guard; this only disambiguates + rejects a gross wrong-city match. Kept

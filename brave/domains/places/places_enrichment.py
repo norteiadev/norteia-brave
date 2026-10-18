@@ -75,6 +75,7 @@ from brave.domains.places.signal_agent import (
     _is_recent_review,
     _merged_recency,
 )
+from brave.domains.places.verifier import AtrativoVerifier
 from brave.observability.audit import write_audit
 from brave.observability.record_events import record_event
 from brave.shared.exceptions import CostGuardError, ProviderBalanceError
@@ -103,6 +104,12 @@ logger = structlog.get_logger(__name__)
 
 # Never swallowed by the "a Places defect keeps the TA floor" catch-alls: each one means
 # "stop and pause the caller", not "this record had no Google data".
+# CascadeResult.motivo values that ARE a verdict on the description (vs. a transient failure:
+# None without prose, "verificacao_falhou").
+_CASCADE_VERDICTS = frozenset(
+    {"sem_mencao", "municipio_nao_confirmado", "nao_fundamentada", "nao_verificada"}
+)
+
 _PROPAGATE: tuple[type[BaseException], ...] = (
     ProviderBalanceError,
     CostGuardError,
@@ -260,6 +267,9 @@ class PlacesEnrichmentAgent:
                             mention + groundedness gates) instead of Sonnet + web_search.
                             atrativo_description_cascade_enabled. None → web_search mode.
         cascade_model:      Writer slug in cascade mode (atrativo_cascade_model).
+        verifier_llm_client: LLMClientProtocol for the post-write verifier (cascade mode only;
+                            atrativo_description_verifier_enabled). None → no verifier.
+        verifier_model:     Verifier slug (atrativo_verifier_model).
         now:                Injectable reference clock (atualidade / recency). None → now.
         max_distance_km:    Text-Search match radius in km (places_match_max_distance_km).
     """
@@ -278,6 +288,8 @@ class PlacesEnrichmentAgent:
         max_distance_km: float = 20.0,
         search_client: Any = None,
         cascade_model: str = CASCADE_MODEL,
+        verifier_llm_client: LLMClientProtocol | None = None,
+        verifier_model: str = CASCADE_MODEL,
     ) -> None:
         self._places_client = places_client
         self._session = session
@@ -293,6 +305,11 @@ class PlacesEnrichmentAgent:
                 model=cascade_model if search_client is not None else voice_model_slug,
                 enable_web_search=enable_web_search,
                 search_client=search_client,
+                verifier=(
+                    AtrativoVerifier(verifier_llm_client, verifier_model)
+                    if verifier_llm_client is not None and search_client is not None
+                    else None
+                ),
             )
             if llm_client is not None
             else None
@@ -717,6 +734,7 @@ class PlacesEnrichmentAgent:
         # Same predicate as the Step-1 gate (routing + attempt budget included) — the two
         # conditions MUST agree, so this branch reuses it instead of restating it.
         cascade: CascadeResult | None = None
+        judged = False  # see below: the cascade reached a verdict on the description
         if wants_description and self._copywriter is not None:
             if description is None:
                 description = await self.write_description(
@@ -762,7 +780,13 @@ class PlacesEnrichmentAgent:
                 # _MAX_DESCRIPTION_ATTEMPTS the record stops re-entering the pass (see the
                 # constant for why this is a count, not a flag).
                 new_normalized["descricao_attempts"] = attempts + 1
-            if cascade is not None:
+            # A pass that reached a verdict on the description. A transient failure (search
+            # or writer error, verifier failure) judged nothing: it must neither release a
+            # sticky description verdict nor wipe the steward's draft from an earlier pass.
+            judged = cascade is not None and (
+                cascade.prose is not None or cascade.motivo in _CASCADE_VERDICTS
+            )
+            if judged:
                 # Gate verdicts are board-only (excluded from the Mar canonical). A gated pass
                 # burns an attempt like any spend without prose — the search was paid — so a
                 # record the index does not cover stops re-searching after
@@ -771,6 +795,7 @@ class PlacesEnrichmentAgent:
                 new_normalized["descricao_gate"] = cascade.motivo
                 new_normalized["descricao_rascunho"] = cascade.rascunho
                 new_normalized["descricao_groundedness"] = cascade.groundedness
+                new_normalized["descricao_verificacao"] = cascade.verificacao
 
         # Step 5: mark enriched (idempotency), mutate normalized, re-score. sub_state is
         # left untouched — a dlq record stays in the plain DLQ (sub_state=None) queue.
@@ -806,14 +831,16 @@ class PlacesEnrichmentAgent:
         redecided: set[str] = set()
         if details:
             redecided.add(TEMPORARILY_CLOSED_REASON)
-        if cascade is not None:
+        if judged:
             redecided |= {"descricao_nao_fundamentada", "municipio_nao_confirmado"}
         route_by_score(self._session, rio, self._config, redecided=redecided)
         # Ungrounded prose goes to the human queue, not to Mar: the draft sits in
         # descricao_rascunho for a steward, and the reason overrides the score one so the DLQ
         # says what to look at. The invariant does not depend on this routing — the draft is
-        # never written to descricao_editorial, so no re-score can carry it to Mar.
-        if cascade is not None and cascade.motivo == "nao_fundamentada":
+        # never written to descricao_editorial, so no re-score can carry it to Mar. A verifier
+        # REPROVA (nao_verificada) is the same steward case under the same reason; a verifier
+        # FAILURE (verificacao_falhou) is transient and stays out of the DLQ.
+        if cascade is not None and cascade.motivo in ("nao_fundamentada", "nao_verificada"):
             rio.routing = "dlq"
             rio.dlq_reason = "descricao_nao_fundamentada"
         # The search never names the record's município: a steward must fix the record (a

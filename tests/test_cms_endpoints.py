@@ -75,6 +75,24 @@ def enqueued(app):
         app.dependency_overrides.pop(get_publish_enqueue, None)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _purge_committed_leftovers(db_engine):
+    """These tests commit their rows (the API reads through its own session), so every run
+    leaves atrativos/destinos behind; once a UF passed 500 rows the ``limit=500`` list
+    assertions stopped finding the row just created. Purge earlier runs' leftovers (the
+    helpers' ``atrativo:``/``destino:`` keys) that nothing references, before the module."""
+    from sqlalchemy import text  # noqa: PLC0415
+
+    with db_engine.begin() as conn:
+        conn.execute(text("""
+            DELETE FROM rio_records r
+            WHERE (r.canonical_key LIKE 'atrativo:%' OR r.canonical_key LIKE 'destino:%')
+              AND NOT EXISTS (SELECT 1 FROM mar_records m WHERE m.rio_id = r.id)
+              AND NOT EXISTS (SELECT 1 FROM consent_log c WHERE c.rio_id = r.id)
+              AND NOT EXISTS (SELECT 1 FROM conversation_message cm WHERE cm.rio_id = r.id)
+        """))
+
+
 @pytest.fixture(scope="module")
 def client(app):
     """FastAPI TestClient — bare, no default auth headers (auth tests use explicit headers)."""

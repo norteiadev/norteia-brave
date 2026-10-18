@@ -1300,11 +1300,14 @@ def _enrich_agent(
     # passes it. A sweep / enrich_places_task / repair script never writes a description,
     # whatever the overlay says.
     desc_on = describe and _description_on(effective)
+    verify_llm = None
     if desc_on:
-        copy_llm = clients.llm(
-            "atrativo_copywriter", session=session if llm_session is None else llm_session
-        )
+        llm_rows = session if llm_session is None else llm_session
+        copy_llm = clients.llm("atrativo_copywriter", session=llm_rows)
         copy_search = clients.search()
+        # The verifier runs in cascade mode only (copy_search set), on its own spend lane.
+        if copy_search is not None and effective.atrativo_description_verifier_enabled:
+            verify_llm = clients.llm("atrativo_verifier", session=llm_rows)
     else:
         copy_llm = NullLLMClient()
         copy_search = None
@@ -1321,6 +1324,8 @@ def _enrich_agent(
         max_distance_km=effective.places_match_max_distance_km,
         search_client=copy_search,
         cascade_model=effective.atrativo_cascade_model,
+        verifier_llm_client=verify_llm,
+        verifier_model=effective.atrativo_verifier_model,
     )
 
 

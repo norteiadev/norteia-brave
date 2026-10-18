@@ -133,7 +133,7 @@ class Clients:
     def check_search(self) -> str | None:
         """Why the cascade search client can't be built, or None — builds nothing.
 
-        The same validations as ``search()``: a Gemini-direct cascade writer needs
+        The same validations as ``search()``: a Gemini-direct cascade writer (or verifier) needs
         BRAVE_LLM_GEMINI_API_KEY and a price (else generate() fails per atrativo and burns
         one descricao_attempt each), and Parallel needs its key and a known mode.
         """
@@ -144,12 +144,18 @@ class Clients:
         from brave.clients.llm import gemini_is_priced  # noqa: PLC0415
         from brave.clients.parallel import USD_PER_REQUEST  # noqa: PLC0415
 
-        model = self._cfg.atrativo_cascade_model
-        if model.startswith("gemini-"):
-            if not self._cfg.llm.gemini_api_key:
-                return f"cascade model {model!r} needs BRAVE_LLM_GEMINI_API_KEY"
-            if not gemini_is_priced(model):
-                return f"cascade model {model!r} has no Gemini price"
+        # The verifier's model too: an unusable one fails every written text the same way.
+        # Checked whatever the env flag says — the Painel overlay can switch the verifier on.
+        models = [
+            ("cascade", self._cfg.atrativo_cascade_model),
+            ("verifier", self._cfg.atrativo_verifier_model),
+        ]
+        for role, model in models:
+            if model.startswith("gemini-"):
+                if not self._cfg.llm.gemini_api_key:
+                    return f"{role} model {model!r} needs BRAVE_LLM_GEMINI_API_KEY"
+                if not gemini_is_priced(model):
+                    return f"{role} model {model!r} has no Gemini price"
         if not self._cfg.parallel_api_key:
             return "PARALLEL_API_KEY is empty"
         if self._cfg.parallel_search_mode not in USD_PER_REQUEST:

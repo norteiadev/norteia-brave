@@ -111,6 +111,11 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
             ("atrativo_description_cascade_enabled",),
             "bool",
         ),
+        ConfigKey(
+            "atrativo_description_verifier_enabled",
+            ("atrativo_description_verifier_enabled",),
+            "bool",
+        ),
     )
 }
 

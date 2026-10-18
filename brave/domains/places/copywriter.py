@@ -39,6 +39,7 @@ from brave.shared.exceptions import CostGuardError, ProviderBalanceError
 if TYPE_CHECKING:
     from brave.clients.base import LLMClientProtocol
     from brave.clients.parallel import ParallelSearch
+    from brave.domains.places.verifier import AtrativoVerifier
 
 logger = structlog.get_logger(__name__)
 
@@ -227,12 +228,16 @@ class CascadeResult:
     motivo:       why there is no prose: "sem_mencao" (the search does not mention the
                   atrativo; the model was never called), "municipio_nao_confirmado" (the
                   search never names the record's município — likely a wrong-município
-                  record; the model was never called) or "nao_fundamentada" (written, but
-                  below MIN_GROUNDEDNESS). None on success and on a plain failure.
+                  record; the model was never called), "nao_fundamentada" (written, but
+                  below MIN_GROUNDEDNESS), "nao_verificada" (the verifier said REPROVA) or
+                  "verificacao_falhou" (the verifier itself failed — transient, no DLQ, the
+                  next pass retries). None on success and on a plain failure.
     rascunho:     the ungrounded prose, kept for steward review — never canonical.
     groundedness: grounded fraction of the concrete claims, when a text was generated.
     busca:        the paid search, whole — set on EVERY outcome after the search succeeded,
                   so the caller can persist it (atrativo_buscas) whatever the verdict.
+    verificacao:  the verifier's board-only summary (CF, counts, decision, flagged trechos),
+                  when the verifier ran and answered.
     """
 
     prose: str | None
@@ -240,6 +245,7 @@ class CascadeResult:
     rascunho: str | None = None
     groundedness: float | None = None
     busca: ParallelSearch | None = None
+    verificacao: dict[str, Any] | None = None
 
 
 class TourismCopywriter:
@@ -259,6 +265,8 @@ class TourismCopywriter:
                     grounded only in the Places context — cheaper, offline-safe).
         search_client: RealParallelClient-shaped (``async search(queries, objective) ->
                     ParallelSearch``). Enables the cascade; ``write`` is unaffected by it.
+        verifier:   AtrativoVerifier — cascade only: the post-write fact check (rubric CF
+                    v1.2) that runs after the groundedness gate. None → the gates alone.
     """
 
     def __init__(
@@ -268,11 +276,13 @@ class TourismCopywriter:
         *,
         enable_web_search: bool = True,
         search_client: Any = None,
+        verifier: AtrativoVerifier | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._model = model
         self._enable_web_search = enable_web_search
         self._search_client = search_client
+        self._verifier = verifier
 
     @property
     def cascade(self) -> bool:
@@ -286,13 +296,16 @@ class TourismCopywriter:
         places_context: dict[str, Any] | None = None,
         local: str = "",
     ) -> CascadeResult:
-        """Search → mention gate → município gate → write (no tool) → groundedness gate.
+        """Search → mention gate → município gate → write (no tool) → groundedness gate
+        → verifier (when configured).
 
         Same failure posture as ``write``: any search/LLM failure degrades to an empty result
         (the caller keeps the floor), except ``CostGuardError``, which propagates — both the
         search and the model check the budget before dispatch. A guard trip on the MODEL after
         a paid search loses that search (the exception carries no result); rare, and the next
-        pass searches again.
+        pass searches again. The verifier follows the same rule (a guard trip there loses the
+        search AND the written text), but any other verifier failure never publishes the
+        unverified text: no prose, motivo "verificacao_falhou", and the next pass retries.
         """
         if not nome or self._search_client is None:
             return CascadeResult(None)
@@ -353,7 +366,33 @@ class TourismCopywriter:
             return CascadeResult(
                 None, motivo="nao_fundamentada", rascunho=texto, groundedness=ratio, busca=busca
             )
-        return CascadeResult(texto, groundedness=ratio, busca=busca)
+        if self._verifier is None:
+            return CascadeResult(texto, groundedness=ratio, busca=busca)
+
+        # Verifier (rubric CF v1.2): catches what token groundedness cannot — reputation made
+        # up from one review, fabricated plurals, a neighbour's facts, operational data.
+        try:
+            v = await self._verifier.verificar(texto, user)
+        except CostGuardError:
+            logger.warning("copywriter_cost_guard_blocked", nome=nome, uf=uf)
+            raise
+        except ProviderBalanceError:
+            raise
+        except Exception:  # noqa: BLE001 — never publish unverified text
+            logger.warning("copywriter_verifier_failed", nome=nome, uf=uf)
+            return CascadeResult(
+                None, motivo="verificacao_falhou", groundedness=ratio, busca=busca
+            )
+        if v.texto is None:
+            return CascadeResult(
+                None,
+                motivo="nao_verificada",
+                rascunho=texto,
+                groundedness=ratio,
+                busca=busca,
+                verificacao=v.resumo,
+            )
+        return CascadeResult(v.texto, groundedness=ratio, busca=busca, verificacao=v.resumo)
 
     async def write(
         self,
