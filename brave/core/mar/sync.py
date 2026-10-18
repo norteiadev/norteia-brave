@@ -1,8 +1,8 @@
 """Mar → norteia-api sync health: is the API reachable, and what is still unpushed.
 
-A Mar row with ``pushed_at IS NULL`` never reached norteia-api (API down, broker
-down, retries exhausted). brave.publish_mar (via NorteiaApiClient.push) consults
-``norteia_api_up`` before the POST so a down API (or an expired token) costs one cached
+A Mar row norteia-api is behind on (``_needs_sync``: never accepted, updated after the
+last attempt, or whose Rio left 'mar' and still shows on the API) is pending.
+brave.publish_mar (via NorteiaApiClient.push) consults ``norteia_api_up`` before the POST so a down API (or an expired token) costs one cached
 probe instead of 3 Celery retries per record, and ``pending_push_rows`` feeds the
 re-dispatch (beat + Painel "Reenviar") in brave.core.mar.publication.republish_pending.
 """
@@ -11,15 +11,16 @@ from __future__ import annotations
 
 import contextlib
 import os
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from brave.config.settings import AppConfig
-from brave.core.models import MarRecord
+from brave.core.models import MarRecord, RioRecord
 
 logger = structlog.get_logger(__name__)
 
@@ -86,25 +87,73 @@ def norteia_api_up(redis: Any | None = None) -> bool | None:
     return None if health is None else health == "ok"
 
 
-def _pending_filter() -> Any:
-    return (MarRecord.pushed_at.is_(None), MarRecord.superseded_by_id.is_(None))
+# A row attempted this recently is not re-dispatched: publish_mar's own retry chain (5xx:
+# 180+360+720s) finishes inside it, so a tick never stacks a second chain on the same row.
+_RETRY_AFTER = timedelta(minutes=30)
+# A row norteia-api rejected (permanent 4xx) is retried once a day — a fix on either side
+# (contract, data) then lands on its own — and never hogs the dispatch cap meanwhile.
+_REJECTED_RETRY_AFTER = timedelta(hours=24)
+
+
+def _needs_sync() -> Any:
+    """Active Mar row whose norteia-api copy is behind its Rio (joined on RioRecord).
+
+    In Mar: never accepted, retracted earlier (re-show it), or re-scored after the last
+    attempt — route_by_score stamps processed_at on every description / Places / TA-backfill
+    write, and publish re-derives the snapshot (F48). Out of Mar: not yet retracted (F47).
+    """
+    in_mar = RioRecord.routing == "mar"
+    return and_(
+        MarRecord.superseded_by_id.is_(None),
+        or_(
+            and_(
+                in_mar,
+                or_(
+                    MarRecord.pushed_at.is_(None),
+                    MarRecord.retracted_at.isnot(None),
+                    RioRecord.processed_at
+                    > func.coalesce(MarRecord.push_attempted_at, MarRecord.published_at),
+                ),
+            ),
+            and_(~in_mar, MarRecord.retracted_at.is_(None)),
+        ),
+    )
+
+
+def _base() -> Any:
+    return select(func.count(MarRecord.id)).join(RioRecord, RioRecord.id == MarRecord.rio_id)
 
 
 def count_pending_pushes(session: Session) -> int:
-    """Active Mar rows norteia-api has never accepted."""
-    return session.scalar(select(func.count(MarRecord.id)).where(*_pending_filter())) or 0
+    """Active Mar rows norteia-api is behind on (rejected ones excluded — see below)."""
+    stmt = _base().where(_needs_sync(), MarRecord.push_error.is_(None))
+    return session.scalar(stmt) or 0
+
+
+def count_rejected_pushes(session: Session) -> int:
+    """Active Mar rows norteia-api refused with a permanent 4xx (``push_error`` set)."""
+    stmt = _base().where(_needs_sync(), MarRecord.push_error.isnot(None))
+    return session.scalar(stmt) or 0
 
 
 def pending_push_rows(
-    session: Session, limit: int = PENDING_DISPATCH_LIMIT
+    session: Session, limit: int = PENDING_DISPATCH_LIMIT, *, now: datetime | None = None
 ) -> list[tuple[Any, str]]:
-    """(rio_id, entity_type) of up to ``limit`` unpushed active Mar rows, oldest first."""
+    """(rio_id, entity_type) of up to ``limit`` rows to dispatch, never-attempted first."""
+    now = now or datetime.now(UTC)
+    attempted = MarRecord.push_attempted_at
+    due = or_(
+        attempted.is_(None),
+        and_(MarRecord.push_error.is_(None), attempted < now - _RETRY_AFTER),
+        attempted < now - _REJECTED_RETRY_AFTER,
+    )
     return [
         (rio_id, entity_type)
         for rio_id, entity_type in session.execute(
             select(MarRecord.rio_id, MarRecord.entity_type)
-            .where(*_pending_filter())
-            .order_by(MarRecord.published_at)
+            .join(RioRecord, RioRecord.id == MarRecord.rio_id)
+            .where(_needs_sync(), due)
+            .order_by(attempted.asc().nulls_first(), MarRecord.published_at)
             .limit(limit)
         ).all()
     ]

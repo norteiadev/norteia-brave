@@ -231,6 +231,7 @@ export function PainelView() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {bulkDry?.candidates} elegíveis{uf ? ` em ${uf}` : ""}. Excluídos:{" "}
+              {bulkDry?.excluded.verdict ?? 0} por veredito do DLQ,{" "}
               {bulkDry?.excluded.below_score} por score,{" "}
               {bulkDry?.excluded.no_description} sem descrição,{" "}
               {bulkDry?.excluded.recency} sem review recente. Cada promoção fica

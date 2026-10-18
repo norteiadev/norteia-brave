@@ -41,6 +41,8 @@ class FakeTripAdvisorClient:
         fixture_geo: dict[int, dict[str, Any] | None] | None = None,
         gql_pages: list[tuple[int, list[dict[str, Any]]]] | None = None,
         recent_review: dict[str, Any] | None = None,
+        recent_review_error: BaseException | None = None,
+        geo_error: BaseException | None = None,
     ) -> None:
         """Initialize with optional fixture data.
 
@@ -65,6 +67,9 @@ class FakeTripAdvisorClient:
                                   regardless of geo_id.
             recent_review:        Dict (or None) returned by fetch_recent_review()
                                   for any location_id.
+            recent_review_error:  When set, fetch_recent_review() raises it (after
+                                  recording the call) — e.g. SessionExpiredError.
+            geo_error:            When set, fetch_attraction_geo() raises it likewise.
         """
         self._fixture_destinations = fixture_destinations or {}
         self._fixture_attractions = fixture_attractions or {}
@@ -74,6 +79,8 @@ class FakeTripAdvisorClient:
         self._fixture_geo: dict[int, dict[str, Any] | None] = fixture_geo or {}
         self._gql_pages: list[tuple[int, list[dict[str, Any]]]] = gql_pages or []
         self._recent_review: dict[str, Any] | None = recent_review
+        self._recent_review_error = recent_review_error
+        self._geo_error = geo_error
 
         # Call recording lists for test assertions
         self.destinations_calls: list[dict[str, Any]] = []
@@ -168,6 +175,8 @@ class FakeTripAdvisorClient:
             The configured self._recent_review dict, or None if unset.
         """
         self.recent_review_calls.append(location_id)
+        if self._recent_review_error is not None:
+            raise self._recent_review_error
         return self._recent_review
 
     async def resolve_geo_id(self, uf: str) -> int:
@@ -206,6 +215,8 @@ class FakeTripAdvisorClient:
             Fixture geo dict if locationId is in fixture_geo, else None.
         """
         self.geo_calls.append(location_id)
+        if self._geo_error is not None:
+            raise self._geo_error
         return self._fixture_geo.get(location_id)
 
 

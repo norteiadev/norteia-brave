@@ -14,6 +14,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from brave.core.models import NascenteRecord
@@ -31,6 +32,7 @@ def store_raw(
     payload: dict[str, Any],
     *,
     timeline: list[dict[str, Any]] | None = None,
+    _retried: bool = False,
 ) -> NascenteRecord:
     """Ingest a raw payload into the Nascente layer.
 
@@ -98,13 +100,26 @@ def store_raw(
         content_hash=content_hash,
         version=new_version,
     )
-    session.add(new_record)
-    session.flush()  # Assign ID before FK update
+    # Savepoint: uq_nascente_source_ref_version makes a concurrent writer of the same
+    # source_ref (bulk sweep x per-UF sweep, TA x Places ensure_destino) lose with an
+    # IntegrityError on THIS insert only — instead of forking two active versions. The loser
+    # re-runs once: Stage 1 then returns the winner's row (same payload) or supersedes it.
+    try:
+        with session.begin_nested():
+            session.add(new_record)
+            session.flush()  # Assign ID before FK update
 
-    # Set supersession pointer on old record (D-03)
-    if latest is not None:
-        latest.superseded_by_id = new_record.id
-        session.flush()
+            # Set supersession pointer on old record (D-03)
+            if latest is not None:
+                latest.superseded_by_id = new_record.id
+                session.flush()
+    except IntegrityError:
+        if _retried:
+            raise
+        return store_raw(
+            session, source, source_ref, entity_type, uf, payload,
+            timeline=timeline, _retried=True,
+        )
 
     # Per-entity sync log — emitted only when a NEW or SUPERSEDED record is
     # created (the idempotent early-return above stays silent to avoid re-ingest

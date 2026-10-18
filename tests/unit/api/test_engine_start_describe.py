@@ -122,3 +122,23 @@ def test_unknown_action_is_422(monkeypatch):
             redis=fakeredis.FakeStrictRedis(), body={"action": "nuke"}, db=MagicMock()
         )
     assert exc.value.status_code == 422
+
+
+def test_backfill_action_delegates_to_the_backfill_start(monkeypatch):
+    """Continuar after a backfill pause posts action=backfill here: the paused run already
+    ended, so it starts a new backfill run through the same guarded endpoint."""
+    from brave.api.routers import tripadvisor_session
+
+    calls = []
+
+    def fake_start(*, redis, db):
+        calls.append((redis, db))
+        return {"status": "started", "run_id": "r1"}
+
+    monkeypatch.setattr(tripadvisor_session, "start_backfill", fake_start)
+    fake, db = fakeredis.FakeStrictRedis(), MagicMock()
+
+    result = engine_router.engine_start(redis=fake, body={"action": "backfill"}, db=db)
+
+    assert result == {"status": "started", "run_id": "r1"}
+    assert calls == [(fake, db)]

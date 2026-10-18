@@ -161,9 +161,10 @@ def test_distrito_survives_promote_to_mar_and_push_payload():
     assert push["place"]["distrito_name"] == _DISTRITO_NAME
     # The NEW parent-município relation survives the full Rio→Mar→push chain.
     assert push["place"]["distrito_municipio_ibge"] == _PORTO_SEGURO_IBGE
-    # Full distrito family: distrito_source flows; subdistrito is reserved-null.
+    # Full distrito family: distrito_source flows; subdistrito is reserved-null, so it is
+    # omitted (F93: no null place keys — a null would wipe an API-side value on re-push).
     assert push["place"]["distrito_source"] == "places_admin_area_level_3"
-    assert push["place"]["subdistrito_name"] is None
+    assert "subdistrito_name" not in push["place"]
     # address flows as a top-level attraction field (normalize_address title-cases it).
     assert push["address"] and "Arraial" in push["address"]
 
@@ -276,4 +277,4 @@ def test_attraction_without_distrito_promotes_clean_no_floor_regression():
         assert key not in mar.canonical
 
     push = build_push_payload(mar, rio)
-    assert push["place"]["distrito_code"] is None
+    assert "distrito_code" not in push.get("place", {})

@@ -111,6 +111,8 @@ export interface EngineStatus {
     /** Why a push would fail: "unreachable" | "unhealthy:<status>" | "ingest:<status>". */
     reason?: string | null;
     pending: number;
+    /** Mar rows norteia-api refused with a permanent 4xx (retried daily, not in `pending`). */
+    rejected?: number;
   };
   /**
    * Maintenance beat tasks whose last run failed (cleared on the next success, kept 7
@@ -194,8 +196,9 @@ export function transition(
 export function startEngine(
   body?: {
     // "sweep" (default) runs the ingest sweep and needs a depth; "describe" runs
-    // the per-UF description lane (no depth, no TA session).
-    action?: "sweep" | "describe";
+    // the per-UF description lane (no depth, no TA session); "backfill" resumes the
+    // TripAdvisor backfill run (Continuar after a Places key swap / budget pause).
+    action?: "sweep" | "describe" | "backfill";
     ufs?: string[];
     lane?: "destinos" | "atrativos" | "both";
     depth?: EngineDepth;

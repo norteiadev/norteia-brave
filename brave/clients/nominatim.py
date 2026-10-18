@@ -44,6 +44,10 @@ logger = structlog.get_logger(__name__)
 NOMINATIM_CACHE_KEY_PREFIX: str = "brave:geo:"
 NOMINATIM_CACHE_TTL: int = 86_400 * 30  # geocodes are stable — 30 days (module default)
 
+# One Redis key shared by every worker process: the public Nominatim policy is 1 req/s
+# ABSOLUTE, and the per-instance gate alone let C concurrent UF sweeps send ~C req/s.
+NOMINATIM_SLOT_KEY: str = "brave:nominatim:slot"
+
 # All 27 Brazilian state codes mapped to full names (Nominatim query parameter)
 UF_NAME: dict[str, str] = {
     "AC": "Acre",
@@ -88,6 +92,12 @@ def _decode(value: Any) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8")
     return str(value)
+
+
+def _uf_from_address(addr: dict[str, Any]) -> str | None:
+    """UF from Nominatim's ``ISO3166-2-lvl4`` (e.g. "BR-GO" → "GO"), or None."""
+    iso = addr.get("ISO3166-2-lvl4") or ""
+    return iso[3:] if iso.startswith("BR-") and len(iso) == 5 else None
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -150,6 +160,22 @@ class NominatimGeocoderClient:
         async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as hc:
             yield hc
 
+    async def _acquire_global_slot(self) -> None:
+        """Wait for the cross-process 1-req/interval slot (after the local gate).
+
+        Inside one process the local gate already spaced requests by the interval, so the
+        slot is normally free. Bounded loop + best-effort: a Redis fault never blocks a geocode.
+        """
+        # ponytail: SET NX PX spin on one key, no fairness; a queue if many workers contend.
+        px = max(int(self._min_interval * 1000), 1)
+        try:
+            for _ in range(50):
+                if self._redis.set(NOMINATIM_SLOT_KEY, "1", nx=True, px=px):
+                    return
+                await asyncio.sleep(max(self._redis.pttl(NOMINATIM_SLOT_KEY), 10) / 1000)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("nominatim_slot_error", error=type(exc).__name__)
+
     @retry(
         # Analog: brave/clients/places.py lines 223-228
         retry=retry_if_exception(_is_retryable),
@@ -193,6 +219,7 @@ class NominatimGeocoderClient:
         if elapsed < self._min_interval:
             await asyncio.sleep(self._min_interval - elapsed)
         self._last_request_ts = time.monotonic()
+        await self._acquire_global_slot()
 
         # 3. Nominatim HTTP call (spike-validated q/params shape)
         uf_name = UF_NAME.get(uf, uf)
@@ -281,8 +308,8 @@ class NominatimGeocoderClient:
             name:        Attraction name for the national search query.
 
         Returns:
-            {"lat": float, "lon": float, "osm_id": int | None, "municipio_name": str | None}
-            or None when Nominatim returns no results.
+            {"lat": float, "lon": float, "osm_id": int | None, "municipio_name": str | None,
+            "uf": str | None} or None when Nominatim returns no results.
         """
         # 1. Redis cache hit (national namespace — never collides with per-UF key)
         key = f"{NOMINATIM_CACHE_KEY_PREFIX}natl:{location_id}"
@@ -290,13 +317,19 @@ class NominatimGeocoderClient:
         if raw:
             logger.debug("nominatim_natl_cache_hit", location_id=location_id)
             cached = json.loads(raw)
-            return None if cached.get("__no_match") else cached
+            if cached.get("__no_match"):
+                return None
+            # Entries cached before "uf" existed are re-fetched: the bulk needs the UF to
+            # keep the nearest IBGE seat inside the state Nominatim placed the point in.
+            if "uf" in cached:
+                return cached
 
         # 2. Rate limit — ≥1 req/s per Nominatim policy (Pattern 3)
         elapsed = time.monotonic() - self._last_request_ts
         if elapsed < self._min_interval:
             await asyncio.sleep(self._min_interval - elapsed)
         self._last_request_ts = time.monotonic()
+        await self._acquire_global_slot()
 
         # 3. Nominatim HTTP call — national query (no UF segment)
         params = {
@@ -339,11 +372,13 @@ class NominatimGeocoderClient:
         )
 
         # 6. LGPD: persist only lat/lon/osm_id/municipio_name — never display_name or street
+        # + uf (public geo, from ISO3166-2-lvl4): the state Nominatim placed the point in.
         result: dict[str, Any] = {
             "lat": float(hit["lat"]),
             "lon": float(hit["lon"]),
             "osm_id": hit.get("osm_id"),
             "municipio_name": municipio_name,
+            "uf": _uf_from_address(addr),
         }
         self._redis.setex(key, self._cache_ttl, json.dumps(result))
         logger.info(

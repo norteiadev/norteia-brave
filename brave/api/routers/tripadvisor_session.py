@@ -3,6 +3,9 @@
 Endpoints:
   POST /api/v1/tripadvisor/session        — inject operator session + canary gate
   GET  /api/v1/tripadvisor/session/status — read current session status
+  GET  /api/v1/tripadvisor/sweep/progress — bulk national sweep progress
+  POST /api/v1/tripadvisor/backfill       — start/resume the backfill engine run
+  GET  /api/v1/tripadvisor/backfill/progress — backfill counters + pending counts
 
 The injection endpoint accepts a DataDome session (cookies + queryIds) captured
 by the operator's real browser via DevTools "Copy as cURL". It writes the session
@@ -25,8 +28,9 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 from redis import Redis
+from sqlalchemy.orm import Session
 
-from brave.api.deps import get_redis, require_steward_or_bearer
+from brave.api.deps import get_db, get_redis, require_steward_or_bearer
 from brave.domains.tripadvisor import sweep_progress as sweep_progress_state
 from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY, SessionExpiredError
 
@@ -128,6 +132,10 @@ class TASweepProgressResponse(BaseModel):
     current_offset: int
     error_count: int
     started_at: str | None = None
+    # updated_at = last write; stale = still "running" but untouched for 10 min — a dead
+    # worker, not a slow page (the bare "running" used to read as alive forever).
+    updated_at: str | None = None
+    stale: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -139,8 +147,9 @@ async def _run_canary(session: dict[str, Any], ta_config: Any, redis: Redis) -> 
     """Run a synchronous canary validation through the real httpx path.
 
     On success (non-empty result list): returns normally.
-    On any failure (SessionExpiredError, timeout, empty result): deletes the
-    Redis session key and raises HTTPException(422, detail="invalid_session").
+    On any failure (SessionExpiredError, timeout, empty result): raises
+    HTTPException(422, detail="invalid_session"); an infrastructure fault raises 503.
+    The caller (inject_session) puts the previous session back — this never deletes it.
 
     NEVER call this from tests — monkeypatch this function at the module level.
     Tests should: monkeypatch brave.api.routers.tripadvisor_session._run_canary
@@ -176,15 +185,7 @@ async def _run_canary(session: dict[str, Any], ta_config: Any, redis: Redis) -> 
         )
     except (SessionExpiredError, asyncio.TimeoutError) as exc:
         # Session is provably bad (DataDome 403/429) or unresponsive within the
-        # bounded single-page window → delete the key and fail closed.
-        # WR-03: a Redis blip during this cleanup delete must NOT propagate as a
-        # raw 500 (it would not be caught by the sibling `except Exception` 503
-        # branch — exceptions raised inside an except block escape the try).
-        # Guard the delete and still raise the intended 422.
-        try:
-            redis.delete(BRAVE_TA_SESSION_KEY)
-        except Exception:
-            logger.warning("ta_session_canary_delete_failed", reason=type(exc).__name__)
+        # bounded single-page window → fail closed (the caller restores the old key).
         logger.warning(
             "ta_session_canary_failed",
             reason=type(exc).__name__,
@@ -209,18 +210,32 @@ async def _run_canary(session: dict[str, Any], ta_config: Any, redis: Redis) -> 
 
     # Empty-result guard: a valid 200 response with empty data means stale queryId
     if not results:
-        # WR-03: guard the cleanup delete so a Redis blip can't turn this
-        # classified 422 into an unhandled 500.
-        try:
-            redis.delete(BRAVE_TA_SESSION_KEY)
-        except Exception:
-            logger.warning("ta_session_canary_delete_failed", reason="empty_result")
         logger.warning(
             "ta_session_canary_empty_result",
             cookie_count=len(session.get("cookies", {})),
             query_ids_keys=list(session.get("query_ids", {}).keys()),
         )
         raise HTTPException(status_code=422, detail="invalid_session")
+
+
+def _restore_session(
+    redis: Redis, previous: Any, previous_pttl: int, *, keep_candidate: bool
+) -> None:
+    """Put back the session that was live before a failed injection.
+
+    No previous session: delete the candidate, unless ``keep_candidate`` (503). WR-03: a
+    Redis blip here must not turn the classified 422/503 into a raw 500.
+    """
+    try:
+        if previous is not None and previous_pttl != -2:
+            if previous_pttl > 0:
+                redis.psetex(BRAVE_TA_SESSION_KEY, previous_pttl, previous)
+            else:  # -1: the old key had no TTL
+                redis.set(BRAVE_TA_SESSION_KEY, previous)
+        elif not keep_candidate:
+            redis.delete(BRAVE_TA_SESSION_KEY)
+    except Exception:
+        logger.warning("ta_session_restore_failed")
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +263,11 @@ async def inject_session(
       5. Audit-log (cookie_count + query_ids keys — NEVER values)
       6. Return {status: "ready", canary: "ready"}
 
-    On canary failure: Redis key is deleted and 422 is returned.
+    On canary failure (422/503) the session that was live before the call is put back
+    (value + remaining TTL): a mid-run re-inject whose canary times out on a saturated
+    proxy used to delete the working session and stop every sweep. With no previous
+    session a 422 deletes the candidate and a 503 keeps it (WR-02: an infra fault is not
+    proof the scarce, hand-captured credential is bad).
     """
     # T-12-02-03: 64 KB size guard before any parsing
     content_length = request.headers.get("content-length")
@@ -279,7 +298,9 @@ async def inject_session(
 
     ta_config = TripAdvisorConfig()
 
-    # Write the session to Redis FIRST (canary uses it via the same key)
+    # Snapshot the live session, then write the candidate (the canary uses the same key).
+    previous = redis.get(BRAVE_TA_SESSION_KEY)
+    previous_pttl = redis.pttl(BRAVE_TA_SESSION_KEY)
     redis.setex(BRAVE_TA_SESSION_KEY, ta_config.session_ttl, json.dumps(session))
     logger.debug(
         "ta_session_key_written",
@@ -289,7 +310,11 @@ async def inject_session(
     )
 
     # Canary gate: validates the session synchronously before returning ready
-    await _run_canary(session, ta_config, redis)
+    try:
+        await _run_canary(session, ta_config, redis)
+    except HTTPException as exc:
+        _restore_session(redis, previous, previous_pttl, keep_candidate=exc.status_code == 503)
+        raise
 
     # Audit log (T-12-02-01: only metadata, NEVER cookie values)
     #
@@ -429,3 +454,139 @@ def sweep_progress_status(redis: Redis = Depends(get_redis)) -> TASweepProgressR
     hash is secret-free and extra="forbid" blocks any field drift.
     """
     return TASweepProgressResponse(**sweep_progress_state.get_progress(redis))
+
+
+# ---------------------------------------------------------------------------
+# TripAdvisor backfill (brave.backfill_ta_atrativos): manual trigger + progress
+# ---------------------------------------------------------------------------
+
+
+class TABackfillProgressResponse(BaseModel):
+    """GET /api/v1/tripadvisor/backfill/progress — the backfill hash plus what is left.
+
+    ``ta_pending`` / ``places_pending`` are live DB counts of the candidates (the
+    task's own selector); the hash fields are the current/last run's counters.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    state: str = "idle"
+    run_id: str | None = None
+    processed: int = 0
+    failed: int = 0
+    last_status: str | None = None
+    reason: str | None = None
+    started_at: str | None = None
+    updated_at: str | None = None
+    # The Places key id (sha256 prefix) the WORKER used on its last link — compare with
+    # /api/v1/cost places.key_id to see whether a swapped .env key actually reached it.
+    places_key_id: str | None = None
+    ta_pending: int
+    places_pending: int
+
+
+@router.post(
+    "/api/v1/tripadvisor/backfill",
+    status_code=202,
+    dependencies=[Depends(require_steward_or_bearer)],
+)
+def start_backfill(
+    redis: Redis = Depends(get_redis),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Start (or resume) the TA backfill as an engine run — also the resume path after a
+    Places key swap or a billing/budget pause (start turns the motor LIGADO).
+
+    409 when externals are off, the lane is disabled, there is no live TA session, the
+    current Places key's credit is already spent (resuming would re-pause at once), or a
+    run is already active; 503 when the broker refuses the first link (run aborted).
+    """
+    from brave.config.runtime import enabled_sources, load_effective_config  # noqa: PLC0415
+    from brave.tasks.pipeline import start_backfill_run  # noqa: PLC0415
+
+    cfg = load_effective_config(db)
+    if not cfg.run_real_externals:
+        raise HTTPException(status_code=409, detail="Backfill requer externals reais.")
+    if "tripadvisor" not in enabled_sources(cfg):
+        raise HTTPException(status_code=409, detail="Lane tripadvisor desligada no config.")
+    ttl = redis.ttl(BRAVE_TA_SESSION_KEY)
+    if ttl != -1 and ttl <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Backfill TripAdvisor requer uma sessão com TTL válido — injete um cURL primeiro.",
+        )
+    if cfg.places_enrichment_enabled:
+        import os  # noqa: PLC0415
+
+        from brave.clients.places import USD_DETAILS_ENTERPRISE  # noqa: PLC0415
+        from brave.observability.cost_guard import (  # noqa: PLC0415
+            places_key_id,
+            places_total_spend,
+        )
+
+        # This process's key. The worker reads its own env: a swapped .env reaches neither
+        # until the containers are recreated — the usual cause of an instant re-pause.
+        key = os.environ.get("BRAVE_PLACES_API_KEY", "")
+        if places_total_spend(redis, key) + USD_DETAILS_ENTERPRISE > cfg.places_total_usd_cap:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Crédito Places da chave atual ({places_key_id(key)}) esgotado — troque "
+                    "BRAVE_PLACES_API_KEY no .env e recrie worker e api (docker compose up -d "
+                    "worker api); restart não relê o .env."
+                ),
+            )
+    try:
+        run_id = start_backfill_run(redis, db)
+    except Exception as exc:
+        logger.error("ta_backfill_dispatch_failed", error_type=type(exc).__name__)
+        raise HTTPException(
+            status_code=503, detail="Backfill não despachado (broker indisponível)."
+        ) from exc
+    if run_id is None:
+        raise HTTPException(
+            status_code=409, detail="Engine already running — stop it before starting a new run."
+        )
+    logger.info("ta_backfill_started", run_id=run_id)
+    return {"status": "started", "run_id": run_id}
+
+
+@router.get(
+    "/api/v1/tripadvisor/backfill/progress",
+    dependencies=[Depends(require_steward_or_bearer)],
+    response_model=TABackfillProgressResponse,
+)
+def backfill_progress(
+    redis: Redis = Depends(get_redis),
+    db: Session = Depends(get_db),
+) -> TABackfillProgressResponse:
+    """The backfill's live counters + how many records each part still has to do."""
+    from sqlalchemy import func, select  # noqa: PLC0415
+
+    from brave.core.models import RioRecord  # noqa: PLC0415
+    from brave.tasks.pipeline import (  # noqa: PLC0415
+        _BACKFILL_PROGRESS_KEY,
+        backfill_pending_filter,
+    )
+
+    raw = {
+        (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+        for k, v in (redis.hgetall(_BACKFILL_PROGRESS_KEY) or {}).items()
+    }
+    fields = {k: (v or None) for k, v in raw.items() if k in TABackfillProgressResponse.model_fields}
+    for key in ("processed", "failed"):
+        fields[key] = int(fields.get(key) or 0)
+    fields["state"] = fields.get("state") or "idle"
+
+    def _count(*where: Any) -> int:
+        return int(db.scalar(select(func.count()).select_from(RioRecord).where(*where)) or 0)
+
+    # TA part: the selector without Places; Places part: what Places adds on top of it.
+    ta_where = backfill_pending_filter(places_on=False)
+    both = backfill_pending_filter(places_on=True)
+    ta_pending = _count(*ta_where)
+    return TABackfillProgressResponse(
+        **fields,
+        ta_pending=ta_pending,
+        places_pending=_count(*both) - ta_pending,
+    )

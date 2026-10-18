@@ -40,6 +40,7 @@ from brave.config.runtime import load_effective_config
 from brave.core.mar.publication import promote
 from brave.core.mar.service import _attraction_review_recent
 from brave.core.models import RioRecord
+from brave.core.rio.routing import STICKY_DLQ_REASONS
 from brave.observability.audit import write_audit
 
 router = APIRouter()
@@ -194,18 +195,27 @@ def _query_promote_bulk_candidates(db: Session, uf: str | None) -> list[RioRecor
     return list(db.execute(stmt.order_by(RioRecord.score.desc())).scalars().all())
 
 
+# The deliberate verdicts (C5) minus no_recent_reviews, which the recency check below re-tests.
+_BULK_EXCLUDED_REASONS = STICKY_DLQ_REASONS - {"no_recent_reviews"}
+
+
 def _bucket_promote_bulk_candidates(
     rows: list[RioRecord], min_score: float, require_description: bool
 ) -> tuple[list[RioRecord], dict[str, int]]:
     """Split DLQ rows into promotable candidates + excluded-by-reason counts.
 
-    Pure (no DB). First matching reason wins, so each row is counted once.
+    Pure (no DB). First matching reason wins, so each row is counted once. A deliberate
+    DLQ verdict (wrong/unconfirmed município, temporarily closed, ungrounded description,
+    sent to review, error report) is never bulk-promoted: promote() would re-score past it
+    and push it — those need the steward's per-card call.
     """
     candidates: list[RioRecord] = []
-    excluded = {"below_score": 0, "no_description": 0, "recency": 0}
+    excluded = {"verdict": 0, "below_score": 0, "no_description": 0, "recency": 0}
     for rio in rows:
         normalized = rio.normalized or {}
-        if float(rio.score or 0.0) < min_score:
+        if rio.dlq_reason in _BULK_EXCLUDED_REASONS:
+            excluded["verdict"] += 1
+        elif float(rio.score or 0.0) < min_score:
             excluded["below_score"] += 1
         elif require_description and not normalized.get("descricao_editorial"):
             excluded["no_description"] += 1

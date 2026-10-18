@@ -474,9 +474,10 @@ async def test_canary_infra_error_returns_503_and_keeps_key(fake_redis, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_canary_session_expired_returns_422_and_deletes_key(fake_redis, monkeypatch):
+async def test_canary_session_expired_returns_422_and_leaves_key_to_caller(fake_redis, monkeypatch):
     """WR-02 complement: a provably-bad session (SessionExpiredError) → 422
-    invalid_session, key deleted."""
+    invalid_session. The canary no longer touches the key: inject_session restores the
+    previous session or deletes the candidate (F71)."""
     import json
 
     from fastapi import HTTPException
@@ -505,9 +506,7 @@ async def test_canary_session_expired_returns_422_and_deletes_key(fake_redis, mo
 
     assert ei.value.status_code == 422
     assert ei.value.detail == "invalid_session"
-    assert not fake_redis.exists(BRAVE_TA_SESSION_KEY), (
-        "provably-bad session key must be deleted (fail closed)"
-    )
+    assert fake_redis.exists(BRAVE_TA_SESSION_KEY), "the canary must not delete the key"
 
 
 # ---------------------------------------------------------------------------
@@ -583,3 +582,197 @@ async def test_canary_probes_fetch_attractions(fake_redis, monkeypatch):
     assert listing_called_with[0]["max_pages"] == 1, (
         f"Canary must stay single-page; got: {listing_called_with[0]['max_pages']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# F71: a failed re-inject puts the previously live session back
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("status", [422, 503])
+def test_failed_reinject_restores_previous_session(authed_client, fake_redis, monkeypatch, status):
+    """Mid-run re-inject whose canary fails (bad session or a timeout on a saturated
+    proxy) must leave the WORKING session in place, with its remaining TTL — it used to
+    delete the key (422) or leave the unvalidated one (503), stopping every sweep."""
+    import json
+
+    from fastapi import HTTPException
+
+    import brave.api.routers.tripadvisor_session as ts_module
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
+
+    old = json.dumps({"cookies": {"datadome": "old"}, "query_ids": {"a": "q"}})
+    fake_redis.setex(BRAVE_TA_SESSION_KEY, 900, old)
+
+    async def _failing_canary(session, ta_config, redis):
+        raise HTTPException(status_code=status, detail="x")
+
+    monkeypatch.setattr(ts_module, "_run_canary", _failing_canary)
+
+    resp = authed_client.post("/api/v1/tripadvisor/session", json=_VALID_BODY)
+
+    assert resp.status_code == status
+    raw = fake_redis.get(BRAVE_TA_SESSION_KEY)
+    assert raw is not None and raw.decode() == old
+    assert 0 < fake_redis.ttl(BRAVE_TA_SESSION_KEY) <= 900
+
+
+def test_failed_first_inject_503_keeps_candidate(authed_client, fake_redis, monkeypatch):
+    """No previous session + infra fault (503) → the candidate stays (WR-02)."""
+    from fastapi import HTTPException
+
+    import brave.api.routers.tripadvisor_session as ts_module
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
+
+    async def _infra(session, ta_config, redis):
+        raise HTTPException(status_code=503, detail="canary_unverified")
+
+    monkeypatch.setattr(ts_module, "_run_canary", _infra)
+
+    resp = authed_client.post("/api/v1/tripadvisor/session", json=_VALID_BODY)
+    assert resp.status_code == 503
+    assert fake_redis.exists(BRAVE_TA_SESSION_KEY)
+
+
+# ---------------------------------------------------------------------------
+# F83: bulk progress exposes updated_at + stale
+# ---------------------------------------------------------------------------
+
+
+def test_sweep_progress_flags_a_stale_running_hash(authed_client, fake_redis):
+    """A 'running' hash untouched for >10 min is a dead worker: stale=True."""
+    from brave.domains.tripadvisor import sweep_progress
+
+    sweep_progress.start(fake_redis, pages_total=334)
+    fake_redis.hset(sweep_progress._PROGRESS_KEY, "updated_at", "2026-01-01T00:00:00+00:00")
+
+    body = authed_client.get("/api/v1/tripadvisor/sweep/progress").json()
+    assert body["state"] == "running"
+    assert body["updated_at"] == "2026-01-01T00:00:00+00:00"
+    assert body["stale"] is True
+
+
+def test_sweep_progress_fresh_running_hash_is_not_stale(authed_client, fake_redis):
+    from brave.domains.tripadvisor import sweep_progress
+
+    sweep_progress.start(fake_redis, pages_total=334)
+    body = authed_client.get("/api/v1/tripadvisor/sweep/progress").json()
+    assert body["stale"] is False and body["updated_at"]
+
+
+# ---------------------------------------------------------------------------
+# Backfill trigger + progress (C3)
+# ---------------------------------------------------------------------------
+
+
+def _backfill_cfg(monkeypatch, *, real=True, lane=True):
+    from brave.config import runtime
+    from brave.config.settings import AppConfig
+
+    cfg = AppConfig(run_real_externals=real, sources={"default": False, "tripadvisor": lane})
+    monkeypatch.setattr(runtime, "load_effective_config", lambda session, redis=None: cfg)
+    return cfg
+
+
+def test_backfill_trigger_409_offline(authed_client, fake_redis, monkeypatch):
+    _backfill_cfg(monkeypatch, real=False)
+    assert authed_client.post("/api/v1/tripadvisor/backfill").status_code == 409
+
+
+def test_backfill_trigger_409_without_session(authed_client, fake_redis, monkeypatch):
+    _backfill_cfg(monkeypatch)
+    assert authed_client.post("/api/v1/tripadvisor/backfill").status_code == 409
+
+
+def test_backfill_trigger_starts_an_engine_run(authed_client, fake_redis, monkeypatch):
+    """202 → an engine run (motor LIGADO, run_id) whose first link carries the token."""
+    from brave.core import engine as collection_engine
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.tasks import pipeline
+
+    _backfill_cfg(monkeypatch)
+    fake_redis.setex(BRAVE_TA_SESSION_KEY, 900, "{}")
+    collection_engine.pause_with_reason(fake_redis, "provider_balance", "places", action="backfill")
+    sent: list[dict] = []
+    monkeypatch.setattr(pipeline.backfill_ta_atrativos, "delay", lambda **kw: sent.append(kw))
+
+    resp = authed_client.post("/api/v1/tripadvisor/backfill")
+
+    assert resp.status_code == 202, resp.text
+    run_id = resp.json()["run_id"]
+    assert sent == [{"run_id": run_id}]
+    status = collection_engine.get_status(fake_redis)
+    assert status["state"] == "running" and status["mode"] == "LIGADO"
+    assert status["pause_reason"] is None  # the trigger IS the resume after a key swap
+
+    # Busy motor → 409, no second link.
+    assert authed_client.post("/api/v1/tripadvisor/backfill").status_code == 409
+    assert len(sent) == 1
+
+
+def test_backfill_trigger_409_when_the_current_places_key_is_spent(
+    authed_client, fake_redis, monkeypatch
+):
+    """Continuar after a .env key swap without recreating the containers would dispatch a
+    link that re-pauses at once on the old key: refuse with the recreate instruction."""
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.observability.cost_guard import record_places_spend
+    from brave.tasks import pipeline
+
+    _backfill_cfg(monkeypatch)
+    fake_redis.setex(BRAVE_TA_SESSION_KEY, 900, "{}")
+    monkeypatch.setenv("BRAVE_PLACES_API_KEY", "key-old")
+    record_places_spend(fake_redis, 299.99, "key-old")
+    sent: list[dict] = []
+    monkeypatch.setattr(pipeline.backfill_ta_atrativos, "delay", lambda **kw: sent.append(kw))
+
+    resp = authed_client.post("/api/v1/tripadvisor/backfill")
+
+    assert resp.status_code == 409
+    assert "docker compose up -d worker api" in resp.json()["detail"]
+    assert sent == []
+
+    monkeypatch.setenv("BRAVE_PLACES_API_KEY", "key-new")  # the swap reached this process
+    assert authed_client.post("/api/v1/tripadvisor/backfill").status_code == 202
+
+
+def test_backfill_trigger_503_aborts_on_broker_down(authed_client, fake_redis, monkeypatch):
+    from brave.core import engine as collection_engine
+    from brave.domains.tripadvisor.client import BRAVE_TA_SESSION_KEY
+    from brave.tasks import pipeline
+
+    _backfill_cfg(monkeypatch)
+    fake_redis.setex(BRAVE_TA_SESSION_KEY, 900, "{}")
+
+    def _down(**kw):
+        raise ConnectionError("broker")
+
+    monkeypatch.setattr(pipeline.backfill_ta_atrativos, "delay", _down)
+
+    assert authed_client.post("/api/v1/tripadvisor/backfill").status_code == 503
+    assert collection_engine.get_state(fake_redis) == collection_engine.IDLE
+
+
+def test_backfill_progress_reports_hash_and_pending(fake_redis, monkeypatch):
+    from unittest.mock import MagicMock
+
+    from fastapi.testclient import TestClient
+
+    from brave.api.deps import get_db, get_redis, require_steward_or_bearer
+    from brave.api.main import app
+    from brave.tasks import pipeline
+
+    db = MagicMock()
+    db.scalar.side_effect = [7, 10]  # TA-pending, then TA-or-Places pending
+    app.dependency_overrides[get_redis] = lambda: fake_redis
+    app.dependency_overrides[require_steward_or_bearer] = lambda: None
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        pipeline._backfill_progress(fake_redis, state="running", run_id="r1", processed=3, failed=1)
+        body = TestClient(app).get("/api/v1/tripadvisor/backfill/progress").json()
+    finally:
+        app.dependency_overrides.clear()
+
+    assert body["state"] == "running" and body["run_id"] == "r1"
+    assert body["processed"] == 3 and body["failed"] == 1
+    assert body["ta_pending"] == 7 and body["places_pending"] == 3

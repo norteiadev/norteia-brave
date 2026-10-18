@@ -16,6 +16,7 @@ State lives in one Redis HASH (following the repo `brave:ta:*` convention, cf.
     attractions_ingested   running count of cards landed in Nascente
     current_offset         the oa{N} offset of the most recent page
     last_completed_offset  the oa{N} offset to resume AFTER on a re-run
+    next_page              the 1-based page a resumed run starts at (the resume cursor)
     error_count            per-page ingest errors (best-effort; non-fatal)
     started_at             ISO8601 timestamp of the run start
     updated_at             ISO8601 timestamp of the last write
@@ -57,6 +58,11 @@ _F_LAST_COMPLETED_OFFSET = "last_completed_offset"
 _F_ERROR_COUNT = "error_count"
 _F_STARTED_AT = "started_at"
 _F_UPDATED_AT = "updated_at"
+_F_NEXT_PAGE = "next_page"
+
+# A "running" hash untouched this long is a dead worker, not a slow page (a page takes
+# seconds; the Nominatim-paced worst case is ~1 min). Surfaced as ``stale``.
+_STALE_AFTER_SECONDS = 600
 
 
 def _decode(value: Any) -> str:
@@ -76,13 +82,24 @@ def start(
     redis: Any,
     pages_total: int,
     resume_from_offset: int = 0,
+    *,
+    resume: bool = False,
+    start_page: int | None = None,
 ) -> None:
-    """Seed a fresh run: state=running, counters zeroed, offsets seeded for resume.
+    """Seed a run: state=running.
 
-    `resume_from_offset` lets a re-run continue mid-sweep — current_offset and
-    last_completed_offset start there so get_resume_offset() reflects prior progress.
+    Fresh (default): counters zeroed, offsets seeded at ``resume_from_offset`` and the
+    resume cursor at ``start_page`` (default: the page after that offset).
+    ``resume=True`` continues the stored run: only state/pages_total/updated_at change,
+    so pages_done, attractions, offsets and next_page stay cumulative.
     """
     now = _now()
+    if resume:
+        redis.hset(
+            _PROGRESS_KEY,
+            mapping={_F_STATE: RUNNING, _F_PAGES_TOTAL: int(pages_total), _F_UPDATED_AT: now},
+        )
+        return
     redis.hset(
         _PROGRESS_KEY,
         mapping={
@@ -95,6 +112,7 @@ def start(
             _F_ERROR_COUNT: 0,
             _F_STARTED_AT: now,
             _F_UPDATED_AT: now,
+            _F_NEXT_PAGE: int(start_page or resume_from_offset // 30 + 1),
         },
     )
 
@@ -108,6 +126,7 @@ def record_page(redis: Any, offset: int, ingested_delta: int) -> None:
         mapping={
             _F_CURRENT_OFFSET: int(offset),
             _F_LAST_COMPLETED_OFFSET: int(offset),
+            _F_NEXT_PAGE: int(offset) // 30 + 2,
             _F_UPDATED_AT: _now(),
         },
     )
@@ -159,6 +178,8 @@ def get_progress(redis: Any) -> dict[str, Any]:
             "current_offset": 0,
             "error_count": 0,
             "started_at": None,
+            "updated_at": None,
+            "stale": False,
         }
 
     hash_map = {_decode(k): v for k, v in raw.items()}
@@ -168,6 +189,14 @@ def get_progress(redis: Any) -> dict[str, Any]:
         state = IDLE
 
     started_at = _decode(hash_map.get(_F_STARTED_AT)) or None
+    updated_at = _decode(hash_map.get(_F_UPDATED_AT)) or None
+    stale = False
+    if state == RUNNING and updated_at:
+        try:
+            age = (datetime.now(UTC) - datetime.fromisoformat(updated_at)).total_seconds()
+            stale = age > _STALE_AFTER_SECONDS
+        except ValueError:
+            stale = False
 
     return {
         "state": state,
@@ -177,6 +206,8 @@ def get_progress(redis: Any) -> dict[str, Any]:
         "current_offset": int(_decode(hash_map.get(_F_CURRENT_OFFSET)) or 0),
         "error_count": int(_decode(hash_map.get(_F_ERROR_COUNT)) or 0),
         "started_at": started_at,
+        "updated_at": updated_at,
+        "stale": stale,
     }
 
 
@@ -189,3 +220,22 @@ def get_resume_offset(redis: Any) -> int:
     return int(_decode(raw) or 0)
 
 
+def get_resume_page(redis: Any) -> int | None:
+    """The page a re-run continues at, or None when it must start fresh.
+
+    Only an unfinished run (running / stopped / stopped_needs_bootstrap) resumes; idle
+    and done start fresh, so a finished national run never turns every later bulk into
+    a no-op. Read from the explicit next_page cursor, so a resumed run that halts
+    before completing a page keeps its place (pages_done is not the signal). A hash
+    written before next_page existed falls back to last_completed_offset when it
+    recorded a page.
+    """
+    raw = redis.hgetall(_PROGRESS_KEY)
+    hash_map = {_decode(k): _decode(v) for k, v in (raw or {}).items()}
+    if hash_map.get(_F_STATE) not in (RUNNING, STOPPED, STOPPED_NEEDS_BOOTSTRAP):
+        return None
+    if hash_map.get(_F_NEXT_PAGE):
+        return int(hash_map[_F_NEXT_PAGE])
+    if int(hash_map.get(_F_PAGES_DONE) or 0) > 0:
+        return int(hash_map.get(_F_LAST_COMPLETED_OFFSET) or 0) // 30 + 2
+    return None

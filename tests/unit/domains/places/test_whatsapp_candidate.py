@@ -135,6 +135,26 @@ async def test_contact_finder_no_candidate_when_no_phone() -> None:
     assert "contact" not in rio.normalized
 
 
+@pytest.mark.asyncio
+async def test_contact_finder_skips_reviews_in_place_details() -> None:
+    """ContactFinder reads only phone/website → place_details without reviews, so the
+    call bills Enterprise ($20/1k) instead of Enterprise+Atmosphere ($25/1k)."""
+    from brave.domains.places.contact_finder_agent import ContactFinderAgent
+
+    fake_places = FakePlacesClient(
+        fixture_details={"ChIJx": {"international_phone_number": "+55 73 99999-0001"}},
+    )
+    rio = _make_rio()
+
+    agent = ContactFinderAgent(places_client=fake_places, session=MagicMock())
+    with patch("brave.domains.places.contact_finder_agent.write_audit"):
+        await agent.run(rio)
+
+    assert fake_places.place_details_calls == ["ChIJx"]
+    assert fake_places.place_details_include_reviews == [False]
+    assert rio.sub_state == "contacts_found"
+
+
 # ---------------------------------------------------------------------------
 # CMS board projection — masked-only, deny-by-default
 # ---------------------------------------------------------------------------

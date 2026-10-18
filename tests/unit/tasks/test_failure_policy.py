@@ -20,7 +20,7 @@ from sqlalchemy import delete, select
 
 from brave.core import engine as collection_engine
 from brave.core.models import PoisonQuarantine
-from brave.shared.exceptions import ComplianceError, ProviderBalanceError
+from brave.shared.exceptions import ComplianceError, CostGuardError, ProviderBalanceError
 from brave.tasks import pipeline
 
 _RIO = str(uuid.uuid4())
@@ -116,6 +116,25 @@ def test_provider_balance_pauses_without_retry_or_quarantine(
     assert (reason["reason"], reason["provider"], reason["action"]) == (
         "provider_balance", "tavily", action,
     )
+    assert collection_engine.get_mode(fake) == collection_engine.PAUSADO
+
+
+# 2b. CostGuardError (our cap — e.g. the Places daily cap) → pause daily_budget, same as 2.
+@pytest.mark.parametrize(("attr", "args", "_payload", "action"), F1, ids=_IDS)
+def test_cost_guard_pauses_without_retry_or_quarantine(
+    monkeypatch, attr, args, _payload, action
+):
+    _boom, calls, fake = _fail_with(monkeypatch, CostGuardError("places cap"))
+    quarantine = MagicMock()
+    monkeypatch.setattr("brave.core.quarantine.quarantine_poison", quarantine)
+
+    result = getattr(pipeline, attr).apply(args=args)
+
+    assert result.state == states.SUCCESS
+    assert len(calls) == 1  # no retry
+    quarantine.assert_not_called()
+    reason = collection_engine.get_pause_reason(fake)
+    assert (reason["reason"], reason["action"]) == ("daily_budget", action)
     assert collection_engine.get_mode(fake) == collection_engine.PAUSADO
 
 

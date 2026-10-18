@@ -10,6 +10,7 @@ reopen_from_error_report (CNTR-02):
   Locates active MarRecord by source_ref, resets its linked RioRecord to routing='dlq'.
 """
 
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -25,8 +26,9 @@ from brave.shared.opening_hours import to_hours_map
 _mar_repo = SqlAlchemyMarRepository()
 _rio_repo = SqlAlchemyRioRepository()
 
-# Attraction recency backstop window (Phase F). Mirrors the SignalAgent
-# no-recent-reviews rule: a review older than this (or missing) blocks promotion.
+# Attraction recency backstop window (Phase F). The SignalAgent no-recent-reviews rule
+# calls this same helper (over its merged TA+Google view), so the two cannot drift:
+# a review older than this (or missing) blocks promotion.
 _REVIEW_MAX_AGE_DAYS = 90
 # ...unless the attraction is ESTABLISHED: the 90-day rule was written for business
 # liveness (a restaurant that shut), and measured on the TA base it held back 189 of 275
@@ -47,7 +49,8 @@ def _attraction_review_recent(
     or within _ESTABLISHED_MAX_AGE_DAYS when normalized["review_count"] reaches
     _ESTABLISHED_MIN_REVIEWS.
 
-    Reads normalized["most_recent_review_at"] (ISO-8601 str, written by SignalAgent).
+    Reads normalized["most_recent_review_at"] (ISO-8601 str, written by the TA ingest,
+    SignalAgent and PlacesEnrichmentAgent). Also the SignalAgent's no-recent-reviews gate.
     Missing / None / unparseable → False (route to DLQ). Deterministic + offline:
     'now' is injectable so the 90-day boundary is pinnable in tests.
     """
@@ -132,9 +135,56 @@ def _price_level_for_push(value: Any) -> int | None:
     return _PRICE_LEVEL_TO_INT.get(str(value).strip().upper())
 
 
+# TripAdvisor card category (primaryInfo, PT-BR — "Cachoeiras", "Igrejas e catedrais",
+# "Trilhas para caminhada • Cachoeiras"; EN fixtures say "Waterfalls"/"Parks") → the
+# AtrativoTipo vocabulary the push `type` already speaks (C6). Keyword match on the
+# accent-folded text, first "•" segment that maps wins; a None tipo marks a segment that
+# matches but is deliberately not a tipo (a water park is not a parque). Order matters:
+# the more specific keyword first.
+_CATEGORY_TIPO: tuple[tuple[str, str | None], ...] = (
+    ("praia", "praia"), ("beach", "praia"),
+    ("cachoeira", "cachoeira"), ("waterfall", "cachoeira"),
+    ("museu", "museu"), ("museum", "museu"), ("galeria", "museu"), ("galler", "museu"),
+    ("trilha", "trilha"), ("hiking", "trilha"), ("trail", "trilha"),
+    ("mirante", "mirante"), ("observat", "mirante"), ("panoramic", "mirante"),
+    ("lookout", "mirante"),
+    ("aquatic", None), ("diversoes", None), ("water park", None), ("amusement", None),
+    ("parque", "parque"), ("jardi", "parque"), ("natureza", "parque"), ("reserva", "parque"),
+    ("park", "parque"), ("garden", "parque"), ("nature", "parque"),
+    ("igreja", "centro_historico"), ("catedra", "centro_historico"),
+    ("religios", "centro_historico"), ("historic", "centro_historico"),
+    ("monumento", "centro_historico"), ("arquitet", "centro_historico"),
+    ("church", "centro_historico"), ("monument", "centro_historico"),
+    ("teatro", "show_cultural"), ("theat", "show_cultural"), ("festiva", "show_cultural"),
+    ("centro cultural", "show_cultural"),
+    ("pulgas", None),
+    ("vinicola", "experiencia_gastronomica"), ("adega", "experiencia_gastronomica"),
+    ("destilaria", "experiencia_gastronomica"), ("mercado", "experiencia_gastronomica"),
+    ("feira", "experiencia_gastronomica"), ("gastron", "experiencia_gastronomica"),
+    ("winer", "experiencia_gastronomica"),
+    ("caverna", "esporte_aventura"), ("gruta", "esporte_aventura"),
+    ("aventura", "esporte_aventura"), ("mergulho", "esporte_aventura"),
+    ("rafting", "esporte_aventura"), ("cave", "esporte_aventura"),
+)
+
+
+def tipo_from_category(category: Any) -> str:
+    """Map a raw TripAdvisor card category onto AtrativoTipo; unknown/empty → "outros"."""
+    for raw in str(category or "").split("•"):  # split BEFORE folding: "•" is not ASCII
+        segment = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode().casefold()
+        for keyword, tipo in _CATEGORY_TIPO:
+            if keyword in segment:
+                if tipo is not None:
+                    return tipo
+                break  # known non-tipo segment: try the next one
+    return "outros"
+
+
 def promote_to_mar(
     session: Session,
     rio_record: RioRecord,
+    *,
+    now: datetime | None = None,
 ) -> MarRecord | None:
     """Create or update a MarRecord for a scored RioRecord.
 
@@ -150,7 +200,7 @@ def promote_to_mar(
     NOT promoted — it is routed to DLQ (dlq_reason="no_recent_reviews") and this
     returns None. Destinos have no reviews and are UNAFFECTED (entity_type guard).
     Deterministic + offline: recency is read from normalized["most_recent_review_at"]
-    against an injectable 'now'.
+    against ``now`` (default: the real clock), so the 90-day boundary is pinnable.
 
     Args:
         session:    SQLAlchemy synchronous Session.
@@ -160,32 +210,50 @@ def promote_to_mar(
         The MarRecord (existing updated, or newly created), or None when the
         attraction recency backstop routes the record to DLQ instead of promoting.
     """
-    source_ref = rio_record.canonical_key or str(rio_record.id)
-    normalized = rio_record.normalized or {}
-    entity_type = rio_record.entity_type
-
     # Attraction recency BACKSTOP (Phase F) — attraction only, before any Mar write.
     # Missing or >90-day-old most-recent review → route to DLQ instead of promoting.
-    if entity_type == "attraction" and not _attraction_review_recent(normalized):
+    if rio_record.entity_type == "attraction" and not _attraction_review_recent(
+        rio_record.normalized or {}, now=now
+    ):
         rio_record.routing = "dlq"
         rio_record.dlq_reason = "no_recent_reviews"
         session.flush()
         return None
+    return upsert_mar_snapshot(session, rio_record)
 
-    # Build canonical payload from normalized record. most_recent_review_at, contact
-    # (Phase F), google_enriched (the Places-enrichment idempotency marker) and
-    # descricao_attempts (the copywriter retry counter), places_refreshed_at (the refresh
-    # sweep's clock — else every refresh would supersede the row) and the cascade gate verdicts
-    # (descricao_gate / _rascunho / _groundedness) are internal/board-only —
-    # exclude them alongside the five reliability *_value criteria so the norteia-api
-    # Mar push shape stays byte-identical.
+
+# Internal/board-only normalized keys, never part of the Mar canonical: the five reliability
+# *_value criteria, recency evidence, the masked WhatsApp contact (Phase F) and its window
+# state, the Places/TA backfill markers (C1 google_enriched / ta_backfilled_at / ta_uf,
+# google_fetched_at), the copywriter retry counters and the cascade gate verdicts. Leaking
+# a counter or a timestamp would supersede (and re-push) an active Mar row for a purely
+# internal change.
+_NON_CANONICAL_KEYS = frozenset(
+    {
+        "origem_value", "completude_value", "corroboracao_value", "atualidade_value",
+        "validacao_humana_value", "most_recent_review_at", "review_count", "contact",
+        "window_open", "last_inbound_at", "google_enriched", "google_fetched_at",
+        "ta_backfilled_at", "ta_uf", "descricao_attempts", "descricao_batch_expiries",
+        "descricao_gate", "descricao_rascunho", "descricao_groundedness",
+        "places_refreshed_at",
+    }
+)
+
+
+def upsert_mar_snapshot(session: Session, rio_record: RioRecord) -> MarRecord:
+    """Write the Mar snapshot of ``rio_record`` — no gate, no recency backstop.
+
+    promote_to_mar is the gated entry; this is the snapshot half it shares with the outbox
+    (publication.publish), which re-derives the canonical of an ALREADY-promoted record so
+    a later description / Places / TA-backfill write reaches norteia-api (F48). No-op when
+    nothing changed; supersedes (D-03) when it did.
+    """
+    source_ref = rio_record.canonical_key or str(rio_record.id)
+    normalized = rio_record.normalized or {}
+    entity_type = rio_record.entity_type
+
     canonical: dict[str, Any] = {
-        k: v for k, v in normalized.items()
-        if k not in ("origem_value", "completude_value", "corroboracao_value",
-                     "atualidade_value", "validacao_humana_value",
-                     "most_recent_review_at", "review_count", "contact", "google_enriched",
-                     "descricao_attempts", "descricao_gate", "descricao_rascunho",
-                     "descricao_groundedness", "places_refreshed_at")
+        k: v for k, v in normalized.items() if k not in _NON_CANONICAL_KEYS
     }
 
     # Build provenance (D-06) — full per-criterion breakdown + score_version
@@ -228,6 +296,12 @@ def promote_to_mar(
             reliability_score=reliability_score,
             score_version=score_version,
             parent_mar_id=existing.id,
+            # push_hash describes what norteia-api holds for this source_ref, not the row:
+            # carried over, a supersession whose payload did not move is not re-POSTed.
+            push_hash=existing.push_hash,
+            # Same for a Brave retraction: the API copy is still hidden until a push says
+            # otherwise, so publish() must still send visibility=published (F47).
+            retracted_at=existing.retracted_at,
         )
         # Assign superseded_by_id + add + single flush as one atomic step: at
         # flush only the new row is active, so the partial unique index
@@ -258,6 +332,8 @@ def reopen_from_error_report(
 
     Finds the active MarRecord by source_ref, then resets its linked
     RioRecord to routing='dlq' with dlq_reason='community_error_report'.
+    The Mar row stays active: the outbox (publication.publish) sees a Mar row whose
+    Rio left 'mar' and retracts it from norteia-api (visibility=hidden) — F47.
 
     Args:
         session:    SQLAlchemy synchronous Session.
@@ -312,11 +388,15 @@ def build_push_payload(
         "validacao_humana": float(score_breakdown.get("validacao_humana", 0.0)),
     }
 
-    # source_ref format "source:UF:id" → "mtur:BA:123"
+    # source_ref format "source:UF:id" → "mtur:BA:123" — but NOT every lane: TripAdvisor
+    # refs are "tripadvisor:attraction:<id>", whose [1] read as a UF made the destino
+    # fallback "ibge:attraction:<ibge>", a ghost Destination per município on the API
+    # (F43). The Rio row's own UF wins; the ref's [1] only counts when it IS a UF.
     source_ref = mar_record.source_ref or ""
     parts = source_ref.split(":")
     source = parts[0] if parts and parts[0] else "unknown"
-    uf = parts[1] if len(parts) >= 2 else ""
+    ref_uf = parts[1] if len(parts) >= 3 and len(parts[1]) == 2 and parts[1].isalpha() else ""
+    uf = (getattr(rio_record, "uf", None) or ref_uf).upper()
 
     canonical = mar_record.canonical or {}
     reliability = float(mar_record.reliability_score)
@@ -343,17 +423,23 @@ def build_push_payload(
     # Split the Places phone: a BR celular → whatsapp, anything else → telefone.
     wa_from_places, telefone_from_places = _split_phone_for_push(canonical.get("phone"))
     # Parent destino link (destino-first). Fall back to the canonical IBGE ref so
-    # the API can resolve-or-create even when a lane didn't stamp parent_source_ref.
-    parent_ref = canonical.get("parent_source_ref") or f"ibge:{uf}:{municipio_ibge}"
+    # the API can resolve-or-create even when a lane didn't stamp parent_source_ref
+    # (the TA bulk lane). No UF or no município → no fallback at all: a half-built ref
+    # is exactly the ghost destino of F43.
+    parent_ref = canonical.get("parent_source_ref") or (
+        f"ibge:{uf}:{municipio_ibge}" if uf and municipio_ibge else None
+    )
+    destino_name = canonical.get("municipio") or canonical.get("municipio_nome") or ""
     weekday_text = canonical.get("weekday_text") or signal.get("weekday_text")
 
-    payload = {
+    payload: dict[str, Any] = {
         "source_ref": source_ref,
         "source": source,
         "name": canonical.get("name") or canonical.get("nome") or "",
-        # ponytail: label_entity is a Phase-1 stub, so `tipo` (carried from the
-        # lane in routing) is the only type signal; "outros" until NLP labeling lands.
-        "type": canonical.get("tipo") or canonical.get("type") or "outros",
+        # Lane taxonomy `tipo` first (Places/discovery), else the TripAdvisor card
+        # category (C6, raw in canonical["category"]) mapped onto the same vocabulary.
+        "type": canonical.get("tipo") or canonical.get("type")
+        or tipo_from_category(canonical.get("category")),
         "municipio_ibge": municipio_ibge,
         "description": canonical.get("descricao_editorial"),
         "latitude": canonical.get("lat"),
@@ -372,28 +458,56 @@ def build_push_payload(
         "website": canonical.get("website") or contacts.get("website"),
         "reliability_score": reliability,
         "provenance": flat_provenance,
-        "destino": {
-            "source_ref": parent_ref,
-            "source": parent_ref.split(":")[0] if parent_ref else source,
-            "tourist_name": canonical.get("municipio") or canonical.get("municipio_nome") or "",
-            "municipio_ibge": municipio_ibge,
-        },
-        "place": {
-            "place_id": canonical.get("google_place_id")
-            or canonical.get("place_id_cache")
-            or canonical.get("place_id"),
-            "business_status": signal.get("business_status"),
-            "opening_hours": weekday_text,
-            "price_level": _price_level_for_push(canonical.get("price_level")),
-            "reviews_recent_count": signal.get("reviews_recent_count"),
-            "distrito_code": canonical.get("distrito_code"),
-            "distrito_name": canonical.get("distrito_name"),
-            "distrito_municipio_ibge": canonical.get("distrito_municipio_ibge"),
-            "subdistrito_name": canonical.get("subdistrito_name"),
-            "subdistrito_code": canonical.get("subdistrito_code"),
-            "distrito_source": canonical.get("distrito_source"),
-        },
+        # No `visibility`: the API keeps its own moderation state (a community hide) on a
+        # re-push. publish() adds hidden/published only when Brave retracts / re-shows (F47).
     }
+
+    # Omitted rather than sent half-built: the API requires destino.source_ref and a
+    # non-empty destino.tourist_name, so an empty one 422s the whole push. Without the
+    # block the API resolves the existing "ibge:<UF>:<ibge>" destination itself.
+    if parent_ref and destino_name:
+        payload["destino"] = {
+            "source_ref": parent_ref,
+            "source": parent_ref.split(":")[0],
+            "tourist_name": destino_name,
+            "municipio_ibge": municipio_ibge,
+        }
+
+    # Google Places block, None keys dropped and the block omitted when empty (F93): the
+    # API upserts attraction_place_details with enriched_at=now() for ANY non-empty
+    # `place`, so all-null keys stamped never-enriched atrativos as enriched — and a
+    # re-push carrying null wiped a place_id the API already had.
+    place = {
+        "place_id": canonical.get("google_place_id")
+        or canonical.get("place_id_cache")
+        or canonical.get("place_id"),
+        "business_status": signal.get("business_status"),
+        "opening_hours": weekday_text,
+        "price_level": _price_level_for_push(canonical.get("price_level")),
+        "reviews_recent_count": signal.get("reviews_recent_count"),
+        "distrito_code": canonical.get("distrito_code"),
+        "distrito_name": canonical.get("distrito_name"),
+        "distrito_municipio_ibge": canonical.get("distrito_municipio_ibge"),
+        "subdistrito_name": canonical.get("subdistrito_name"),
+        "subdistrito_code": canonical.get("subdistrito_code"),
+        "distrito_source": canonical.get("distrito_source"),
+    }
+    # Exception: once the API holds a copy (push_hash), a key Brave deliberately CLEARED —
+    # present in the canonical as None (a TA-geo move off a homonym, a NotFound place_id) —
+    # is sent as null: omitted, the API kept the wrong place's id/hours/status/distrito.
+    cleared: set[str] = set()
+    if getattr(mar_record, "push_hash", None):
+        gone = {k for k, v in canonical.items() if v is None}
+        sources = {
+            "place_id": {"google_place_id", "place_id_cache", "place_id"},
+            "business_status": {"signal"},
+            "reviews_recent_count": {"signal"},
+            "opening_hours": {"weekday_text", "signal"},
+        }
+        cleared = {k for k in place if sources.get(k, {k}) & gone}
+    place = {k: v for k, v in place.items() if v is not None or k in cleared}
+    if place:
+        payload["place"] = place
 
     # Language-neutral day→hours map for attractions.opening_hours (the raw Google
     # lines keep riding untouched in place.opening_hours, which the Pact freezes).
@@ -403,5 +517,7 @@ def build_push_payload(
     hours_map = to_hours_map(weekday_text)
     if hours_map:
         payload["opening_hours"] = hours_map
+    elif "opening_hours" in cleared:
+        payload["opening_hours"] = {}  # the cleared hours overwrite the API's map
 
     return payload

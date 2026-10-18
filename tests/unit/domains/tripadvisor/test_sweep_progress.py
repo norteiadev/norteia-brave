@@ -48,6 +48,8 @@ def test_get_progress_absent_returns_idle(redis):
         "current_offset": 0,
         "error_count": 0,
         "started_at": None,
+        "updated_at": None,
+        "stale": False,
     }
 
 
@@ -181,6 +183,6 @@ def test_progress_hash_holds_no_secrets(redis):
     allowed = {
         "state", "pages_total", "pages_done", "attractions_ingested",
         "current_offset", "last_completed_offset", "error_count",
-        "started_at", "updated_at",
+        "started_at", "updated_at", "next_page",
     }
     assert keys <= allowed, f"unexpected fields in progress hash: {keys - allowed}"

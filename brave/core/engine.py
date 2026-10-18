@@ -92,9 +92,13 @@ _RUN_ID_KEY = "brave:engine:run_id"
 _INFLIGHT_KEY = "brave:engine:producers_inflight"
 _DISPATCH_DONE_KEY = "brave:engine:dispatch_done"
 # A reasoned pause (provider_balance | daily_budget) — set by pause_with_reason, read by
-# get_status for the Painel banner, cleared only by set_mode(LIGADO) (both resume paths:
+# get_status for the Painel banner, cleared by set_mode(LIGADO|DESLIGADO) (both resume paths:
 # POST /engine/start and POST /engine/mode LIGADO already call set_mode).
 _PAUSE_REASON_KEY = "brave:engine:pause_reason"
+# Producers of the current run that ended without doing their work (exhausted retries,
+# quarantined, a swallowed PermanentError, an early gate return). Any > 0 → "parcial":
+# "concluido" counted DISPATCHED units, so a UF whose producer failed read as complete.
+_FAILED_KEY = "brave:engine:producers_failed"
 
 # Source selects which ingest lane the orchestrator dispatches:
 #   default      — Google Places attraction lane (discover_atrativo_task; dormant by
@@ -177,6 +181,7 @@ def start(
     ufs: list[str],
     lane: str,
     valid_sources: Any = None,
+    units_total: int | None = None,
 ) -> str | None:
     """Start a fresh run and return its run_id; None (no-op) if a run is already active.
 
@@ -191,6 +196,9 @@ def start(
     Validation (depth/source/HTTP semantics) stays at the API edge; set_depth/set_source
     still raise ValueError on an out-of-contract value. ``valid_sources`` is injected by
     the caller (the kernel must not import the domains registry, D-18).
+
+    ``units_total`` overrides the plan size (default ``len(ufs)``) for a run whose unit
+    is not a UF — the bulk national sweep counts pages.
     """
     if get_state(redis) in (RUNNING, STOPPING):
         return None
@@ -201,11 +209,13 @@ def start(
         _finalize(session, previous, "parcial", int(_decode(redis.get(_UFS_DONE_KEY)) or 0))
     redis.set(_STATE_KEY, RUNNING)
     redis.set(_ENABLED_KEY, "1")
-    redis.set(_UFS_TOTAL_KEY, len(ufs))
+    total = len(ufs) if units_total is None else units_total
+    redis.set(_UFS_TOTAL_KEY, total)
     redis.set(_UFS_DONE_KEY, 0)
     redis.delete(_CURRENT_UF_KEY)
     redis.delete(_LAST_RUN_ENDED_KEY)  # a fresh run is not "synced" yet
     redis.set(_INFLIGHT_KEY, "0")
+    redis.set(_FAILED_KEY, "0")
     redis.delete(_DISPATCH_DONE_KEY)
     if action == "sweep":
         set_depth(redis, depth)
@@ -224,7 +234,7 @@ def start(
                     source=source,
                     depth=depth,
                     lane=lane,
-                    ufs_total=len(ufs),
+                    ufs_total=total,
                     status="running",
                 )
             )
@@ -307,8 +317,12 @@ def progress(redis: Any, run_id: str | None = None, n: int = 1, *, uf: str | Non
     redis.incrby(_UFS_DONE_KEY, n)
 
 
-def producer_done(redis: Any, session: Any, run_id: str | None = None) -> bool:
+def producer_done(
+    redis: Any, session: Any, run_id: str | None = None, *, failed: bool = False
+) -> bool:
     """A producer reached its terminal outcome. Returns True iff it completed the run.
+
+    ``failed``: the producer ended without doing its work — the run then ends "parcial".
 
     A producer of an older generation is ignored — it can never drain the new run's
     counter. So is one with ``run_id=None``: it ran outside any run (the daily discover
@@ -321,6 +335,8 @@ def producer_done(redis: Any, session: Any, run_id: str | None = None) -> bool:
     current = _current(redis, run_id)
     if current is None:
         return False
+    if failed:
+        redis.incr(_FAILED_KEY)
     if int(redis.decr(_INFLIGHT_KEY)) < 0:
         redis.set(_INFLIGHT_KEY, "0")
     return _maybe_complete(redis, session, current)
@@ -349,14 +365,17 @@ def _maybe_complete(redis: Any, session: Any, run_id: str) -> bool:
 
     Status: "concluido" only when every planned unit was dispatched and nothing
     interrupted the run; a Stop, pause, DESLIGADO or R1 (state no longer RUNNING, or
-    mode no longer LIGADO) → "parcial".
+    mode no longer LIGADO), or any producer_done(failed=True) → "parcial".
     """
     if _inflight(redis) > 0 or _decode(redis.get(_DISPATCH_DONE_KEY)) != "1":
         return False
     done = int(_decode(redis.get(_UFS_DONE_KEY)) or 0)
     total = int(_decode(redis.get(_UFS_TOTAL_KEY)) or 0)
     interrupted = (
-        get_state(redis) != RUNNING or get_mode(redis) != LIGADO or done < total
+        get_state(redis) != RUNNING
+        or get_mode(redis) != LIGADO
+        or done < total
+        or int(_decode(redis.get(_FAILED_KEY)) or 0) > 0
     )
     if _decode(redis.getset(_LAST_RUN_ENDED_KEY, "1")) == "1":
         return False  # another caller already completed this run
@@ -395,13 +414,14 @@ def pause_with_reason(
     """Pause the motor (mode=PAUSADO) with a human-visible reason for the Painel.
 
     Distinct from a plain ``set_mode(redis, PAUSADO)``: this ALSO writes the reason
-    (``provider_balance`` | ``daily_budget``), which provider tripped it (if any), and
+    (``provider_balance`` | ``daily_budget`` | ``manual`` — a plain pause that cut a backfill),
+    which provider tripped it (if any), and
     which action (``sweep`` | ``describe``) was interrupted — so the Painel can render a
     banner and rebuild the Continuar resume call. ``action=None`` (a chain task, e.g.
     enrich_places) means Continuar only lifts the pause, starting no run — unless a pause
     is already recorded: its action is kept, so when a producer stopped a sweep and its
-    queued chain tasks hit the same wall, Continuar still resumes the sweep. Cleared only
-    by ``set_mode(LIGADO)``.
+    queued chain tasks hit the same wall, Continuar still resumes the sweep. Cleared by
+    ``set_mode(LIGADO)`` and ``set_mode(DESLIGADO)``.
     """
     if action is None:
         action = (get_pause_reason(redis) or {}).get("action")
@@ -519,10 +539,12 @@ def set_mode(redis: Any, mode: str, *, session: Any = None) -> None:
         # +1 by never reaching its finally, permanently. producer_done clamps at 0, so a
         # still-draining producer that finishes after OFF cannot underflow this reset.
         redis.set(_INFLIGHT_KEY, "0")
-    if mode == LIGADO:
+    if mode in (LIGADO, DESLIGADO):
         # Both resume paths (POST /engine/start and POST /engine/mode LIGADO) call
         # set_mode(LIGADO) directly or via start — clearing the reason here covers
-        # every resume without separate clear-on-resume code anywhere else.
+        # every resume without separate clear-on-resume code anywhere else. A hard OFF
+        # supersedes the pause too: a reason left behind let the beat's auto-resume
+        # (_backfill_tick) turn the motor back on against the operator's Desligar.
         redis.delete(_PAUSE_REASON_KEY)
     if session is not None:
         upsert_config(session, {ENGINE_MODE_KEY: mode}, updated_by="engine")

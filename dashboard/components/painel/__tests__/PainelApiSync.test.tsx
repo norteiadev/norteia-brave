@@ -29,6 +29,7 @@ function mount(norteia_api?: {
   up: boolean | null;
   reason?: string | null;
   pending: number;
+  rejected?: number;
 }) {
   server.use(
     destinosListSuccess([]),
@@ -95,6 +96,21 @@ describe("Painel — sync com a norteia-api", () => {
       "norteia-api online",
     );
     expect(queryByTestId("reenviar-btn")).toBeNull();
+  });
+
+  it("rejected pushes → 'Pushes rejeitados' badge with the count", async () => {
+    const { findByTestId } = mount({ up: true, pending: 0, rejected: 3 });
+
+    expect((await findByTestId("api-sync-rejected")).textContent).toBe(
+      "Pushes rejeitados: 3",
+    );
+  });
+
+  it("no rejected pushes → no badge", async () => {
+    const { findByTestId, queryByTestId } = mount({ up: true, pending: 2, rejected: 0 });
+
+    await findByTestId("api-sync-label");
+    expect(queryByTestId("api-sync-rejected")).toBeNull();
   });
 
   it("hidden while externals are off (up=null) or the block is absent", async () => {

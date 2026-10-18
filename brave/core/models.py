@@ -65,6 +65,11 @@ class NascenteRecord(Base):
     """
 
     __tablename__ = "nascente_records"
+    __table_args__ = (
+        # One row per version (migration 0020): concurrent store_raw writers of the same
+        # source_ref collide here instead of forking two "active" versions.
+        Index("uq_nascente_source_ref_version", "source", "source_ref", "version", unique=True),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -137,7 +142,7 @@ class RioRecord(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     nascente_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("nascente_records.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("nascente_records.id"), nullable=False, index=True
     )
     entity_type: Mapped[str] = mapped_column(String(64), nullable=False)
     uf: Mapped[str] = mapped_column(String(2), nullable=False)
@@ -262,6 +267,17 @@ class MarRecord(Base):
     # tasks skip the POST while it matches. NULL = never pushed (or force a re-push).
     push_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     pushed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Outbox bookkeeping (migration 0019, brave.core.mar.publication/sync): the last publish
+    # attempt (dispatch backoff — no duplicate chains per tick), the API's permanent 4xx
+    # rejection (kept out of the dispatch so it can't hog the cap), and when the row was
+    # hidden on norteia-api because its Rio left 'mar' (retraction, F47).
+    push_attempted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    push_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retracted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
@@ -400,6 +416,9 @@ class RunHistory(Base):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="running"
     )
+    # The operator's per-UF test cap (max_atrativos_per_uf); NULL = uncapped. Written by
+    # engine_sweep_run so a reprocess repeats the run's scope instead of a full paid sweep.
+    max_per_uf: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     def __repr__(self) -> str:
         return (

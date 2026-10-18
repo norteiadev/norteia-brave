@@ -49,9 +49,13 @@ class Clients:
         whatsapp: Any = None,
         norteia_api: Any = None,
         batch: Any = None,
+        places_api_key_env: str = "BRAVE_PLACES_API_KEY",
     ) -> None:
         self._cfg = config if config is not None else AppConfig()
         self._ibge_lookup = ibge_lookup
+        # Env var holding the Places key: the daily refresh may run on its own key (and
+        # therefore its own per-key spend counters, see cost_guard.places_key_id).
+        self._places_api_key_env = places_api_key_env
         self._given: dict[str, Any] = {
             k: v
             for k, v in {
@@ -101,8 +105,11 @@ class Clients:
             from brave.clients.places import RealPlacesClient  # noqa: PLC0415
 
             return RealPlacesClient(
-                api_key=os.environ.get("BRAVE_PLACES_API_KEY", ""),
+                api_key=os.environ.get(self._places_api_key_env, ""),
                 ibge_lookup=self._ibge_lookup() if self._ibge_lookup else None,
+                redis_client=self._redis(),
+                daily_usd_cap=self._cfg.places_daily_usd_cap,
+                total_usd_cap=self._cfg.places_total_usd_cap,
             )
 
         return self._get("places", build)
@@ -278,7 +285,8 @@ def clients_for(
     config: AppConfig,
     *,
     ibge_lookup: Callable[[], dict[tuple[str, str], str]] | None = None,
+    places_api_key_env: str = "BRAVE_PLACES_API_KEY",
 ) -> Clients:
     """The external clients for one task run (see ``Clients``). ``config`` is the effective
     config; a caller with no DB session passes ``AppConfig()``."""
-    return Clients(config, ibge_lookup=ibge_lookup)
+    return Clients(config, ibge_lookup=ibge_lookup, places_api_key_env=places_api_key_env)

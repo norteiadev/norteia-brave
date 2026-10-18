@@ -33,11 +33,14 @@ class NullPlacesClient:
         """
         return []
 
-    async def place_details(self, place_id: str) -> dict[str, Any]:
+    async def place_details(
+        self, place_id: str, *, include_reviews: bool = True
+    ) -> dict[str, Any]:
         """Return empty dict — offline stub fetches no details.
 
         Args:
             place_id: Google Places place_id (ignored).
+            include_reviews: Ignored.
 
         Returns:
             Empty dict.

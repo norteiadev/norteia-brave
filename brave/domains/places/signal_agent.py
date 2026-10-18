@@ -9,7 +9,12 @@ D-05: Hard descarte path fires FIRST, before any reliability scoring:
   - business_status CLOSED_TEMPORARILY (operator decision 2026-09-18: the place still
     exists, a steward decides): → rio.routing = "dlq", rio.sub_state = None,
     rio.dlq_reason = "closed_temporarily" — the Painel shows a "Fechado Temporariamente"
-    badge. Audit row, flush, return (no scoring).
+    badge. The signals delta (below) is persisted first; audit row, flush, return (no
+    scoring).
+
+Every non-descarte exit (temporarily closed, no recent reviews, scored) persists the same
+signals delta from the already-paid place_details call: signal, atualidade_value,
+corroboracao_value, weekday_text, address (when present) and most_recent_review_at.
 
 Score inputs set on normalized:
   - atualidade_value: 100 if review ≤ 30 days, 50 if 1–6 months, 0 if no recent reviews
@@ -19,12 +24,15 @@ Score inputs set on normalized:
     lane writes a deterministic 0.0. This matches the prior offline (Null) behaviour
     exactly and keeps the reliability score input present (no default drift in routing).
 
-No-recent-reviews rule (Phase F), attraction only, BEFORE any reliability scoring:
-  - NO reviews OR most-recent review older than 90 days:
+No-recent-reviews rule (Phase F), attraction only, BEFORE any reliability scoring — the
+SAME rule as the promote_to_mar backstop (brave.core.mar.service._attraction_review_recent),
+read over the merged recency view (the later of the existing normalized date and the newest
+Google review; review_count from normalized only, i.e. the TripAdvisor count):
+  - newest review older than 90 days (365 when review_count >= 20), or none at all:
     → rio.routing = "dlq", rio.dlq_reason = "no_recent_reviews", rio.sub_state = None
     → terminal DLQ; does NOT enter the WhatsApp gate (the gate is manual now).
-  The 90-day check uses an injectable reference clock (SignalAgent(now=...)) so it is
-  fully deterministic offline.
+  The check uses an injectable reference clock (SignalAgent(now=...)) so it is fully
+  deterministic offline.
 
 After gathering signals, calls route_by_score to apply reliability scoring and route to mar/dlq/descarte.
 For a NON-stale borderline record (routing == "dlq" via score), sets
@@ -43,6 +51,7 @@ import structlog
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
+from brave.core.mar.service import _attraction_review_recent
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import route_by_score
 from brave.domains.places.schemas import SignalResult
@@ -167,7 +176,7 @@ class SignalAgent:
         self._config = config
         # Injectable reference clock (Phase F). None → resolved to
         # datetime.now(timezone.utc) at run() time. Pinning it makes the atualidade
-        # buckets AND the 90-day no-recent-reviews rule fully deterministic offline.
+        # buckets AND the no-recent-reviews rule fully deterministic offline.
         self._now = now
 
     async def run(self, rio: RioRecord) -> None:
@@ -177,14 +186,15 @@ class SignalAgent:
 
         Pipeline:
           1. Fetch place_details by place_id_cache
-          2. HARD DESCARTE CHECK: CLOSED_* → descarte + return
-          2.5 NO-RECENT-REVIEWS RULE (attraction): no reviews OR newest > 90 days →
-              terminal DLQ (dlq_reason="no_recent_reviews", sub_state=None) + return.
-              Does NOT enter the WhatsApp gate.
-          3. Compute atualidade_value from reviews
+          2. HARD DESCARTE CHECK: CLOSED_PERMANENTLY → descarte + return (nothing persisted)
+          3. Compute atualidade_value (max of existing and Google reviews)
           4. Set corroboracao_value to the deterministic 0.0 constant (Apify retired)
-          5. Mutate normalized (incl. most_recent_review_at) with flag_modified, advance sub_state
-          6. Call route_by_score for reliability scoring
+          5. Persist the signals delta (incl. most_recent_review_at) — on every path below
+          2b. CLOSED_TEMPORARILY → DLQ (dlq_reason="closed_temporarily") + return
+          2.5 NO-RECENT-REVIEWS RULE (attraction): the Mar backstop rule fails on the
+              merged recency view → terminal DLQ (dlq_reason="no_recent_reviews",
+              sub_state=None) + return. Does NOT enter the WhatsApp gate.
+          6. Advance sub_state, call route_by_score for reliability scoring
           7. If routing == "dlq" → set sub_state = "aguardando_consulta_whatsapp"
 
         Args:
@@ -228,67 +238,20 @@ class SignalAgent:
             )
             return
 
-        # Step 2b: temporarily closed → steward's call, not a descarte (no scoring).
-        if business_status == TEMPORARILY_CLOSED:
-            rio.routing = "dlq"
-            rio.dlq_reason = TEMPORARILY_CLOSED_REASON
-            rio.sub_state = None
-            write_audit(
-                session=self._session,
-                action="temporarily_closed",
-                entity_type="attraction",
-                record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
-                before_state={"sub_state": "contacts_found"},
-                after_state={
-                    "routing": "dlq",
-                    "sub_state": None,
-                    "reason": TEMPORARILY_CLOSED_REASON,
-                },
-                actor="signal_agent",
-            )
-            self._session.flush()
-            logger.info("atrativo_temporarily_closed", rio_id=str(rio.id))
-            return
-
         # Reference clock (Phase F): resolve ONCE so the atualidade buckets, the
-        # 90-day no-recent-reviews rule, and reviews_recent_count all share one
+        # no-recent-reviews rule, and reviews_recent_count all share one
         # deterministic 'now' (injectable via SignalAgent(now=...) for offline tests).
         ref_date = self._now or datetime.now(UTC)
 
         reviews: list[dict[str, Any]] = details.get("reviews", [])
+        recency = _merged_recency(normalized, reviews)
 
-        # Step 2.5: NO-RECENT-REVIEWS RULE (Phase F) — attraction only, BEFORE scoring.
-        # No reviews at all, OR the most-recent review older than 90 days → terminal
-        # DLQ (dlq_reason="no_recent_reviews"). This deliberately does NOT enter the
-        # WhatsApp gate: the record lands in the plain DLQ (sub_state=None) for a
-        # manual, operator-driven move (Phase F makes the gate manual). The CLOSED
-        # hard-descarte path above still fires first; corroboração stays the Phase E
-        # 0.0 constant on the scored (non-stale) path below.
-        if rio.entity_type == "attraction" and _reviews_stale_90d(reviews, ref_date):
-            rio.routing = "dlq"
-            rio.dlq_reason = "no_recent_reviews"
-            rio.sub_state = None
-
-            write_audit(
-                session=self._session,
-                action="no_recent_reviews",
-                entity_type="attraction",
-                record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
-                before_state={"sub_state": "contacts_found"},
-                after_state={"routing": "dlq", "sub_state": None, "reason": "no_recent_reviews"},
-                actor="signal_agent",
-            )
-            self._session.flush()
-
-            logger.info(
-                "atrativo_no_recent_reviews",
-                rio_id=str(rio.id),
-                review_count=len(reviews),
-            )
-            return
-
-        # Step 3: Compute atualidade_value from reviews (D-05)
-        atualidade_value = _compute_atualidade(reviews, ref_date)
+        # Step 3: atualidade_value from Google reviews (D-05), never below the existing
+        # value (e.g. TripAdvisor's) — same max-merge as PlacesEnrichmentAgent.
+        atualidade_value = max(
+            float(normalized.get("atualidade_value") or 0.0),
+            _compute_atualidade(reviews, ref_date),
+        )
 
         # Compute reviews_recent_count (for SignalResult)
         recent_count = sum(
@@ -302,7 +265,7 @@ class SignalAgent:
         # (routing does not silently drift on a missing key).
         corroboracao_value = 0.0
 
-        # Step 5: Mutate normalized with flag_modified (T-02-06-04 lesson)
+        # Step 5: build the signals delta (derived scalars only — no review text/author).
         weekday_text: list[str] = details.get("weekday_text", [])
 
         signal = SignalResult(
@@ -326,20 +289,81 @@ class SignalAgent:
         address = details.get("formatted_address")
         if address:
             new_normalized["address"] = address
-        # Phase F: persist the most-recent review timestamp (ISO-8601, UTC) so the
-        # promote_to_mar recency BACKSTOP can re-check the 90-day rule at promotion
-        # time. Excluded from the Mar `canonical` payload in promote_to_mar so the
-        # norteia-api push shape stays byte-identical (Pact).
-        newest_dt = _newest_review_dt(reviews)
-        new_normalized["most_recent_review_at"] = (
-            newest_dt.isoformat() if newest_dt is not None else None
-        )
+        # Phase F: persist the merged most-recent review timestamp so the promote_to_mar
+        # recency BACKSTOP re-checks the same rule at promotion time. It is excluded from the
+        # Mar `canonical` payload in promote_to_mar so the norteia-api push shape stays
+        # byte-identical (Pact).
+        new_normalized.update(recency)
 
+        # Persist on EVERY non-descarte path (temporarily closed, no recent reviews, scored),
+        # BEFORE the gates: the place_details call is already paid, and dropping its hours /
+        # address / status on a DLQ exit makes the record look "sem horário" (WhatsApp
+        # eligibility) and leaves the steward's card empty. Same as PlacesEnrichmentAgent,
+        # which persists before parking a temporarily-closed place.
         # Merge the delta onto the CURRENT column under a row lock instead of writing this
         # pre-place_details snapshot back whole — otherwise anything committed during the
         # Places call (a paid batched descricao_editorial + its completude, whose batch stamp
         # is already cleared) is erased and gets paid for again. See persist_normalized.
         persist_normalized(self._session, rio, normalized, new_normalized)
+
+        # Step 2b: temporarily closed → steward's call, not a descarte (no scoring).
+        if business_status == TEMPORARILY_CLOSED:
+            rio.routing = "dlq"
+            rio.dlq_reason = TEMPORARILY_CLOSED_REASON
+            rio.sub_state = None
+            write_audit(
+                session=self._session,
+                action="temporarily_closed",
+                entity_type="attraction",
+                record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
+                before_state={"sub_state": "contacts_found"},
+                after_state={
+                    "routing": "dlq",
+                    "sub_state": None,
+                    "reason": TEMPORARILY_CLOSED_REASON,
+                },
+                actor="signal_agent",
+            )
+            self._session.flush()
+            logger.info("atrativo_temporarily_closed", rio_id=str(rio.id))
+            return
+
+        # Step 2.5: NO-RECENT-REVIEWS RULE (Phase F) — attraction only, BEFORE scoring.
+        # One rule with the promote_to_mar backstop (_attraction_review_recent), read over
+        # the merged view: a fresh TripAdvisor date passes even with zero Google reviews,
+        # and an established place (review_count >= 20) gets the 365-day window. Failing it
+        # → terminal DLQ (dlq_reason="no_recent_reviews"). This deliberately does NOT enter
+        # the WhatsApp gate: the record lands in the plain DLQ (sub_state=None) for a
+        # manual, operator-driven move (Phase F makes the gate manual). The CLOSED
+        # hard-descarte path above still fires first; corroboração stays the Phase E
+        # 0.0 constant on the scored (non-stale) path below.
+        # Reads the pre-call snapshot + this run's recency (NOT the refreshed column), so a
+        # concurrent writer cannot change this run's routing outcome.
+        if rio.entity_type == "attraction" and not _attraction_review_recent(
+            {**normalized, **recency}, now=ref_date
+        ):
+            rio.routing = "dlq"
+            rio.dlq_reason = "no_recent_reviews"
+            rio.sub_state = None
+
+            write_audit(
+                session=self._session,
+                action="no_recent_reviews",
+                entity_type="attraction",
+                record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
+                before_state={"sub_state": "contacts_found"},
+                after_state={"routing": "dlq", "sub_state": None, "reason": "no_recent_reviews"},
+                actor="signal_agent",
+            )
+            self._session.flush()
+
+            logger.info(
+                "atrativo_no_recent_reviews",
+                rio_id=str(rio.id),
+                review_count=len(reviews),
+            )
+            return
+
         rio.sub_state = "signals_gathered"
 
         # Write audit before scoring
@@ -354,8 +378,9 @@ class SignalAgent:
         )
         self._session.flush()
 
-        # Step 6: Apply reliability scoring (route_by_score mutates routing in-place)
-        route_by_score(self._session, rio, self._config)
+        # Step 6: Apply reliability scoring (route_by_score mutates routing in-place). The fresh
+        # business_status above re-decided temporarily-closed; other verdicts stay sticky (C5).
+        route_by_score(self._session, rio, self._config, redecided={TEMPORARILY_CLOSED_REASON})
         self._session.flush()
 
         # Step 7 (Phase F, spec 2026-07-02): NÃO auto-gate. A borderline score→dlq
@@ -421,19 +446,27 @@ def _newest_review_dt(reviews: list[dict[str, Any]]) -> datetime | None:
     return newest
 
 
-def _reviews_stale_90d(reviews: list[dict[str, Any]], reference_date: datetime) -> bool:
-    """True when the no-recent-reviews rule fires (Phase F).
+def _merged_recency(
+    normalized: dict[str, Any],
+    reviews: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """The recency keys to write onto normalized: only what changes, never a None.
 
-    Fires when there are NO reviews, OR none carry a parseable publishTime, OR the
-    most-recent review is older than 90 days relative to reference_date. Pure +
-    deterministic (reference_date injected) → fully offline-testable.
+    most_recent_review_at = the later of the existing value (e.g. TripAdvisor's) and the
+    newest Google review — never regresses. review_count is left alone: the backstop's
+    established window (review_count >= 20) is calibrated on TripAdvisor review counts,
+    and Google's userRatingCount (star-only ratings included) is not comparable.
     """
-    if not reviews:
-        return True
-    newest = _newest_review_dt(reviews)
-    if newest is None:
-        return True  # reviews present but no usable recency signal → treat as stale
-    return (reference_date - newest) > timedelta(days=90)
+    out: dict[str, Any] = {}
+    existing = normalized.get("most_recent_review_at")
+    existing_dt = _parse_publish_time({"publishTime": existing})
+    newest = max(
+        (d for d in (existing_dt, _newest_review_dt(reviews)) if d is not None),
+        default=None,
+    )
+    if newest is not None and newest != existing_dt:
+        out["most_recent_review_at"] = newest.isoformat()
+    return out
 
 
 def _is_recent_review(review: dict[str, Any], reference_date: datetime) -> bool:

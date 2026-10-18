@@ -21,17 +21,19 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from brave.config.settings import ScoreConfig
 from brave.core.atrativos.state_machine import advance_sub_state
-from brave.core.models import MarRecord
+from brave.core.models import MarRecord, RioRecord
 from brave.core.nascente.service import store_raw
 from brave.core.quarantine import quarantine_poison
 from brave.core.rio.routing import process_nascente_record
 from brave.domains.places.schemas import AtrativoResult
 from brave.observability.audit import write_audit
 from brave.shared.destino import ensure_destino
+from brave.shared.exceptions import CostGuardError, ProviderBalanceError
 from brave.shared.ibge_distritos import resolve_distrito
 
 if TYPE_CHECKING:
@@ -39,6 +41,10 @@ if TYPE_CHECKING:
     from brave.shared.ibge_distritos import IbgeDistrito
 
 logger = structlog.get_logger(__name__)
+
+# Run-level stops (billing wall, our daily cap): never a property of one query/place, so
+# they escape the per-item quarantine and reach the task's failure policy (pause).
+_RUN_LEVEL: tuple[type[BaseException], ...] = (ProviderBalanceError, CostGuardError)
 
 
 # ---------------------------------------------------------------------------
@@ -175,11 +181,32 @@ class DiscoveryAgent:
             "distrito_source": "places_admin_area_level_3" if match else None,
         }
 
+    def _known_place_ids(self, uf: str, place_ids: list[str]) -> set[str]:
+        """place_ids of one Places page already in Rio — ONE query, before any paid LLM call.
+
+        Matches the discovery canonical_key (``places:{uf}:{place_id}``) and the normalized
+        ``place_id_cache`` / ``google_place_id`` (also set on TA records Places matched).
+        """
+        ids = {p for p in place_ids if p}
+        if not ids:
+            return set()
+        keys = {f"places:{uf}:{p}": p for p in ids}
+        pid = RioRecord.normalized["place_id_cache"].as_string()
+        gid = RioRecord.normalized["google_place_id"].as_string()
+        rows = self._session.execute(
+            select(RioRecord.canonical_key, pid, gid).where(
+                or_(RioRecord.canonical_key.in_(keys), pid.in_(ids), gid.in_(ids))
+            )
+        )
+        return {v for key, p, g in rows for v in (keys.get(key), p, g)} & ids
+
     async def produce(self, uf: str) -> None:
         """Sweep Google Places for attractions in a UF and write to Nascente.
 
-        Each Places result goes through: parent-destino check → LLM extraction →
-        store_raw. Failures are quarantined (never propagated).
+        Each Places result goes through: known-place skip → parent-destino check → LLM
+        extraction → store_raw. A place_id already in Rio is skipped before the paid LLM
+        extraction (one batched lookup per Places page). Failures are quarantined (never
+        propagated).
 
         Args:
             uf: Two-letter Brazilian state code (e.g. "BA", "RJ", "SP").
@@ -191,6 +218,8 @@ class DiscoveryAgent:
         for query in search_queries:
             try:
                 places_results = await self._places_client.text_search(query=query, uf=uf)
+            except _RUN_LEVEL:
+                raise
             except Exception as exc:
                 quarantine_poison(
                     session=self._session,
@@ -201,9 +230,10 @@ class DiscoveryAgent:
                 )
                 continue
 
+            known = self._known_place_ids(uf, [p.get("place_id", "") for p in places_results])
             for place in places_results:
                 place_id: str = place.get("place_id", "")
-                if not place_id:
+                if not place_id or place_id in known:
                     continue
 
                 place_name: str = place.get("name", "")
@@ -240,6 +270,8 @@ class DiscoveryAgent:
                         schema=AtrativoResult,
                         mode="tools",  # instructor Mode.TOOLS — D-09
                     )
+                except _RUN_LEVEL:
+                    raise
                 except Exception as exc:
                     quarantine_poison(
                         session=self._session,
@@ -396,6 +428,8 @@ class DiscoveryAgent:
 
             try:
                 places_results = await self._places_client.text_search(query=query, uf=uf)
+            except _RUN_LEVEL:
+                raise
             except Exception as exc:
                 quarantine_poison(
                     session=self._session,
@@ -406,12 +440,13 @@ class DiscoveryAgent:
                 )
                 continue
 
+            known = self._known_place_ids(uf, [p.get("place_id", "") for p in places_results])
             for place in places_results:
                 if created >= target_count:
                     break
 
                 place_id: str = place.get("place_id", "")
-                if not place_id or place_id in seen_place_ids:
+                if not place_id or place_id in seen_place_ids or place_id in known:
                     continue
                 seen_place_ids.add(place_id)
 
@@ -436,6 +471,8 @@ class DiscoveryAgent:
                         schema=AtrativoResult,
                         mode="tools",
                     )
+                except _RUN_LEVEL:
+                    raise
                 except Exception as exc:
                     quarantine_poison(
                         session=self._session,

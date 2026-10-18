@@ -10,7 +10,7 @@ export interface PainelFiltersProps {
   onPromoverLote: () => void;
   promoverLoteDisabled?: boolean;
   /** Mar → norteia-api sync (engine status). Absent = nothing to show. */
-  apiSync?: { up: boolean | null; reason?: string | null; pending: number };
+  apiSync?: { up: boolean | null; reason?: string | null; pending: number; rejected?: number };
   onReenviar?: () => void;
   reenviarDisabled?: boolean;
 }
@@ -139,6 +139,16 @@ export function PainelFilters({
               ? ` · ${apiSync.pending} ${apiSync.pending === 1 ? "pendente" : "pendentes"} de envio`
               : ""}
           </span>
+          {(apiSync.rejected ?? 0) > 0 ? (
+            <span
+              data-testid="api-sync-rejected"
+              title="Recusados pela norteia-api (4xx) — reenvio automático diário"
+              className="rounded-full px-2 py-[1px] text-[11px] font-medium text-white"
+              style={{ background: "var(--status-dlq)" }}
+            >
+              Pushes rejeitados: {apiSync.rejected}
+            </span>
+          ) : null}
           {apiSync.pending > 0 ? (
             <button
               type="button"

@@ -105,16 +105,28 @@ services:
 
   worker:
     <<: *backend
-    environment: *backend-env
+    environment:
+      <<: *backend-env
+      BRAVE_WORKER_RELOAD: ${BRAVE_WORKER_RELOAD:-0}
     # No -Q flag: worker consumes the default 'celery' queue (single-queue model).
-    # Dev autoreload: Celery has no native --reload (unlike uvicorn), so wrap it in
-    # watchfiles (already in the venv — uvicorn[standard] pulls it). It restarts the
-    # worker on any *.py change under /app/brave, so a task-signature change no longer
-    # needs a manual `docker compose restart worker`. Not for prod.
+    # Default = plain celery, NO autoreload. watchfiles restarts on every *.py save with
+    # SIGINT then SIGKILL after 5s: a long sweep (time_limit 1h, acks_late) dies mid-run,
+    # its `finally` never runs and the message only comes back after the broker's
+    # visibility_timeout. Opt in for pure dev with BRAVE_WORKER_RELOAD=1 (shell or .env)
+    # — never during a real collection run. `exec` keeps celery/watchfiles as PID 1 so
+    # `docker compose stop` delivers SIGTERM (warm shutdown) straight to it.
     command:
-      ["/app/.venv/bin/watchfiles", "--filter", "python",
-       "/app/.venv/bin/celery -A brave.tasks.celery_app:app worker --loglevel=info",
-       "/app/brave"]
+      - /bin/sh
+      - -c
+      - |
+        if [ "$$BRAVE_WORKER_RELOAD" = "1" ]; then
+          exec /app/.venv/bin/watchfiles --filter python "/app/.venv/bin/celery -A brave.tasks.celery_app:app worker --loglevel=info" /app/brave
+        fi
+        exec /app/.venv/bin/celery -A brave.tasks.celery_app:app worker --loglevel=info
+    # Warm shutdown waits for in-flight tasks (up to time_limit=3600s); the default 10s
+    # grace would SIGKILL them and strand acks_late messages. `docker compose kill worker`
+    # remains the explicit "don't wait" escape hatch.
+    stop_grace_period: 65m
     depends_on:
       migrate:
         condition: service_completed_successfully

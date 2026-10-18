@@ -42,6 +42,8 @@ class FakePlacesClient:
         self._fixture_details = fixture_details or {}
         self.text_search_calls: list[dict[str, Any]] = []
         self.place_details_calls: list[str] = []
+        # include_reviews flag of each place_details call (parallel to place_details_calls)
+        self.place_details_include_reviews: list[bool] = []
 
     async def text_search(self, query: str, uf: str) -> list[dict[str, Any]]:
         """Return fixture results for the given query.
@@ -56,17 +58,25 @@ class FakePlacesClient:
         self.text_search_calls.append({"query": query, "uf": uf})
         return self._fixture_results.get(query, [])
 
-    async def place_details(self, place_id: str) -> dict[str, Any]:
+    async def place_details(
+        self, place_id: str, *, include_reviews: bool = True
+    ) -> dict[str, Any]:
         """Return fixture details for the given place_id.
 
         Args:
             place_id: Google Places place_id.
+            include_reviews: False mirrors the real client's reviews-free mask — the
+                fixture comes back as a copy with ``reviews == []``.
 
         Returns:
             Fixture detail dict if place_id matches, empty dict otherwise.
         """
         self.place_details_calls.append(place_id)
-        return self._fixture_details.get(place_id, {})
+        self.place_details_include_reviews.append(include_reviews)
+        details = self._fixture_details.get(place_id, {})
+        if not include_reviews and details:
+            return {**details, "reviews": []}
+        return details
 
 
 # Structural type check: FakePlacesClient must satisfy PlacesClientProtocol

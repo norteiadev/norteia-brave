@@ -11,12 +11,14 @@ All tests run 100% offline (fakeredis, no DB needed, no real TripAdvisor calls).
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis
+import pytest
 from celery.exceptions import Retry
 
 from brave.config.settings import ScoreConfig
@@ -273,30 +275,34 @@ class TestSweepTripAdvisorSessionFailFast:
 
 
 class TestSweepTripAdvisorPerUfDestinoBuild:
-    """Per-UF destino_rio_map is built from ALL destination RioRecords, not source-filtered."""
+    """Per-UF destino_rio_map holds only the canonical IBGE destino of each município."""
 
-    def test_per_uf_destino_rio_map_sourced_from_authoritative_rio(self, monkeypatch):
-        """destino_rio_map is keyed by municipio_id from ANY destination RioRecord (Mtur etc).
+    def test_per_uf_destino_rio_map_keeps_only_canonical_ibge_destino(self, monkeypatch):
+        """destino_rio_map is keyed by municipio_id from the "ibge:{uf}:{ibge}" destino.
 
-        Simulates a Mtur destino already in Rio for BA/Salvador (ibge 2927408).
-        Asserts atrativos ingest receives that map entry — proves the source=='tripadvisor'
-        filter is gone and the oa3 fix is wired end-to-end.
+        Another destination row of the same município (a legacy mtur: ref) is listed AFTER
+        the IBGE one and must not win by order: norteia-api only accepts the canonical ref
+        as an attraction's destino.
         """
         import uuid as _uuid
         import asyncio as _asyncio
 
         fake_redis = fakeredis.FakeRedis()
-        mtur_rio_id = _uuid.uuid4()
-        mtur_source_ref = "mtur:BA:2927408"
+        ibge_rio_id = _uuid.uuid4()
+        ibge_source_ref = "ibge:BA:2927408"
 
-        # Fake DB row simulating a Mtur destino RioRecord for Salvador/BA
+        # Destino RioRecords for Salvador/BA: the canonical IBGE one, then a legacy mtur: one
         fake_row = MagicMock()
-        fake_row.id = mtur_rio_id
-        fake_row.source_ref = mtur_source_ref
+        fake_row.id = ibge_rio_id
+        fake_row.source_ref = ibge_source_ref
         fake_row.municipio_id = "2927408"
+        legacy_row = MagicMock()
+        legacy_row.id = _uuid.uuid4()
+        legacy_row.source_ref = "mtur:BA:2927408"
+        legacy_row.municipio_id = "2927408"
 
         mock_db_session = MagicMock()
-        mock_db_session.execute.return_value = MagicMock(all=lambda: [fake_row])
+        mock_db_session.execute.return_value = MagicMock(all=lambda: [fake_row, legacy_row])
         mock_db_engine = MagicMock()
 
         captured: dict = {}
@@ -342,11 +348,11 @@ class TestSweepTripAdvisorPerUfDestinoBuild:
             pass  # Retry etc. are fine; we only check captured
 
         assert "2927408" in captured.get("map", {}), (
-            f"destino_rio_map must contain Mtur ibge key '2927408'; "
+            f"destino_rio_map must contain ibge key '2927408'; "
             f"got keys: {list(captured.get('map', {}).keys())}"
         )
-        assert captured["map"]["2927408"] == (mtur_rio_id, mtur_source_ref), (
-            "Map entry must be (rio_id, source_ref) from the authoritative destino row"
+        assert captured["map"]["2927408"] == (ibge_rio_id, ibge_source_ref), (
+            "Map entry must be (rio_id, source_ref) from the canonical IBGE destino row"
         )
 
 
@@ -443,6 +449,10 @@ def _run_bulk_sweep(
     start_page: int = 1,
     max_pages: int | None = None,
     pre_seed=None,
+    mock_self=None,
+    effective=None,
+    depth=None,
+    **task_kwargs,
 ):
     """Run sweep_tripadvisor's BULK branch end-to-end offline.
 
@@ -462,7 +472,7 @@ def _run_bulk_sweep(
     )
     monkeypatch.setattr(
         "brave.tasks.pipeline.load_effective_config",
-        lambda session, redis=None: MagicMock(score=_make_config()),
+        lambda session, redis=None: effective or MagicMock(score=_make_config()),
     )
     monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
     monkeypatch.setenv("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
@@ -478,7 +488,7 @@ def _run_bulk_sweep(
     if pre_seed is not None:
         pre_seed(fake_redis)
 
-    mock_self = MagicMock()
+    mock_self = mock_self or MagicMock()
     retry_calls = []
 
     def _recording_retry(exc=None, max_retries=None, countdown=None):
@@ -494,17 +504,23 @@ def _run_bulk_sweep(
     with (
         patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
         patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
+        # The bulk links each card's parent destino (F43-b) — DB-free here.
+        patch(
+            "brave.domains.tripadvisor.atrativos.TripAdvisorAtrativosIngest._ensure_destino",
+            return_value=(uuid.uuid4(), "ibge:MG:3170107"),
+        ),
     ):
         mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
         # NOTE: do NOT swallow — an UnboundLocalError regression must fail the test.
         raw_fn(
             mock_self,
             "BR",
-            None,
+            depth,
             bulk_national=True,
             start_page=start_page,
             max_pages=max_pages,
             geo_id=_GEO_ID_BR,
+            **task_kwargs,
         )
         store_call_count = mock_store_raw.call_count
 
@@ -637,7 +653,7 @@ class TestSweepTripAdvisorBulkNational:
 
 
     def test_bulk_counts_its_pages_against_the_current_run(self, monkeypatch):
-        """The standalone bulk run claims itself against the current engine run, counts
+        """The bulk run, claimed by its dispatcher (the script's own engine run), counts
         each page as progress and pays the claim back when it ends."""
         from brave.core import engine as collection_engine
 
@@ -652,6 +668,7 @@ class TestSweepTripAdvisorBulkNational:
             fake_redis, None, action="sweep", depth="nascente_rio",
             source="tripadvisor", ufs=["BR"], lane="atrativos",
         )
+        claimed = collection_engine.claim_producer(fake_redis, run_id)
 
         _run_bulk_sweep(
             fake_client=fake_client,
@@ -659,6 +676,7 @@ class TestSweepTripAdvisorBulkNational:
             fake_redis=fake_redis,
             monkeypatch=monkeypatch,
             max_pages=2,
+            run_id=claimed,
         )
 
         assert collection_engine.get_status(fake_redis)["ufs_done"] == 2
@@ -1012,7 +1030,7 @@ class TestSweepNeverDescribes:
             parallel_search_mode="turbo",
             atrativo_cascade_model=model,
             llm=LLMConfig(openrouter_api_key="or", gemini_api_key=gemini_key),
-            places_enrichment_enabled=False,
+            places_enrichment_enabled=True,
             description_enrichment_enabled=True,
             atrativo_description_batch_enabled=False,
             atrativo_description_cascade_enabled=True,
@@ -1040,6 +1058,8 @@ class TestSweepNeverDescribes:
             "brave.clients.nominatim.NominatimGeocoderClient",
             lambda config, redis: NullGeocoderClient(),
         )
+        # Places on (an agent is built only then); its client is irrelevant here.
+        monkeypatch.setattr("brave.clients.places.RealPlacesClient", lambda **kw: MagicMock())
 
         mock_self = MagicMock()
         mock_self.retry.side_effect = lambda **kw: Retry()
@@ -1064,3 +1084,354 @@ class TestSweepNeverDescribes:
         assert agent is not None and "inline_enrichment_build_failed" not in events
         assert agent._description_enabled is False
         assert isinstance(agent._llm_client, NullLLMClient)
+
+
+# ---------------------------------------------------------------------------
+# Wave-1 orchestration fixes: time budget (F04), resume cursor (F05), Places off (F10),
+# 429 back-off, bulk → backfill chain.
+# ---------------------------------------------------------------------------
+
+
+class _SlowSecondPageClient:
+    """Page 1 at once; page 2 only after a long await (the cooperative budget cuts it)."""
+
+    async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=334):
+        import asyncio as _aio
+
+        yield (start_page - 1) * 30, [_make_card(location_id=7000 + start_page)]
+        await _aio.sleep(5)
+        yield start_page * 30, [_make_card(location_id=7001 + start_page)]
+
+
+def _engine_run(fake_redis):
+    from brave.core import engine as collection_engine
+
+    run_id = collection_engine.start(
+        fake_redis, None, action="sweep", depth="nascente_rio", source="tripadvisor",
+        ufs=["BR"], lane="tripadvisor_bulk", units_total=334,
+    )
+    claimed = collection_engine.claim_producer(fake_redis, run_id)
+    collection_engine.dispatch_finished(fake_redis, None, run_id)
+    return claimed
+
+
+class TestBulkTimeBudget:
+    def test_budget_hands_the_remaining_pages_to_a_continuation(self, monkeypatch):
+        """F04: a worker execution stops before the soft limit and re-enqueues itself for
+        the pages left, on the same run token — no retry consumed, no 'running' left
+        behind a FAILURE, and the run stays open for the continuation."""
+        from brave.core import engine as collection_engine
+        from brave.tasks import pipeline
+
+        fake_redis = fakeredis.FakeRedis()
+        run_id = _engine_run(fake_redis)
+        sent: list[dict] = []
+        monkeypatch.setattr(
+            pipeline.sweep_tripadvisor, "apply_async",
+            lambda args=(), kwargs=None, countdown=None: sent.append({"args": args, **kwargs}),
+        )
+        monkeypatch.setattr(pipeline, "_time_budget", lambda task: 0.2)
+
+        _, retry_calls, store_calls = _run_bulk_sweep(
+            fake_client=_SlowSecondPageClient(),
+            fake_geo=FakeGeocoderClient(fixture_national_results=_resolvable_geo_fixture(["7001"])),
+            fake_redis=fake_redis,
+            monkeypatch=monkeypatch,
+            max_pages=10,
+            run_id=run_id,
+        )
+
+        assert retry_calls == []
+        assert store_calls == 1  # page 1 durable
+        assert sent == [{
+            "args": ("BR", None), "bulk_national": True, "max_pages": 9,
+            "geo_id": _GEO_ID_BR, "run_id": run_id,
+        }]
+        snap = sweep_progress.get_progress(fake_redis)
+        assert snap["state"] == "running" and snap["pages_done"] == 1
+        assert sweep_progress.get_resume_page(fake_redis) == 2
+        # The continuation holds the inflight token: the run is still open.
+        assert collection_engine.get_status(fake_redis)["state"] == collection_engine.RUNNING
+
+    def test_unexpected_error_never_leaves_running(self, monkeypatch):
+        """F04 safety net: any exit (here a retry) flips the panel to stopped."""
+        fake_redis = fakeredis.FakeRedis()
+        with contextlib.suppress(Retry):
+            _run_bulk_sweep(
+                fake_client=_RaisingPaginatedClient(pages_before_raise=1, exc=RuntimeError("boom")),
+                fake_geo=FakeGeocoderClient(fixture_national_results=_resolvable_geo_fixture(["1000"])),
+                fake_redis=fake_redis,
+                monkeypatch=monkeypatch,
+            )
+        assert sweep_progress.get_progress(fake_redis)["state"] == "stopped"
+
+
+class TestBulkResumeCursor:
+    def test_halted_resume_keeps_its_place(self, monkeypatch):
+        """F05: a resumed run halted before completing a page (motor off) must not fall
+        back to page 1 on the next trigger — pages_done=0 is not 'no progress'."""
+        from brave.core import engine as collection_engine
+
+        fake_redis = fakeredis.FakeRedis()
+        sweep_progress.start(fake_redis, pages_total=334)
+        sweep_progress.record_page(fake_redis, offset=5970, ingested_delta=30)  # page 200 done
+        sweep_progress.stop_needs_bootstrap(fake_redis)
+
+        # Re-trigger with the motor still off: halts before any page.
+        _run_bulk_sweep(
+            fake_client=FakeTripAdvisorClient(gql_pages=[(6000, [_make_card(1)])]),
+            fake_geo=FakeGeocoderClient(fixture_national_results={}),
+            fake_redis=fake_redis,
+            monkeypatch=monkeypatch,
+            pre_seed=lambda rc: collection_engine.set_mode(rc, collection_engine.PAUSADO),
+        )
+        assert sweep_progress.get_progress(fake_redis)["state"] == "stopped"
+
+        recorder = _RecordingGqlClient()
+        _run_bulk_sweep(
+            fake_client=recorder,
+            fake_geo=FakeGeocoderClient(fixture_national_results={}),
+            fake_redis=fake_redis,
+            monkeypatch=monkeypatch,
+            pre_seed=lambda rc: collection_engine.set_mode(rc, collection_engine.LIGADO),
+        )
+        assert recorder.gql_calls[0]["start_page"] == 201
+        assert sweep_progress.get_progress(fake_redis)["pages_done"] == 1  # cumulative
+
+    def test_a_done_run_starts_fresh(self, monkeypatch):
+        """F05: after a finished national run a new bulk starts at start_page instead of
+        an empty range past page 334 (a silent no-op forever)."""
+        fake_redis = fakeredis.FakeRedis()
+        sweep_progress.start(fake_redis, pages_total=334)
+        sweep_progress.record_page(fake_redis, offset=9990, ingested_delta=30)
+        sweep_progress.mark_done(fake_redis)
+
+        recorder = _RecordingGqlClient()
+        _run_bulk_sweep(
+            fake_client=recorder, fake_geo=FakeGeocoderClient(fixture_national_results={}),
+            fake_redis=fake_redis, monkeypatch=monkeypatch,
+        )
+        assert recorder.gql_calls[0]["start_page"] == 1
+
+    def test_fresh_flag_overrides_a_stored_run(self, monkeypatch):
+        fake_redis = fakeredis.FakeRedis()
+        sweep_progress.start(fake_redis, pages_total=334)
+        sweep_progress.record_page(fake_redis, offset=300, ingested_delta=30)
+        sweep_progress.stop(fake_redis)
+
+        recorder = _RecordingGqlClient()
+        _run_bulk_sweep(
+            fake_client=recorder, fake_geo=FakeGeocoderClient(fixture_national_results={}),
+            fake_redis=fake_redis, monkeypatch=monkeypatch, start_page=50, fresh=True,
+        )
+        assert recorder.gql_calls[0]["start_page"] == 50
+
+
+class TestBulkChainsIntoBackfill:
+    def test_done_bulk_hands_its_token_to_the_backfill(self, monkeypatch):
+        from brave.config.settings import AppConfig
+        from brave.core import engine as collection_engine
+        from brave.tasks import pipeline
+
+        fake_redis = fakeredis.FakeRedis()
+        run_id = _engine_run(fake_redis)
+        sent: list[dict] = []
+        monkeypatch.setattr(
+            pipeline.backfill_ta_atrativos, "apply_async",
+            lambda args=(), kwargs=None, countdown=None: sent.append(kwargs),
+        )
+
+        _run_bulk_sweep(
+            fake_client=FakeTripAdvisorClient(gql_pages=[(0, [_make_card(1)])]),
+            fake_geo=FakeGeocoderClient(fixture_national_results=_resolvable_geo_fixture(["1"])),
+            fake_redis=fake_redis,
+            monkeypatch=monkeypatch,
+            max_pages=1,
+            run_id=run_id,
+            effective=AppConfig(score=_make_config()),
+        )
+
+        assert sweep_progress.get_progress(fake_redis)["state"] == "done"
+        assert sent == [{"run_id": run_id}]
+        assert collection_engine.get_status(fake_redis)["state"] == collection_engine.RUNNING
+
+    @pytest.mark.parametrize(
+        ("cfg_kw", "task_kw"),
+        [({"ta_backfill_enabled": False}, {}), ({}, {"depth": "nascente"})],
+        ids=["flag-off", "nascente-only"],
+    )
+    def test_no_backfill_when_off_or_nascente_only(self, monkeypatch, cfg_kw, task_kw):
+        from brave.config.settings import AppConfig
+        from brave.core import engine as collection_engine
+        from brave.tasks import pipeline
+
+        fake_redis = fakeredis.FakeRedis()
+        run_id = _engine_run(fake_redis)
+        sent: list[dict] = []
+        monkeypatch.setattr(
+            pipeline.backfill_ta_atrativos, "apply_async",
+            lambda args=(), kwargs=None, countdown=None: sent.append(kwargs),
+        )
+
+        _run_bulk_sweep(
+            fake_client=FakeTripAdvisorClient(gql_pages=[(0, [_make_card(1)])]),
+            fake_geo=FakeGeocoderClient(fixture_national_results=_resolvable_geo_fixture(["1"])),
+            fake_redis=fake_redis,
+            monkeypatch=monkeypatch,
+            max_pages=1,
+            run_id=run_id,
+            effective=AppConfig(score=_make_config(), **cfg_kw),
+            **task_kw,
+        )
+
+        assert sent == []
+        assert collection_engine.get_status(fake_redis)["state"] == collection_engine.IDLE
+
+    def test_budget_spent_after_the_last_page_still_chains_the_backfill(self, monkeypatch):
+        """The time budget (or a soft-limit signal) landing after the last page committed:
+        all pages are in, so the backfill must start — it used to just mark_done and end."""
+        from brave.config.settings import AppConfig
+        from brave.tasks import pipeline
+
+        async def _spent_after(coro, budget):
+            await coro
+            return pipeline._BUDGET_SPENT
+
+        monkeypatch.setattr(pipeline, "_bounded", _spent_after)
+        fake_redis = fakeredis.FakeRedis()
+        run_id = _engine_run(fake_redis)
+        sent: list[dict] = []
+        monkeypatch.setattr(
+            pipeline.backfill_ta_atrativos, "apply_async",
+            lambda args=(), kwargs=None, countdown=None: sent.append(kwargs),
+        )
+
+        _run_bulk_sweep(
+            fake_client=FakeTripAdvisorClient(gql_pages=[(0, [_make_card(1)])]),
+            fake_geo=FakeGeocoderClient(fixture_national_results=_resolvable_geo_fixture(["1"])),
+            fake_redis=fake_redis,
+            monkeypatch=monkeypatch,
+            max_pages=1,
+            run_id=run_id,
+            effective=AppConfig(score=_make_config()),
+        )
+
+        assert sweep_progress.get_progress(fake_redis)["state"] == "done"
+        assert sent == [{"run_id": run_id}]
+
+
+class TestRateLimitBackoff:
+    def test_bulk_429_reenqueues_after_retry_after_without_killing_the_motor(self, monkeypatch):
+        from brave.core import engine as collection_engine
+        from brave.shared.exceptions import SourceRateLimitError
+        from brave.tasks import pipeline
+
+        fake_redis = fakeredis.FakeRedis()
+        run_id = _engine_run(fake_redis)
+        sent: list[dict] = []
+        monkeypatch.setattr(
+            pipeline.sweep_tripadvisor, "apply_async",
+            lambda args=(), kwargs=None, countdown=None: sent.append({**kwargs, "countdown": countdown}),
+        )
+
+        _, retry_calls, _ = _run_bulk_sweep(
+            fake_client=_RaisingPaginatedClient(
+                pages_before_raise=1, exc=SourceRateLimitError(retry_after=30)
+            ),
+            fake_geo=FakeGeocoderClient(fixture_national_results=_resolvable_geo_fixture(["1000"])),
+            fake_redis=fake_redis,
+            monkeypatch=monkeypatch,
+            max_pages=5,
+            run_id=run_id,
+        )
+
+        assert retry_calls == []
+        assert fake_redis.get(_TA_NEEDS_BOOTSTRAP_KEY) is None
+        assert collection_engine.get_mode(fake_redis) == collection_engine.LIGADO
+        assert sent == [{
+            "bulk_national": True, "geo_id": _GEO_ID_BR, "max_pages": 4, "run_id": run_id,
+            "backoffs": 1, "countdown": 30,
+        }]
+
+    def test_schema_error_stops_without_retry(self, monkeypatch):
+        from brave.shared.exceptions import SourceSchemaError
+
+        fake_redis = fakeredis.FakeRedis()
+        _, retry_calls, _ = _run_bulk_sweep(
+            fake_client=_RaisingPaginatedClient(pages_before_raise=0, exc=SourceSchemaError("x")),
+            fake_geo=FakeGeocoderClient(fixture_national_results={}),
+            fake_redis=fake_redis,
+            monkeypatch=monkeypatch,
+        )
+        assert retry_calls == []
+        assert sweep_progress.get_progress(fake_redis)["state"] == "stopped"
+
+
+class TestPerUfPlacesOffAndBudget:
+    def _run(self, monkeypatch, *, places_on: bool, produce=None, run_id=None, rc=None):
+        captured: dict[str, Any] = {}
+
+        class _Ingest:
+            def __init__(self, **kw: Any) -> None:
+                captured.update(kw)
+
+            async def produce(self, uf: str, **kw: Any) -> list[str]:
+                return await produce() if produce else []
+
+        cfg = MagicMock(run_real_externals=False, places_enrichment_enabled=places_on)
+        cfg.atrativo_voice_model_slug = "claude-sonnet-4-5"
+        cfg.places_match_max_distance_km = 20.0
+        fake_redis = rc or fakeredis.FakeRedis()
+        session = MagicMock()
+        session.execute.return_value = MagicMock(all=lambda: [])
+        monkeypatch.setattr("brave.tasks.pipeline.load_effective_config", lambda s, redis=None: cfg)
+        monkeypatch.setattr("brave.shared.ibge_distritos.load_distritos", lambda s: [])
+        monkeypatch.setattr("redis.from_url", lambda url, **kw: fake_redis)
+        monkeypatch.setattr("brave.tasks.pipeline._get_session", lambda: (session, MagicMock()))
+        monkeypatch.setattr("brave.domains.tripadvisor.ibge.load_ibge_municipios", lambda s: [])
+        monkeypatch.setattr(
+            "brave.domains.tripadvisor.atrativos.TripAdvisorAtrativosIngest", _Ingest
+        )
+        from brave.tasks.pipeline import sweep_tripadvisor
+
+        sweep_tripadvisor.__wrapped__.__func__(MagicMock(), uf="ES", depth="nascente_rio", run_id=run_id)
+        return captured, fake_redis
+
+    def test_places_off_builds_no_agent(self, monkeypatch):
+        """F10: Places disabled → no inline agent (a Null-client agent marked every
+        record google_enriched, so enabling Places later enriched nothing)."""
+        captured, _ = self._run(monkeypatch, places_on=False)
+        assert captured["places_agent"] is None
+
+    def test_places_on_builds_the_agent(self, monkeypatch):
+        captured, _ = self._run(monkeypatch, places_on=True)
+        assert captured["places_agent"] is not None
+
+    def test_per_uf_budget_hands_the_uf_on(self, monkeypatch):
+        import asyncio as _aio
+
+        from brave.core import engine as collection_engine
+        from brave.tasks import pipeline
+
+        sent: list[dict] = []
+        monkeypatch.setattr(
+            pipeline.sweep_tripadvisor, "apply_async",
+            lambda args=(), kwargs=None, countdown=None: sent.append({"args": args, **kwargs}),
+        )
+        monkeypatch.setattr(pipeline, "_time_budget", lambda task: 0.05)
+
+        async def _slow():
+            await _aio.sleep(5)
+
+        rc = fakeredis.FakeRedis()
+        run_id = collection_engine.start(
+            rc, None, action="sweep", depth="nascente_rio", source="tripadvisor",
+            ufs=["ES"], lane="atrativos",
+        )
+        claimed = collection_engine.claim_producer(rc, run_id)
+        collection_engine.dispatch_finished(rc, None, run_id)
+        self._run(monkeypatch, places_on=False, produce=_slow, run_id=claimed, rc=rc)
+
+        assert sent == [{"args": ("ES", "nascente_rio"), "max_per_uf": None, "run_id": claimed}]
+        # The continuation holds the token: without the hand-over the run would be done.
+        assert collection_engine.get_status(rc)["state"] == collection_engine.RUNNING

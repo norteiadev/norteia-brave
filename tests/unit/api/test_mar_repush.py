@@ -39,7 +39,7 @@ def client(monkeypatch):
         app.dependency_overrides.pop(get_publish_enqueue, None)
 
 
-def _patch(monkeypatch, *, up, pending=0, dispatched=0):
+def _patch(monkeypatch, *, up, pending=0, rejected=0, dispatched=0):
     import brave.api.routers.engine as engine_router
 
     calls = MagicMock(return_value=dispatched)
@@ -50,20 +50,26 @@ def _patch(monkeypatch, *, up, pending=0, dispatched=0):
         lambda _redis: None if up is None else ("ok" if up else "ingest:401"),
     )
     monkeypatch.setattr(engine_router, "count_pending_pushes", lambda _db: pending)
+    monkeypatch.setattr(engine_router, "count_rejected_pushes", lambda _db: rejected)
     monkeypatch.setattr(engine_router, "republish_pending", calls)
     return calls
 
 
 def test_status_carries_norteia_api_block(client, monkeypatch):
-    _patch(monkeypatch, up=False, pending=7)
+    _patch(monkeypatch, up=False, pending=7, rejected=3)
     body = client.get("/api/v1/engine/status", headers=BEARER_HEADERS).json()
-    assert body["norteia_api"] == {"up": False, "reason": "ingest:401", "pending": 7}
+    assert body["norteia_api"] == {
+        "up": False,
+        "reason": "ingest:401",
+        "pending": 7,
+        "rejected": 3,
+    }
 
 
 def test_status_has_no_reason_when_up(client, monkeypatch):
     _patch(monkeypatch, up=True)
     body = client.get("/api/v1/engine/status", headers=BEARER_HEADERS).json()
-    assert body["norteia_api"] == {"up": True, "reason": None, "pending": 0}
+    assert body["norteia_api"] == {"up": True, "reason": None, "pending": 0, "rejected": 0}
 
 
 def test_repush_dispatches_when_api_up(client, monkeypatch):

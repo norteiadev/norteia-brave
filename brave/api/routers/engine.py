@@ -37,7 +37,12 @@ from brave.config.settings import AppConfig
 from brave.core import beat_health
 from brave.core import engine as collection_engine
 from brave.core.mar.publication import republish_pending
-from brave.core.mar.sync import count_pending_pushes, norteia_api_health, norteia_api_up
+from brave.core.mar.sync import (
+    count_pending_pushes,
+    count_rejected_pushes,
+    norteia_api_health,
+    norteia_api_up,
+)
 from brave.core.models import MarRecord, NascenteRecord, RioRecord
 
 logger = structlog.get_logger(__name__)
@@ -146,6 +151,8 @@ def engine_status(
         "up": None if health is None else health == "ok",
         "reason": None if health in (None, "ok") else health,
         "pending": count_pending_pushes(db),
+        # Permanent 4xx (push_error set): retried daily, never counted in pending (F46).
+        "rejected": count_rejected_pushes(db),
     }
     # Maintenance beats that failed on their last run (brave.core.beat_health).
     status["beat_errors"] = beat_health.beat_errors(redis)
@@ -245,6 +252,8 @@ def engine_start(
     `depth` is the cost-checkpoint contract and is **required** — there is no
     implicit default, so the engine never silently spends.
 
+    `action: "backfill"` starts the TA backfill run (POST /api/v1/tripadvisor/backfill).
+
     `action: "describe"` (default "sweep") runs the description producer per UF
     (brave.describe_uf) instead of a sweep: no depth, no source, no TA session —
     but 409 unless the inline copywriter is actually on (real externals, description
@@ -256,8 +265,16 @@ def engine_start(
     lane = body.get("lane", "both")
 
     action = body.get("action", "sweep")
-    if action not in ("sweep", "describe"):
-        raise HTTPException(status_code=422, detail="action must be 'sweep' or 'describe'")
+    if action not in ("sweep", "describe", "backfill"):
+        raise HTTPException(
+            status_code=422, detail="action must be 'sweep', 'describe' or 'backfill'"
+        )
+    if action == "backfill":
+        # The Painel's Continuar after a backfill pause (Places key swap / budget wall):
+        # the paused run already ended, so resuming = a new backfill run, same guards.
+        from brave.api.routers.tripadvisor_session import start_backfill  # noqa: PLC0415
+
+        return start_backfill(redis=redis, db=db)
 
     if action == "describe":
         cfg = _effective_config(db, redis)

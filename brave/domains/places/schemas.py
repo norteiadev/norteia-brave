@@ -182,9 +182,12 @@ class SignalResult(BaseModel):
             "(≤30 dias); 50 se 1–6 meses; 0 se sem reviews recentes."
         ),
     )
-    reviews_recent_count: int = Field(
+    reviews_recent_count: int | None = Field(
         default=0,
-        description="Quantidade de reviews com publishTime nos últimos 30 dias.",
+        description=(
+            "Quantidade de reviews com publishTime nos últimos 30 dias. None = desconhecido "
+            "(Details pedido sem reviews e sem contagem anterior)."
+        ),
     )
 
 

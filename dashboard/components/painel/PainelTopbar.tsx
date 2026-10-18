@@ -116,9 +116,19 @@ function sessionColor(s: TASessionStatus): string {
   return "var(--status-descarte)";
 }
 
+/** Continuar's confirm text. A Places key swap only reaches the worker when its container is
+ *  RECREATED (env_file is read at create; `restart` keeps the old key and re-pauses at once). */
+function continuarConfirmText(reason: { reason: string; provider: string | null }): string {
+  if (reason.reason === "manual") return "Retomar o backfill?";
+  if (reason.provider === "google_places")
+    return "Saldo recarregado? Se trocou BRAVE_PLACES_API_KEY no .env, recrie worker e api antes (docker compose up -d worker api) — restart não relê o .env.";
+  return "Saldo recarregado?";
+}
+
 /** PT-BR pause-reason banner text (quick-260918-ohm) — reason + which provider tripped it. */
 function pauseReasonLabel(reason: { reason: string; provider: string | null }): string {
   if (reason.reason === "daily_budget") return "Motor pausado: orçamento diário atingido";
+  if (reason.reason === "manual") return "Motor pausado: backfill interrompido";
   if (reason.provider) return `Motor pausado: sem saldo (${reason.provider})`;
   return "Motor pausado: sem saldo";
 }
@@ -162,10 +172,13 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     mutationFn: (
       vars:
         | { action: "sweep"; depth: EngineDepth; ufs?: string[]; maxPerUf?: number }
-        | { action: "describe"; ufs?: string[]; maxPerUf?: number },
+        | { action: "describe"; ufs?: string[]; maxPerUf?: number }
+        | { action: "backfill" },
     ) =>
       startEngine(
-        vars.action === "describe"
+        vars.action === "backfill"
+          ? { action: "backfill" }
+          : vars.action === "describe"
           ? {
               action: "describe",
               ufs: vars.ufs,
@@ -181,9 +194,11 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     onError: (err) => toast.error(explainError(err)),
     onSuccess: (_res, vars) =>
       toast.success(
-        vars.action === "describe"
-          ? "Motor ligado — gerando descrições"
-          : "Motor ligado — varredura iniciada",
+        vars.action === "backfill"
+          ? "Motor ligado — backfill retomado"
+          : vars.action === "describe"
+            ? "Motor ligado — gerando descrições"
+            : "Motor ligado — varredura iniciada",
       ),
     onSettled: invalidate,
   });
@@ -323,16 +338,19 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   };
 
   // Continuar (quick-260918-ohm): resume the paused action after a manual confirm
-  // that the provider's balance/quota was recharged. Rebuilds the start body from
+  // that the provider's balance/quota was recharged (or, reason "manual", that an engine
+  // pause mid-backfill should resume it). Rebuilds the start body from
   // the server-polled pause_reason.action — never trusts client-held depth state.
   // A null action (a chain task hit the wall, no run to resume) only lifts the
   // pause: mode LIGADO clears pause_reason server-side and starts nothing.
   const pauseReason = data?.pause_reason ?? null;
   const onContinuar = () => {
     if (!pauseReason) return;
-    if (!window.confirm("Saldo recarregado?")) return;
+    if (!window.confirm(continuarConfirmText(pauseReason))) return;
     if (pauseReason.action === "describe") {
       start.mutate({ action: "describe" });
+    } else if (pauseReason.action === "backfill") {
+      start.mutate({ action: "backfill" });
     } else if (pauseReason.action === "sweep") {
       start.mutate({ action: "sweep", depth: data?.depth ?? "nascente_rio" });
     } else {

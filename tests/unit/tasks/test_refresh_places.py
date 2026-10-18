@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.dialects import postgresql
 
-from brave.shared.exceptions import ProviderBalanceError
+from brave.shared.exceptions import CostGuardError, ProviderBalanceError
 from brave.tasks import pipeline
 
 
@@ -84,6 +84,13 @@ def test_balance_wall_stops_the_run(harness):
         pipeline.refresh_places()
 
 
+def test_places_cost_cap_stops_the_run(harness):
+    harness.fail_with = CostGuardError("places daily cap")
+    with pytest.raises(CostGuardError):
+        pipeline.refresh_places()
+    assert harness.session.rollback.call_count == 1
+
+
 def test_one_bad_record_does_not_abort(harness):
     harness.fail_with = RuntimeError("boom")
     assert pipeline.refresh_places() == 0
@@ -96,3 +103,18 @@ def test_due_query_compiles():
     pipeline._places_refresh_due(session, 10)
     params = session.scalars.call_args.args[0].compile(dialect=postgresql.dialect()).params
     assert all(k in list(params.values()) for k in ("places_refreshed_at", "place_id_cache"))
+
+
+@pytest.mark.parametrize("env, expected", [
+    ({"BRAVE_PLACES_REFRESH_API_KEY": "refresh-key"}, "BRAVE_PLACES_REFRESH_API_KEY"),
+    ({}, "BRAVE_PLACES_API_KEY"),
+])
+def test_refresh_uses_its_own_key_when_set(harness, monkeypatch, env, expected):
+    monkeypatch.delenv("BRAVE_PLACES_REFRESH_API_KEY", raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    seen = []
+    monkeypatch.setattr(pipeline, "clients_for",
+                        lambda *a, **k: seen.append(k.get("places_api_key_env")) or MagicMock())
+    pipeline.refresh_places()
+    assert seen and set(seen) == {expected}

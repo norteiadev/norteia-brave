@@ -11,10 +11,9 @@ pipeline.py write points):
         envelope recomputes them from the medallion tables at read time.
 
   - PATCH /api/v1/runs/{run_id}/reprocess     (require_steward_or_bearer) → 202
-        Re-dispatch the run's (ufs, source, depth/lane) scope, audited. v1 re-runs
-        the SCOPE (not a precise failed-record replay — per-record replay would
-        need a runs_failures join table, DEFERRED). Reuses the prod-vs-offline
-        broker fallback (mirrors sweep.py:31-54) so the offline suite runs inline.
+        Re-run the run's scope (ufs, source, depth, lane, per-UF cap) as a NEW engine
+        run, audited. v1 re-runs the SCOPE (not a precise failed-record replay —
+        per-record replay would need a runs_failures join table, DEFERRED).
 
 On-read approximation (A4): a record from a prior run re-touched inside this run's
 window could be counted. Acceptable for an ops dashboard.
@@ -30,10 +29,11 @@ from datetime import datetime, timezone
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from redis import Redis
 from sqlalchemy import DateTime, Integer, column, func, select, values
 from sqlalchemy.orm import Session
 
-from brave.api.deps import get_db, require_bearer, require_steward_or_bearer
+from brave.api.deps import get_db, get_redis, require_bearer, require_steward_or_bearer
 from brave.core.models import MarRecord, PoisonQuarantine, RioRecord, RunHistory
 from brave.observability.audit import write_audit
 
@@ -73,36 +73,6 @@ class RunsResponse(BaseModel):
     total: int
     offset: int
     limit: int
-
-
-# ---------------------------------------------------------------------------
-# Broker-down dispatch fallback (prod-vs-offline) — verbatim from sweep.py:31-54
-# ---------------------------------------------------------------------------
-
-
-def _dispatch(task, uf: str, *, task_label: str) -> None:
-    """Dispatch a producer task with the prod-vs-offline fallback (sweep.py:31-54).
-
-    Swallow the broker error only when run_real_externals is False (offline: the
-    task is exercised inline / by tests). In a real environment a dispatch failure
-    surfaces as a 503 rather than silently dropping the reprocess fan-out.
-    """
-    try:
-        task.delay(uf)
-    except Exception as exc:
-        from brave.config.settings import AppConfig
-
-        if AppConfig().run_real_externals:
-            logger.error("run_reprocess_dispatch_failed", task=task_label, uf=uf, error=str(exc))
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    f"Reprocess dispatch failed for {task_label} (broker unavailable). "
-                    "Retry once the broker is reachable."
-                ),
-            ) from exc
-        # Offline (tests/dev): no broker — run the real task inline against fakes.
-        task.run(uf)
 
 
 # ---------------------------------------------------------------------------
@@ -218,39 +188,79 @@ def list_runs(
     status_code=202,
     dependencies=[Depends(require_steward_or_bearer)],
 )
-def reprocess_run(run_id: uuid.UUID, db: Session = Depends(get_db)) -> dict:
-    """Re-dispatch a run's scope (ufs × source × lane), audited (T-17.1-02-04).
+def reprocess_run(
+    run_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+) -> dict:
+    """Re-run a run's scope as a NEW engine run, audited (T-17.1-02-04).
 
-    v1 re-runs the SCOPE, not a precise failed-record replay (documented above).
-    Dispatch reuses the prod-vs-offline broker fallback so the offline suite runs
-    the producers inline against fakes.
+    Goes through the same path as POST /engine/start: collection_engine.start (409 while
+    a run is active — never a second fan-out beside it) + engine_sweep_run with the run's
+    own depth, lane, source and per-UF cap, so the producers carry a run_id and honor the
+    motor's mode. A describe run re-describes, a backfill run restarts the backfill. The
+    old loose ``.delay(uf)`` dropped depth/cap/run_id: a capped ``nascente`` test run came
+    back as a full sweep with paid Places per card.
     """
+    from brave.config.runtime import enabled_sources, load_effective_config
+    from brave.config.settings import AppConfig
+    from brave.core import engine as collection_engine
+    from brave.tasks.pipeline import engine_sweep_run, start_backfill_run
+
     run = db.get(RunHistory, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="RunHistory not found")
 
     ufs = list(run.ufs or [])
+    busy = HTTPException(
+        status_code=409, detail="Engine already running — stop it before reprocessing."
+    )
 
-    if run.source == "tripadvisor":
-        from brave.tasks.pipeline import sweep_tripadvisor
-
-        for uf in ufs:
-            _dispatch(sweep_tripadvisor, uf, task_label="sweep_tripadvisor")
-    elif run.source == "descricao":
-        from brave.tasks.pipeline import describe_uf
-
-        # A describe run (engine action "describe") re-describes — never the Places
-        # discovery lane below, which bills Places and writes no description.
-        for uf in ufs:
-            _dispatch(describe_uf, uf, task_label="describe_uf")
+    if run.source == "ta_backfill":
+        try:
+            new_id = start_backfill_run(redis, db)
+        except Exception as exc:
+            logger.error("run_reprocess_dispatch_failed", error_type=type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Reprocess dispatch failed.") from exc
+        if new_id is None:
+            raise busy
     else:
-        from brave.tasks.pipeline import discover_atrativo_task
-
-        # destinos has no producer (Mtur seed retired; destinos come from DB tables) —
-        # only the atrativos lane re-dispatches for the default (Places) source.
-        for uf in ufs:
-            if run.lane in ("atrativos", "both"):
-                _dispatch(discover_atrativo_task, uf, task_label="discover_atrativo_task")
+        action = "describe" if run.source == "descricao" else "sweep"
+        valid_sources = None
+        if action == "sweep":
+            if run.depth not in collection_engine.VALID_DEPTHS:
+                raise HTTPException(status_code=422, detail=f"run depth {run.depth!r} not replayable")
+            valid_sources = enabled_sources(load_effective_config(db))
+        try:
+            new_id = collection_engine.start(
+                redis,
+                db,
+                action=action,
+                depth=run.depth,
+                source=run.source,
+                ufs=ufs,
+                lane=run.lane,
+                valid_sources=valid_sources,
+            )
+        except ValueError as exc:  # the run's source is disabled/unknown now
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if new_id is None:
+            raise busy
+        kwargs = dict(ufs=ufs, lane=run.lane, run_id=new_id, max_per_uf=run.max_per_uf)
+        if action == "describe":
+            kwargs["action"] = "describe"
+        else:
+            kwargs.update(depth=run.depth, source=run.source)
+        try:
+            engine_sweep_run.delay(**kwargs)
+        except Exception as exc:  # broker down — same contract as POST /engine/start
+            if AppConfig().run_real_externals:
+                collection_engine.abort(redis, db, new_id)
+                logger.error("run_reprocess_dispatch_failed", error_type=type(exc).__name__)
+                raise HTTPException(
+                    status_code=503,
+                    detail="Reprocess dispatch failed (broker unavailable). Retry once reachable.",
+                ) from exc
 
     write_audit(
         session=db,
@@ -258,9 +268,16 @@ def reprocess_run(run_id: uuid.UUID, db: Session = Depends(get_db)) -> dict:
         entity_type="run",
         record_id=run.id,
         before_state={"status": run.status},
-        after_state={"reprocessed_ufs": ufs, "source": run.source, "lane": run.lane},
+        after_state={
+            "reprocessed_ufs": ufs,
+            "source": run.source,
+            "lane": run.lane,
+            "depth": run.depth,
+            "max_per_uf": run.max_per_uf,
+            "new_run_id": new_id,
+        },
         actor="steward",
     )
     db.commit()
 
-    return {"status": "accepted", "run_id": str(run.id), "ufs": ufs}
+    return {"status": "accepted", "run_id": str(run.id), "new_run_id": new_id, "ufs": ufs}

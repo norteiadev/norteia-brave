@@ -1,11 +1,12 @@
 """Unit tests for the TripAdvisor BULK national ingest path (plan 15-06, TA-12).
 
 The bulk lane resolves the operator-locked A1 blocker: it writes all-Brazil
-attractions to Nascente WITHOUT a parent destino, deriving uf + município from the
+attractions to Nascente without per-UF context, deriving uf + município from the
 national geocode (geocode_national) + nearest-IBGE-seat resolution
 (resolve_municipio_national). This is a DISTINCT path:
 
-  - _ingest_one_bulk    — parent-less single-card ingest (drops the parent gate)
+  - _ingest_one_bulk    — single-card ingest; links the parent destino of the derived
+                          município (cached per sweep, F43-b)
   - produce_paginated   — drives fetch_attractions_paginated, commits PER PAGE,
                           records progress + a live error counter
 
@@ -47,6 +48,30 @@ _IBGE_RECORDS = [
 ]
 
 _GEO_ID_BR = 294280  # all-Brazil geoId
+
+_PARENT_ID = uuid.uuid4()
+
+
+def _real_ensure():
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+    return TripAdvisorAtrativosIngest._ensure_destino
+
+
+_REAL_ENSURE = _real_ensure()  # captured before the autouse fixture patches it
+
+
+@pytest.fixture(autouse=True)
+def ensure_destino_mock():
+    """The bulk links the parent destino via _ensure_destino (lookup + ensure) — DB-free."""
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+    with patch.object(
+        TripAdvisorAtrativosIngest,
+        "_ensure_destino",
+        side_effect=lambda m: (_PARENT_ID, f"ibge:{m.uf}:{m.ibge_code}"),
+    ) as mock:
+        yield mock
 
 
 def _make_config() -> ScoreConfig:
@@ -97,8 +122,8 @@ class TestIngestBulk:
     """_ingest_one_bulk: parent-less Nascente ingest with derived uf/município."""
 
     @pytest.mark.asyncio
-    async def test_ingest_bulk_writes_parentless_nascente_row(self) -> None:
-        """A geocodable card → exactly one Nascente row, parent_rio_id None, derived uf."""
+    async def test_ingest_bulk_writes_nascente_row_linked_to_parent(self) -> None:
+        """A geocodable card → exactly one Nascente row, parent destino linked, derived uf."""
         from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 
         card = _make_card(location_id=312332)
@@ -119,7 +144,7 @@ class TestIngestBulk:
                 session=MagicMock(),
                 config=_make_config(),
                 ibge_records=_IBGE_RECORDS,
-                destino_rio_map={},  # bulk path ignores the parent map entirely
+                destino_rio_map={},
                 geocoder=fake_geo,
             )
             await ingest._ingest_one_bulk(card, run_rio=False)
@@ -130,8 +155,9 @@ class TestIngestBulk:
         # uf is DERIVED from the matched IBGE record, not any input arg.
         assert kwargs["uf"] == "MG"
         payload = kwargs["payload"]
-        assert payload["parent_rio_id"] is None, "bulk path is parent-less"
-        assert payload["parent_source_ref"] is None
+        # F43-b: the bulk links the parent destino exactly like the per-UF path.
+        assert payload["parent_rio_id"] == str(_PARENT_ID)
+        assert payload["parent_source_ref"] == "ibge:MG:3170107"
         assert payload["municipio_id"] == "3170107"
         assert payload["canonical"]["municipio"] == "Uberlândia"
         assert payload["canonical"]["uf"] == "MG"
@@ -418,3 +444,161 @@ class TestProducePaginated:
         )
         assert snap["attractions_ingested"] == 1, "only the resolvable card landed"
         assert mock_store_raw.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# F43-b — parent destino linkage on the bulk, one ensure_destino per município
+# ---------------------------------------------------------------------------
+
+
+class TestBulkParentDestino:
+    @pytest.mark.asyncio
+    async def test_parent_source_ref_uses_the_real_ensure_destino_format(self) -> None:
+        """Unmocked ensure_destino (DB layer patched) → 'ibge:{UF}:{ibge7}'."""
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+        from brave.shared.destino import ensure_destino
+
+        parent_rio = MagicMock(id=uuid.uuid4())
+        session = MagicMock()
+        fake_geo = FakeGeocoderClient(
+            fixture_national_results=dict([_geo_near_uberlandia("312332")])
+        )
+        with (
+            patch.object(TripAdvisorAtrativosIngest, "_ensure_destino", _REAL_ENSURE),
+            patch("brave.domains.tripadvisor.atrativos.ensure_destino", ensure_destino),
+            patch("brave.shared.destino.store_raw"),
+            patch("brave.shared.destino.process_nascente_record", return_value=parent_rio),
+            patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+        ):
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=FakeTripAdvisorClient(),
+                session=session,
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                geocoder=fake_geo,
+            )
+            assert await ingest._ingest_one_bulk(_make_card(location_id=312332), run_rio=False)
+
+        payload = mock_store_raw.call_args.kwargs["payload"]
+        assert payload["parent_rio_id"] == str(parent_rio.id)
+        assert payload["parent_source_ref"] == "ibge:MG:3170107"
+
+    @pytest.mark.asyncio
+    async def test_one_ensure_destino_per_municipio_across_the_run(
+        self, ensure_destino_mock: MagicMock
+    ) -> None:
+        """30 cards in the same município → ensure_destino runs once, not 30 times."""
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        cards = [_make_card(location_id=50_000 + i) for i in range(30)]
+        ids = [str(c["locationId"]) for c in cards]
+        with patch("brave.domains.tripadvisor.atrativos.store_raw"):
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=FakeTripAdvisorClient(gql_pages=[(0, cards)]),
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                geocoder=FakeGeocoderClient(fixture_national_results=_resolvable_geo_fixture(ids)),
+            )
+            await ingest.produce_paginated(
+                _GEO_ID_BR, start_page=1, max_pages=1, redis=fakeredis.FakeRedis(),
+                run_rio=False,
+            )
+
+        assert ensure_destino_mock.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_card_evicts_the_destino_its_savepoint_rolled_back(
+        self, ensure_destino_mock: MagicMock
+    ) -> None:
+        """Card 1 fails after ensuring the destino → card 2 re-ensures it (no ghost parent)."""
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        cards = [_make_card(location_id=60_000), _make_card(location_id=60_001)]
+        with (
+            patch(
+                "brave.domains.tripadvisor.atrativos.store_raw",
+                side_effect=[RuntimeError("flush failed"), MagicMock()],
+            ),
+            patch("brave.domains.tripadvisor.atrativos.quarantine_poison"),
+            patch("brave.domains.tripadvisor.atrativos.record_event_once"),
+        ):
+            ingest = TripAdvisorAtrativosIngest(
+                ta_client=FakeTripAdvisorClient(gql_pages=[(0, cards)]),
+                session=MagicMock(),
+                config=_make_config(),
+                ibge_records=_IBGE_RECORDS,
+                geocoder=FakeGeocoderClient(
+                    fixture_national_results=_resolvable_geo_fixture(["60000", "60001"])
+                ),
+            )
+            await ingest.produce_paginated(
+                _GEO_ID_BR, start_page=1, max_pages=1, redis=fakeredis.FakeRedis(),
+                run_rio=False,
+            )
+
+        assert ensure_destino_mock.call_count == 2
+        assert "3170107" in ingest._destino_rio_map  # card 2's (committed) parent is cached
+
+
+class TestEnsureDestinoKeepsIbgeContract:
+    """The parent link is always ibge:{UF}:{ibge7} — never another destino of the município.
+
+    A manual sub-destino (manual:destination:{UF}:{ibge}) or a TA destino sharing the
+    município_id must not capture its atrativos: the push sends parent_source_ref as the
+    API's Destination source_ref, so a foreign ref would overwrite that destino's name or
+    create a ghost Destination next to the ibge: one.
+    """
+
+    def test_other_destino_of_the_municipio_does_not_capture_the_link(self) -> None:
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        ibge_id = uuid.uuid4()
+        session = MagicMock()
+        # Any lookup would find a manual destino of the same município.
+        session.execute.return_value.first.return_value = (
+            uuid.uuid4(), "manual:destination:MG:3170107",
+        )
+        ingest = TripAdvisorAtrativosIngest(
+            ta_client=FakeTripAdvisorClient(), session=session, config=_make_config(),
+            ibge_records=_IBGE_RECORDS,
+        )
+        with (
+            patch.object(TripAdvisorAtrativosIngest, "_ensure_destino", _REAL_ENSURE),
+            patch(
+                "brave.domains.tripadvisor.atrativos.ensure_destino",
+                return_value=(ibge_id, "ibge:MG:3170107", None),
+            ) as ensure,
+        ):
+            assert ingest._parent_destino(_IBGE_RECORDS[0]) == (ibge_id, "ibge:MG:3170107")
+        assert ensure.call_count == 1
+
+    @pytest.mark.integration
+    def test_db_links_ibge_destino_and_is_idempotent(self, db_session) -> None:
+        from brave.core.models import RioRecord
+        from brave.core.nascente.service import store_raw
+        from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+        muni = IbgeMunicipio("9999901", "Cidade Teste", "ZZ", 0.0, 0.0)
+        for key in ("manual:destination:ZZ:9999901", "tripadvisor:destination:123"):
+            nascente = store_raw(db_session, "test", key, "destination", "ZZ", {"name": key})
+            db_session.add(RioRecord(
+                nascente_id=nascente.id, entity_type="destination", uf="ZZ",
+                municipio_id=muni.ibge_code, routing="dlq", canonical_key=key, normalized={},
+            ))
+        db_session.flush()
+
+        def fresh_ingest() -> TripAdvisorAtrativosIngest:  # empty cache, like bulk/backfill
+            return TripAdvisorAtrativosIngest(
+                ta_client=FakeTripAdvisorClient(), session=db_session, config=_make_config(),
+                ibge_records=[muni],
+            )
+
+        with patch.object(TripAdvisorAtrativosIngest, "_ensure_destino", _REAL_ENSURE):
+            rio_id, ref = fresh_ingest()._parent_destino(muni)
+            again = fresh_ingest()._parent_destino(muni)
+        assert ref == "ibge:ZZ:9999901"
+        assert again == (rio_id, ref)  # no ibge: twin from a second empty-cache run
+        assert db_session.query(RioRecord).filter(
+            RioRecord.canonical_key == "ibge:ZZ:9999901"
+        ).count() == 1
