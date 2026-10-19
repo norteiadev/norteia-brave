@@ -88,7 +88,8 @@ LEITURA FLUIDA (texto fácil para qualquer leitor, como pede a WCAG 2.2):
 - Frases curtas, de no máximo 20 palavras, com uma ideia por frase. Ordem direta e voz ativa.
 - Palavras do dia a dia. Troque termos técnicos, eruditos ou raros por palavras comuns. Sem siglas que o leitor precise decifrar.
 - Nada de frases com muitas vírgulas e orações encaixadas, metáforas difíceis ou ironia.
-- De 100 a 160 palavras, em 2 ou 3 parágrafos curtos.
+- De 120 a 180 palavras quando as fontes permitirem, em 2 ou 3 parágrafos curtos.
+- Frase curta também vende: destaque os detalhes concretos e marcantes que as fontes trazem, contados com verbos de ação e imagens que o leitor consegue ver.
 
 REGRA DE OURO (obrigatória, acima de qualquer objetivo de venda):
 - NUNCA invente informações para vender. Cada afirmação precisa estar no contexto desta mensagem (dados do Google Places, avaliações de visitantes, fontes da web fornecidas ou encontradas).
