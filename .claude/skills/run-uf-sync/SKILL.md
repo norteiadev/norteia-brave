@@ -68,10 +68,10 @@ Done when the `descricao` run reads `concluido` and the funnel's `described` sto
 Dry-run first and show the numbers to the user:
 
 ```bash
-.claude/skills/run-uf-sync/scripts/api.sh POST /api/v1/atrativos/promote-bulk '{"uf":"<UF>","min_score":65,"require_description":true,"limit":200,"dry_run":true}'
+.claude/skills/run-uf-sync/scripts/api.sh POST /api/v1/atrativos/promote-bulk '{"uf":"<UF>","require_description":true,"limit":200,"dry_run":true}'
 ```
 
-`min_score` 65 is the runbook default; use the user's value when they give one. Promotion adds the human-validation criterion (weight 15), which is what lifts a 65 over the Mar threshold of 80. Then run it with `"dry_run":false`, repeating while `remaining > 0`. Done when `promoted` equals the dry-run `would_promote` and `failed` is empty; report any `held` with its reason.
+Leave `min_score` out: it defaults to `threshold_mar` minus the human-validation weight (15), the lowest score promotion can still lift into Mar — the dry-run echoes it. The cut is moved with `score.threshold_mar` on the Painel, never with a `min_score` below that floor (those rows are only held). Pass `min_score` only when the user asks for a stricter cut. Then run it with `"dry_run":false`, repeating while `remaining > 0`. Done when `promoted` equals the dry-run `would_promote` and `failed` is empty; report any `held` with its reason.
 
 ## 7. Push check
 

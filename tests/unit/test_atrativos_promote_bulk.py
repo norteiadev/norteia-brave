@@ -23,6 +23,7 @@ from brave.api.routers.atrativos import (  # noqa: E402
     promote_bulk_atrativos,
 )
 from brave.core.mar.publication import Promotion  # noqa: E402
+from brave.config.settings import ScoreConfig  # noqa: E402
 from brave.core.models import RioRecord  # noqa: E402
 from tests.unit.api.test_editing_lock import (  # noqa: E402, F401
     STEWARD_HEADERS,
@@ -32,6 +33,8 @@ from tests.unit.api.test_editing_lock import (  # noqa: E402, F401
 )
 
 MOD = "brave.api.routers.atrativos"
+# Default ScoreConfig: threshold_mar 80 - validação weight 15 → derived min_score 65.
+_CFG = MagicMock(score=ScoreConfig())
 URL = "/api/v1/atrativos/promote-bulk"
 
 
@@ -84,7 +87,9 @@ def test_bucket_each_row_lands_in_exactly_one_bucket():
     ]
     candidates, excluded = _bucket_promote_bulk_candidates(rows, 65.0, True)
     assert candidates == [ok]
-    assert excluded == {"verdict": 0, "below_score": 1, "no_description": 1, "recency": 2}
+    assert excluded == {
+        "verdict": 0, "below_score": 1, "no_description": 1, "recency": 2, "duplicate": 0
+    }
 
 
 def test_bucket_require_description_false_keeps_undescribed():
@@ -116,6 +121,35 @@ def test_bucket_never_bulk_promotes_a_deliberate_verdict(reason):
 
     assert candidates == [plain]
     assert excluded["verdict"] == 1
+
+
+def test_bucket_skips_a_place_already_in_mar_or_taken_by_a_higher_score():
+    """Duplicate TA cards of one Google place: only the best-scored reaches Mar, once."""
+    in_mar = _atr(score=90.0, google_place_id="ChIJarcos")
+    best = _atr(score=80.0, google_place_id="ChIJpraca")
+    twin = _atr(score=70.0, google_place_id="ChIJpraca")
+    no_pid = _atr(score=70.0)
+
+    candidates, excluded = _bucket_promote_bulk_candidates(
+        [in_mar, best, twin, no_pid], 65.0, True, {"ChIJarcos"}
+    )
+
+    assert candidates == [best, no_pid]
+    assert excluded["duplicate"] == 2
+
+
+def test_dry_run_min_score_follows_the_threshold_overlay():
+    """min_score omitted → threshold_mar - validação weight, so a cut never sits below what
+    promote() can lift into Mar (a 55 under threshold 80 would only ever be held)."""
+    cfg = MagicMock(score=ScoreConfig(threshold_mar=70.0))
+    rows = [_atr(score=56.0), _atr(score=54.0)]
+    with (
+        patch(f"{MOD}._query_promote_bulk_candidates", return_value=rows),
+        patch(f"{MOD}.load_effective_config", return_value=cfg),
+    ):
+        out = promote_bulk_atrativos(PromoteBulkBody(), _db_for(rows))
+    assert out["min_score"] == 55.0
+    assert out["candidates"] == 1
 
 
 def test_bucket_null_score_is_below_score():
@@ -151,12 +185,16 @@ def test_dry_run_reports_counts_and_never_mutates():
     queued: list[str] = []
     with (
         patch(f"{MOD}._query_promote_bulk_candidates", return_value=rows),
+        patch(f"{MOD}.load_effective_config", return_value=_CFG),
         patch(f"{MOD}.promote") as promote,
     ):
         out = promote_bulk_atrativos(PromoteBulkBody(uf="ba", limit=1), db, queued.append)
     assert out == {
+        "min_score": 65.0,
         "candidates": 2,
-        "excluded": {"verdict": 0, "below_score": 1, "no_description": 0, "recency": 0},
+        "excluded": {
+            "verdict": 0, "below_score": 1, "no_description": 0, "recency": 0, "duplicate": 0
+        },
         "would_promote": 1,
     }
     promote.assert_not_called()
@@ -174,7 +212,7 @@ def _run(rows, body, promote_side_effect=_promote):
     queued: list[str] = []
     with (
         patch(f"{MOD}._query_promote_bulk_candidates", return_value=rows),
-        patch(f"{MOD}.load_effective_config") as cfg,
+        patch(f"{MOD}.load_effective_config", return_value=_CFG) as cfg,
         patch(f"{MOD}.promote", side_effect=promote_side_effect) as promote,
     ):
         out = promote_bulk_atrativos(body, db, queued.append)
@@ -249,7 +287,7 @@ def test_vanished_record_is_reported_as_failed():
     db.get.return_value = None
     with (
         patch(f"{MOD}._query_promote_bulk_candidates", return_value=[row]),
-        patch(f"{MOD}.load_effective_config"),
+        patch(f"{MOD}.load_effective_config", return_value=_CFG),
     ):
         out = promote_bulk_atrativos(PromoteBulkBody(dry_run=False), db)
     assert out["failed"] == [{"id": str(row.id), "error": "not found"}]

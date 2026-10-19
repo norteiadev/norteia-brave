@@ -1021,26 +1021,21 @@ async def test_backstop_passing_record_that_google_could_still_help_keeps_review
 
 
 @pytest.mark.asyncio
-async def test_reviews_skip_requires_backstop_headroom_with_established_window() -> None:
-    """atualidade 100 alone is not enough: the backstop must still pass 60 days out, under
-    the same rule as promote_to_mar — the 365d window applies when review_count >= 20."""
+async def test_reviews_skip_follows_the_ta_60_day_rule() -> None:
+    """Operator rule: a TA review under 60 days (atualidade 100) skips Google's reviews,
+    whatever the backstop headroom; without one, the reviews are fetched."""
     from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     def at(days: int) -> str:
         return (_NOW - timedelta(days=days)).isoformat()
 
     for extra, expected in (
-        ({"most_recent_review_at": at(200), "review_count": 30}, False),  # 260d ≤ 365d
-        ({"most_recent_review_at": at(200), "review_count": 5}, True),
-        ({"most_recent_review_at": at(40), "review_count": 5}, True),  # 100d > 90d
-        # Horizon boundary: 90 - 60 = 30 days is the last skippable non-established age.
-        ({"most_recent_review_at": at(30), "review_count": 5}, False),  # 90d ≤ 90d
-        ({"most_recent_review_at": at(31), "review_count": 5}, True),  # 91d > 90d
-        ({"most_recent_review_at": at(31), "review_count": 20}, False),  # 91d ≤ 365d
-        ({}, True),  # no date at all
+        ({"most_recent_review_at": at(59), "atualidade_value": 100.0, "review_count": 5}, False),
+        ({"most_recent_review_at": at(61), "atualidade_value": 70.0, "review_count": 5}, True),
+        ({}, True),  # no TA date at all
     ):
         fake = _reviews_fake()
-        rio = _make_rio(extra_normalized={**extra, "atualidade_value": 100.0})
+        rio = _make_rio(extra_normalized=extra)
         await _run(PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig()), rio)
         assert fake.place_details_include_reviews == [expected], extra
 
@@ -1057,29 +1052,6 @@ async def test_enrichment_never_writes_review_count() -> None:
         await _run(PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig()), rio)
         assert rio.normalized.get("review_count") == expected
         assert "google_rating_count" not in rio.normalized
-
-
-@pytest.mark.asyncio
-async def test_description_in_same_run_keeps_reviews() -> None:
-    """The copywriter grounds on details['reviews'] texts → a run that writes the description
-    from these live details keeps reviews even when the backstop already passes. A
-    pre-fetched description (describe_uf path) does not need them."""
-    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
-
-    fresh = {"most_recent_review_at": (_NOW - timedelta(days=5)).isoformat(), "atualidade_value": 100.0}
-    fake = _reviews_fake()
-    agent = PlacesEnrichmentAgent(
-        places_client=fake, session=_make_session(), llm_client=FakeLLMClient(generate_result="Prosa."),
-        now=_NOW, config=ScoreConfig(),
-    )
-    await _run(agent, _make_rio(extra_normalized=fresh))
-    assert fake.place_details_include_reviews == [True]
-
-    with patch("brave.domains.places.places_enrichment.write_audit"), \
-         patch("brave.domains.places.places_enrichment.record_event"), \
-         patch("brave.domains.places.places_enrichment.route_by_score"):
-        await agent.run(_make_rio(extra_normalized=fresh), description=("Prosa.", None, False))
-    assert fake.place_details_include_reviews == [True, False]
 
 
 @pytest.mark.asyncio

@@ -124,9 +124,9 @@ curl -sX POST $API/api/v1/engine/start -H "$H" -H 'content-type: application/jso
 
 # 4.4 Promoção. Primeiro dry-run, depois real (limite 200 por chamada; repita enquanto remaining>0)
 curl -sX POST $API/api/v1/atrativos/promote-bulk -H "$H" -H 'content-type: application/json' \
-  -d '{"uf":"SE","min_score":65,"require_description":true,"limit":200,"dry_run":true}'
+  -d '{"uf":"SE","require_description":true,"limit":200,"dry_run":true}'
 curl -sX POST $API/api/v1/atrativos/promote-bulk -H "$H" -H 'content-type: application/json' \
-  -d '{"uf":"SE","min_score":65,"require_description":true,"limit":200,"dry_run":false}'
+  -d '{"uf":"SE","require_description":true,"limit":200,"dry_run":false}'
 
 # 4.5 Push pendente/rejeitado: o beat reenvia a cada 15 min; para forçar:
 curl -sX POST $API/api/v1/mar/repush -H "$H"

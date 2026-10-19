@@ -67,9 +67,9 @@ def corroboracao_from_reviews(count: int, rating: float) -> float:
 def atualidade_from_recency(most_recent_review_at: datetime | None) -> float:
     """Compute atualidade value from the date of the most recent TripAdvisor review.
 
-    Step function (CONTEXT.md TA-04):
+    Step function (CONTEXT.md TA-04; the 100 step widened from 30 to 60 days in 10/2026):
       None           → 0   (no reviews, no recency signal)
-      ≤ 30 days      → 100 (very recent)
+      ≤ 60 days      → 100 (very recent — Place Details then skips Google's reviews)
       ≤ 180 days     → 70  (within 6 months; 5 months ≈ 150 days falls here)
       ≤ 365 days     → 40  (within a year)
       ≤ 730 days     → 20  (within 2 years)
@@ -91,7 +91,7 @@ def atualidade_from_recency(most_recent_review_at: datetime | None) -> float:
 
     age_days = (now - most_recent_review_at).days
 
-    if age_days <= 30:
+    if age_days <= 60:
         return 100.0
     elif age_days <= 180:
         return 70.0

@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import math
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -55,7 +55,6 @@ from brave.clients.places import (
     _normalize_name,
 )
 from brave.config.settings import ScoreConfig
-from brave.core.mar.service import _attraction_review_recent
 from brave.core.models import AtrativoBusca, Municipio
 from brave.core.rio.normalize import normalize_name
 from brave.core.rio.persist import persist_normalized
@@ -142,11 +141,6 @@ _GEOGRAPHIC_TYPE_MARKER: str = "political"
 # 60+ km from São João d'Aliança's) and border parks sit in the next município (Terra
 # Ronca, ~40 km); the same-name mismatches it must reject were all 190+ km away.
 _SEAT_RADIUS_KM: float = 80.0
-
-# Headroom the record must keep on the Mar recency backstop before Place Details may drop
-# reviews: a TA record (score ~55) reaches promote_to_mar only after a steward validates it
-# from the DLQ, and the backstop re-runs then with the real clock. Scale of that delay.
-_REVIEWS_SKIP_HORIZON_DAYS: int = 60
 
 # PT-BR wording of Places' business_status for the atrativo's Log tab.
 _CLOSED_LABELS: dict[str, str] = {
@@ -498,22 +492,13 @@ class PlacesEnrichmentAgent:
         place_id: str = normalized.get("place_id_cache") or ""
         consensus, self._consensus_search = self._consensus_search, None
         # Reviews are the only field that lifts Place Details from Enterprise ($20/1k) to
-        # Enterprise+Atmosphere ($25/1k). They are kept by default — Google's review date is
-        # what carries many atrativos past the Mar recency backstop — and dropped only when
-        # Google's reviews cannot change anything this one-shot step decides:
-        #   - atualidade is already 100 (TA date ≤30d) — Google's max can't lift the score;
-        #   - the record still passes the backstop _REVIEWS_SKIP_HORIZON_DAYS from now —
-        #     promote_to_mar re-runs it at promotion time, typically after a steward's DLQ
-        #     validation, and a skipped Google date is never fetched again;
-        #   - no description is written here from these live details (the copywriter
-        #     grounds on the review texts).
-        include_reviews = not (
-            float(normalized.get("atualidade_value") or 0.0) >= 100.0
-            and _attraction_review_recent(
-                normalized, now=ref_date + timedelta(days=_REVIEWS_SKIP_HORIZON_DAYS)
-            )
-            and not (wants_description and description is None)
-        )
+        # Enterprise+Atmosphere ($25/1k). Operator rule (10/2026): a TA review under 60 days
+        # (atualidade already 100) is the recency signal and Google's reviews are skipped;
+        # without one, Google's reviews are fetched for it. Corroboração never depends on
+        # which source answered (it counts TA reviews only).
+        # ponytail: a skipped Google date is not fetched again here; a record promoted >90 days
+        # after its TA review then leans on the backstop's established-place window.
+        include_reviews = float(normalized.get("atualidade_value") or 0.0) < 100.0
         # True only once Places really answered for this record: a conclusive no-match or a
         # non-empty Details. Gates the google_enriched marker (Step 5).
         places_consulted = False
