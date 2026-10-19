@@ -252,6 +252,11 @@ Vantagens sobre ddev + dump:
   (com days, stops e versions), seasonal_events, vínculos de região/segmento e cat_cache.
   Preservados: `municipalities` (5570), `tourist_regions` (12) e `tourism_segments` (20).
 - Token `brave-ingest` emitido no DEV para o usuário 1, com ability `territorial:ingest`. Vence em **~2026-11-18**.
+- **Todo deploy do DEV roda `php artisan db:seed`** (`deploy-dev.yml`, passo 10). Até api#104, esse seed recolocava 17 destinos
+  e 35 atrativos demo. Desde api#104 o conteúdo demo depende de `SEED_DEMO_CONTENT`, que é `false` no `.env.dev.encrypted`.
+  Se destinos ou atrativos com `source` NULL voltarem a aparecer, o primeiro suspeito é essa flag.
+- Webhook ativo desde api#103: `BRAVE_BASE_URL` e `BRAVE_WEBHOOK_SECRET` no env de DEV, conferidos nos containers api e queue.
+- Backups antes de cada limpeza: `/opt/norteia-dev/backups/pre-brave-prod-20261019-1452.sql.gz` e `pre-brave-reclean-20261019-1544.sql.gz`.
 
 **Trocar o alvo do Brave:**
 ```bash
@@ -273,7 +278,7 @@ ssh norteia-dev 'docker exec dev-norteia-api php artisan tinker --execute="echo 
   `http://100.119.254.11:8000/api/v1/health` com 200, em 0,06–0,4 s.
 - A API (`app/Services/BraveClient.php`, api#101) faz POST em `${BRAVE_BASE_URL}/webhook/error-report` com `X-Webhook-Secret`,
   através do `ReportBraveErrorJob`, que roda no queue e refaz em caso de 429/5xx.
-- Para ativar, o env do DEV (`.env.dev.encrypted` da norteia-api, skill `env-sync`) precisa de:
+- Ativado em api#103. Para mudar o IP ou o secret, edite o env do DEV (`.env.dev.encrypted` da norteia-api, skill `env-sync`):
   `BRAVE_BASE_URL=http://100.119.254.11:8000` e `BRAVE_WEBHOOK_SECRET` igual ao do `.env` do Brave.
   Depois, deploy ou restart da api e do queue.
 - Com o Mac dormindo ou fora do Tailscale, o job refaz e depois desiste. Use `caffeinate` durante o run.
