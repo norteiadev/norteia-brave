@@ -1161,6 +1161,32 @@ async def test_grounded_rewrite_releases_descricao_nao_fundamentada() -> None:
 
 
 @pytest.mark.asyncio
+async def test_transient_cascade_failure_keeps_verdict_and_draft() -> None:
+    """A search/writer failure (no prose, no motivo) judged nothing: it must not release the
+    sticky descricao_nao_fundamentada verdict nor wipe the steward's draft."""
+    from brave.domains.places.copywriter import CascadeResult
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    rio = _make_rio(extra_normalized={
+        **_TOP, "google_enriched": True,
+        "most_recent_review_at": (_NOW - timedelta(days=5)).isoformat(),
+        "descricao_gate": "nao_fundamentada", "descricao_rascunho": "Rascunho.",
+    })
+    rio.routing, rio.dlq_reason = "dlq", "descricao_nao_fundamentada"
+    agent = PlacesEnrichmentAgent(
+        places_client=_reviews_fake(), session=_make_session(),
+        llm_client=FakeLLMClient(generate_result="Prosa."), now=_NOW, config=ScoreConfig(),
+    )
+    with patch("brave.domains.places.places_enrichment.write_audit"), \
+         patch("brave.domains.places.places_enrichment.record_event"):
+        await agent.run(rio, description=(None, CascadeResult(None), False))
+
+    assert rio.normalized["descricao_rascunho"] == "Rascunho."
+    assert rio.normalized["descricao_gate"] == "nao_fundamentada"
+    assert (rio.routing, rio.dlq_reason) == ("dlq", "descricao_nao_fundamentada")
+
+
+@pytest.mark.asyncio
 async def test_ta_unplaced_record_is_not_enriched_nor_described() -> None:
     """TA put the card in another UF (ta_uf != uf, municipio_nao_confirmado): a Places search
     or description in the stored UF can only find a homonym, and the cascade re-decision used

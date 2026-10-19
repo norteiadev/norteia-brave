@@ -717,6 +717,7 @@ class PlacesEnrichmentAgent:
         # Same predicate as the Step-1 gate (routing + attempt budget included) — the two
         # conditions MUST agree, so this branch reuses it instead of restating it.
         cascade: CascadeResult | None = None
+        judged = False  # see below: the cascade reached a verdict on the description
         if wants_description and self._copywriter is not None:
             if description is None:
                 description = await self.write_description(
@@ -762,7 +763,13 @@ class PlacesEnrichmentAgent:
                 # _MAX_DESCRIPTION_ATTEMPTS the record stops re-entering the pass (see the
                 # constant for why this is a count, not a flag).
                 new_normalized["descricao_attempts"] = attempts + 1
-            if cascade is not None:
+            # A pass that reached a verdict on the description. A transient failure (search or
+            # writer error: no prose, no motivo) judged nothing: it must neither release a
+            # sticky description verdict nor wipe the steward's draft from an earlier pass.
+            judged = cascade is not None and (
+                cascade.prose is not None or cascade.motivo is not None
+            )
+            if judged:
                 # Gate verdicts are board-only (excluded from the Mar canonical). A gated pass
                 # burns an attempt like any spend without prose — the search was paid — so a
                 # record the index does not cover stops re-searching after
@@ -806,7 +813,7 @@ class PlacesEnrichmentAgent:
         redecided: set[str] = set()
         if details:
             redecided.add(TEMPORARILY_CLOSED_REASON)
-        if cascade is not None:
+        if judged:
             redecided |= {"descricao_nao_fundamentada", "municipio_nao_confirmado"}
         route_by_score(self._session, rio, self._config, redecided=redecided)
         # Ungrounded prose goes to the human queue, not to Mar: the draft sits in
