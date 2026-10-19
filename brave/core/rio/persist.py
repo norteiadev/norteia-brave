@@ -52,4 +52,9 @@ def persist_normalized(
     merged = {**(rio.normalized or {}), **delta}
     rio.normalized = merged
     flag_modified(rio, "normalized")
+    # Never leave the merge pending: the next persist_normalized on this row refreshes,
+    # and refresh expires `normalized` BEFORE autoflushing — the pending merge would be
+    # dropped. That erased ta_backfilled_at on every TA card with coordinates (the inline
+    # Places agent writes right after the stamp with no SELECT in between).
+    session.flush()
     return merged
