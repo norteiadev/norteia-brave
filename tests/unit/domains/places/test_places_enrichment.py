@@ -216,6 +216,47 @@ async def test_closed_place_hard_descarte() -> None:
 
 
 @pytest.mark.asyncio
+async def test_google_business_type_hard_descarte() -> None:
+    """A confident match Google files as a business (Faraó na Praia, TA "Praias") →
+    descarte nao_atrativo, types kept on the record, no re-score."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    details = {**_details(), "primary_type": "restaurant", "types": ["restaurant", "bar", "food"]}
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": details},
+    )
+    rio = _make_rio()
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
+    mock_route = await _run(agent, rio)
+
+    assert rio.routing == "descarte"
+    assert rio.dlq_reason == "nao_atrativo"
+    assert rio.normalized["google_primary_type"] == "restaurant"
+    assert not mock_route.called
+
+
+@pytest.mark.parametrize(
+    ("primary", "types", "expected"),
+    [
+        ("restaurant", ["restaurant", "pub", "bar", "food"], True),  # Faraó na Praia
+        ("condominium_complex", ["condominium_complex", "service"], True),  # Ecoville Park
+        ("tour_agency", ["tour_agency", "travel_agency", "service"], True),
+        ("clothing_store", ["clothing_store", "store"], True),
+        ("shopping_mall", ["shopping_mall", "tourist_attraction"], True),  # malls always out
+        ("pet_care", ["tourist_attraction", "park", "pet_care"], False),  # Parque dos Falcões
+        ("non_profit_organization", ["non_profit_organization"], False),  # Projeto Tamar
+        ("church", ["church", "place_of_worship"], False),
+        ("", ["restaurant", "museum", "park"], False),  # no primaryType → not judged
+    ],
+)
+def test_google_not_atrativo(primary: str, types: list[str], expected: bool) -> None:
+    from brave.domains.places.places_enrichment import _google_not_atrativo
+
+    assert _google_not_atrativo({"primary_type": primary, "types": types}) is expected
+
+
+@pytest.mark.asyncio
 async def test_no_name_match_keeps_floor() -> None:
     """A wrong-name result (< threshold) → TA floor kept, marker set, still re-scores."""
     from brave.domains.places.places_enrichment import PlacesEnrichmentAgent

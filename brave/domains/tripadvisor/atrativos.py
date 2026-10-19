@@ -159,7 +159,7 @@ _NOT_ATRATIVO = frozenset({
     "Stand-up paddle", "Caiaque e canoagem", "Caminhadas", "Cinemas",
     "Centros de entretenimento e jogos", "Pistas de boliche", "Jogos de fuga", "Baladas",
     "Bares e clubes", "Cervejarias", "Clubes com piscina e praia",
-    "Trilhas para quadriciclos e off-road",
+    "Trilhas para quadriciclos e off-road", "Shopping centers",
 })
 
 
@@ -167,9 +167,10 @@ def _is_not_atrativo(entity: dict[str, Any]) -> bool:
     """Every TA category of the card is a non-place one — drop it before any Places/geo/Rio cost.
 
     A card mixing in one place category stays (Feira do Turista: "Lojas ... • Passeios
-    urbanos"). Shops ("Lojas ...", "Shopping ...") count as places only when reviewed:
-    TA lists any local store (Magazine Luiza, a motorcycle dealer) there with no reviews,
-    while Riomar or the Mercado Municipal have hundreds. A card with no category stays.
+    urbanos"). Shopping malls never stay. Shops ("Lojas ...") count as places only when
+    reviewed: TA lists any local store (Magazine Luiza, a motorcycle dealer) there with no
+    reviews, while the Mercado Thales Ferraz has hundreds. A mall TA files under "Lojas"
+    (Riomar) is caught by Google's primaryType after Places. No category → it stays.
     """
     # ponytail: pt-BR label match; switch to TA category ids if the session locale changes.
     reviewed = int(entity.get("review_count") or 0) > 0
@@ -177,7 +178,7 @@ def _is_not_atrativo(entity: dict[str, Any]) -> bool:
     return bool(parts) and all(
         p in _NOT_ATRATIVO
         or p.startswith(_NOT_ATRATIVO_PREFIXES)
-        or (p.startswith(("Lojas ", "Shopping")) and not reviewed)
+        or (p.startswith("Lojas ") and not reviewed)
         for p in parts
     )
 
