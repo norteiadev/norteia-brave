@@ -101,7 +101,7 @@ class TripAdvisorAtrativoPayload(BaseModel):
         description="Aggregate review signals (LGPD-safe)",
     )
     # reliability scoring criterion values
-    origem_value: float = Field(default=65.0, ge=0.0, le=100.0)
+    origem_value: float = Field(default=80.0, ge=0.0, le=100.0)
     completude_value: float = Field(default=0.0, ge=0.0, le=100.0)
     corroboracao_value: float = Field(default=0.0, ge=0.0, le=100.0)
     atualidade_value: float = Field(default=0.0, ge=0.0, le=100.0)

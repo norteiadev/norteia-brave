@@ -26,7 +26,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from brave.api.deps import (
@@ -39,7 +39,7 @@ from brave.api.routers.cms import _ROUTING_TO_COLUMN, TransitionBody
 from brave.config.runtime import load_effective_config
 from brave.core.mar.publication import promote
 from brave.core.mar.service import _attraction_review_recent
-from brave.core.models import RioRecord
+from brave.core.models import MarRecord, RioRecord
 from brave.core.rio.routing import STICKY_DLQ_REASONS
 from brave.observability.audit import write_audit
 
@@ -178,7 +178,9 @@ class PromoteBulkBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     uf: str | None = None
-    min_score: float = 65.0
+    # None = the lowest score promote() can still lift into Mar: threshold_mar minus the
+    # human-validation weight it adds. Anything below is only ever held.
+    min_score: float | None = None
     require_description: bool = True
     limit: int = Field(200, ge=1, le=200)
     dry_run: bool = True
@@ -187,8 +189,15 @@ class PromoteBulkBody(BaseModel):
 def _query_promote_bulk_candidates(db: Session, uf: str | None) -> list[RioRecord]:
     # ponytail: unbounded SELECT, fine at the measured ~427-10k row DLQ scale;
     # add a hard cap if the DLQ ever grows past ~50k rows.
+    # Also a record whose score crossed threshold_mar outside a promotion (ingest/enrichment
+    # route it 'mar' with no MarRecord — only promote() writes one): a dead end otherwise,
+    # reachable once threshold_mar sits below a TA record's top score (79).
+    active_mar = select(MarRecord.id).where(
+        MarRecord.rio_id == RioRecord.id, MarRecord.superseded_by_id.is_(None)
+    )
     stmt = select(RioRecord).where(
-        RioRecord.entity_type == "attraction", RioRecord.routing == "dlq"
+        RioRecord.entity_type == "attraction",
+        or_(RioRecord.routing == "dlq", and_(RioRecord.routing == "mar", ~active_mar.exists())),
     )
     if uf:
         stmt = stmt.where(RioRecord.uf == uf.upper())
@@ -199,18 +208,35 @@ def _query_promote_bulk_candidates(db: Session, uf: str | None) -> list[RioRecor
 _BULK_EXCLUDED_REASONS = STICKY_DLQ_REASONS - {"no_recent_reviews"}
 
 
+def _active_mar_place_ids(db: Session) -> set[str]:
+    """google_place_id of every atrativo with an active Mar row (published or pending)."""
+    pid = RioRecord.normalized["google_place_id"].as_string()
+    stmt = (
+        select(pid)
+        .join(MarRecord, MarRecord.rio_id == RioRecord.id)
+        .where(MarRecord.superseded_by_id.is_(None), RioRecord.routing == "mar", pid.isnot(None))
+    )
+    return set(db.scalars(stmt))
+
+
 def _bucket_promote_bulk_candidates(
-    rows: list[RioRecord], min_score: float, require_description: bool
+    rows: list[RioRecord],
+    min_score: float,
+    require_description: bool,
+    taken_place_ids: set[str] | None = None,
 ) -> tuple[list[RioRecord], dict[str, int]]:
     """Split DLQ rows into promotable candidates + excluded-by-reason counts.
 
     Pure (no DB). First matching reason wins, so each row is counted once. A deliberate
     DLQ verdict (wrong/unconfirmed município, temporarily closed, ungrounded description,
     sent to review, error report) is never bulk-promoted: promote() would re-score past it
-    and push it — those need the steward's per-card call.
+    and push it — those need the steward's per-card call. A row whose google_place_id is
+    already in Mar (or taken by a higher-scored candidate — rows come score-desc) is a
+    duplicate TA card of the same place and stays out.
     """
+    taken = set(taken_place_ids or ())
     candidates: list[RioRecord] = []
-    excluded = {"verdict": 0, "below_score": 0, "no_description": 0, "recency": 0}
+    excluded = {"verdict": 0, "below_score": 0, "no_description": 0, "recency": 0, "duplicate": 0}
     for rio in rows:
         normalized = rio.normalized or {}
         if rio.dlq_reason in _BULK_EXCLUDED_REASONS:
@@ -221,8 +247,12 @@ def _bucket_promote_bulk_candidates(
             excluded["no_description"] += 1
         elif not _attraction_review_recent(normalized):
             excluded["recency"] += 1
+        elif normalized.get("google_place_id") in taken:
+            excluded["duplicate"] += 1
         else:
             candidates.append(rio)
+            if normalized.get("google_place_id"):
+                taken.add(normalized["google_place_id"])
     return candidates, excluded
 
 
@@ -243,18 +273,22 @@ def promote_bulk_atrativos(
     record and the loop goes on. Publish dispatch never fails the request: ids whose
     enqueue failed are listed in push_failed and stay pending for the outbox.
     """
+    config = load_effective_config(db).score
+    min_score = body.min_score
+    if min_score is None:
+        min_score = config.threshold_mar - config.weight_validacao_humana
     rows = _query_promote_bulk_candidates(db, body.uf)
     candidates, excluded = _bucket_promote_bulk_candidates(
-        rows, body.min_score, body.require_description
+        rows, min_score, body.require_description, _active_mar_place_ids(db)
     )
     if body.dry_run:
         return {
+            "min_score": min_score,
             "candidates": len(candidates),
             "excluded": excluded,
             "would_promote": min(len(candidates), body.limit),
         }
 
-    config = load_effective_config(db).score
     batch_id = str(uuid.uuid4())
     # Ids up front: a rollback expires ORM instances, so re-fetch inside the loop.
     ids = [r.id for r in candidates[: body.limit]]

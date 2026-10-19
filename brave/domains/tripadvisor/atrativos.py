@@ -2,7 +2,7 @@
 
 This lane scrapes TripAdvisor attraction listings via the GraphQL hybrid
 client (TripAdvisorClientProtocol) and ingests them into Nascente with
-source='tripadvisor', entity_type='attraction', origem=65.0.
+source='tripadvisor', entity_type='attraction', origem=80.0.
 
 ToS WARNING: Systematic scraping violates TripAdvisor's Terms of Service
 (Section 5, "Use of Site"). This module must NOT be used without operator
@@ -92,9 +92,10 @@ if TYPE_CHECKING:
 # Constants
 # ---------------------------------------------------------------------------
 
-TA_ATRATIVO_ORIGEM_VALUE = 65.0
-# origem=65 (>Places 60, <gov 100 — firewall: TA never crosses 85 on origem alone).
-# Source: CONTEXT.md TA-04.
+TA_ATRATIVO_ORIGEM_VALUE = 80.0
+# origem=80 (>Places 60, <gov 100): published TA listings are trusted above a Places-only
+# find. Still no TA atrativo reaches Mar on its own — the max without the human-validation
+# criterion is 79 — so promotion stays the gate. Was 65 (CONTEXT.md TA-04) until 10/2026.
 
 # Version of the município-resolution chain, stamped on every ibge_unmatched quarantine.
 # A card quarantined under THIS version is skipped by later sweeps (its per-card TA calls
