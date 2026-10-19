@@ -99,7 +99,11 @@ _DESTINATIONS_QID: str | None = None
 # live against real TripAdvisor — see docs/poc/ta-graphql-pagination.md). The
 # GraphQL listing DOES paginate via request.routeParameters.pagee, so this
 # REPLACES the single-page fetch_attractions AND the fragile HTML-SSR path.
-_LISTING_QID_GQL: str = "79aaeeb847e55e58"
+# Captured live 2026-10-19 — the old 79aaeeb847e55e58 started answering
+# PersistedQueryNotFound. TA rotates these: BRAVE_TA_QUERY_ID_OVERRIDE={"listing":"<qid>"}
+# swaps it without a deploy (capture: listing page › next page › the /data/graphql/ids
+# item whose variables carry request.routeParameters.pagee).
+_LISTING_QID_GQL: str = "0e26761de5110a17"
 
 # Review-list persisted query id: powers reliability review recency (atualidade + precise
 # corroboração) via fetch_recent_review. Captured live from the attraction detail page
@@ -943,7 +947,7 @@ class TripAdvisorClient:
 
         REPLACES both the single-page ``fetch_attractions`` and the fragile HTML-SSR
         ``fetch_attractions_paginated``: the AttractionsFusion persisted query
-        (qid ``79aaeeb847e55e58``) DOES paginate via ``request.routeParameters.pagee``.
+        (qid ``_LISTING_QID_GQL``) DOES paginate via ``request.routeParameters.pagee``.
         Each page POSTs the same batch-array shape as ``fetch_attractions`` with an
         explicit ``pagee=str(offset)`` (offset = (page-1)*30). Page 1 MUST send
         ``pagee="0"`` — an absent ``pagee`` returns 0 cards (POC finding). Parses each
@@ -1034,7 +1038,10 @@ class TripAdvisorClient:
                         "debug": False,
                         "polling": False,
                     },
-                    "extensions": {"preRegisteredQueryId": _LISTING_QID_GQL},
+                    "extensions": {
+                        "preRegisteredQueryId": self._config.query_id_override.get("listing")
+                        or _LISTING_QID_GQL
+                    },
                 }
             ]
 

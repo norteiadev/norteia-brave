@@ -1761,7 +1761,35 @@ class TestFetchAttractionsPaginatedGql:
         assert captured_pagees == ["0", "30", "60"]
         assert captured_pagees[0] == "0"
         # Every page uses the paginated-GraphQL qid.
-        assert all(q == "79aaeeb847e55e58" for q in captured_qids)
+        assert all(q == "0e26761de5110a17" for q in captured_qids)
+
+    @pytest.mark.asyncio
+    async def test_query_id_override_listing_wins(self):
+        """BRAVE_TA_QUERY_ID_OVERRIDE={"listing": ...} swaps a rotated qid without a deploy."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.domains.tripadvisor.client import TripAdvisorClient
+
+        config = AppConfig().tripadvisor
+        config.page_throttle_seconds = 0.0
+        config.query_id_override = {"listing": "feedfacecafebeef"}
+        redis = fakeredis.FakeRedis()
+        _make_session_redis(redis)
+        captured_qids: list[str] = []
+
+        with respx.mock:
+            def handler(request):
+                captured_qids.append(json.loads(request.content)[0]["extensions"]["preRegisteredQueryId"])
+                return httpx.Response(200, json=_make_ta_response([]))
+
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(side_effect=handler)
+            async for _ in TripAdvisorClient(config=config, redis=redis).fetch_attractions_paginated_gql(
+                geo_id=294280, max_pages=1
+            ):
+                pass
+
+        assert captured_qids == ["feedfacecafebeef"]
 
     @pytest.mark.asyncio
     async def test_empty_first_page_yields_nothing(self):
