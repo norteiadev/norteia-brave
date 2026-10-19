@@ -80,8 +80,10 @@ Checklist:
 - [ ] **VM do Docker com folga.** Em 2026-10-19, com 8 GB dos 16 GB do Mac e outro projeto ddev ativo, a VM chegou a
       load 11,9 em 8 CPUs, 536 MB livres e 1,4 GB de swap. O health da ddev oscilou entre 0,2 e 10 s, e o push ficou
       bloqueado como `norteia_api_down` (o repush de 15 min recupera, mas atrasa).
-      Recomendado: Docker Desktop › Resources com 10–12 GB. Mudar isso reinicia o Docker e derruba **todos** os containers,
-      inclusive os de outros projetos. Faça numa janela combinada.
+      Com o alvo DEV (seção 11), a ddev da norteia-api sai do caminho: `ddev stop norteia-api`. Sem ela, a VM ficou com
+      4,3 GB disponíveis e load 1,7, e o worker ocioso usa ~0,8 GB. Isso dá folga para um sweep por UF **sem** mudar a memória.
+      Só aumente para 10–12 GB (Docker Desktop › Resources) se o monitor `stack` mostrar `docker VM ... LOW/CRITICAL` ou swap
+      crescendo. Mudar isso reinicia o Docker e derruba **todos** os containers, inclusive os de outros projetos.
 - [ ] **Token `brave-ingest` válido.** O Sanctum expira em 30 dias (`sanctum.expiration=43200`).
       Emitido em 2026-10-19, vence em **~2026-11-18**. Para renovar:
       ```bash

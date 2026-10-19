@@ -13,6 +13,16 @@ while true; do
   on_change health "$h" "api health: $h"
   w=$(api /api/v1/workers | jq -r '"broker=\(.broker_reachable) workers=\(.workers|length) active=\([.workers[].active_count]|add // 0) reserved=\([.workers[].reserved_count]|add // 0)"' 2>/dev/null); w=${w:-"workers endpoint unreachable"}
   on_change workers "$w" "celery: $w"
+  # Docker VM pressure (read via the redis container, which sees the whole VM): emits
+  # only when a bucket changes — RAM <2 GB / <1 GB available, swap use growing, load > CPUs.
+  vm=$(docker compose exec -T redis sh -c 'awk "/MemAvailable/{a=\$2}/SwapTotal/{t=\$2}/SwapFree/{f=\$2}END{print int(a/1024), int((t-f)/1024)}" /proc/meminfo; cut -d" " -f1 /proc/loadavg; nproc' 2>/dev/null | tr '\n' ' ')
+  read -r avail swap load cpus <<<"$vm"
+  if [ -n "$avail" ]; then
+    mb=ok; [ "$avail" -lt 2048 ] && mb="LOW(<2GB)"; [ "$avail" -lt 1024 ] && mb="CRITICAL(<1GB)"
+    sb=$(( swap / 512 ))   # 512 MB steps
+    lb=ok; awk -v l="$load" -v c="$cpus" 'BEGIN{exit !(l>c)}' && lb="HIGH"
+    on_change vm "$mb/$sb/$lb" "docker VM: ram_available=${avail}MB ($mb) swap_used=${swap}MB load=${load}/${cpus} ($lb)"
+  fi
   q=$(rds LLEN celery); q=${q:-?}
   # queue depth is noisy: report only the bucket (0 / 1-9 / 10-99 / 100+)
   case "$q" in 0) b=0;; ?) b="1-9";; ??) b="10-99";; '?') b="?";; *) b="100+";; esac
