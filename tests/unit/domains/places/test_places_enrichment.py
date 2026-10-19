@@ -1161,10 +1161,15 @@ async def test_grounded_rewrite_releases_descricao_nao_fundamentada() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("paid", [False, True], ids=["search_failed", "writer_failed"])
-async def test_transient_cascade_failure_keeps_verdict_and_draft(paid) -> None:
-    """A search/writer failure (no prose, no motivo) judged nothing: it must not release the
-    sticky descricao_nao_fundamentada verdict nor wipe the steward's draft."""
+@pytest.mark.parametrize(
+    ("paid", "motivo"),
+    [(False, None), (True, None), (True, "sem_mencao")],
+    ids=["search_failed", "writer_failed", "sem_mencao"],
+)
+async def test_transient_cascade_failure_keeps_verdict_and_draft(paid, motivo) -> None:
+    """A search/writer failure (no prose, no motivo) judged nothing, and a sem_mencao pass (the
+    search missed the place, the model never wrote) says nothing about an earlier draft: none
+    may release the sticky descricao_nao_fundamentada verdict nor wipe the steward's draft."""
     from brave.clients.parallel import ParallelSearch
     from brave.domains.places.copywriter import CascadeResult
     from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
@@ -1182,7 +1187,9 @@ async def test_transient_cascade_failure_keeps_verdict_and_draft(paid) -> None:
     )
     with patch("brave.domains.places.places_enrichment.write_audit"), \
          patch("brave.domains.places.places_enrichment.record_event"):
-        await agent.run(rio, description=(None, CascadeResult(None, busca=busca), False))
+        await agent.run(
+            rio, description=(None, CascadeResult(None, motivo=motivo, busca=busca), False)
+        )
 
     assert rio.normalized["descricao_rascunho"] == "Rascunho."
     assert rio.normalized["descricao_gate"] == "nao_fundamentada"

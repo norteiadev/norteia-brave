@@ -766,8 +766,15 @@ class PlacesEnrichmentAgent:
             # A pass that reached a verdict on the description. A transient failure (search or
             # writer error: no prose, no motivo) judged nothing: it must neither release a
             # sticky description verdict nor wipe the steward's draft from an earlier pass.
+            # Nor does sem_mencao over an earlier written verdict: this search missed the
+            # atrativo and the model never wrote, which says nothing about that draft or
+            # município verdict (an earlier search did reach the place).
             judged = cascade is not None and (
                 cascade.prose is not None or cascade.motivo is not None
+            ) and not (
+                cascade.motivo == "sem_mencao"
+                and normalized.get("descricao_gate")
+                in ("nao_fundamentada", "municipio_nao_confirmado")
             )
             if judged:
                 # Gate verdicts are board-only (excluded from the Mar canonical). A gated pass
