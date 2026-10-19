@@ -8,7 +8,8 @@
 
 - **Máquina**: este MacBook, stack em Docker (`docker compose`). A VPS DEV não tem folga para o Brave.
 - **Serviços**: postgres (pgvector) · redis · migrate (one-shot) · api `:8000` · worker · beat · dashboard `:3000/painel`.
-- **Destino do Mar**: norteia-api local na ddev (`http://norteia-api.ddev.site`, branch `develop`).
+- **Destino do Mar**: desde 2026-10-19 é a **norteia-api do DEV na VPS** (`https://dev-api.norteia.app.br`), com push direto (seção 11).
+  O caminho anterior, ddev local seguida de dump para o DEV, continua documentado nas seções 3 e 10 como alternativa.
   No fim, o banco da API é exportado e restaurado no DEV (seção 10).
 - **Lane ativa**: TripAdvisor (`source.tripadvisor.enabled=true`). A lane `default` (Places/Mtur) segue desligada.
 
@@ -155,7 +156,7 @@ tmux kill-session -t brave-mon              # encerra
 | `stack.sh` | Docker + `/health` + `/workers` + `LLEN celery` | estado/health/restarts dos containers, workers Celery, profundidade da fila | serviço `NOT RUNNING`, `restarts` subindo, `workers=0`, `api health: DOWN` |
 | `ta-session.sh` | Redis (só TTL, nunca o conteúdo) | sessão viva/expirando/ausente, `needs_bootstrap`, falhas do keepalive | `ABSENT`, `needs_bootstrap=1`, `EXPIRING` |
 | `cost.sh` | Redis `brave:cost:*`, `/cost`, `llm_generations` | gasto LLM+busca do dia (UTC), Places do dia e crédito total por chave | 50/80/100% de um teto |
-| `api-ingest.sh` | ddev norteia-api | health + probe de ingestão, contagem de destinations/attractions, `ERROR` novos do `laravel.log` | `TOKEN EXPIRED/WRONG`, `API DOWN?`, `laravel: ...ERROR` |
+| `api-ingest.sh` | norteia-api do `BRAVE_NORTEIA_API_URL`: ddev local, ou DEV via `ssh norteia-dev` | health + probe de ingestão, contagem de destinations/attractions, `ERROR` novos (`laravel.log` na ddev; `docker logs` de api+queue no DEV) | `TOKEN EXPIRED/WRONG`, `API DOWN?`, `laravel: ...ERROR` |
 
 Variáveis: `MONITOR_INTERVAL` (padrão 15 s; 30 s no api-ingest), `MONITOR_UF` (filtra o funnel), `COST_STEP` (US$ 0,25).
 O Painel (`http://localhost:3000/painel`) continua sendo a visão humana principal: Kanban, DLQ, Varreduras e Custos.
@@ -235,7 +236,57 @@ Antes de restaurar, confirme as migrations: o DEV precisa estar na mesma versão
 **Atenção**: a ddev já tinha 25 destinations e 43 attractions de testes antigos *antes* deste run.
 Limpe essas tabelas na ddev antes do run de produção, ou filtre na exportação.
 
-## 11. Encerrar
+## 11. Alvo DEV (VPS): Brave local publicando direto em dev-api
+
+Configuração em uso desde 2026-10-19. O Brave roda no Mac e o push vai pela internet para `https://dev-api.norteia.app.br`.
+O webhook de erro volta da VPS para o Mac pelo Tailscale.
+Vantagens sobre ddev + dump:
+- o health do DEV responde em 0,1–0,4 s, contra 1–26 s da ddev disputando a VM do Docker;
+- o push passa pela validação do contrato de ingestão;
+- não há dump/restore nem IDs de município divergentes.
+
+**Estado preparado em 2026-10-19:**
+- Backup do MySQL do DEV antes da limpeza: `/opt/norteia-dev/backups/pre-brave-prod-20261019-1452.sql.gz`.
+  Cópia local em `backups/norteia-api-DEV-pre-brave-prod-20261019-1452.sql.gz`.
+- Tabelas territoriais do DEV zeradas, junto com os dados demo/teste: destinations, attractions, itineraries
+  (com days, stops e versions), seasonal_events, vínculos de região/segmento e cat_cache.
+  Preservados: `municipalities` (5570), `tourist_regions` (12) e `tourism_segments` (20).
+- Token `brave-ingest` emitido no DEV para o usuário 1, com ability `territorial:ingest`. Vence em **~2026-11-18**.
+
+**Trocar o alvo do Brave:**
+```bash
+# .env do Brave
+BRAVE_NORTEIA_API_URL=https://dev-api.norteia.app.br
+BRAVE_NORTEIA_API_SERVICE_TOKEN="<id|secret>"     # entre aspas
+docker compose up -d api worker beat              # env_file só é lido ao recriar
+scripts/monitors/api-ingest.sh                     # "health=200 ingest_probe=422 (ok)" e modo (ssh)
+```
+
+**Renovar o token** (a cada 30 dias, ou quando o probe der 401):
+```bash
+ssh norteia-dev 'docker exec dev-norteia-api php artisan tinker --execute="echo \App\Models\User::find(1)->createToken(\"brave-ingest\", [\"territorial:ingest\"])->plainTextToken;"'
+```
+
+**Webhook de erro (API → Brave) pelo Tailscale:**
+- IPs: Mac `100.119.254.11`, VPS `100.115.13.125`.
+- Testado em 2026-10-19: o host da VPS e os containers `dev-norteia-api` e `dev-norteia-queue` alcançam
+  `http://100.119.254.11:8000/api/v1/health` com 200, em 0,06–0,4 s.
+- A API (`app/Services/BraveClient.php`, api#101) faz POST em `${BRAVE_BASE_URL}/webhook/error-report` com `X-Webhook-Secret`,
+  através do `ReportBraveErrorJob`, que roda no queue e refaz em caso de 429/5xx.
+- Para ativar, o env do DEV (`.env.dev.encrypted` da norteia-api, skill `env-sync`) precisa de:
+  `BRAVE_BASE_URL=http://100.119.254.11:8000` e `BRAVE_WEBHOOK_SECRET` igual ao do `.env` do Brave.
+  Depois, deploy ou restart da api e do queue.
+- Com o Mac dormindo ou fora do Tailscale, o job refaz e depois desiste. Use `caffeinate` durante o run.
+
+**Monitores:** `api-ingest.sh` detecta o alvo pelo `BRAVE_NORTEIA_API_URL`. Para o DEV ele usa `ssh norteia-dev`, configurável por
+`NORTEIA_API_SSH`: conta as linhas no `dev-norteia-mysql` e lê os `ERROR` de `docker logs` da api e do queue (`LOG_CHANNEL=stderr`).
+
+**Restaurar o DEV** se precisar voltar ao estado anterior:
+```bash
+ssh norteia-dev 'gunzip -c /opt/norteia-dev/backups/pre-brave-prod-20261019-1452.sql.gz | docker exec -i dev-norteia-mysql sh -c "mysql -uroot -p\$MYSQL_ROOT_PASSWORD \$MYSQL_DATABASE"'
+```
+
+## 12. Encerrar
 
 ```bash
 curl -sX POST localhost:8000/api/v1/engine/stop -H "$H"   # se algo estiver rodando
