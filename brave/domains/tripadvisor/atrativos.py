@@ -148,6 +148,39 @@ def _source_ref(entity: dict[str, Any]) -> str:
     return f"tripadvisor:attraction:{entity.get('locationId', '')}"
 
 
+# TA listing categories that are not a place to visit: tours sold by agencies (forbidden in
+# Norteia, whatever their reviews), transport, services and commercial leisure. The pt-BR
+# labels of the listing card (primaryInfo.text); "Passeios ..."/"Excursões ..." are prefixes.
+_NOT_ATRATIVO_PREFIXES = ("Passeios", "Excursões", "Viagens de um dia", "Táxis", "Aulas", "Locação")
+_NOT_ATRATIVO = frozenset({
+    "Lojas de departamento", "Serviços de ônibus", "Sistemas de transporte público",
+    "Spas", "Academias de ginástica", "Complexos esportivos", "Surfe e windsurfe",
+    "Stand-up paddle", "Caiaque e canoagem", "Caminhadas", "Cinemas",
+    "Centros de entretenimento e jogos", "Pistas de boliche", "Jogos de fuga", "Baladas",
+    "Bares e clubes", "Cervejarias", "Clubes com piscina e praia",
+    "Trilhas para quadriciclos e off-road",
+})
+
+
+def _is_not_atrativo(entity: dict[str, Any]) -> bool:
+    """Every TA category of the card is a non-place one — drop it before any Places/geo/Rio cost.
+
+    A card mixing in one place category stays (Feira do Turista: "Lojas ... • Passeios
+    urbanos"). Shops ("Lojas ...", "Shopping ...") count as places only when reviewed:
+    TA lists any local store (Magazine Luiza, a motorcycle dealer) there with no reviews,
+    while Riomar or the Mercado Municipal have hundreds. A card with no category stays.
+    """
+    # ponytail: pt-BR label match; switch to TA category ids if the session locale changes.
+    reviewed = int(entity.get("review_count") or 0) > 0
+    parts = [p.strip() for p in str(entity.get("category") or "").split("•") if p.strip()]
+    return bool(parts) and all(
+        p in _NOT_ATRATIVO
+        or p.startswith(_NOT_ATRATIVO_PREFIXES)
+        or (p.startswith(("Lojas ", "Shopping")) and not reviewed)
+        for p in parts
+    )
+
+
 def _parse_dt(raw: Any) -> datetime | None:
     """ISO-8601 → aware datetime, or None."""
     if not isinstance(raw, str) or not raw:
@@ -317,7 +350,7 @@ class TripAdvisorAtrativosIngest:
                 # Already in Brave: the TA signals were consumed by the score on the first
                 # sync — skip before any per-card TA call. Not counted toward max_per_uf,
                 # so the cap measures NEW atrativos.
-                if ref in synced and ref not in backfill:
+                if (ref in synced and ref not in backfill) or _is_not_atrativo(entity):
                     skipped += 1
                     continue
                 # Snapshot the destino cache keys BEFORE the attempt so that a rollback
@@ -1586,8 +1619,8 @@ class TripAdvisorAtrativosIngest:
             errors = 0
             synced = self._already_synced(cards, run_rio=run_rio, bulk=True)
             for card in cards:
-                if _source_ref(card) in synced:
-                    continue  # already in Brave — skip the geocode/ingest (see produce)
+                if _source_ref(card) in synced or _is_not_atrativo(card):
+                    continue  # already in Brave / not a place — skip the geocode/ingest
                 keys_before = set(self._destino_rio_map)  # see produce(): cache coherence
                 try:
                     # SAVEPOINT per card: a flush error reverts only this card, so the poison
