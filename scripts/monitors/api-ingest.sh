@@ -55,6 +55,11 @@ while true; do
   n=$(rows)
   IFS='|' read -r dst atr apd <<<"$n"
   on_change rows "$n" "api rows: destinations=${dst:-?} attractions=${atr:-?} place_details=${apd:-?}"
-  new_errors | cut -c1-300 | while read -r l; do emit "laravel: $l"; done
+  # docker logs --since re-reads the boundary second: emit each error line once.
+  new_errors | cut -c1-300 | while read -r l; do
+    grep -qxF -- "$l" "$_STATE/seen_errors" 2>/dev/null && continue
+    printf '%s\n' "$l" >> "$_STATE/seen_errors"
+    emit "laravel: $l"
+  done
   sleep "$INTERVAL"
 done
