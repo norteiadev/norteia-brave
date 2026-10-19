@@ -70,6 +70,7 @@ _GET_PLACE_FIELD_MASK_NO_REVIEWS = (
     "displayName,"
     "formattedAddress,"
     "types,"
+    "primaryType,"
     "location,"
     "addressComponents,"
     "businessStatus,"
@@ -536,6 +537,8 @@ class RealPlacesClient:
             "distrito_hint": distrito_hint,
             "price_level": price_level,
             "types": list(place.types or []),
+            # Pro-tier field: free here, the mask already bills Enterprise.
+            "primary_type": getattr(place, "primary_type", "") or "",
         }
 
         logger.info(

@@ -18,7 +18,7 @@ from brave.domains.tripadvisor.atrativos import _is_not_atrativo
         ("Baladas", 307, True),  # Casa de Forró Cariri: commercial leisure
         ("Lojas especializadas e de suvenir", 465, False),  # Riomar Aracaju
         ("Lojas especializadas e de suvenir • Passeios urbanos", 547, False),  # Feira do Turista
-        ("Shopping centers", 275, False),
+        ("Shopping centers", 275, True),  # Shopping Jardins: malls are never atrativos
         ("Natureza e vida selvagem • Parques aquáticos", 160, False),
         ("Igrejas e catedrais", 0, False),  # unreviewed but a real atrativo
         ("Cânions • Trilhas para caminhada", 1, False),

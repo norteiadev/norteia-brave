@@ -147,6 +147,38 @@ _CLOSED_LABELS: dict[str, str] = {
     "CLOSED_PERMANENTLY": "fechado permanentemente",
 }
 
+# Google primaryType of a business, not a place to visit (operator-approved 10/2026 from the
+# SE types): Faraó na Praia came from TA as "Praias" and is a restaurant, Ecoville Park
+# under "Parques" is a condominium. Agencies are forbidden in Norteia; shopping malls too.
+# A store / *_store type matches by suffix.
+_NOT_ATRATIVO_PRIMARY_TYPES = frozenset({
+    "restaurant", "fast_food_restaurant", "cafe", "bar", "pub", "bakery", "food",
+    "condominium_complex", "premise", "real_estate_agency",
+    "tour_agency", "travel_agency",
+    "beauty_salon", "spa", "gym", "sports_club",
+    "store", "supermarket",
+    "lodging", "hotel",
+    "car_dealer", "car_repair", "hospital", "doctor", "school",
+})
+# A place type anywhere in ``types`` overrides the primaryType: Google files Parque dos
+# Falcões (518 TA reviews) as pet_care, yet it is also a tourist_attraction and a park.
+_PLACE_TYPES = frozenset({
+    "tourist_attraction", "park", "national_park", "city_park", "museum", "historical_landmark",
+    "historical_place", "monument", "beach", "church", "place_of_worship", "nature_preserve",
+    "scenic_spot", "cultural_center", "art_gallery", "performing_arts_theater", "zoo",
+    "aquarium", "amusement_park", "hiking_area", "island", "lake",
+})
+
+
+def _google_not_atrativo(details: dict[str, Any]) -> bool:
+    """Google says this is a business, not an atrativo: a non-place primaryType and no place
+    type among ``types``. No primaryType (Google left it unset) → not judged here."""
+    primary = details.get("primary_type") or ""
+    if primary == "shopping_mall":  # operator: malls are never atrativos, park or not
+        return True
+    business = primary in _NOT_ATRATIVO_PRIMARY_TYPES or primary.endswith("_store")
+    return business and not _PLACE_TYPES.intersection(details.get("types") or ())
+
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in km (pure math).
@@ -566,17 +598,24 @@ class PlacesEnrichmentAgent:
 
         if details:
             business_status: str = details.get("business_status", "UNKNOWN")
+            new_normalized["google_primary_type"] = details.get("primary_type") or None
+            new_normalized["google_types"] = list(details.get("types") or [])
 
-            # Step 3: CLOSED_* on a confident match → hard descarte (mirror SignalAgent).
-            if business_status in CLOSED_STATUSES:
+            # Step 3: CLOSED_* or a business (not a place) on a confident match → hard
+            # descarte (mirror SignalAgent). A record already in Mar leaves it and the publish
+            # outbox retracts it from the API (F47).
+            closed = business_status in CLOSED_STATUSES
+            if closed or _google_not_atrativo(details):
+                reason = "closed_place" if closed else "nao_atrativo"
                 new_normalized["google_enriched"] = True
                 persist_normalized(self._session, rio, normalized, new_normalized)
                 routing_before = rio.routing
                 rio.routing = "descarte"
-                rio.dlq_reason = "closed_place"
+                rio.dlq_reason = reason
                 cause = {
-                    "reason": "closed_place",
+                    "reason": reason,
                     "business_status": business_status,
+                    "primary_type": details.get("primary_type") or None,
                     "place_id": place_id,
                     "place_name": details.get("name") or None,
                     "place_address": details.get("formatted_address") or None,
@@ -600,7 +639,11 @@ class PlacesEnrichmentAgent:
                     stage="places_descarte",
                     status="fail",
                     message=(
-                        f"Google Places marca como {_CLOSED_LABELS.get(business_status, business_status)}"
+                        (
+                            f"Google Places marca como {_CLOSED_LABELS.get(business_status, business_status)}"
+                            if closed
+                            else f"Google Places classifica como {cause['primary_type']}, não é atrativo"
+                        )
                         + (f" ({cause['place_name']})" if cause["place_name"] else "")
                     ),
                     entity_type="attraction",
