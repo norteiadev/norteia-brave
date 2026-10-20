@@ -110,12 +110,18 @@ def _extract_municipio_from_components(address_components: Any) -> tuple[str, st
 
     Types:
       "administrative_area_level_2" → município name (long_text)
+      "locality"                    → município name when level_2 is absent (long_text)
       "administrative_area_level_1" → state abbreviation (short_text = "BA", "RJ", ...)
+
+    Google omits level_2 on some results (AL 10/2026: "Praia da Sereia" came with only
+    locality=Maceió + level_1). locality is only the fallback: it can name a distrito
+    (Trancoso of Porto Seguro), which then simply fails the IBGE name lookup.
 
     Returns ("", "") if components are missing or do not contain the expected types.
     Source: RESEARCH.md RQ-2 (verified from installed place.py AddressComponent class)
     """
     municipio_nome = ""
+    locality = ""
     uf_short = ""
     for comp in address_components:
         types = list(comp.types)
@@ -123,7 +129,9 @@ def _extract_municipio_from_components(address_components: Any) -> tuple[str, st
             municipio_nome = comp.long_text
         elif "administrative_area_level_1" in types:
             uf_short = comp.short_text  # "BA", "RJ", etc.
-    return municipio_nome, uf_short
+        elif "locality" in types:
+            locality = comp.long_text
+    return municipio_nome or locality, uf_short
 
 
 def _extract_distrito_from_components(address_components: Any) -> str:

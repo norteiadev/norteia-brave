@@ -616,3 +616,37 @@ async def test_total_cap_survives_the_utc_day_turn(monkeypatch, fake_redis):
         await client.place_details("ChIJtest001")
     assert sdk.get_place.await_count == 0
 
+
+
+# ---------------------------------------------------------------------------
+# T8 — município from locality when Google omits administrative_area_level_2
+# ---------------------------------------------------------------------------
+
+
+def _component(long_text: str, short_text: str, *types: str) -> MagicMock:
+    comp = MagicMock()
+    comp.long_text, comp.short_text, comp.types = long_text, short_text, list(types)
+    return comp
+
+
+def test_municipio_falls_back_to_locality_without_level_2():
+    """AL sync, live: "Praia da Sereia" (beach) came with locality=Maceió + level_1 only."""
+    from brave.clients.places import _extract_municipio_from_components
+
+    comps = [
+        _component("Maceió", "Maceió", "locality", "political"),
+        _component("Alagoas", "AL", "administrative_area_level_1", "political"),
+    ]
+    assert _extract_municipio_from_components(comps) == ("Maceió", "AL")
+
+
+def test_level_2_wins_over_locality():
+    """locality can be a distrito (Trancoso); level_2 stays the município when present."""
+    from brave.clients.places import _extract_municipio_from_components
+
+    comps = [
+        _component("Trancoso", "Trancoso", "locality", "political"),
+        _component("Porto Seguro", "Porto Seguro", "administrative_area_level_2", "political"),
+        _component("Bahia", "BA", "administrative_area_level_1", "political"),
+    ]
+    assert _extract_municipio_from_components(comps) == ("Porto Seguro", "BA")
