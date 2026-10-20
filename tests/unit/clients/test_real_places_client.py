@@ -253,6 +253,28 @@ async def test_text_search_drops_places_google_puts_in_another_uf(monkeypatch):
 
     assert [r["place_id"] for r in results] == ["ChIJpi", "ChIJnolevel1"]
     assert results[0]["municipio_ibge"] == "2201903"
+    # locate() snaps a result to a seat by coords only when Google confirmed its UF.
+    assert [r["uf_short"] for r in results] == ["PI", ""]
+    assert [r["municipio_from_locality"] for r in results] == [False, False]
+
+
+async def test_text_search_flags_a_municipio_read_from_locality(monkeypatch):
+    """No level_2: the name came from locality, which locate() checks against the coords."""
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    response = _make_search_response(municipio="Maceió", uf_short="AL")
+    response.places[0].address_components[0].types = ["locality", "political"]
+    mock_client = MagicMock()
+    mock_client.search_text = AsyncMock(return_value=response)
+
+    with patch("google.maps.places_v1.PlacesAsyncClient", return_value=mock_client):
+        from brave.clients.places import RealPlacesClient
+
+        client = RealPlacesClient(api_key="test-key", ibge_lookup={("maceio", "AL"): "2704302"})
+        client._client = mock_client
+        results = await client.text_search(query="Praia da Sereia", uf="AL")
+
+    assert results[0]["municipio_ibge"] == "2704302"
+    assert results[0]["municipio_from_locality"] is True
 
 
 # ---------------------------------------------------------------------------

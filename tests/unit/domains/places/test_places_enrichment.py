@@ -1474,6 +1474,7 @@ async def test_locate_places_a_result_by_its_coords_when_no_municipio_name() -> 
                          types=["premise"]),
         "municipio_nome": "",
         "municipio_ibge": "",
+        "uf_short": "AL",
     }
     session = _make_session()
     session.scalars.return_value.all.return_value = [
@@ -1496,7 +1497,7 @@ async def test_locate_coords_fallback_never_reaches_a_far_seat() -> None:
     from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     far = {**_search_result(name="Farol da Ponta Verde", lat=-3.0, lng=-60.0),
-           "municipio_ibge": ""}
+           "municipio_ibge": "", "uf_short": "AL"}
     session = _make_session()
     session.scalars.return_value.all.return_value = [
         Municipio(ibge_code="2704302", nome="Maceió", uf="AL", lat=-9.6658, lng=-35.7350),
@@ -1554,12 +1555,18 @@ def test_best_match_prefers_a_place_over_a_same_name_business() -> None:
         _search_result(name="Piscinas naturais de Pajuçara", place_id="ChIJagency",
                        types=["tour_agency", "travel_agency", "point_of_interest"]),
     ]
-    match = _best_match(results, "Piscinas Naturais de Pajuçara", _LAT, _LNG, 20.0)
+    card = "Piscinas Naturais de Pajuçara"
+    match = _best_match(results, card, _LAT, _LNG, 20.0, "Pontos de interesse & marcos")
     assert match is not None and match["place_id"] == "ChIJmaceio"
 
     # No place-typed alternative → the business is still the match (judged on Details).
-    match = _best_match(results[2:], "Piscinas Naturais de Pajuçara", _LAT, _LNG, 20.0)
+    match = _best_match(results[2:], card, _LAT, _LNG, 20.0, "Pontos de interesse & marcos")
     assert match is not None and match["place_id"] == "ChIJagency"
+
+    # A card TA files as a tour/shop/food (or no category) keeps its own business match.
+    for category in ("Passeios de barco", None):
+        match = _best_match(results, card, _LAT, _LNG, 20.0, category)
+        assert match is not None and match["place_id"] == "ChIJagency"
 
 
 @pytest.mark.asyncio
@@ -1573,7 +1580,9 @@ async def test_business_match_on_a_ta_attraction_category_goes_to_review() -> No
         fixture_results={"Igreja Matriz": [_search_result()]},
         fixture_details={"ChIJmatriz001": details},
     )
-    rio = _make_rio(extra_normalized={"category": "Praias"})
+    # The business's id rode in from locate() as place_id_cache (the ingest payload).
+    rio = _make_rio(extra_normalized={"category": "Praias", "place_id_cache": "ChIJmatriz001",
+                                      "google_place_id": "ChIJmatriz001"})
     agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW,
                                   config=ScoreConfig())
     mock_route = await _run(agent, rio)
@@ -1581,7 +1590,11 @@ async def test_business_match_on_a_ta_attraction_category_goes_to_review() -> No
     assert (rio.routing, rio.dlq_reason) == ("dlq", "google_tipo_negocio")
     assert rio.normalized["google_enriched"] is True
     assert rio.normalized["google_primary_type"] == "restaurant"
-    assert "weekday_text" not in rio.normalized and "place_id_cache" not in rio.normalized
+    # Cleared: refresh_places would re-bill it, a Mar approval would publish the business id.
+    assert rio.normalized["place_id_cache"] is None and rio.normalized["google_place_id"] is None
+    assert "weekday_text" not in rio.normalized
+    # A steward judges the business match first: no description pass may re-reason it.
+    assert agent.wants_description(rio) is False
     assert not mock_route.called
 
 
@@ -1609,3 +1622,120 @@ async def test_business_match_without_an_attraction_category_is_still_discarded(
                                   config=ScoreConfig())
     await _run(agent, rio)
     assert (rio.routing, rio.dlq_reason) == (routing, "nao_atrativo")
+
+
+def test_best_match_keeps_an_exact_name_non_business_over_a_place_typed_homonym() -> None:
+    """2b made premise neutral: "Usina Hidrelétrica de Xingó" (premise, exact) must keep
+    beating "Mirante da Usina…" (tourist_attraction), which token_set_ratio also scores 100;
+    same for "Farol da Ponta Verde" vs the beach "Ponta Verde". Only a BUSINESS gives way."""
+    from brave.domains.places.places_enrichment import _best_match
+
+    for card, other in (("Usina Hidrelétrica de Xingó", "Mirante da Usina Hidrelétrica de Xingó"),
+                        ("Farol da Ponta Verde", "Ponta Verde")):
+        results = [
+            _search_result(name=card, place_id="ChIJexact", types=["premise", "establishment"]),
+            _search_result(name=other, place_id="ChIJother", types=["beach", "tourist_attraction"]),
+        ]
+        match = _best_match(results, card, _LAT, _LNG, 20.0, "Pontos de interesse & marcos")
+        assert match is not None and match["place_id"] == "ChIJexact"
+
+
+def test_best_match_without_coords_gives_way_only_inside_the_same_municipio() -> None:
+    """locate() has no distance guard: a business in the card's município must not lose to a
+    place-typed homonym in ANOTHER município of the UF (it would place the card there)."""
+    from brave.domains.places.places_enrichment import _best_match
+
+    agency = {**_search_result(name="Piscinas Naturais de Pajuçara", place_id="ChIJagency",
+                               types=["tour_agency"]), "municipio_ibge": "2704302"}
+    elsewhere = {**_search_result(name="Piscinas Naturais de Pajuçara Norte",
+                                  place_id="ChIJfar"), "municipio_ibge": "2704708"}
+    same = {**_search_result(name="Piscinas naturais de Maceió", place_id="ChIJmaceio"),
+            "municipio_ibge": "2704302"}
+    card, category = "Piscinas Naturais de Pajuçara", "Piscinas naturais"
+    assert _best_match([agency, elsewhere], card, None, None, 20.0, category)["place_id"] == (
+        "ChIJagency"
+    )
+    assert _best_match([agency, elsewhere, same], card, None, None, 20.0, category)[
+        "place_id"
+    ] == "ChIJmaceio"
+
+
+@pytest.mark.asyncio
+async def test_locate_majority_needs_the_closest_name_in_the_winner() -> None:
+    """A Google that does not know "Museu Casa do Penedo" answers with popular museums of
+    Maceió: 4 of 6 is a 2/3 majority, but the closest name sits in Penedo → no verdict."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    def res(name, ibge):
+        return {**_search_result(name=name), "municipio_ibge": ibge}
+
+    results = [res("Museu Théo Brandão", "2704302"), res("Museu de Arte Sacra", "2704302"),
+               res("Museu Palácio Floriano Peixoto", "2704302"), res("Museu Pierre Chalita", "2704302"),
+               res("Casa da Cultura de Penedo", "2706703"),
+               res("Igreja do Penedo", "2706703")]
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Museu Casa do Penedo": results}),
+        session=_make_session(),
+        config=ScoreConfig(),
+    )
+    assert await agent.locate("Museu Casa do Penedo", "AL") is None
+
+
+def _seats_session(*seats):
+    session = _make_session()
+    session.scalars.return_value.all.return_value = list(seats)
+    return session
+
+
+@pytest.mark.asyncio
+async def test_locate_never_snaps_a_result_google_did_not_put_in_the_uf() -> None:
+    """The client keeps a result with no state component (fail open): near a border it may
+    be in PE/SE, so its coords must not snap it to an AL seat."""
+    from brave.core.models import Municipio
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    no_uf = {**_search_result(name="Farol da Ponta Verde", lat=-9.6658, lng=-35.6950,
+                              types=["premise"]), "municipio_ibge": "", "uf_short": ""}
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Farol - Ponta Verde": [no_uf]}),
+        session=_seats_session(
+            Municipio(ibge_code="2704302", nome="Maceió", uf="AL", lat=-9.6658, lng=-35.7350)
+        ),
+        config=ScoreConfig(),
+    )
+    assert await agent.locate("Farol - Ponta Verde", "AL") is None
+
+
+@pytest.mark.asyncio
+async def test_locate_rechecks_a_locality_municipio_against_the_coords() -> None:
+    """locality (no level_2) named a distrito that shares another município's name: the
+    lookup gave that far município's code; the coords put it back at the nearest seat."""
+    from brave.core.models import Municipio
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    homonym = {**_search_result(name="Praia da Sereia", lat=-9.6658, lng=-35.6950),
+               "municipio_ibge": "2708006", "municipio_from_locality": True, "uf_short": "AL"}
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Praia da Sereia": [homonym]}),
+        session=_seats_session(
+            Municipio(ibge_code="2704302", nome="Maceió", uf="AL", lat=-9.6658, lng=-35.7350),
+            Municipio(ibge_code="2708006", nome="Santana do Ipanema", uf="AL", lat=-9.3780,
+                      lng=-37.2450),
+        ),
+        config=ScoreConfig(),
+    )
+    match = await agent.locate("Praia da Sereia", "AL")
+    assert match is not None and match["municipio_ibge"] == "2704302"
+
+
+def test_description_filter_skips_business_review_records() -> None:
+    """The batch / describe_uf eligibility mirrors wants_description for google_tipo_negocio."""
+    from sqlalchemy.dialects import postgresql
+
+    from brave.domains.places.copy_batch import description_candidates_filter
+
+    sql = " ".join(
+        str(c.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+        for c in description_candidates_filter()
+    )
+    assert "coalesce(rio_records.dlq_reason, '') != 'google_tipo_negocio'" in sql

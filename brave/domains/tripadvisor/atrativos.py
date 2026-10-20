@@ -1046,7 +1046,7 @@ class TripAdvisorAtrativosIngest:
         places_consulted = False
         if ibge_match is None and self._places_agent is not None:
             try:
-                place = await self._places_agent.locate(name, uf)
+                place = await self._places_agent.locate(name, uf, category)
                 places_consulted = _places_live(self._places_agent) and not getattr(
                     self._places_agent, "locate_failed", False
                 )
