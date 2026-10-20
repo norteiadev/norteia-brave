@@ -46,6 +46,7 @@ import structlog
 
 from brave.shared.exceptions import (
     SourceRateLimitError,
+    SourceRecordError,
     SourceSchemaError,
     SourceSessionError,
     TransientError,
@@ -1172,6 +1173,12 @@ class TripAdvisorClient:
         except ValueError:
             data = None  # a non-JSON 200 is no answer either: abort, never "no reviews"
         errors = _graphql_errors(data)
+        if errors == ["Unexpected error."]:
+            # One location TA's resolver chokes on (a PE card failed on every retry while the
+            # cards around it answered): that card only. A retired qid says
+            # PersistedQueryNotFound and still aborts below.
+            logger.warning("ta.reviews.record_error", qid=_REVIEWS_QID, location_id=location_id)
+            raise SourceRecordError(f"TripAdvisor reviews failed for location {location_id}")
         if errors or not (isinstance(data, list) and data and isinstance(data[0], dict)
                           and "data" in data[0]):
             # A retired qid / schema change fails for EVERY card. Returning None stored each

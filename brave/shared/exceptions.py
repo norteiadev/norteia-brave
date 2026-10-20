@@ -138,3 +138,11 @@ class SourceSchemaError(SourceError):
     or a response-schema change. Systemic: abort the run instead of writing each record
     without the field (or poisoning each one). Re-injecting a session does not fix it.
     """
+
+
+class SourceRecordError(SourceError):
+    """External source failed for ONE record only (TA reviews: ``Unexpected error.``).
+
+    The caller skips that field for the record and withholds its completion marker, so a
+    later backfill retries it; the run goes on.
+    """
