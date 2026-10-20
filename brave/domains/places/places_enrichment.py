@@ -95,7 +95,8 @@ _COMPLETUDE_WITH_DESCRIPTION: float = 90.0
 # already-enriched atrativo). A permanent "failed once, never again" marker re-creates the
 # opposite bug — a transient outage would block backfill for good. A small bounded count is
 # the only shape that is both. Operators clear ``descricao_attempts`` to re-arm.
-# NOT counted: a CostGuardError (raised before dispatch, zero spend) — see run().
+# NOT counted: a CostGuardError (raised before dispatch, zero spend) or a 429 that outlived
+# the retries (a quota wall, not a verdict) — see run().
 _MAX_DESCRIPTION_ATTEMPTS: int = 3
 
 logger = structlog.get_logger(__name__)
@@ -785,9 +786,15 @@ class PlacesEnrichmentAgent:
                     _COMPLETUDE_WITH_DESCRIPTION,
                 )
                 description_written = True
+            elif cascade is not None and cascade.rate_limited:
+                # A 429 that outlived the retries says nothing about the atrativo: keep the
+                # budget so the next pass tries again (19/10: 73 records lost one this way).
+                logger.warning(
+                    "copywriter_rate_limited_no_attempt", rio_id=str(rio.id), attempts=attempts
+                )
             elif not no_spend:
-                # Only a real invocation that produced no prose burns budget; success and a
-                # pre-dispatch cost-guard block never increment. After
+                # Only a real invocation that produced no prose burns budget; success, a
+                # pre-dispatch cost-guard block and a 429 never increment. After
                 # _MAX_DESCRIPTION_ATTEMPTS the record stops re-entering the pass (see the
                 # constant for why this is a count, not a flag).
                 new_normalized["descricao_attempts"] = attempts + 1

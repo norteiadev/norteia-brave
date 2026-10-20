@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import uuid
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis
 import httpx
@@ -506,3 +506,22 @@ def test_local_goes_into_the_first_query_and_the_objective_only() -> None:
     assert "em Trancoso, Porto Seguro/BA" in cascade_objective(
         "Igreja Matriz", "Porto Seguro", "BA", "Trancoso"
     )
+
+
+@respx.mock
+async def test_model_429_is_flagged_rate_limited(real_env: None, monkeypatch) -> None:
+    """A 429 that outlives the retries is a quota wall, not a verdict — flagged for the caller."""
+    from brave.clients import llm as llm_mod
+
+    respx.post(PARALLEL_SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_parallel_reply(_COM_MENCAO))
+    )
+    respx.post(GEMINI_URL).mock(return_value=httpx.Response(429))
+    monkeypatch.setattr(llm_mod.RealLLMClient._gemini_post_standard.retry, "sleep", AsyncMock())
+    llm, search = _clients(fakeredis.FakeRedis())
+
+    out = await TourismCopywriter(llm, CASCADE_MODEL, search_client=search).write_cascade(
+        "Praia Da Costa", "Vila Velha", "ES"
+    )
+    assert out.prose is None and out.motivo is None
+    assert out.rate_limited and out.busca is not None

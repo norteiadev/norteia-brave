@@ -23,6 +23,7 @@ Usage (production — only when run_real_externals=True):
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from typing import Any
 
@@ -96,6 +97,44 @@ _GEMINI_PRICES_USD_PER_MTOK: dict[tuple[str, str], tuple[float, float, float]] =
 # Flex sheds load with these; the same body is re-sent at the standard tier right away.
 _GEMINI_FLEX_FALLBACK_STATUS: frozenset[int] = frozenset({429, 503})
 _GEMINI_TIMEOUT_S: float = 60.0
+# The standard tier's 429 is a per-minute quota wall: Google names the quota and how long to
+# wait in the JSON body (RetryInfo.retryDelay), never in a retry-after header. The plain
+# backoff spent its 3 attempts inside the same minute, so DF+GO+ES described at once lost
+# ~73 atrativos (19/10). 4 attempts = at most 3 waits of 60 s, inside enrich_places' 300 s.
+_GEMINI_MAX_ATTEMPTS = 4
+_GEMINI_MAX_RETRY_DELAY_S = 60.0
+
+
+def _gemini_429(response: httpx.Response) -> dict[str, Any]:
+    """quota_id / quota_metric / quota_value / retry_delay_s from a Gemini 429 body (best effort)."""
+    out: dict[str, Any] = {}
+    try:
+        details = response.json()["error"]["details"]
+    except Exception:  # noqa: BLE001 — a body we cannot read only loses the diagnosis
+        return out
+    for d in details if isinstance(details, list) else []:
+        kind = str(d.get("@type", ""))
+        if kind.endswith("QuotaFailure"):
+            v = (d.get("violations") or [{}])[0]
+            out.update(
+                quota_id=v.get("quotaId"),
+                quota_metric=v.get("quotaMetric"),
+                quota_value=v.get("quotaValue"),
+            )
+        elif kind.endswith("RetryInfo"):
+            with contextlib.suppress(ValueError):
+                out["retry_delay_s"] = float(str(d.get("retryDelay", "")).rstrip("s"))
+    return out
+
+
+def _gemini_wait(retry_state: Any) -> float:
+    """Wait the retryDelay Google asked for on a 429 (capped), else the shared httpx wait."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+        delay = _gemini_429(exc.response).get("retry_delay_s")
+        if delay is not None:
+            return min(delay, _GEMINI_MAX_RETRY_DELAY_S)
+    return float(_httpx_wait(retry_state))
 
 
 def gemini_is_priced(model: str) -> bool:
@@ -598,14 +637,19 @@ class RealLLMClient:
         r = await http.post(
             url, headers={"x-goog-api-key": self._config.gemini_api_key}, json=body, timeout=timeout
         )
+        if r.status_code == 429:
+            # Which quota (RPM, TPM, RPD, flex capacity) decides the fix — log it every time.
+            logger.warning(
+                "gemini_rate_limited", tier=body.get("serviceTier", "standard"), **_gemini_429(r)
+            )
         r.raise_for_status()
         result: dict[str, Any] = r.json()
         return result
 
     @retry(
         retry=retry_if_exception(_is_httpx_retryable),
-        stop=stop_after_attempt(3),
-        wait=_httpx_wait,
+        stop=stop_after_attempt(_GEMINI_MAX_ATTEMPTS),
+        wait=_gemini_wait,
         reraise=True,
     )
     async def _gemini_post_standard(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
