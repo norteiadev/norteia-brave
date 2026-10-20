@@ -1453,3 +1453,87 @@ async def test_rate_limited_description_never_burns_attempt_budget() -> None:
 
     assert "descricao_attempts" not in rio.normalized
     assert "descricao_gate" not in rio.normalized
+
+
+# ---------------------------------------------------------------------------
+# AL sync 10/2026 — locate() fixes from the live Text Search evidence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_locate_places_a_result_by_its_coords_when_no_municipio_name() -> None:
+    """"Farol - Ponta Verde" came back with only administrative_area_level_1 (no city), but
+    with coords: the nearest IBGE seat of the UF places it."""
+    from brave.core.models import Municipio
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    farol = {
+        **_search_result(name="Farol da Ponta Verde", lat=-9.6658, lng=-35.6950,
+                         types=["premise"]),
+        "municipio_nome": "",
+        "municipio_ibge": "",
+    }
+    session = _make_session()
+    session.scalars.return_value.all.return_value = [
+        Municipio(ibge_code="2704302", nome="Maceió", uf="AL", lat=-9.6658, lng=-35.7350),
+        Municipio(ibge_code="2706901", nome="Paripueira", uf="AL", lat=-9.4650, lng=-35.5520),
+    ]
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Farol - Ponta Verde": [farol]}),
+        session=session,
+        config=ScoreConfig(),
+    )
+    match = await agent.locate("Farol - Ponta Verde", "AL")
+    assert match is not None and match["municipio_ibge"] == "2704302"
+
+
+@pytest.mark.asyncio
+async def test_locate_coords_fallback_never_reaches_a_far_seat() -> None:
+    """A point with no seat of the UF within reach stays unresolved (no wrong município)."""
+    from brave.core.models import Municipio
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    far = {**_search_result(name="Farol da Ponta Verde", lat=-3.0, lng=-60.0),
+           "municipio_ibge": ""}
+    session = _make_session()
+    session.scalars.return_value.all.return_value = [
+        Municipio(ibge_code="2704302", nome="Maceió", uf="AL", lat=-9.6658, lng=-35.7350),
+    ]
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Farol - Ponta Verde": [far]}),
+        session=session,
+        config=ScoreConfig(),
+    )
+    assert await agent.locate("Farol - Ponta Verde", "AL") is None
+
+
+@pytest.mark.asyncio
+async def test_locate_consensus_by_two_thirds_majority() -> None:
+    """"Praia de Pratagi": no name match, the Pratagy results sit in Maceió and one outlier
+    elsewhere — unanimity dropped the card; a >= 2/3 majority places it."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    def res(name, ibge):
+        return {**_search_result(name=name), "municipio_ibge": ibge}
+
+    results = [res("Pratagy Beach Resort", "2704302"), res("Pratagy Acqua Park", "2704302"),
+               res("Piscinas Naturais do Pratagy", "2704302"), res("Praia da Sereia", "2704302"),
+               res("Pousada Paripueira", "2706901")]
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Praia de Pratagi": results}),
+        session=_make_session(),
+        config=ScoreConfig(),
+    )
+    assert await agent.locate("Praia de Pratagi", "AL") == {
+        "municipio_ibge": "2704302",
+        "consensus": True,
+    }
+
+    # Below 2/3 (2 of 4) → still no verdict.
+    split = [res("A", "2704302"), res("B", "2704302"), res("C", "2706901"), res("D", "2700300")]
+    agent = PlacesEnrichmentAgent(
+        places_client=FakePlacesClient(fixture_results={"Praia de Pratagi": split}),
+        session=_make_session(),
+        config=ScoreConfig(),
+    )
+    assert await agent.locate("Praia de Pratagi", "AL") is None

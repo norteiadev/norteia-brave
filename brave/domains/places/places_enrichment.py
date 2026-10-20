@@ -39,12 +39,14 @@ from __future__ import annotations
 
 import math
 import uuid
+from collections import Counter
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
 from rapidfuzz import fuzz
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.clients.null_places import NullPlacesClient
@@ -142,6 +144,15 @@ _GEOGRAPHIC_TYPE_MARKER: str = "political"
 # 60+ km from São João d'Aliança's) and border parks sit in the next município (Terra
 # Ronca, ~40 km); the same-name mismatches it must reject were all 190+ km away.
 _SEAT_RADIUS_KM: float = 80.0
+
+# Radius from a Text Search result's own coords to the nearest município seat of the UF, for
+# a result whose addressComponents name no município (AL 10/2026: "Farol - Ponta Verde"
+# came with only the state). Same radius the TA ingest gives a Nominatim point.
+_COORDS_SEAT_RADIUS_KM: float = 50.0
+
+# Share of the in-UF results (each with a resolved município) that must agree for locate()'s
+# município consensus. Unanimity let one outlier drop "Praia de Pratagi" (AL 10/2026).
+_CONSENSUS_SHARE: float = 2 / 3
 
 # PT-BR wording of Places' business_status for the atrativo's Log tab.
 _CLOSED_LABELS: dict[str, str] = {
@@ -343,12 +354,14 @@ class PlacesEnrichmentAgent:
         result — place_id, location, municipio_ibge — or None. Never raises: a Places
         failure just means the card stays unmatched.
 
-        No confident match, but every in-UF result sits in the SAME município → returns
+        A result whose addressComponents name no município is placed by its own coords
+        (_place_by_coords). No confident match, but the in-UF results agree on ONE município
+        (all of them, or a _CONSENSUS_SHARE majority of at least 2) → returns
         only ``{"municipio_ibge", "consensus": True}``: the card is placed in the município
         the search clusters in, WITHOUT a place_id (none of the results is provably this
         atrativo, so run() keeps its own strict match). Measured on the 7 Chapada cards
         the name guard rejected: all 7 clustered correctly (e.g. "Jardim de Maytreia" vs
-        "Mirante Jardim de Maytrea", score 83.7). Disagreeing results → None.
+        "Mirante Jardim de Maytrea", score 83.7). No such majority → None.
         """
         self._consensus_search = None
         # Read by the TA ingest: a swallowed failure is "Places not consulted", so the
@@ -362,6 +375,7 @@ class PlacesEnrichmentAgent:
             logger.warning("places_locate_failed", uf=uf)
             self.locate_failed = True
             return None
+        results = self._place_by_coords(results, uf)
         in_uf = [
             r
             for r in results
@@ -370,13 +384,47 @@ class PlacesEnrichmentAgent:
         match = _best_match(in_uf, nome, None, None, self._max_distance_km)
         if match is not None:
             return match
-        municipios = {r["municipio_ibge"] for r in in_uf}
-        if len(municipios) == 1:
+        counts = Counter(r["municipio_ibge"] for r in in_uf).most_common(1)
+        if counts and (
+            # all agree (a lone result included, as before) or a >= 2/3 majority of 2+
+            counts[0][1] == len(in_uf)
+            or (counts[0][1] >= 2 and counts[0][1] >= _CONSENSUS_SHARE * len(in_uf))
+        ):
             # Keyed on the ingest's normalize_name: run() reads the Rio's normalized name
             # (title-cased), locate() gets the raw TA card name ("Cachoeira do Abismo").
             self._consensus_search = ((normalize_name(nome), uf), results)
-            return {"municipio_ibge": municipios.pop(), "consensus": True}
+            return {"municipio_ibge": counts[0][0], "consensus": True}
         return None
+
+    def _place_by_coords(self, results: list[dict[str, Any]], uf: str) -> list[dict[str, Any]]:
+        """Give a result whose município name did not resolve the nearest seat of ``uf`` to its
+        own coords (within _COORDS_SEAT_RADIUS_KM). Copies; the input dicts are untouched.
+
+        Safe on the UF: the client already dropped results Google puts in another state.
+        ponytail: nearest seat, not a polygon — a point near a border of a big município can
+        land on the neighbour's seat; IBGE polygons would fix it if that shows up.
+        """
+        if not any(
+            r.get("municipio_ibge") == "" and (r.get("location") or {}).get("lat") is not None
+            for r in results
+        ):
+            return results
+        seats = [
+            m
+            for m in self._session.scalars(select(Municipio).where(Municipio.uf == uf)).all()
+            if isinstance(m, Municipio)
+        ]
+        out = []
+        for r in results:
+            loc = r.get("location") or {}
+            lat, lng = loc.get("lat"), loc.get("lng")
+            if r.get("municipio_ibge") == "" and lat is not None and lng is not None and seats:
+                dist, seat = min(((_haversine_km(lat, lng, m.lat, m.lng), m) for m in seats),
+                                 key=lambda pair: pair[0])
+                if dist <= _COORDS_SEAT_RADIUS_KM:
+                    r = {**r, "municipio_ibge": seat.ibge_code}
+            out.append(r)
+        return out
 
     def wants_description(self, rio: RioRecord) -> bool:
         """The description sub-step's gate. Reads ``rio`` only — no I/O, no writes."""
