@@ -253,6 +253,28 @@ async def test_text_search_drops_places_google_puts_in_another_uf(monkeypatch):
 
     assert [r["place_id"] for r in results] == ["ChIJpi", "ChIJnolevel1"]
     assert results[0]["municipio_ibge"] == "2201903"
+    # locate() snaps a result to a seat by coords only when Google confirmed its UF.
+    assert [r["uf_short"] for r in results] == ["PI", ""]
+    assert [r["municipio_from_locality"] for r in results] == [False, False]
+
+
+async def test_text_search_flags_a_municipio_read_from_locality(monkeypatch):
+    """No level_2: the name came from locality, which locate() checks against the coords."""
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    response = _make_search_response(municipio="Maceió", uf_short="AL")
+    response.places[0].address_components[0].types = ["locality", "political"]
+    mock_client = MagicMock()
+    mock_client.search_text = AsyncMock(return_value=response)
+
+    with patch("google.maps.places_v1.PlacesAsyncClient", return_value=mock_client):
+        from brave.clients.places import RealPlacesClient
+
+        client = RealPlacesClient(api_key="test-key", ibge_lookup={("maceio", "AL"): "2704302"})
+        client._client = mock_client
+        results = await client.text_search(query="Praia da Sereia", uf="AL")
+
+    assert results[0]["municipio_ibge"] == "2704302"
+    assert results[0]["municipio_from_locality"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -616,3 +638,37 @@ async def test_total_cap_survives_the_utc_day_turn(monkeypatch, fake_redis):
         await client.place_details("ChIJtest001")
     assert sdk.get_place.await_count == 0
 
+
+
+# ---------------------------------------------------------------------------
+# T8 — município from locality when Google omits administrative_area_level_2
+# ---------------------------------------------------------------------------
+
+
+def _component(long_text: str, short_text: str, *types: str) -> MagicMock:
+    comp = MagicMock()
+    comp.long_text, comp.short_text, comp.types = long_text, short_text, list(types)
+    return comp
+
+
+def test_municipio_falls_back_to_locality_without_level_2():
+    """AL sync, live: "Praia da Sereia" (beach) came with locality=Maceió + level_1 only."""
+    from brave.clients.places import _extract_municipio_from_components
+
+    comps = [
+        _component("Maceió", "Maceió", "locality", "political"),
+        _component("Alagoas", "AL", "administrative_area_level_1", "political"),
+    ]
+    assert _extract_municipio_from_components(comps) == ("Maceió", "AL")
+
+
+def test_level_2_wins_over_locality():
+    """locality can be a distrito (Trancoso); level_2 stays the município when present."""
+    from brave.clients.places import _extract_municipio_from_components
+
+    comps = [
+        _component("Trancoso", "Trancoso", "locality", "political"),
+        _component("Porto Seguro", "Porto Seguro", "administrative_area_level_2", "political"),
+        _component("Bahia", "BA", "administrative_area_level_1", "political"),
+    ]
+    assert _extract_municipio_from_components(comps) == ("Porto Seguro", "BA")

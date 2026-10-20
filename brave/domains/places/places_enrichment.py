@@ -39,12 +39,14 @@ from __future__ import annotations
 
 import math
 import uuid
+from collections import Counter
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
 from rapidfuzz import fuzz
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.clients.null_places import NullPlacesClient
@@ -143,6 +145,18 @@ _GEOGRAPHIC_TYPE_MARKER: str = "political"
 # Ronca, ~40 km); the same-name mismatches it must reject were all 190+ km away.
 _SEAT_RADIUS_KM: float = 80.0
 
+# Radius from a Text Search result's own coords to the nearest município seat of the UF, for
+# a result whose addressComponents name no município (AL 10/2026: "Farol - Ponta Verde"
+# came with only the state). Same radius the TA ingest gives a Nominatim point.
+_COORDS_SEAT_RADIUS_KM: float = 50.0
+
+# Share of the in-UF results (each with a resolved município) that must agree for locate()'s
+# município consensus. Unanimity let one outlier drop "Praia de Pratagi" (AL 10/2026).
+_CONSENSUS_SHARE: float = 2 / 3
+
+# DLQ reason of a business match on a TA attraction card (a steward decides, Step 3).
+GOOGLE_TIPO_NEGOCIO_REASON = "google_tipo_negocio"
+
 # PT-BR wording of Places' business_status for the atrativo's Log tab.
 _CLOSED_LABELS: dict[str, str] = {
     "CLOSED_PERMANENTLY": "fechado permanentemente",
@@ -151,10 +165,11 @@ _CLOSED_LABELS: dict[str, str] = {
 # Google primaryType of a business, not a place to visit (operator-approved 10/2026 from the
 # SE types): Faraó na Praia came from TA as "Praias" and is a restaurant, Ecoville Park
 # under "Parques" is a condominium. Agencies are forbidden in Norteia; shopping malls too.
-# A store / *_store type matches by suffix.
+# A store / *_store type matches by suffix. NOT "premise": it is Google's generic "an
+# address" type, and it descartou Usina de Xingó and Farol da Ponta Verde (AL 10/2026).
 _NOT_ATRATIVO_PRIMARY_TYPES = frozenset({
-    "restaurant", "fast_food_restaurant", "cafe", "bar", "pub", "bakery", "food",
-    "condominium_complex", "premise", "real_estate_agency",
+    "restaurant", "fast_food_restaurant", "cafe", "bar", "pub", "bakery", "food", "deli",
+    "condominium_complex", "real_estate_agency",
     "tour_agency", "travel_agency",
     "beauty_salon", "spa", "gym", "sports_club",
     "store", "supermarket",
@@ -171,14 +186,50 @@ _PLACE_TYPES = frozenset({
 })
 
 
+# TA card categories (normalized["category"], AttractionsFusion primaryInfo.text) that name a
+# place to visit, matched as accent-folded substrings. A business-typed Google match on such a
+# card is a same-name business more often than a wrong TA card ("Maragogi Beach" → a
+# restaurant), so it goes to a steward instead of a descarte. Tours/shops/food stay out.
+_TA_ATTRACTION_CATEGORY_TERMS: tuple[str, ...] = (
+    "praia", "museu", "igreja", "catedra", "pontos de interesse", "cachoeira", "parque",
+    "monumento", "mirante", "trilha", "locais religiosos", "locais historicos", "ruina",
+    "formacoes geologicas", "massas de agua", "natureza", "jardi", "montanha", "caverna",
+    "gruta", "ilha", "zoologico", "aquario", "obras arquitetonicas", "ponte", "farol",
+    "centros turisticos", "galerias de arte", "teatro", "piscinas naturais",
+)
+
+
+def _ta_attraction_category(category: Any) -> bool:
+    folded = _normalize_name(category) if isinstance(category, str) else ""
+    return any(term in folded for term in _TA_ATTRACTION_CATEGORY_TERMS)
+
+
+# Google files food and retail under many specific types (pizza_restaurant, coffee_shop,
+# clothing_store): match them by suffix. Marietta Delicatessen (deli) reached Mar without it.
+_BUSINESS_SUFFIXES = ("_store", "_restaurant", "_shop")
+
+
+def _business_type(t: str) -> bool:
+    return t in _NOT_ATRATIVO_PRIMARY_TYPES or t.endswith(_BUSINESS_SUFFIXES)
+
+
 def _google_not_atrativo(details: dict[str, Any]) -> bool:
     """Google says this is a business, not an atrativo: a non-place primaryType and no place
     type among ``types``. No primaryType (Google left it unset) → not judged here."""
     primary = details.get("primary_type") or ""
     if primary == "shopping_mall":  # operator: malls are never atrativos, park or not
         return True
-    business = primary in _NOT_ATRATIVO_PRIMARY_TYPES or primary.endswith("_store")
+    business = _business_type(primary)
     return business and not _PLACE_TYPES.intersection(details.get("types") or ())
+
+
+def _result_is_business(result: dict[str, Any]) -> bool:
+    """_google_not_atrativo for a Text Search result, which carries ``types`` only (no
+    primaryType): a business type among them and no place type. Not a mall: it never gives
+    way (a mall card would take a nearby park's id), and Details then descarta it."""
+    types = result.get("types") or ()
+    business = any(_business_type(t) for t in types)
+    return business and not _PLACE_TYPES.intersection(types)
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -201,6 +252,7 @@ def _best_match(
     target_lat: float | None,
     target_lng: float | None,
     max_distance_km: float,
+    category: Any = None,
 ) -> dict[str, Any] | None:
     """Pick the Text Search result that confidently IS the target atrativo.
 
@@ -210,16 +262,21 @@ def _best_match(
       - when both target and candidate carry coordinates, within max_distance_km
         (rejects same-name places in other cities).
 
-    Among passers the highest name score wins. Returns None when nothing passes → caller
-    keeps the TA floor.
+    The highest name score wins (first on a tie). On a card TA files as a place to visit
+    (``category``, _ta_attraction_category) a BUSINESS winner (_result_is_business) gives way
+    to the best non-business passer: "Piscinas Naturais de Pajuçara" is also the exact name of
+    a tour agency, which outscored the tourist_attraction and got the card descartado. Only a
+    business gives way — an exact-name premise (Usina de Xingó) keeps beating a place-typed
+    "Mirante da Usina…" that token_set_ratio also scores 100 — and, with no target coords
+    (locate), only to a passer in the business's own município (no distance guard there).
+    Returns None when nothing passes → caller keeps the TA floor.
 
     The geographic guard runs FIRST and per-candidate (not as a post-hoc rejection of the
     winner) so a lower-scoring real POI in the same result set can still win — the
     município usually scores 100 on the name.
     """
     folded_target = _normalize_name(target_name)
-    best: dict[str, Any] | None = None
-    best_score = -1.0
+    passers: list[tuple[float, dict[str, Any]]] = []
     have_target_coords = target_lat is not None and target_lng is not None
     for r in results:
         if _GEOGRAPHIC_TYPE_MARKER in (r.get("types") or []):
@@ -244,9 +301,18 @@ def _best_match(
             and _haversine_km(target_lat, target_lng, rlat, rlng) > max_distance_km
         ):
             continue  # right name, wrong place (different city)
-        if score > best_score:
-            best_score = score
-            best = r
+        passers.append((score, r))
+    if not passers:
+        return None
+    best = max(passers, key=lambda p: p[0])[1]
+    if _ta_attraction_category(category) and _result_is_business(best):
+        places = [
+            p for p in passers
+            if not _result_is_business(p[1])
+            and (have_target_coords or p[1].get("municipio_ibge") == best.get("municipio_ibge"))
+        ]
+        if places:
+            best = max(places, key=lambda p: p[0])[1]
     return best
 
 
@@ -333,7 +399,7 @@ class PlacesEnrichmentAgent:
         self._consensus_search: tuple[tuple[str, str], list[dict[str, Any]]] | None = None
         self.locate_failed = False  # set by locate(); see there
 
-    async def locate(self, nome: str, uf: str) -> dict[str, Any] | None:
+    async def locate(self, nome: str, uf: str, category: Any = None) -> dict[str, Any] | None:
         """Find WHERE an atrativo is when no other source could place it in a município.
 
         One Text Search, the same confident-match guards as run() (no coords to compare,
@@ -343,12 +409,15 @@ class PlacesEnrichmentAgent:
         result — place_id, location, municipio_ibge — or None. Never raises: a Places
         failure just means the card stays unmatched.
 
-        No confident match, but every in-UF result sits in the SAME município → returns
+        A result whose addressComponents name no município is placed by its own coords
+        (_place_by_coords). No confident match, but the in-UF results agree on ONE município
+        (all of them, or a _CONSENSUS_SHARE majority of at least 2 that also holds the result
+        whose name is closest to the card's) → returns
         only ``{"municipio_ibge", "consensus": True}``: the card is placed in the município
         the search clusters in, WITHOUT a place_id (none of the results is provably this
         atrativo, so run() keeps its own strict match). Measured on the 7 Chapada cards
         the name guard rejected: all 7 clustered correctly (e.g. "Jardim de Maytreia" vs
-        "Mirante Jardim de Maytrea", score 83.7). Disagreeing results → None.
+        "Mirante Jardim de Maytrea", score 83.7). No such majority → None.
         """
         self._consensus_search = None
         # Read by the TA ingest: a swallowed failure is "Places not consulted", so the
@@ -362,21 +431,84 @@ class PlacesEnrichmentAgent:
             logger.warning("places_locate_failed", uf=uf)
             self.locate_failed = True
             return None
+        results = self._place_by_coords(results, uf)
         in_uf = [
             r
             for r in results
             if r.get("municipio_ibge") and _GEOGRAPHIC_TYPE_MARKER not in (r.get("types") or [])
         ]
-        match = _best_match(in_uf, nome, None, None, self._max_distance_km)
+        match = _best_match(in_uf, nome, None, None, self._max_distance_km, category)
         if match is not None:
             return match
-        municipios = {r["municipio_ibge"] for r in in_uf}
-        if len(municipios) == 1:
+        counts = Counter(r["municipio_ibge"] for r in in_uf).most_common(1)
+        # A Google that does not know the atrativo answers with popular POIs of the capital
+        # or the tourist hubs; a majority of THOSE is no evidence. The closest name must sit
+        # in the winner too ("Praia de Pratagi" → "Praia da Sereia", Maceió).
+        # ponytail: closest name ≠ right place; drop the majority path if it misplaces cards.
+        folded = _normalize_name(nome)
+        closest = max(
+            in_uf,
+            key=lambda r: fuzz.token_set_ratio(folded, _normalize_name(r.get("name") or "")),
+            default=None,
+        )
+        if counts and (
+            # all agree (a lone result included, as before) or a >= 2/3 majority of 2+
+            counts[0][1] == len(in_uf)
+            or (
+                counts[0][1] >= 2
+                and counts[0][1] >= _CONSENSUS_SHARE * len(in_uf)
+                and closest is not None
+                and closest["municipio_ibge"] == counts[0][0]
+            )
+        ):
             # Keyed on the ingest's normalize_name: run() reads the Rio's normalized name
             # (title-cased), locate() gets the raw TA card name ("Cachoeira do Abismo").
             self._consensus_search = ((normalize_name(nome), uf), results)
-            return {"municipio_ibge": municipios.pop(), "consensus": True}
+            return {"municipio_ibge": counts[0][0], "consensus": True}
         return None
+
+    def _place_by_coords(self, results: list[dict[str, Any]], uf: str) -> list[dict[str, Any]]:
+        """Give a result with coords whose município did not resolve the nearest seat of
+        ``uf`` (within _COORDS_SEAT_RADIUS_KM). Copies; the input dicts are untouched.
+
+        Only when Google put the result in ``uf`` (``uf_short``): the client keeps a result
+        with no state component (fail open), which near a border may be in the next state.
+        A município read from ``locality`` (no level_2) must also sit within the radius of
+        its own seat: a distrito named like another município resolves to that one's code.
+        ponytail: nearest seat, not a polygon — a point near a border of a big município can
+        land on the neighbour's seat; IBGE polygons would fix it if that shows up.
+        """
+
+        def coords(r: dict[str, Any]) -> tuple[Any, Any]:
+            loc = r.get("location") or {}
+            return loc.get("lat"), loc.get("lng")
+
+        todo = [
+            r for r in results
+            if None not in coords(r)
+            and (r.get("municipio_ibge") == "" or r.get("municipio_from_locality"))
+        ]
+        if not todo:
+            return results
+        seats = {
+            m.ibge_code: m
+            for m in self._session.scalars(select(Municipio).where(Municipio.uf == uf)).all()
+            if isinstance(m, Municipio)
+        }
+        out = []
+        for r in results:
+            if any(r is t for t in todo) and seats:
+                lat, lng = coords(r)
+                own = seats.get(r.get("municipio_ibge") or "")
+                if own is None or _haversine_km(lat, lng, own.lat, own.lng) > _COORDS_SEAT_RADIUS_KM:
+                    dist, seat = min(
+                        ((_haversine_km(lat, lng, m.lat, m.lng), m) for m in seats.values()),
+                        key=lambda pair: pair[0],
+                    )
+                    near = dist <= _COORDS_SEAT_RADIUS_KM and r.get("uf_short") == uf.upper()
+                    r = {**r, "municipio_ibge": seat.ibge_code if near else ""}
+            out.append(r)
+        return out
 
     def wants_description(self, rio: RioRecord) -> bool:
         """The description sub-step's gate. Reads ``rio`` only — no I/O, no writes."""
@@ -388,6 +520,9 @@ class PlacesEnrichmentAgent:
             and not normalized.get("descricao_editorial")
             and bool(normalized.get("name"))
             and rio.routing != "descarte"
+            # A business match a steward must judge first: a description verdict would
+            # overwrite the reason (and a re-score drop it) — see description_candidates_filter.
+            and rio.dlq_reason != GOOGLE_TIPO_NEGOCIO_REASON
             and int(normalized.get("descricao_attempts") or 0) < _MAX_DESCRIPTION_ATTEMPTS
             # A live batch already holds a PAID request for this record's description.
             # Turning atrativo_description_batch_enabled OFF (the operator action that flag
@@ -562,7 +697,9 @@ class PlacesEnrichmentAgent:
                         if isinstance(seat, Municipio):
                             ref_lat, ref_lng = seat.lat, seat.lng
                             radius = max(radius, _SEAT_RADIUS_KM)
-                    match = _best_match(results, nome, ref_lat, ref_lng, radius)
+                    match = _best_match(
+                        results, nome, ref_lat, ref_lng, radius, normalized.get("category")
+                    )
                     if match is not None:
                         place_id = match.get("place_id") or ""
                 if place_id:
@@ -607,11 +744,28 @@ class PlacesEnrichmentAgent:
             # outbox retracts it from the API (F47).
             closed = business_status in CLOSED_STATUSES
             if closed or _google_not_atrativo(details):
-                reason = "closed_place" if closed else "nao_atrativo"
+                # A business match on a card TA files as a place to visit (Praias, Museus…)
+                # is likely a same-name business: a steward decides (DLQ), no descarte. None
+                # of its data is written. Malls stay out regardless (operator rule).
+                review = (
+                    not closed
+                    and details.get("primary_type") != "shopping_mall"
+                    and _ta_attraction_category(normalized.get("category"))
+                )
+                reason = (
+                    "closed_place" if closed else GOOGLE_TIPO_NEGOCIO_REASON if review
+                    else "nao_atrativo"
+                )
                 new_normalized["google_enriched"] = True
+                if review:
+                    # The business's id (a locate() match rides in as place_id_cache) must not
+                    # stay: refresh_places would re-bill and re-review it, and a steward's Mar
+                    # approval would publish the business's id. None: persist_normalized merges.
+                    new_normalized["place_id_cache"] = None
+                    new_normalized["google_place_id"] = None
                 persist_normalized(self._session, rio, normalized, new_normalized)
                 routing_before = rio.routing
-                rio.routing = "descarte"
+                rio.routing = "dlq" if review else "descarte"
                 rio.dlq_reason = reason
                 cause = {
                     "reason": reason,
@@ -627,7 +781,7 @@ class PlacesEnrichmentAgent:
                     entity_type="attraction",
                     record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
                     before_state={"routing": routing_before},
-                    after_state={"routing": "descarte", **cause},
+                    after_state={"routing": rio.routing, **cause},
                     actor="places_enrichment_agent",
                 )
                 # The atrativo's Log tab must say WHY it left the pipeline — the audit row
@@ -637,12 +791,15 @@ class PlacesEnrichmentAgent:
                     session=self._session,
                     source=canonical_key.split(":", 1)[0] if canonical_key else "unknown",
                     source_ref=canonical_key,
-                    stage="places_descarte",
-                    status="fail",
+                    stage="places_review" if review else "places_descarte",
+                    status="skip" if review else "fail",
                     message=(
                         (
                             f"Google Places marca como {_CLOSED_LABELS.get(business_status, business_status)}"
                             if closed
+                            else f"Google Places classifica como {cause['primary_type']}, mas o "
+                            f"TripAdvisor diz {normalized.get('category')} — revisão humana"
+                            if review
                             else f"Google Places classifica como {cause['primary_type']}, não é atrativo"
                         )
                         + (f" ({cause['place_name']})" if cause["place_name"] else "")

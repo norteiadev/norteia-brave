@@ -1395,7 +1395,7 @@ class _LocatingAgent:
         self._place = place
         self.locate_calls: list[tuple[str, str]] = []
 
-    async def locate(self, nome: str, uf: str) -> dict[str, Any] | None:
+    async def locate(self, nome: str, uf: str, category: Any = None) -> dict[str, Any] | None:
         self.locate_calls.append((nome, uf))
         return self._place
 
@@ -1498,7 +1498,7 @@ class _FailingLocateAgent(_LocatingAgent):
     def __init__(self) -> None:
         super().__init__(None)
 
-    async def locate(self, nome: str, uf: str) -> dict[str, Any] | None:
+    async def locate(self, nome: str, uf: str, category: Any = None) -> dict[str, Any] | None:
         raise RuntimeError("places 503")
 
 
@@ -1560,3 +1560,45 @@ async def test_produce_skips_card_already_unmatched_under_the_current_resolver()
         )
     )
     assert "resolver_version" in poison_sql
+
+
+@pytest.fixture
+def tx_session(db_engine):
+    from sqlalchemy.orm import Session
+
+    conn = db_engine.connect()
+    outer = conn.begin()
+    session = Session(bind=conn, join_transaction_mode="create_savepoint")
+    try:
+        yield session
+    finally:
+        session.close()
+        outer.rollback()
+        conn.close()
+
+
+@pytest.mark.integration
+def test_resolver_version_releases_the_v4_quarantines(tx_session) -> None:
+    """v5 (locality, coords, majority consensus): a card quarantined as ibge_unmatched under
+    v4 is retried; one stamped with the CURRENT version is skipped (it would fail the same)."""
+    from brave.core.models import PoisonQuarantine
+    from brave.domains.tripadvisor.atrativos import (
+        _IBGE_UNMATCHED_TASK,
+        IBGE_RESOLVER_VERSION,
+        TripAdvisorAtrativosIngest,
+    )
+
+    assert IBGE_RESOLVER_VERSION == 5
+    for location_id, version in (("990001", 4), ("990002", IBGE_RESOLVER_VERSION)):
+        tx_session.add(PoisonQuarantine(
+            task_name=_IBGE_UNMATCHED_TASK,
+            error_message="ibge_unmatched",
+            payload={"uf": "AL", "locationId": location_id, "name": "x",
+                     "resolver_version": version},
+        ))
+    tx_session.flush()
+    ingest = TripAdvisorAtrativosIngest(
+        ta_client=MagicMock(), session=tx_session, config=_make_config(), ibge_records=[]
+    )
+    cards = [{"locationId": 990001}, {"locationId": 990002}]
+    assert ingest._already_synced(cards, run_rio=True) == {"tripadvisor:attraction:990002"}

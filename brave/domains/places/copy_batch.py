@@ -79,6 +79,7 @@ from brave.domains.places.copywriter import (
 from brave.domains.places.places_enrichment import (
     _COMPLETUDE_WITH_DESCRIPTION,
     _MAX_DESCRIPTION_ATTEMPTS,
+    GOOGLE_TIPO_NEGOCIO_REASON,
 )
 from brave.observability.cost_guard import reconcile_spend, record_spend
 
@@ -215,6 +216,8 @@ def description_candidates_filter() -> tuple[Any, ...]:
     return (
         RioRecord.entity_type == "attraction",
         RioRecord.routing != "descarte",
+        # A business match waiting for a steward (wants_description says why).
+        func.coalesce(RioRecord.dlq_reason, "") != GOOGLE_TIPO_NEGOCIO_REASON,
         or_(
             ~func.coalesce(RioRecord.canonical_key, "").like("tripadvisor:attraction:%"),
             RioRecord.normalized["ta_backfilled_at"].as_string().isnot(None),
