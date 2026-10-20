@@ -44,6 +44,7 @@ STICKY_DLQ_REASONS = frozenset(
         "no_recent_reviews",
         "steward_sent_to_review",
         "community_error_report",
+        "google_tipo_negocio",  # Places matched a business on a TA attraction card
     }
 )
 

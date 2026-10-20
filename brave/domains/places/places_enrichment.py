@@ -162,10 +162,11 @@ _CLOSED_LABELS: dict[str, str] = {
 # Google primaryType of a business, not a place to visit (operator-approved 10/2026 from the
 # SE types): Faraó na Praia came from TA as "Praias" and is a restaurant, Ecoville Park
 # under "Parques" is a condominium. Agencies are forbidden in Norteia; shopping malls too.
-# A store / *_store type matches by suffix.
+# A store / *_store type matches by suffix. NOT "premise": it is Google's generic "an
+# address" type, and it descartou Usina de Xingó and Farol da Ponta Verde (AL 10/2026).
 _NOT_ATRATIVO_PRIMARY_TYPES = frozenset({
     "restaurant", "fast_food_restaurant", "cafe", "bar", "pub", "bakery", "food",
-    "condominium_complex", "premise", "real_estate_agency",
+    "condominium_complex", "real_estate_agency",
     "tour_agency", "travel_agency",
     "beauty_salon", "spa", "gym", "sports_club",
     "store", "supermarket",
@@ -180,6 +181,24 @@ _PLACE_TYPES = frozenset({
     "scenic_spot", "cultural_center", "art_gallery", "performing_arts_theater", "zoo",
     "aquarium", "amusement_park", "hiking_area", "island", "lake",
 })
+
+
+# TA card categories (normalized["category"], AttractionsFusion primaryInfo.text) that name a
+# place to visit, matched as accent-folded substrings. A business-typed Google match on such a
+# card is a same-name business more often than a wrong TA card ("Maragogi Beach" → a
+# restaurant), so it goes to a steward instead of a descarte. Tours/shops/food stay out.
+_TA_ATTRACTION_CATEGORY_TERMS: tuple[str, ...] = (
+    "praia", "museu", "igreja", "catedra", "pontos de interesse", "cachoeira", "parque",
+    "monumento", "mirante", "trilha", "locais religiosos", "locais historicos", "ruina",
+    "formacoes geologicas", "massas de agua", "natureza", "jardi", "montanha", "caverna",
+    "gruta", "ilha", "zoologico", "aquario", "obras arquitetonicas", "ponte", "farol",
+    "centros turisticos", "galerias de arte", "teatro", "piscinas naturais",
+)
+
+
+def _ta_attraction_category(category: Any) -> bool:
+    folded = _normalize_name(category) if isinstance(category, str) else ""
+    return any(term in folded for term in _TA_ATTRACTION_CATEGORY_TERMS)
 
 
 def _google_not_atrativo(details: dict[str, Any]) -> bool:
@@ -221,8 +240,10 @@ def _best_match(
       - when both target and candidate carry coordinates, within max_distance_km
         (rejects same-name places in other cities).
 
-    Among passers the highest name score wins. Returns None when nothing passes → caller
-    keeps the TA floor.
+    Among passers a place-typed one (``_PLACE_TYPES`` in ``types``) beats any other, then
+    the highest name score wins: "Piscinas Naturais de Pajuçara" is also the exact name of a
+    tour agency, which outscored the tourist_attraction and then got the card descartado.
+    Returns None when nothing passes → caller keeps the TA floor.
 
     The geographic guard runs FIRST and per-candidate (not as a post-hoc rejection of the
     winner) so a lower-scoring real POI in the same result set can still win — the
@@ -230,7 +251,7 @@ def _best_match(
     """
     folded_target = _normalize_name(target_name)
     best: dict[str, Any] | None = None
-    best_score = -1.0
+    best_score: tuple[bool, float] = (False, -1.0)
     have_target_coords = target_lat is not None and target_lng is not None
     for r in results:
         if _GEOGRAPHIC_TYPE_MARKER in (r.get("types") or []):
@@ -255,8 +276,9 @@ def _best_match(
             and _haversine_km(target_lat, target_lng, rlat, rlng) > max_distance_km
         ):
             continue  # right name, wrong place (different city)
-        if score > best_score:
-            best_score = score
+        ranked = (bool(_PLACE_TYPES.intersection(r.get("types") or ())), score)
+        if ranked > best_score:
+            best_score = ranked
             best = r
     return best
 
@@ -655,11 +677,22 @@ class PlacesEnrichmentAgent:
             # outbox retracts it from the API (F47).
             closed = business_status in CLOSED_STATUSES
             if closed or _google_not_atrativo(details):
-                reason = "closed_place" if closed else "nao_atrativo"
+                # A business match on a card TA files as a place to visit (Praias, Museus…)
+                # is likely a same-name business: a steward decides (DLQ), no descarte. None
+                # of its data is written. Malls stay out regardless (operator rule).
+                review = (
+                    not closed
+                    and details.get("primary_type") != "shopping_mall"
+                    and _ta_attraction_category(normalized.get("category"))
+                )
+                reason = (
+                    "closed_place" if closed else "google_tipo_negocio" if review
+                    else "nao_atrativo"
+                )
                 new_normalized["google_enriched"] = True
                 persist_normalized(self._session, rio, normalized, new_normalized)
                 routing_before = rio.routing
-                rio.routing = "descarte"
+                rio.routing = "dlq" if review else "descarte"
                 rio.dlq_reason = reason
                 cause = {
                     "reason": reason,
@@ -675,7 +708,7 @@ class PlacesEnrichmentAgent:
                     entity_type="attraction",
                     record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
                     before_state={"routing": routing_before},
-                    after_state={"routing": "descarte", **cause},
+                    after_state={"routing": rio.routing, **cause},
                     actor="places_enrichment_agent",
                 )
                 # The atrativo's Log tab must say WHY it left the pipeline — the audit row
@@ -685,12 +718,15 @@ class PlacesEnrichmentAgent:
                     session=self._session,
                     source=canonical_key.split(":", 1)[0] if canonical_key else "unknown",
                     source_ref=canonical_key,
-                    stage="places_descarte",
-                    status="fail",
+                    stage="places_review" if review else "places_descarte",
+                    status="skip" if review else "fail",
                     message=(
                         (
                             f"Google Places marca como {_CLOSED_LABELS.get(business_status, business_status)}"
                             if closed
+                            else f"Google Places classifica como {cause['primary_type']}, mas o "
+                            f"TripAdvisor diz {normalized.get('category')} — revisão humana"
+                            if review
                             else f"Google Places classifica como {cause['primary_type']}, não é atrativo"
                         )
                         + (f" ({cause['place_name']})" if cause["place_name"] else "")

@@ -247,6 +247,8 @@ async def test_google_business_type_hard_descarte() -> None:
         ("pet_care", ["tourist_attraction", "park", "pet_care"], False),  # Parque dos Falcões
         ("non_profit_organization", ["non_profit_organization"], False),  # Projeto Tamar
         ("church", ["church", "place_of_worship"], False),
+        # Google's generic "an address" type, not a business (Usina de Xingó, Farol da Ponta Verde)
+        ("premise", ["premise", "establishment"], False),
         ("", ["restaurant", "museum", "park"], False),  # no primaryType → not judged
     ],
 )
@@ -1537,3 +1539,73 @@ async def test_locate_consensus_by_two_thirds_majority() -> None:
         config=ScoreConfig(),
     )
     assert await agent.locate("Praia de Pratagi", "AL") is None
+
+
+def test_best_match_prefers_a_place_over_a_same_name_business() -> None:
+    """"Piscinas Naturais de Pajuçara": the exact-name result is a tour agency; a
+    tourist_attraction that also clears the name threshold wins over it."""
+    from brave.domains.places.places_enrichment import _best_match
+
+    results = [
+        _search_result(name="Piscinas naturais de Maceió", place_id="ChIJmaceio",
+                       types=["tourist_attraction", "point_of_interest", "establishment"]),
+        _search_result(name="Piscinas Naturais da Ponta Verde", place_id="ChIJpontaverde",
+                       types=["tourist_attraction", "point_of_interest", "establishment"]),
+        _search_result(name="Piscinas naturais de Pajuçara", place_id="ChIJagency",
+                       types=["tour_agency", "travel_agency", "point_of_interest"]),
+    ]
+    match = _best_match(results, "Piscinas Naturais de Pajuçara", _LAT, _LNG, 20.0)
+    assert match is not None and match["place_id"] == "ChIJmaceio"
+
+    # No place-typed alternative → the business is still the match (judged on Details).
+    match = _best_match(results[2:], "Piscinas Naturais de Pajuçara", _LAT, _LNG, 20.0)
+    assert match is not None and match["place_id"] == "ChIJagency"
+
+
+@pytest.mark.asyncio
+async def test_business_match_on_a_ta_attraction_category_goes_to_review() -> None:
+    """"Maragogi Beach" (TA "Praias") matched only a restaurant: a human decides (DLQ),
+    instead of a descarte, and none of the restaurant's data lands on the record."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    details = {**_details(), "primary_type": "restaurant", "types": ["restaurant", "food"]}
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": details},
+    )
+    rio = _make_rio(extra_normalized={"category": "Praias"})
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW,
+                                  config=ScoreConfig())
+    mock_route = await _run(agent, rio)
+
+    assert (rio.routing, rio.dlq_reason) == ("dlq", "google_tipo_negocio")
+    assert rio.normalized["google_enriched"] is True
+    assert rio.normalized["google_primary_type"] == "restaurant"
+    assert "weekday_text" not in rio.normalized and "place_id_cache" not in rio.normalized
+    assert not mock_route.called
+
+
+@pytest.mark.parametrize(
+    ("category", "primary", "routing"),
+    [
+        ("Lojas especializadas e de suvenir", "store", "descarte"),  # TA itself says a shop
+        ("Pontos de interesse", "shopping_mall", "descarte"),  # malls are never atrativos
+        (None, "restaurant", "descarte"),  # no TA category → Google's verdict stands
+    ],
+)
+@pytest.mark.asyncio
+async def test_business_match_without_an_attraction_category_is_still_discarded(
+    category: str | None, primary: str, routing: str
+) -> None:
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    details = {**_details(), "primary_type": primary, "types": [primary]}
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": details},
+    )
+    rio = _make_rio(extra_normalized={"category": category})
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW,
+                                  config=ScoreConfig())
+    await _run(agent, rio)
+    assert (rio.routing, rio.dlq_reason) == (routing, "nao_atrativo")
