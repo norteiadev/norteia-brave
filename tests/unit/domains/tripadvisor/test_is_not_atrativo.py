@@ -31,3 +31,26 @@ def test_is_not_atrativo(category: str, review_count: int, expected: bool) -> No
 
 def test_missing_fields_stay() -> None:
     assert _is_not_atrativo({}) is False
+
+
+@pytest.mark.parametrize(
+    ("name", "category", "expected"),
+    [
+        # Agencies that file one place-like activity too (real AL/DF/GO/ES cards, 10/2026).
+        ("Sergio Tour: Passeios Privativos e Transfer Maceió", "Passeios urbanos • Mergulho com e sem snorkel", True),
+        ("Sherpa Tour", "Pontes • Passeios de barco", True),
+        ("Atlantes Viagens e Mergulho", "Mergulho com e sem snorkel • Excursões subaquáticas", True),
+        ("Rafael Turismo Receptivo", "Centros turísticos", True),
+        ("Andre Pichler Passeios Turísticos", "Praias • Passeios turísticos", True),
+        # An agency-sounding name on a plain place category stays.
+        ("Centro de Turismo", "Pontos de interesse", False),
+        ("Praça de Apoio Ao Turismo", "Pontos de interesse", False),
+        # A place with a diving category and no agency name stays.
+        ("Piscinas Naturais de Ipioca", "Mergulho com e sem snorkel", False),
+        ("Feira do Turista", "Lojas especializadas e de suvenir • Passeios urbanos", False),
+        # "Passeio" alone is a place name (Passeio Público) unless a tour category backs it.
+        ("Passeio Público", "Parques", False),
+    ],
+)
+def test_agency_by_name_and_activity(name: str, category: str, expected: bool) -> None:
+    assert _is_not_atrativo({"name": name, "category": category, "review_count": 50}) is expected

@@ -35,6 +35,7 @@ and brave.domains.tripadvisor.*. It does NOT import from other lane modules.
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
@@ -162,6 +163,29 @@ _NOT_ATRATIVO = frozenset({
     "Bares e clubes", "Cervejarias", "Clubes com piscina e praia",
     "Trilhas para quadriciclos e off-road", "Shopping centers",
 })
+# An agency TA files under one place-like activity too ("Sergio Tour: Passeios Privativos":
+# "Passeios urbanos • Mergulho com e sem snorkel") slips the all-parts rule above. Its name
+# gives it away, but only next to an activity/service category: "Centro de Turismo" and
+# "Praça de Apoio Ao Turismo" are "Pontos de interesse" and stay.
+_AGENCY_NAME = re.compile(
+    r"\b(tour|tours|turismo|receptivo|transfer|transfers|ag[eê]ncia|viagens|expedi[cç][oõ]es)\b",
+    re.IGNORECASE,
+)
+_PASSEIO_NAME = re.compile(r"\bpasseios?\b", re.IGNORECASE)
+_ACTIVITY_PREFIXES = _NOT_ATRATIVO_PREFIXES + (
+    "Ônibus turístico", "Mergulho", "Esportes aquáticos", "Canionismo", "Rafting",
+    "Parapente", "Centros turísticos", "Serviços de ônibus",
+)
+
+
+def _is_agency(entity: dict[str, Any], parts: list[str]) -> bool:
+    """Agency name + an activity/service category → an agency, forbidden whatever its reviews."""
+    name = str(entity.get("name") or "")
+    activity = any(p.startswith(_ACTIVITY_PREFIXES) for p in parts)
+    tour_category = any(p.startswith(("Passeios", "Excursões")) for p in parts)
+    return activity and (bool(_AGENCY_NAME.search(name)) or (
+        tour_category and bool(_PASSEIO_NAME.search(name))
+    ))
 
 
 def _is_not_atrativo(entity: dict[str, Any]) -> bool:
@@ -176,6 +200,8 @@ def _is_not_atrativo(entity: dict[str, Any]) -> bool:
     # ponytail: pt-BR label match; switch to TA category ids if the session locale changes.
     reviewed = int(entity.get("review_count") or 0) > 0
     parts = [p.strip() for p in str(entity.get("category") or "").split("•") if p.strip()]
+    if _is_agency(entity, parts):
+        return True
     return bool(parts) and all(
         p in _NOT_ATRATIVO
         or p.startswith(_NOT_ATRATIVO_PREFIXES)
