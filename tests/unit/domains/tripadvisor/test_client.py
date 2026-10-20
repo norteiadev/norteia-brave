@@ -2107,13 +2107,20 @@ class TestFetchRecentReview:
             client, "_get_session", lambda: {"cookies": {"datadome": "abc"}, "user_agent": ""}
         )
 
+        msgs = ["Unexpected error.", "Error #939088493: Trace ID: n/a: Timestamp: 1792523173"]
         with respx.mock:
-            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
-                return_value=httpx.Response(200, json=[{"errors": [{"message": "Unexpected error."}]}])
-            )
-            with pytest.raises(SourceRecordError) as exc:
+            route = respx.post("https://www.tripadvisor.com.br/data/graphql/ids")
+            for msg in msgs:
+                route.mock(return_value=httpx.Response(200, json=[{"errors": [{"message": msg}]}]))
+                with pytest.raises(SourceRecordError) as exc:
+                    await client.fetch_recent_review(312332)
+                assert not isinstance(exc.value, SourceSchemaError)
+            # A streak (5 cards in a row) is systemic: the run aborts.
+            for _ in range(2):
+                with pytest.raises(SourceRecordError):
+                    await client.fetch_recent_review(312332)
+            with pytest.raises(SourceSchemaError):
                 await client.fetch_recent_review(312332)
-        assert not isinstance(exc.value, SourceSchemaError)
 
     @pytest.mark.asyncio
     async def test_403_raises_session_expired(self, monkeypatch):
