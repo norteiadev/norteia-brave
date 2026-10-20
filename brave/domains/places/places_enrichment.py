@@ -168,7 +168,7 @@ _CLOSED_LABELS: dict[str, str] = {
 # A store / *_store type matches by suffix. NOT "premise": it is Google's generic "an
 # address" type, and it descartou Usina de Xingó and Farol da Ponta Verde (AL 10/2026).
 _NOT_ATRATIVO_PRIMARY_TYPES = frozenset({
-    "restaurant", "fast_food_restaurant", "cafe", "bar", "pub", "bakery", "food",
+    "restaurant", "fast_food_restaurant", "cafe", "bar", "pub", "bakery", "food", "deli",
     "condominium_complex", "real_estate_agency",
     "tour_agency", "travel_agency",
     "beauty_salon", "spa", "gym", "sports_club",
@@ -204,13 +204,22 @@ def _ta_attraction_category(category: Any) -> bool:
     return any(term in folded for term in _TA_ATTRACTION_CATEGORY_TERMS)
 
 
+# Google files food and retail under many specific types (pizza_restaurant, coffee_shop,
+# clothing_store): match them by suffix. Marietta Delicatessen (deli) reached Mar without it.
+_BUSINESS_SUFFIXES = ("_store", "_restaurant", "_shop")
+
+
+def _business_type(t: str) -> bool:
+    return t in _NOT_ATRATIVO_PRIMARY_TYPES or t.endswith(_BUSINESS_SUFFIXES)
+
+
 def _google_not_atrativo(details: dict[str, Any]) -> bool:
     """Google says this is a business, not an atrativo: a non-place primaryType and no place
     type among ``types``. No primaryType (Google left it unset) → not judged here."""
     primary = details.get("primary_type") or ""
     if primary == "shopping_mall":  # operator: malls are never atrativos, park or not
         return True
-    business = primary in _NOT_ATRATIVO_PRIMARY_TYPES or primary.endswith("_store")
+    business = _business_type(primary)
     return business and not _PLACE_TYPES.intersection(details.get("types") or ())
 
 
@@ -219,7 +228,7 @@ def _result_is_business(result: dict[str, Any]) -> bool:
     primaryType): a business type among them and no place type. Not a mall: it never gives
     way (a mall card would take a nearby park's id), and Details then descarta it."""
     types = result.get("types") or ()
-    business = any(t in _NOT_ATRATIVO_PRIMARY_TYPES or t.endswith("_store") for t in types)
+    business = any(_business_type(t) for t in types)
     return business and not _PLACE_TYPES.intersection(types)
 
 

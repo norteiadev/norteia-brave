@@ -243,6 +243,9 @@ async def test_google_business_type_hard_descarte() -> None:
         ("condominium_complex", ["condominium_complex", "service"], True),  # Ecoville Park
         ("tour_agency", ["tour_agency", "travel_agency", "service"], True),
         ("clothing_store", ["clothing_store", "store"], True),
+        ("deli", ["deli", "food", "store"], True),  # Marietta Delicatessen
+        ("pizza_restaurant", ["pizza_restaurant", "restaurant"], True),
+        ("coffee_shop", ["coffee_shop", "cafe"], True),
         ("shopping_mall", ["shopping_mall", "tourist_attraction"], True),  # malls always out
         ("pet_care", ["tourist_attraction", "park", "pet_care"], False),  # Parque dos Falcões
         ("non_profit_organization", ["non_profit_organization"], False),  # Projeto Tamar
