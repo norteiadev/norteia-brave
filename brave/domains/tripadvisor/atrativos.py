@@ -107,7 +107,8 @@ TA_ATRATIVO_ORIGEM_VALUE = 80.0
 # 2 = + distrito by TA cityName + Google Places Text Search.
 # 3 = + Places município consensus when no result matches the name.
 # 4 = v3 stamps were also written when Places was off/failing — release them once.
-IBGE_RESOLVER_VERSION = 4
+# 5 = Places município from locality / the result's coords + 2/3-majority consensus.
+IBGE_RESOLVER_VERSION = 5
 _IBGE_UNMATCHED_TASK = "brave.ta.atrativos.ibge_unmatched"
 
 # Run-level failures: not a property of the card, so they must escape the per-card

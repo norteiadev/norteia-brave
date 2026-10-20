@@ -1560,3 +1560,11 @@ async def test_produce_skips_card_already_unmatched_under_the_current_resolver()
         )
     )
     assert "resolver_version" in poison_sql
+
+
+def test_resolver_version_releases_the_v4_quarantines() -> None:
+    """v5 (locality, coords, majority consensus): every card stamped under v4 is retried
+    once — _already_synced skips only quarantines stamped with the CURRENT version."""
+    from brave.domains.tripadvisor.atrativos import IBGE_RESOLVER_VERSION
+
+    assert IBGE_RESOLVER_VERSION == 5
