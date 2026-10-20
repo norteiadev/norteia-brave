@@ -79,6 +79,7 @@ from brave.shared.exceptions import (
     CostGuardError,
     ProviderBalanceError,
     SourceRateLimitError,
+    SourceRecordError,
     SourceSchemaError,
     SourceSessionError,
 )
@@ -646,13 +647,17 @@ class TripAdvisorAtrativosIngest:
         after = dict(before)
         uf_before = rio.uf
         status = "ta"
+        reviews_failed = False
         loc_id_raw = (rio.canonical_key or "").removeprefix("tripadvisor:attraction:")
         if loc_id_raw.isdigit():  # else nothing to fetch, ever — mark it done
             loc_id = int(loc_id_raw)
             await self._throttle()
             geo = await self._client.fetch_attraction_geo(loc_id)
             await self._throttle()
-            recency = await self._client.fetch_recent_review(loc_id)
+            try:
+                recency = await self._client.fetch_recent_review(loc_id)
+            except SourceRecordError:
+                recency, reviews_failed = None, True  # no marker: retried later
             if geo is not None:
                 status = await self._apply_ta_geo(rio, loc_id_raw, geo, after)
             if recency is not None:
@@ -668,7 +673,7 @@ class TripAdvisorAtrativosIngest:
                 after["parent_rio_id"], after["parent_source_ref"] = str(entry[0]), entry[1]
                 if after.get("parent_mar_id"):
                     after["parent_mar_id"] = None
-        if status != "municipio_pendente":
+        if status != "municipio_pendente" and not reviews_failed:
             after[TA_BACKFILLED_KEY] = datetime.now(UTC).isoformat()
         persist_normalized(self._session, rio, before, after)
         if (
@@ -918,8 +923,11 @@ class TripAdvisorAtrativosIngest:
                 # Mirror the geo-enrichment throttle: pace review calls when configured.
                 if self._ta_config is not None and self._ta_config.page_throttle_seconds > 0:
                     await asyncio.sleep(self._ta_config.page_throttle_seconds)
-                recency = await self._client.fetch_recent_review(loc_id_int)
-                recency_fetched = True
+                try:
+                    recency = await self._client.fetch_recent_review(loc_id_int)
+                    recency_fetched = True
+                except SourceRecordError:
+                    recency = None  # recency_fetched stays False: no marker, backfill retries
                 if recency is not None:
                     most_recent_dt = recency.get("most_recent_review_at")
                     # Prefer the precise review container over the card's aggregate.

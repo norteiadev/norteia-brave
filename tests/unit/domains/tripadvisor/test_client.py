@@ -2092,6 +2092,30 @@ class TestFetchRecentReview:
         assert errors[0]["errors"] == ["PersistedQueryNotFound"]
 
     @pytest.mark.asyncio
+    async def test_unexpected_error_is_per_record(self, monkeypatch):
+        """TA's "Unexpected error." on one location fails that card only → SourceRecordError,
+        not the run-aborting SourceSchemaError (a PE card killed the whole UF sweep twice)."""
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.domains.tripadvisor.client import TripAdvisorClient
+        from brave.shared.exceptions import SourceRecordError, SourceSchemaError
+
+        config = AppConfig().tripadvisor
+        client = TripAdvisorClient(config=config, redis=fakeredis.FakeRedis())
+        monkeypatch.setattr(
+            client, "_get_session", lambda: {"cookies": {"datadome": "abc"}, "user_agent": ""}
+        )
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
+                return_value=httpx.Response(200, json=[{"errors": [{"message": "Unexpected error."}]}])
+            )
+            with pytest.raises(SourceRecordError) as exc:
+                await client.fetch_recent_review(312332)
+        assert not isinstance(exc.value, SourceSchemaError)
+
+    @pytest.mark.asyncio
     async def test_403_raises_session_expired(self, monkeypatch):
         """403 → SessionExpiredError."""
         import fakeredis
