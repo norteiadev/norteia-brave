@@ -110,6 +110,8 @@ _LISTING_QID_GQL: str = "0e26761de5110a17"
 # corroboração) via fetch_recent_review. Captured live from the attraction detail page
 # 2026-10-17 — the old ef1a9f94012220d3 started answering PersistedQueryNotFound.
 _REVIEWS_QID: str = "1eeac11193438f8a"
+# Reviews GraphQL errors on this many cards in a row → systemic (abort), not per-card.
+_REVIEW_ERRORS_SYSTEMIC = 5
 
 # Locale headers so TripAdvisor returns pt-BR attraction names (else it leaks English
 # names like "Camburi Beach"/"...Convent"). The HTML-SSR path already sends this; the
@@ -194,6 +196,7 @@ class TripAdvisorClient:
         self._config = config
         self._redis = redis
         self._hc: httpx.AsyncClient | None = None
+        self._review_errors_in_a_row = 0  # per-card reviews errors; a run of them is systemic
 
     # ------------------------------------------------------------------
     # Persistent HTTP client (opt-in: ``async with ta_client:`` around a sweep)
@@ -1173,12 +1176,17 @@ class TripAdvisorClient:
         except ValueError:
             data = None  # a non-JSON 200 is no answer either: abort, never "no reviews"
         errors = _graphql_errors(data)
-        if errors == ["Unexpected error."]:
-            # One location TA's resolver chokes on (a PE card failed on every retry while the
-            # cards around it answered): that card only. A retired qid says
-            # PersistedQueryNotFound and still aborts below.
-            logger.warning("ta.reviews.record_error", qid=_REVIEWS_QID, location_id=location_id)
-            raise SourceRecordError(f"TripAdvisor reviews failed for location {location_id}")
+        if errors and not any("PersistedQueryNotFound" in e for e in errors):
+            # One location TA's resolver chokes on ("Unexpected error.", "Error #939088493:
+            # Trace ID: n/a ...") while the cards around it answer: that card only. A retired
+            # qid says PersistedQueryNotFound and aborts below; so does a streak of errors.
+            self._review_errors_in_a_row += 1
+            if self._review_errors_in_a_row < _REVIEW_ERRORS_SYSTEMIC:
+                logger.warning(
+                    "ta.reviews.record_error", qid=_REVIEWS_QID, location_id=location_id,
+                    errors=errors,
+                )
+                raise SourceRecordError(f"TripAdvisor reviews failed for location {location_id}")
         if errors or not (isinstance(data, list) and data and isinstance(data[0], dict)
                           and "data" in data[0]):
             # A retired qid / schema change fails for EVERY card. Returning None stored each
@@ -1190,6 +1198,7 @@ class TripAdvisorClient:
             reviews = result["reviews"]
         except (IndexError, KeyError, TypeError):
             reviews = None
+        self._review_errors_in_a_row = 0
         if not isinstance(reviews, list):
             # A renamed operation/result/reviews answers like "no reviews" for EVERY card:
             # each record was stamped TA-complete with no recency (C1). Only an explicit
