@@ -42,6 +42,17 @@ def test_missing_fields_stay() -> None:
         ("Atlantes Viagens e Mergulho", "Mergulho com e sem snorkel • Excursões subaquáticas", True),
         ("Rafael Turismo Receptivo", "Centros turísticos", True),
         ("Andre Pichler Passeios Turísticos", "Praias • Passeios turísticos", True),
+        # Operators with no agency word: every category an activity, one a sold service (RN).
+        ("Jr Mossoró", "Mergulho com e sem snorkel • Excursões de off-road, quadriciclo e 4WD", True),
+        ("Seabob Natal", "Mergulho com e sem snorkel • Locação de equipamentos", True),
+        # Operator/studio names on a single activity category (RN/AL).
+        ("Discovery Tur Natal", "Mergulho com e sem snorkel", True),
+        ("Maracajaú Diver", "Mergulho com e sem snorkel", True),
+        ("Yoga na Rota", "Ioga e pilates", True),
+        # Sports clinics/schools are services, not places.
+        ("Kauli Seadi Water Sports Club", "Clínicas e quadras esportivas • Surfe e windsurfe", True),
+        # A park TA files under yoga keeps its place (no studio name, nothing sold).
+        ("Bosque dos Namorados", "Ioga e pilates", False),
         # An agency-sounding name on a plain place category stays.
         ("Centro de Turismo", "Pontos de interesse", False),
         ("Praça de Apoio Ao Turismo", "Pontos de interesse", False),

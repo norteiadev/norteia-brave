@@ -161,30 +161,40 @@ _NOT_ATRATIVO = frozenset({
     "Stand-up paddle", "Caiaque e canoagem", "Caminhadas", "Cinemas",
     "Centros de entretenimento e jogos", "Pistas de boliche", "Jogos de fuga", "Baladas",
     "Bares e clubes", "Cervejarias", "Clubes com piscina e praia",
-    "Trilhas para quadriciclos e off-road", "Shopping centers",
+    "Trilhas para quadriciclos e off-road", "Shopping centers", "Clínicas e quadras esportivas",
 })
 # An agency TA files under one place-like activity too ("Sergio Tour: Passeios Privativos":
 # "Passeios urbanos • Mergulho com e sem snorkel") slips the all-parts rule above. Its name
 # gives it away, but only next to an activity/service category: "Centro de Turismo" and
 # "Praça de Apoio Ao Turismo" are "Pontos de interesse" and stay.
+# Also operators and studios: "Discovery Tur", "Maracajaú Diver", "Yoga na Rota".
 _AGENCY_NAME = re.compile(
-    r"\b(tour|tours|turismo|receptivo|transfer|transfers|ag[eê]ncia|viagens|expedi[cç][oõ]es)\b",
+    r"\b(tour|tours|tur|turismo|receptivo|transfer|transfers|ag[eê]ncia|viagens|expedi[cç][oõ]es"
+    r"|dive|divers?|diving|yoga|pilates)\b",
     re.IGNORECASE,
 )
 _PASSEIO_NAME = re.compile(r"\bpasseios?\b", re.IGNORECASE)
 _ACTIVITY_PREFIXES = _NOT_ATRATIVO_PREFIXES + (
     "Ônibus turístico", "Mergulho", "Esportes aquáticos", "Canionismo", "Rafting",
-    "Parapente", "Centros turísticos", "Serviços de ônibus",
+    "Parapente", "Centros turísticos", "Serviços de ônibus", "Ioga e pilates",
 )
 
 
 def _is_agency(entity: dict[str, Any], parts: list[str]) -> bool:
-    """Agency name + an activity/service category → an agency, forbidden whatever its reviews."""
+    """An agency/operator, forbidden whatever its reviews.
+
+    Either its name gives it away next to an activity/service category, or every category
+    is an activity with at least one sold service: "Jr Mossoró" ("Mergulho ... • Excursões
+    de off-road ...") has no agency word, but no place either. A bare "Mergulho com e sem
+    snorkel" (Piscinas Naturais de Ipioca) sells nothing and stays.
+    """
     name = str(entity.get("name") or "")
     activity = any(p.startswith(_ACTIVITY_PREFIXES) for p in parts)
     tour_category = any(p.startswith(("Passeios", "Excursões")) for p in parts)
-    return activity and (bool(_AGENCY_NAME.search(name)) or (
-        tour_category and bool(_PASSEIO_NAME.search(name))
+    only_activities = bool(parts) and all(p.startswith(_ACTIVITY_PREFIXES) for p in parts)
+    sells_service = any(p.startswith(_NOT_ATRATIVO_PREFIXES) for p in parts)
+    return (only_activities and sells_service) or (activity and (
+        bool(_AGENCY_NAME.search(name)) or (tour_category and bool(_PASSEIO_NAME.search(name)))
     ))
 
 
