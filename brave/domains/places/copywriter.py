@@ -240,6 +240,8 @@ class CascadeResult:
     groundedness: grounded fraction of the concrete claims, when a text was generated.
     busca:        the paid search, whole — set on EVERY outcome after the search succeeded,
                   so the caller can persist it (atrativo_buscas) whatever the verdict.
+    rate_limited: the search or the model answered 429 even after its retries — a quota
+                  wall, not a verdict on the atrativo, so the caller must not burn an attempt.
     """
 
     prose: str | None
@@ -247,6 +249,15 @@ class CascadeResult:
     rascunho: str | None = None
     groundedness: float | None = None
     busca: ParallelSearch | None = None
+    rate_limited: bool = False
+
+
+def _is_rate_limited(exc: BaseException) -> bool:
+    """429 from any client shape: httpx (response.status_code) or the SDKs (status_code)."""
+    status = getattr(exc, "status_code", None) or getattr(
+        getattr(exc, "response", None), "status_code", None
+    )
+    return status == 429
 
 
 class TourismCopywriter:
@@ -314,9 +325,9 @@ class TourismCopywriter:
             raise
         except ProviderBalanceError:
             raise
-        except Exception:  # noqa: BLE001 — search failure keeps the TA floor
+        except Exception as exc:  # noqa: BLE001 — search failure keeps the TA floor
             logger.warning("copywriter_search_failed_kept_floor", nome=nome, uf=uf)
-            return CascadeResult(None)
+            return CascadeResult(None, rate_limited=_is_rate_limited(exc))
         fontes = busca.fontes()
 
         # Input gate: context that does not name the atrativo is where every model fabricated
@@ -345,9 +356,9 @@ class TourismCopywriter:
             raise
         except ProviderBalanceError:
             raise
-        except Exception:  # noqa: BLE001 — copywriter failure keeps the TA floor
+        except Exception as exc:  # noqa: BLE001 — copywriter failure keeps the TA floor
             logger.warning("copywriter_failed_kept_floor", nome=nome, uf=uf)
-            return CascadeResult(None, busca=busca)
+            return CascadeResult(None, busca=busca, rate_limited=_is_rate_limited(exc))
         texto = _strip_dashes(raw or "")
         if not texto:
             return CascadeResult(None, busca=busca)

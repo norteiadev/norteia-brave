@@ -658,3 +658,58 @@ async def test_generate_gemini_refuses_server_tools(monkeypatch, fake_redis, sql
         await client.generate(
             [{"role": "user", "content": "x"}], model="gemini-2.5-flash", tools=[{"x": 1}]
         )
+
+
+def _gemini_429(delay: str = "7s") -> httpx.Response:
+    return httpx.Response(
+        429,
+        json={
+            "error": {
+                "code": 429,
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "violations": [
+                            {
+                                "quotaMetric": "generativelanguage.googleapis.com/generate_content_requests",
+                                "quotaId": "GenerateRequestsPerMinutePerProjectPerModel",
+                                "quotaValue": "1000",
+                            }
+                        ],
+                    },
+                    {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": delay},
+                ],
+            }
+        },
+    )
+
+
+@respx.mock
+async def test_generate_gemini_429_waits_retry_delay_and_logs_quota(
+    monkeypatch, fake_redis, sqlite_session
+):
+    """Flex 429 → standard 429 ×2 → 200: waits what Google asked (capped) and names the quota."""
+    from brave.clients import llm
+
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    respx.post(GEMINI_URL).mock(
+        side_effect=[
+            _gemini_429(),
+            _gemini_429("7s"),
+            _gemini_429("900s"),
+            httpx.Response(200, json=_gemini_reply(tier="standard")),
+        ]
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr(llm.RealLLMClient._gemini_post_standard.retry, "sleep", sleep)
+    warnings: list[tuple[str, dict]] = []
+    monkeypatch.setattr(llm.logger, "warning", lambda e, **kw: warnings.append((e, kw)))
+
+    assert await client.generate([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
+
+    assert [c.args[0] for c in sleep.await_args_list] == [7.0, 60.0]
+    limited = [kw for e, kw in warnings if e == "gemini_rate_limited"]
+    assert [kw["tier"] for kw in limited] == ["flex", "standard", "standard"]
+    assert limited[0]["quota_id"] == "GenerateRequestsPerMinutePerProjectPerModel"
+    assert limited[0]["quota_value"] == "1000"

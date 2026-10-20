@@ -1429,3 +1429,27 @@ async def test_details_failure_keeps_the_place_id_the_search_found() -> None:
 
     assert rio.normalized["place_id_cache"] == "ChIJmatriz001"
     assert rio.normalized.get("google_enriched") is not True
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_description_never_burns_attempt_budget() -> None:
+    """A 429 past the retries keeps the budget: the quota, not the atrativo, failed."""
+    from brave.domains.places.copywriter import CascadeResult
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
+    rio = _make_rio(extra_normalized={"google_enriched": True})
+    agent = PlacesEnrichmentAgent(
+        places_client=fake,
+        session=_make_session(),
+        llm_client=FakeLLMClient(generate_result=""),
+        now=_NOW,
+        config=ScoreConfig(),
+    )
+    with patch("brave.domains.places.places_enrichment.write_audit"), \
+         patch("brave.domains.places.places_enrichment.record_event"), \
+         patch("brave.domains.places.places_enrichment.route_by_score"):
+        await agent.run(rio, description=(None, CascadeResult(None, rate_limited=True), False))
+
+    assert "descricao_attempts" not in rio.normalized
+    assert "descricao_gate" not in rio.normalized
