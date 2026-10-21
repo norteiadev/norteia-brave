@@ -1,7 +1,9 @@
-"""PATCH /api/v1/dlq/{id}/aceitar-place — steward accepts a business-typed Google match.
+"""Steward routes over a Google match parked for review.
 
-Restores the place_id the Places gate dropped (from the places_hard_descarte audit), marks
-it accepted, clears the sticky google_tipo_negocio reason and re-dispatches the enrichment.
+PATCH /api/v1/dlq/{id}/aceitar-place restores the place_id the Places gate dropped (from the
+places_hard_descarte audit), marks it accepted, clears the sticky google_tipo_negocio reason
+and re-dispatches the enrichment. PATCH /api/v1/dlq/{id}/liberar-google drops Google's
+verdict instead (homonym or wrong listing): the record goes on without Google data.
 """
 
 from __future__ import annotations
@@ -114,3 +116,37 @@ def test_accept_needs_a_google_tipo_negocio_match(db_session, dispatched, audit_
 
     assert r.status_code == 422
     assert dispatched == []
+
+
+def _parked(db_session, reason: str) -> RioRecord:
+    rio = _business_matched_atrativo(db_session, audit_reason=None)
+    rio.dlq_reason = reason
+    rio.normalized = {**rio.normalized, "origem_value": 65.0, "completude_value": 90.0}
+    db_session.commit()
+    return rio
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("reason", ["google_fechado_revisao", "google_tipo_negocio"])
+def test_release_drops_the_google_verdict_and_re_scores(db_session, reason) -> None:
+    from brave.api.main import app
+
+    rio = _parked(db_session, reason)
+    r = TestClient(app).patch(f"/api/v1/dlq/{rio.id}/liberar-google", headers=HEADERS)
+
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    rio = db_session.get(RioRecord, rio.id)
+    assert rio.routing == "dlq" and rio.dlq_reason.startswith("score=")
+    assert rio.score is not None
+    assert db_session.scalar(select(AuditLog).where(
+        AuditLog.record_id == rio.id, AuditLog.action == "dlq_google_released"))
+
+
+@pytest.mark.integration
+def test_release_needs_a_google_review_reason(db_session) -> None:
+    from brave.api.main import app
+
+    rio = _parked(db_session, "no_recent_reviews")
+    r = TestClient(app).patch(f"/api/v1/dlq/{rio.id}/liberar-google", headers=HEADERS)
+    assert r.status_code == 422

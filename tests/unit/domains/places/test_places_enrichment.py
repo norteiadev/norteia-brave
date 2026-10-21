@@ -796,6 +796,59 @@ async def test_a_description_committed_during_the_places_call_is_not_erased() ->
     session.refresh.assert_called_once_with(rio, ["normalized"], with_for_update=True)
 
 
+@pytest.mark.parametrize(
+    ("category", "types", "routing", "reason"),
+    [
+        # A beach / river never closes: Google matched a same-name resort, or its listing is
+        # wrong (Praia de Parajuru, Rio Cauípe, Cachoeira do Rio Freio — CE 10/2026).
+        ("Praias", ["resort_hotel"], "dlq", "google_fechado_revisao"),
+        ("Massas de água", ["tourist_attraction"], "dlq", "google_fechado_revisao"),
+        ("Cachoeiras", [], "dlq", "google_fechado_revisao"),
+        ("Natureza e vida selvagem • Parques de arvorismo e tirolesa", ["park"], "dlq",
+         "google_fechado_revisao"),
+        # Historic sites are visited as such whatever Google says (Gruta do Frei Pedro
+        # Palácios → a closed plaza, ES 10/2026).
+        ("Locais históricos • Locais religiosos", ["plaza"], "dlq", "google_fechado_revisao"),
+        # A closed business on a card TA files as a place to visit: same-name business.
+        ("Teatros", ["bar"], "dlq", "google_fechado_revisao"),
+        # The place itself closed (a museum, a bar card): Google is right.
+        ("Museus especializados", ["museum"], "descarte", "closed_place"),
+        ("Bares de karaokê", ["bar"], "descarte", "closed_place"),
+        (None, ["bar"], "descarte", "closed_place"),
+        # A nature word inside a business category is not a natural place.
+        ("Passeios de natureza e vida selvagem", ["tour_agency"], "descarte", "closed_place"),
+        ("Clubes de praia", ["bar"], "descarte", "closed_place"),
+        ("Salões de bilhar", ["bar"], "descarte", "closed_place"),
+        # Google also types it as the place (a theatre-bar): the place itself closed.
+        ("Teatros", ["bar", "performing_arts_theater"], "descarte", "closed_place"),
+        # Malls never reach a steward (operator rule), on any card.
+        ("Praias", ["shopping_mall"], "descarte", "closed_place"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_closed_match_on_a_place_that_cannot_close_goes_to_review(
+    category: str | None, types: list[str], routing: str, reason: str
+) -> None:
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    details = {**_details(business_status="CLOSED_PERMANENTLY"),
+               "primary_type": types[0] if types else None, "types": types}
+    fake = FakePlacesClient(fixture_details={"ChIJmatriz001": details})
+    rio = _make_rio(extra_normalized={"category": category, "place_id_cache": "ChIJmatriz001",
+                                      "google_place_id": "ChIJmatriz001"})
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW,
+                                  config=ScoreConfig())
+    mock_route = await _run(agent, rio)
+
+    assert (rio.routing, rio.dlq_reason) == (routing, reason)
+    assert not mock_route.called
+    if routing == "dlq":
+        # The closed listing's id must not reach Mar nor be re-billed by refresh_places.
+        assert rio.normalized["place_id_cache"] is None
+        assert rio.normalized["google_place_id"] is None
+        assert agent.wants_description(rio) is False
+
+
 @pytest.mark.asyncio
 async def test_hard_descarte_writes_the_cause_to_the_atrativo_log() -> None:
     """The Log tab says why the record left the pipeline, and the audit's before_state
@@ -1765,7 +1818,8 @@ async def test_locate_rechecks_a_locality_municipio_against_the_coords() -> None
 
 
 def test_description_filter_skips_business_review_records() -> None:
-    """The batch / describe_uf eligibility mirrors wants_description for google_tipo_negocio."""
+    """The batch / describe_uf eligibility mirrors wants_description for the reasons that
+    wait for a steward's judgement of the Google match."""
     from sqlalchemy.dialects import postgresql
 
     from brave.domains.places.copy_batch import description_candidates_filter
@@ -1774,4 +1828,5 @@ def test_description_filter_skips_business_review_records() -> None:
         str(c.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
         for c in description_candidates_filter()
     )
-    assert "coalesce(rio_records.dlq_reason, '') != 'google_tipo_negocio'" in sql
+    for reason in ("google_tipo_negocio", "google_fechado_revisao"):
+        assert f"coalesce(rio_records.dlq_reason, '') != '{reason}'" in sql
