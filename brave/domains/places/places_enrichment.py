@@ -156,6 +156,9 @@ _CONSENSUS_SHARE: float = 2 / 3
 
 # DLQ reason of a business match on a TA attraction card (a steward decides, Step 3).
 GOOGLE_TIPO_NEGOCIO_REASON = "google_tipo_negocio"
+# normalized key: the place_id a steward confirmed is the right place despite its business
+# type (PATCH /dlq/{id}/aceitar-place). Google files Cachoeira Paracupeba as a restaurant.
+GOOGLE_TIPO_ACEITO_KEY = "google_tipo_aceito"
 
 # PT-BR wording of Places' business_status for the atrativo's Log tab.
 _CLOSED_LABELS: dict[str, str] = {
@@ -743,7 +746,13 @@ class PlacesEnrichmentAgent:
             # descarte (mirror SignalAgent). A record already in Mar leaves it and the publish
             # outbox retracts it from the API (F47).
             closed = business_status in CLOSED_STATUSES
-            if closed or _google_not_atrativo(details):
+            # A steward accepted THIS id as the place (never a mall: operator rule).
+            accepted = (
+                bool(place_id)
+                and normalized.get(GOOGLE_TIPO_ACEITO_KEY) == place_id
+                and details.get("primary_type") != "shopping_mall"
+            )
+            if closed or (_google_not_atrativo(details) and not accepted):
                 # A business match on a card TA files as a place to visit (Praias, Museus…)
                 # is likely a same-name business: a steward decides (DLQ), no descarte. None
                 # of its data is written. Malls stay out regardless (operator rule).
