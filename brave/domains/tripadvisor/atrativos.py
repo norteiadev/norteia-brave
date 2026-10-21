@@ -163,9 +163,10 @@ _NOT_ATRATIVO = frozenset({
     "Centros de entretenimento e jogos", "Pistas de boliche", "Jogos de fuga", "Baladas",
     "Bares e clubes", "Cervejarias", "Clubes com piscina e praia",
     "Trilhas para quadriciclos e off-road", "Shopping centers", "Clínicas e quadras esportivas",
-    # Operator-approved 10/2026: stadiums and venues, casinos, lounges and services are not a
-    # place to visit (Arena Castelão, Centro de Eventos do Ceará left Mar on 20/10).
-    "Arenas e estádios", "Centros de convenção", "Cassinos", "Lounges de aeroporto",
+    # Operator-approved 10/2026: stadiums, casinos, lounges and services are not a place to
+    # visit (Arena Castelão left Mar on 20/10). Not "Centros de convenção": TA files cultural
+    # centers there (Centro Cultural Oscar Niemeyer) — Google's types decide those.
+    "Arenas e estádios", "Cassinos", "Lounges de aeroporto",
     "Stand de tiro", "Caça ao tesouro", "Universidades e escolas",
 })
 # Bars and clubs of any kind ("Bares de karaokê", "Clubes de comédia"); "Clubes com piscina

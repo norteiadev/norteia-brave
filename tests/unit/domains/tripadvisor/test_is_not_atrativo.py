@@ -24,7 +24,9 @@ from brave.domains.tripadvisor.atrativos import _is_not_atrativo
         ("Cânions • Trilhas para caminhada", 1, False),
         # Venues, casinos, bars and clubs of any kind (operator 10/2026; Arena Castelão).
         ("Arenas e estádios", 900, True),
-        ("Centros de convenção", 50, True),
+        # Cultural centers TA files as convention centers (Centro Cultural Oscar Niemeyer):
+        # Google's types decide (categoria_revisao), not the guard.
+        ("Centros de convenção", 866, False),
         ("Bares de karaokê", 12, True),
         ("Clubes de comédia", 30, True),
         ("Universidades e escolas", 40, True),
