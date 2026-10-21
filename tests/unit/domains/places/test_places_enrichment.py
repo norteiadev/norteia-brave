@@ -1602,6 +1602,39 @@ async def test_business_match_on_a_ta_attraction_category_goes_to_review() -> No
 
 
 @pytest.mark.parametrize(
+    ("primary", "accepted_id", "routing", "reason"),
+    [
+        # Steward accepted this id → enriched; re-score (mocked here) owns the routing.
+        ("restaurant", "ChIJmatriz001", "dlq", "score=55.50 below threshold_mar=80.0"),
+        ("restaurant", "ChIJother", "dlq", "google_tipo_negocio"),  # another id: gate stands
+        ("shopping_mall", "ChIJmatriz001", "descarte", "nao_atrativo"),  # malls never pass
+    ],
+)
+@pytest.mark.asyncio
+async def test_steward_accepted_place_id_passes_the_business_gate(
+    primary: str, accepted_id: str, routing: str, reason: str
+) -> None:
+    """Cachoeira Paracupeba is a restaurant on Google: once a steward accepts THAT id
+    (aceitar-place), its Details data is written like any place's."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    details = {**_details(weekday_text=["Seg: 8h–17h"]), "primary_type": primary,
+               "types": [primary]}
+    fake = FakePlacesClient(fixture_details={"ChIJmatriz001": details})
+    rio = _make_rio(extra_normalized={
+        "category": "Cachoeiras", "place_id_cache": "ChIJmatriz001",
+        "google_tipo_aceito": accepted_id})
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW,
+                                  config=ScoreConfig())
+    await _run(agent, rio)
+
+    assert (rio.routing, rio.dlq_reason) == (routing, reason)
+    if reason.startswith("score="):
+        assert rio.normalized["google_place_id"] == "ChIJmatriz001"
+        assert rio.normalized["weekday_text"] == ["Seg: 8h–17h"]
+
+
+@pytest.mark.parametrize(
     ("category", "primary", "routing"),
     [
         ("Lojas especializadas e de suvenir", "store", "descarte"),  # TA itself says a shop
