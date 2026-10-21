@@ -235,7 +235,7 @@ _NON_CANONICAL_KEYS = frozenset(
         "window_open", "last_inbound_at", "google_enriched", "google_fetched_at",
         "ta_backfilled_at", "ta_uf", "descricao_attempts", "descricao_batch_expiries",
         "descricao_gate", "descricao_rascunho", "descricao_groundedness",
-        "places_refreshed_at", "google_tipo_aceito",
+        "places_refreshed_at", "google_tipo_aceito", "categoria_liberada",
     }
 )
 

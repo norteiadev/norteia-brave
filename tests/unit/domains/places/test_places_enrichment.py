@@ -68,6 +68,7 @@ def _make_rio(
     rio.canonical_key = "tripadvisor:attraction:12345"
     normalized = {
         "name": "Igreja Matriz",
+        "category": "Igrejas e catedrais",
         "lat": _LAT,
         "lon": _LNG,
         "municipio": "Porto Seguro",
@@ -217,8 +218,8 @@ async def test_closed_place_hard_descarte() -> None:
 
 @pytest.mark.asyncio
 async def test_google_business_type_hard_descarte() -> None:
-    """A confident match Google files as a business (Faraó na Praia, TA "Praias") →
-    descarte nao_atrativo, types kept on the record, no re-score."""
+    """A confident match Google files as a business on a card with no TA attraction
+    category → descarte nao_atrativo, types kept on the record, no re-score."""
     from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
 
     details = {**_details(), "primary_type": "restaurant", "types": ["restaurant", "bar", "food"]}
@@ -226,7 +227,7 @@ async def test_google_business_type_hard_descarte() -> None:
         fixture_results={"Igreja Matriz": [_search_result()]},
         fixture_details={"ChIJmatriz001": details},
     )
-    rio = _make_rio()
+    rio = _make_rio(extra_normalized={"category": None})
     agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
     mock_route = await _run(agent, rio)
 
@@ -1830,3 +1831,129 @@ def test_description_filter_skips_business_review_records() -> None:
     )
     for reason in ("google_tipo_negocio", "google_fechado_revisao"):
         assert f"coalesce(rio_records.dlq_reason, '') != '{reason}'" in sql
+
+
+@pytest.mark.parametrize(
+    ("category", "expected"),
+    [
+        ("Faróis", True),
+        ("Lojas especializadas e de suvenir • Adegas e vinícolas", True),  # Cantina Mattiello
+        ("Fazendas", True),
+        ("Cânions", True),
+        ("Deques e torres de observação", True),  # Forte São Pedro do Boldró
+        ("Bondes", True),  # Teleférico de Bonito
+        ("Ferrovias panorâmicas", True),  # Trem do Forró
+        ("Locais educativos", True),  # Centro de Lançamento da Barreira do Inferno
+        ("Locais misteriosos", True),  # Jardim de Maytreia
+        ("Áreas históricas para caminhadas", True),  # Recife Antigo
+        ("Bairros", True),  # Rua do Bom Jesus
+        ("Canionismo e rapel", False),  # an activity, not the canyon
+        ("Lojas especializadas e de suvenir", False),
+        ("Feiras e mercados de pulgas", False),  # a steward decides
+        (None, False),
+    ],
+)
+def test_ta_attraction_category(category: str | None, expected: bool) -> None:
+    from brave.domains.places.places_enrichment import _ta_attraction_category
+
+    assert _ta_attraction_category(category) is expected
+
+
+@pytest.mark.parametrize(
+    ("routing", "types", "extra", "held", "described"),
+    [
+        ("dlq", ["gas_station"], {}, True, False),  # AnaShopping: Google calls it no place
+        ("dlq", ["tourist_attraction", "market"], {}, False, True),  # Google confirms a place
+        ("dlq", ["gas_station"], {"categoria_liberada": True}, False, True),  # steward said yes
+        ("mar", ["gas_station"], {}, False, False),  # Mar is left alone, still no prose paid
+    ],
+)
+@pytest.mark.asyncio
+async def test_unconfirmed_category_waits_for_a_steward_without_description(
+    routing: str, types: list[str], extra: dict, held: bool, described: bool
+) -> None:
+    """A TA card neither its category nor Google call a place to visit goes to the DLQ as
+    categoria_revisao, and no description is paid for it."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    details = {**_details(), "primary_type": types[0], "types": types}
+    fake = FakePlacesClient(
+        fixture_results={"Igreja Matriz": [_search_result()]},
+        fixture_details={"ChIJmatriz001": details},
+    )
+    rio = _make_rio(routing=routing, extra_normalized={
+        "category": "Lojas especializadas e de suvenir", **extra})
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW,
+                                  config=ScoreConfig())
+    agent._description_enabled, agent._copywriter = True, MagicMock()  # a live copywriter
+    agent.write_description = AsyncMock(return_value=("Prosa.", None, False))
+    await _run(agent, rio)
+
+    assert (rio.dlq_reason == "categoria_revisao") is held
+    assert agent.write_description.called is described
+    if held:
+        assert rio.routing == "dlq"
+        assert "descricao_editorial" not in rio.normalized
+        assert agent.wants_description(rio) is False
+
+
+@pytest.mark.asyncio
+async def test_a_places_failure_does_not_park_the_category() -> None:
+    """Google never answered (503): the card is not judged — no categoria_revisao, and no
+    description paid either; the next pass retries both."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    fake = FakePlacesClient(fixture_results={"Igreja Matriz": [_search_result()]})
+    fake.place_details = AsyncMock(side_effect=RuntimeError("503 ServiceUnavailable"))
+    rio = _make_rio(extra_normalized={"category": "Lojas especializadas e de suvenir"})
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW,
+                                  config=ScoreConfig())
+    agent._description_enabled, agent._copywriter = True, MagicMock()
+    agent.write_description = AsyncMock(return_value=("Prosa.", None, False))
+    await _run(agent, rio)
+
+    assert rio.dlq_reason != "categoria_revisao"
+    assert not agent.write_description.called
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_google_answer_re_decides_the_category_verdict() -> None:
+    """A parked card whose Details now say tourist_attraction is no longer held: the
+    re-score may drop the sticky categoria_revisao."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    details = {**_details(), "primary_type": "market", "types": ["market", "tourist_attraction"]}
+    fake = FakePlacesClient(fixture_details={"ChIJmatriz001": details})
+    rio = _make_rio(extra_normalized={"category": "Lojas especializadas e de suvenir",
+                                      "place_id_cache": "ChIJmatriz001"})
+    rio.dlq_reason = "categoria_revisao"
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW,
+                                  config=ScoreConfig())
+    mock_route = await _run(agent, rio)
+
+    assert "categoria_revisao" in mock_route.call_args.kwargs["redecided"]
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ("municipio_nao_confirmado", "categoria_revisao"),  # the category is judged first
+        ("descricao_nao_fundamentada", "categoria_revisao"),
+        ("steward_sent_to_review", "steward_sent_to_review"),  # a human's call stands
+        ("closed_temporarily", "closed_temporarily"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_category_verdict_over_the_description_verdicts(before: str, after: str) -> None:
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    details = {**_details(), "primary_type": "gas_station", "types": ["gas_station"]}
+    fake = FakePlacesClient(fixture_details={"ChIJmatriz001": details})
+    rio = _make_rio(extra_normalized={"category": "Lojas especializadas e de suvenir",
+                                      "place_id_cache": "ChIJmatriz001"})
+    rio.dlq_reason = before
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW,
+                                  config=ScoreConfig())
+    await _run(agent, rio)
+
+    assert rio.dlq_reason == after

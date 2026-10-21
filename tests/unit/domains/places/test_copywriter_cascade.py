@@ -342,7 +342,10 @@ def _rio() -> MagicMock:
     rio.entity_type = "attraction"
     rio.uf = "ES"
     rio.canonical_key = "tripadvisor:attraction:1"
-    rio.normalized = {"name": "Praia Da Costa", "municipio": "Vila Velha", "google_enriched": True}
+    rio.normalized = {
+        "name": "Praia Da Costa", "category": "Praias", "municipio": "Vila Velha",
+        "google_enriched": True,
+    }
     return rio
 
 

@@ -5,7 +5,7 @@ PATCH /api/v1/dlq/{rio_id}/reprocess      — trigger reprocess
 PATCH /api/v1/dlq/{rio_id}/descarte       — steward reject
 PATCH /api/v1/dlq/{rio_id}/validate       — steward validate: set validacao_humana=100 → re-score → Mar + push (D-07)
 PATCH /api/v1/dlq/{rio_id}/aceitar-place  — steward accepts a business-typed Google match as the place
-PATCH /api/v1/dlq/{rio_id}/liberar-google — steward drops Google's verdict (homonym / wrong listing)
+PATCH /api/v1/dlq/{rio_id}/liberar-google — steward drops a review verdict (Google homonym, unconfirmed category)
 POST  /api/v1/dlq/validate-batch          — batch validate all DLQ records for a UF (D-08)
 POST  /api/v1/dlq/whatsapp-batch          — manual DLQ→WhatsApp move for atrativos (Phase F)
 """
@@ -37,9 +37,11 @@ from brave.core.repositories import SqlAlchemyDlqRepository
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import route_by_score
 from brave.domains.places.places_enrichment import (
+    CATEGORIA_LIBERADA_KEY,
+    CATEGORIA_REVISAO_REASON,
     GOOGLE_TIPO_ACEITO_KEY,
     GOOGLE_TIPO_NEGOCIO_REASON,
-    STEWARD_GOOGLE_REASONS,
+    STEWARD_REVIEW_REASONS,
 )
 from brave.observability.audit import write_audit
 
@@ -335,28 +337,35 @@ def release_google_dlq_record(
     rio_id: uuid.UUID,
     db: Session = Depends(get_db),
 ) -> dict:
-    """Steward drops Google's verdict on a record parked for review (STEWARD_GOOGLE_REASONS).
+    """Steward drops a review verdict on a record parked for it (STEWARD_REVIEW_REASONS).
 
     For a match that is a homonym or a wrong listing (Praia de Parajuru → a closed resort):
     the atrativo is real, Google's data is not its own. The place_id was already cleared by
     the Places gate, so nothing of Google's is kept; the record is re-scored on its own
     signals and goes on like any other (description, promote). No Places call.
 
+    For categoria_revisao (Mercado Municipal under "Lojas", no place type on Google): the
+    steward says it IS an atrativo; the mark keeps the category gate from parking it again.
+
     422 when the record is not in DLQ on one of those reasons.
     """
     rio = db.get(RioRecord, rio_id, with_for_update=True)
     if rio is None:
         raise HTTPException(status_code=404, detail="RioRecord not found")
-    if rio.routing != "dlq" or rio.dlq_reason not in STEWARD_GOOGLE_REASONS:
+    if rio.routing != "dlq" or rio.dlq_reason not in STEWARD_REVIEW_REASONS:
         raise HTTPException(status_code=422, detail="not_in_google_review")
 
     before_state = {"routing": rio.routing, "dlq_reason": rio.dlq_reason}
+    categoria = rio.dlq_reason == CATEGORIA_REVISAO_REASON
+    if categoria:
+        normalized = dict(rio.normalized or {})
+        persist_normalized(db, rio, normalized, {**normalized, CATEGORIA_LIBERADA_KEY: True})
     rio.dlq_reason = None  # sticky: the re-score would keep it otherwise
     route_by_score(db, rio, load_effective_config(db).score)
     after_state = {"routing": rio.routing, "dlq_reason": rio.dlq_reason}
     write_audit(
         session=db,
-        action="dlq_google_released",
+        action="dlq_categoria_released" if categoria else "dlq_google_released",
         entity_type=rio.entity_type,
         record_id=rio.id,
         before_state=before_state,

@@ -127,7 +127,9 @@ def _parked(db_session, reason: str) -> RioRecord:
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("reason", ["google_fechado_revisao", "google_tipo_negocio"])
+@pytest.mark.parametrize(
+    "reason", ["google_fechado_revisao", "google_tipo_negocio", "categoria_revisao"]
+)
 def test_release_drops_the_google_verdict_and_re_scores(db_session, reason) -> None:
     from brave.api.main import app
 
@@ -139,8 +141,11 @@ def test_release_drops_the_google_verdict_and_re_scores(db_session, reason) -> N
     rio = db_session.get(RioRecord, rio.id)
     assert rio.routing == "dlq" and rio.dlq_reason.startswith("score=")
     assert rio.score is not None
+    # Released as an atrativo: the category gate must not park it again on the next pass.
+    assert bool(rio.normalized.get("categoria_liberada")) is (reason == "categoria_revisao")
+    action = "dlq_categoria_released" if reason == "categoria_revisao" else "dlq_google_released"
     assert db_session.scalar(select(AuditLog).where(
-        AuditLog.record_id == rio.id, AuditLog.action == "dlq_google_released"))
+        AuditLog.record_id == rio.id, AuditLog.action == action))
 
 
 @pytest.mark.integration
