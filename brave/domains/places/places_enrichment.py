@@ -156,6 +156,12 @@ _CONSENSUS_SHARE: float = 2 / 3
 
 # DLQ reason of a business match on a TA attraction card (a steward decides, Step 3).
 GOOGLE_TIPO_NEGOCIO_REASON = "google_tipo_negocio"
+# DLQ reason of a CLOSED_PERMANENTLY match on a place that does not close (a beach, a river)
+# or on a TA attraction card matched to a business: a homonym or a wrong listing (Step 3).
+GOOGLE_FECHADO_REVISAO_REASON = "google_fechado_revisao"
+# Reasons that wait for a steward's judgement of the Google match: no description pass may
+# overwrite them (see wants_description / description_candidates_filter).
+STEWARD_GOOGLE_REASONS = frozenset({GOOGLE_TIPO_NEGOCIO_REASON, GOOGLE_FECHADO_REVISAO_REASON})
 # normalized key: the place_id a steward confirmed is the right place despite its business
 # type (PATCH /dlq/{id}/aceitar-place). Google files Cachoeira Paracupeba as a restaurant.
 GOOGLE_TIPO_ACEITO_KEY = "google_tipo_aceito"
@@ -190,9 +196,10 @@ _PLACE_TYPES = frozenset({
 
 
 # TA card categories (normalized["category"], AttractionsFusion primaryInfo.text) that name a
-# place to visit, matched as accent-folded substrings. A business-typed Google match on such a
-# card is a same-name business more often than a wrong TA card ("Maragogi Beach" → a
-# restaurant), so it goes to a steward instead of a descarte. Tours/shops/food stay out.
+# place to visit, matched at the start of a "•" segment (_ta_category_starts). A
+# business-typed Google match on such a card is a same-name business more often than a
+# wrong TA card ("Maragogi Beach" → a restaurant), so it goes to a steward instead of a
+# descarte. Tours/shops/food stay out.
 _TA_ATTRACTION_CATEGORY_TERMS: tuple[str, ...] = (
     "praia", "museu", "igreja", "catedra", "pontos de interesse", "cachoeira", "parque",
     "monumento", "mirante", "trilha", "locais religiosos", "locais historicos", "ruina",
@@ -202,9 +209,30 @@ _TA_ATTRACTION_CATEGORY_TERMS: tuple[str, ...] = (
 )
 
 
+# TA card categories of a natural place, which never closes for good: Google's
+# CLOSED_PERMANENTLY there is a same-name business or a wrong listing (Praia de Parajuru →
+# a resort, Rio Cauípe, Cachoeira do Rio Freio — CE 10/2026).
+_TA_NATURE_CATEGORY_TERMS: tuple[str, ...] = (
+    "praia", "cachoeira", "massas de agua", "natureza", "mirante", "deques e torres",
+    "trilha", "gruta", "caverna", "ilha", "montanha", "formacoes geologicas",
+    "piscinas naturais",
+)
+
+
+def _ta_category_starts(category: Any, terms: tuple[str, ...]) -> bool:
+    """A term at the START of a "•" segment of the TA category, accent-folded: a substring
+    took "Clubes de praia" (praia) and "Salões de bilhar" (ilha) for places to visit."""
+    if not isinstance(category, str):
+        return False
+    return any(_normalize_name(seg).startswith(terms) for seg in category.split("•"))
+
+
 def _ta_attraction_category(category: Any) -> bool:
-    folded = _normalize_name(category) if isinstance(category, str) else ""
-    return any(term in folded for term in _TA_ATTRACTION_CATEGORY_TERMS)
+    return _ta_category_starts(category, _TA_ATTRACTION_CATEGORY_TERMS)
+
+
+def _ta_nature_category(category: Any) -> bool:
+    return _ta_category_starts(category, _TA_NATURE_CATEGORY_TERMS)
 
 
 # Google files food and retail under many specific types (pizza_restaurant, coffee_shop,
@@ -523,9 +551,10 @@ class PlacesEnrichmentAgent:
             and not normalized.get("descricao_editorial")
             and bool(normalized.get("name"))
             and rio.routing != "descarte"
-            # A business match a steward must judge first: a description verdict would
-            # overwrite the reason (and a re-score drop it) — see description_candidates_filter.
-            and rio.dlq_reason != GOOGLE_TIPO_NEGOCIO_REASON
+            # A Google match a steward must judge first (a business, or closed for good on a
+            # place that cannot close): a description verdict would overwrite the reason (and a
+            # re-score drop it) — see description_candidates_filter.
+            and rio.dlq_reason not in STEWARD_GOOGLE_REASONS
             and int(normalized.get("descricao_attempts") or 0) < _MAX_DESCRIPTION_ATTEMPTS
             # A live batch already holds a PAID request for this record's description.
             # Turning atrativo_description_batch_enabled OFF (the operator action that flag
@@ -593,7 +622,8 @@ class PlacesEnrichmentAgent:
           1. Skip the PAID Places sub-step when already done (marker / cross-lane);
              return only when there is also no description left to backfill.
           2. Resolve place_id: use place_id_cache if present, else Text Search + match.
-          3. place_details → business_status CLOSED_* (confident match) → descarte.
+          3. place_details → business_status CLOSED_* (confident match) → descarte, or DLQ
+             for a steward when the card is a natural place or the match a business.
           4. weekday_text (hours) + Google coords + atualidade=max(TA,Google) +
              most_recent_review_at + place_id_cache/google_place_id.
           5. Mark google_enriched, flag_modified, re-score (route_by_score).
@@ -743,7 +773,7 @@ class PlacesEnrichmentAgent:
             new_normalized["google_types"] = list(details.get("types") or [])
 
             # Step 3: CLOSED_* or a business (not a place) on a confident match → hard
-            # descarte (mirror SignalAgent). A record already in Mar leaves it and the publish
+            # descarte (mirror SignalAgent), or DLQ for a steward (see below). A record already in Mar leaves it and the publish
             # outbox retracts it from the API (F47).
             closed = business_status in CLOSED_STATUSES
             # A steward accepted THIS id as the place (never a mall: operator rule).
@@ -755,16 +785,19 @@ class PlacesEnrichmentAgent:
             if closed or (_google_not_atrativo(details) and not accepted):
                 # A business match on a card TA files as a place to visit (Praias, Museus…)
                 # is likely a same-name business: a steward decides (DLQ), no descarte. None
-                # of its data is written. Malls stay out regardless (operator rule).
-                review = (
-                    not closed
-                    and details.get("primary_type") != "shopping_mall"
-                    and _ta_attraction_category(normalized.get("category"))
-                )
-                reason = (
-                    "closed_place" if closed else GOOGLE_TIPO_NEGOCIO_REASON if review
-                    else "nao_atrativo"
-                )
+                # of its data is written. Malls stay out regardless (operator rule). Closed:
+                # the same for a business match, and for a natural place, which never closes.
+                category = normalized.get("category")
+                primary = details.get("primary_type") or ""
+                if closed:
+                    review = primary != "shopping_mall" and (
+                        _ta_nature_category(category)
+                        or (_ta_attraction_category(category) and _google_not_atrativo(details))
+                    )
+                    reason = GOOGLE_FECHADO_REVISAO_REASON if review else "closed_place"
+                else:
+                    review = primary != "shopping_mall" and _ta_attraction_category(category)
+                    reason = GOOGLE_TIPO_NEGOCIO_REASON if review else "nao_atrativo"
                 new_normalized["google_enriched"] = True
                 if review:
                     # The business's id (a locate() match rides in as place_id_cache) must not
@@ -805,6 +838,7 @@ class PlacesEnrichmentAgent:
                     message=(
                         (
                             f"Google Places marca como {_CLOSED_LABELS.get(business_status, business_status)}"
+                            + (f", mas o TripAdvisor diz {category} — revisão humana" if review else "")
                             if closed
                             else f"Google Places classifica como {cause['primary_type']}, mas o "
                             f"TripAdvisor diz {normalized.get('category')} — revisão humana"

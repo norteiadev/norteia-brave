@@ -45,6 +45,7 @@ STICKY_DLQ_REASONS = frozenset(
         "steward_sent_to_review",
         "community_error_report",
         "google_tipo_negocio",  # Places matched a business on a TA attraction card
+        "google_fechado_revisao",  # Places says closed for good on a place that cannot close
     }
 )
 
