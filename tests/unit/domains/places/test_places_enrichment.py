@@ -806,6 +806,9 @@ async def test_a_description_committed_during_the_places_call_is_not_erased() ->
         ("Cachoeiras", [], "dlq", "google_fechado_revisao"),
         ("Natureza e vida selvagem • Parques de arvorismo e tirolesa", ["park"], "dlq",
          "google_fechado_revisao"),
+        # Historic sites are visited as such whatever Google says (Gruta do Frei Pedro
+        # Palácios → a closed plaza, ES 10/2026).
+        ("Locais históricos • Locais religiosos", ["plaza"], "dlq", "google_fechado_revisao"),
         # A closed business on a card TA files as a place to visit: same-name business.
         ("Teatros", ["bar"], "dlq", "google_fechado_revisao"),
         # The place itself closed (a museum, a bar card): Google is right.

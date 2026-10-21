@@ -211,11 +211,12 @@ _TA_ATTRACTION_CATEGORY_TERMS: tuple[str, ...] = (
 
 # TA card categories of a natural place, which never closes for good: Google's
 # CLOSED_PERMANENTLY there is a same-name business or a wrong listing (Praia de Parajuru →
-# a resort, Rio Cauípe, Cachoeira do Rio Freio — CE 10/2026).
+# a resort, Rio Cauípe, Cachoeira do Rio Freio — CE 10/2026). Historic sites too: tourists
+# visit them as such whatever Google says (operator 10/2026; Gruta do Frei Pedro Palácios).
 _TA_NATURE_CATEGORY_TERMS: tuple[str, ...] = (
     "praia", "cachoeira", "massas de agua", "natureza", "mirante", "deques e torres",
     "trilha", "gruta", "caverna", "ilha", "montanha", "formacoes geologicas",
-    "piscinas naturais",
+    "piscinas naturais", "locais historicos",
 )
 
 
