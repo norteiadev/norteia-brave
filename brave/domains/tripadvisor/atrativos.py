@@ -163,7 +163,14 @@ _NOT_ATRATIVO = frozenset({
     "Centros de entretenimento e jogos", "Pistas de boliche", "Jogos de fuga", "Baladas",
     "Bares e clubes", "Cervejarias", "Clubes com piscina e praia",
     "Trilhas para quadriciclos e off-road", "Shopping centers", "Clínicas e quadras esportivas",
+    # Operator-approved 10/2026: stadiums and venues, casinos, lounges and services are not a
+    # place to visit (Arena Castelão, Centro de Eventos do Ceará left Mar on 20/10).
+    "Arenas e estádios", "Centros de convenção", "Cassinos", "Lounges de aeroporto",
+    "Stand de tiro", "Caça ao tesouro", "Universidades e escolas",
 })
+# Bars and clubs of any kind ("Bares de karaokê", "Clubes de comédia"); "Clubes com piscina
+# e praia" is listed above.
+_NOT_PLACE_PREFIXES = ("Bares ", "Clubes de ")
 # An agency TA files under one place-like activity too ("Sergio Tour: Passeios Privativos":
 # "Passeios urbanos • Mergulho com e sem snorkel") slips the all-parts rule above. Its name
 # gives it away, but only next to an activity/service category: "Centro de Turismo" and
@@ -216,6 +223,7 @@ def _is_not_atrativo(entity: dict[str, Any]) -> bool:
     return bool(parts) and all(
         p in _NOT_ATRATIVO
         or p.startswith(_NOT_ATRATIVO_PREFIXES)
+        or p.startswith(_NOT_PLACE_PREFIXES)
         or (p.startswith("Lojas ") and not reviewed)
         for p in parts
     )

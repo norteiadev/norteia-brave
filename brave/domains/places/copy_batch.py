@@ -79,7 +79,8 @@ from brave.domains.places.copywriter import (
 from brave.domains.places.places_enrichment import (
     _COMPLETUDE_WITH_DESCRIPTION,
     _MAX_DESCRIPTION_ATTEMPTS,
-    STEWARD_GOOGLE_REASONS,
+    STEWARD_REVIEW_REASONS,
+    categoria_nao_confirmada,
 )
 from brave.observability.cost_guard import reconcile_spend, record_spend
 
@@ -216,11 +217,11 @@ def description_candidates_filter() -> tuple[Any, ...]:
     return (
         RioRecord.entity_type == "attraction",
         RioRecord.routing != "descarte",
-        # A Google match waiting for a steward (wants_description says why). One != per
+        # A verdict waiting for a steward (wants_description says why). One != per
         # reason, not NOT IN: an expanding IN breaks the raw-cursor EXPLAIN (migration 0016).
         *(
             func.coalesce(RioRecord.dlq_reason, "") != reason
-            for reason in sorted(STEWARD_GOOGLE_REASONS)
+            for reason in sorted(STEWARD_REVIEW_REASONS)
         ),
         or_(
             ~func.coalesce(RioRecord.canonical_key, "").like("tripadvisor:attraction:%"),
@@ -560,6 +561,11 @@ def submit_batch(
     sized = min(limit, int(remaining // _EST_USD_PER_DESCRIPTION))
 
     rows = list(session.execute(candidates_select(sized)).scalars().all()) if sized > 0 else []
+    # The category gate SQL cannot express (accent-folded per "•" segment): never pay for a card
+    # the Brave does not call an atrativo (wants_description's categoria_nao_confirmada).
+    # ponytail: a dropped row is re-selected every tick until a Places pass parks it as
+    # categoria_revisao; park the legacy ones once if they ever crowd the batch out.
+    rows = [r for r in rows if not categoria_nao_confirmada(r.canonical_key or "", r.normalized or {})]
     requests = [build_request(rio, model=model) for rio in rows]
     # Hand back everything we over-reserved. What stays booked is exactly what collect will
     # settle, one _EST_USD_PER_DESCRIPTION per request, in apply_result.

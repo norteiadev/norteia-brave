@@ -22,6 +22,13 @@ from brave.domains.tripadvisor.atrativos import _is_not_atrativo
         ("Natureza e vida selvagem • Parques aquáticos", 160, False),
         ("Igrejas e catedrais", 0, False),  # unreviewed but a real atrativo
         ("Cânions • Trilhas para caminhada", 1, False),
+        # Venues, casinos, bars and clubs of any kind (operator 10/2026; Arena Castelão).
+        ("Arenas e estádios", 900, True),
+        ("Centros de convenção", 50, True),
+        ("Bares de karaokê", 12, True),
+        ("Clubes de comédia", 30, True),
+        ("Universidades e escolas", 40, True),
+        ("Arenas e estádios • Pontos de interesse", 900, False),  # a place category stays
         ("", 0, False),
     ],
 )

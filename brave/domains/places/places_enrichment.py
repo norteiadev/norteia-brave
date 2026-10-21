@@ -60,7 +60,7 @@ from brave.config.settings import ScoreConfig
 from brave.core.models import AtrativoBusca, Municipio
 from brave.core.rio.normalize import normalize_name
 from brave.core.rio.persist import persist_normalized
-from brave.core.rio.routing import route_by_score
+from brave.core.rio.routing import STICKY_DLQ_REASONS, route_by_score
 from brave.domains.places.copywriter import (
     CASCADE_MODEL,
     CascadeResult,
@@ -159,9 +159,21 @@ GOOGLE_TIPO_NEGOCIO_REASON = "google_tipo_negocio"
 # DLQ reason of a CLOSED_PERMANENTLY match on a place that does not close (a beach, a river)
 # or on a TA attraction card matched to a business: a homonym or a wrong listing (Step 3).
 GOOGLE_FECHADO_REVISAO_REASON = "google_fechado_revisao"
-# Reasons that wait for a steward's judgement of the Google match: no description pass may
-# overwrite them (see wants_description / description_candidates_filter).
-STEWARD_GOOGLE_REASONS = frozenset({GOOGLE_TIPO_NEGOCIO_REASON, GOOGLE_FECHADO_REVISAO_REASON})
+# DLQ reason of a TA card the Brave does not categorize as an atrativo: neither its TA
+# category (_TA_ATTRACTION_CATEGORY_TERMS) nor Google's types (_PLACE_TYPES) name a place to
+# visit (a gas station filed under "Lojas", a convention center). See categoria_nao_confirmada.
+CATEGORIA_REVISAO_REASON = "categoria_revisao"
+# normalized key: a steward released a categoria_revisao card as an atrativo (liberar-google).
+CATEGORIA_LIBERADA_KEY = "categoria_liberada"
+# Sticky verdicts categoria_revisao replaces: the record's description is moot until then.
+_CATEGORIA_OVERRIDES = frozenset(
+    {"no_recent_reviews", "municipio_nao_confirmado", "descricao_nao_fundamentada"}
+)
+# Reasons that wait for a steward's judgement: no description pass may overwrite them (see
+# wants_description / description_candidates_filter); liberar-google releases them.
+STEWARD_REVIEW_REASONS = frozenset(
+    {GOOGLE_TIPO_NEGOCIO_REASON, GOOGLE_FECHADO_REVISAO_REASON, CATEGORIA_REVISAO_REASON}
+)
 # normalized key: the place_id a steward confirmed is the right place despite its business
 # type (PATCH /dlq/{id}/aceitar-place). Google files Cachoeira Paracupeba as a restaurant.
 GOOGLE_TIPO_ACEITO_KEY = "google_tipo_aceito"
@@ -206,6 +218,14 @@ _TA_ATTRACTION_CATEGORY_TERMS: tuple[str, ...] = (
     "formacoes geologicas", "massas de agua", "natureza", "jardi", "montanha", "caverna",
     "gruta", "ilha", "zoologico", "aquario", "obras arquitetonicas", "ponte", "farol",
     "centros turisticos", "galerias de arte", "teatro", "piscinas naturais",
+    # Operator-approved 10/2026: agrotourism and landscape.
+    "adegas e vinicolas", "destilarias", "fazendas", "ranchos",
+    "farois", "canions", "barragens", "estradas panoramicas", "pieres e calcadoes",
+    "observatorios", "florestas", "recifes",
+    # Forte do Boldró, teleféricos, Trem do Forró, Barreira do Inferno, Jardim de Maytreia,
+    # Recife Antigo / Rua do Bom Jesus (operator 10/2026).
+    "deques e torres", "bondes", "ferrovias panoramicas", "locais educativos",
+    "locais misteriosos", "areas historicas", "bairros",
 )
 
 
@@ -234,6 +254,18 @@ def _ta_attraction_category(category: Any) -> bool:
 
 def _ta_nature_category(category: Any) -> bool:
     return _ta_category_starts(category, _TA_NATURE_CATEGORY_TERMS)
+
+
+def categoria_nao_confirmada(canonical_key: str, normalized: dict[str, Any]) -> bool:
+    """A TA card the Brave does not categorize as an atrativo: its TA category is not a place
+    to visit and Google's types (once fetched) do not name one either. A steward decides
+    (categoria_revisao) before any description is paid. Other lanes carry no TA category."""
+    return (
+        canonical_key.startswith("tripadvisor:")
+        and not normalized.get(CATEGORIA_LIBERADA_KEY)
+        and not _ta_attraction_category(normalized.get("category"))
+        and not _PLACE_TYPES.intersection(normalized.get("google_types") or ())
+    )
 
 
 # Google files food and retail under many specific types (pizza_restaurant, coffee_shop,
@@ -542,9 +574,14 @@ class PlacesEnrichmentAgent:
             out.append(r)
         return out
 
-    def wants_description(self, rio: RioRecord) -> bool:
-        """The description sub-step's gate. Reads ``rio`` only — no I/O, no writes."""
-        normalized = rio.normalized or {}
+    def wants_description(self, rio: RioRecord, normalized: dict[str, Any] | None = None) -> bool:
+        """The description sub-step's gate. Reads ``rio`` only — no I/O, no writes.
+
+        ``normalized`` is the record as the current pass left it (Google's types just
+        fetched); default ``rio.normalized``.
+        """
+        if normalized is None:
+            normalized = rio.normalized or {}
         return bool(
             self._description_enabled
             and self._copywriter is not None
@@ -552,10 +589,12 @@ class PlacesEnrichmentAgent:
             and not normalized.get("descricao_editorial")
             and bool(normalized.get("name"))
             and rio.routing != "descarte"
-            # A Google match a steward must judge first (a business, or closed for good on a
-            # place that cannot close): a description verdict would overwrite the reason (and a
-            # re-score drop it) — see description_candidates_filter.
-            and rio.dlq_reason not in STEWARD_GOOGLE_REASONS
+            # A verdict a steward must give first (a business match, closed for good on a
+            # place that cannot close, a category no one calls a place): a description
+            # verdict would overwrite the reason (and a re-score drop it) — see
+            # description_candidates_filter.
+            and rio.dlq_reason not in STEWARD_REVIEW_REASONS
+            and not categoria_nao_confirmada(rio.canonical_key or "", normalized)
             and int(normalized.get("descricao_attempts") or 0) < _MAX_DESCRIPTION_ATTEMPTS
             # A live batch already holds a PAID request for this record's description.
             # Turning atrativo_description_batch_enabled OFF (the operator action that flag
@@ -939,6 +978,18 @@ class PlacesEnrichmentAgent:
         else:
             logger.info("places_enrich_kept_floor", rio_id=str(rio.id), uf=uf)
 
+        # The category gate, on what this pass learned: a TA card that neither its TA category
+        # nor Google's types call a place to visit waits for a steward (categoria_revisao, set
+        # after the re-score below) and gets no description. Only once Google answered (now or
+        # on an earlier pass): a Places failure judges nothing. Mar rows are left alone.
+        google_answered = places_consulted or bool(normalized.get("google_enriched"))
+        held = (
+            google_answered
+            and rio.routing not in ("mar", "descarte")
+            and categoria_nao_confirmada(rio.canonical_key or "", new_normalized)
+        )
+        wants_description = self.wants_description(rio, new_normalized)
+
         # Description (TourismCopywriter): grounded in the Places context + web search, in the
         # Norteia voice. Gated by description_enabled; skipped if a description already exists
         # (idempotent refresh). Runs even without a Places match — web_search can still ground
@@ -1058,6 +1109,8 @@ class PlacesEnrichmentAgent:
             redecided.add(TEMPORARILY_CLOSED_REASON)
         if judged:
             redecided |= {"descricao_nao_fundamentada", "municipio_nao_confirmado"}
+        if google_answered:
+            redecided.add(CATEGORIA_REVISAO_REASON)  # re-applied below while it still holds
         route_by_score(self._session, rio, self._config, redecided=redecided)
         # Ungrounded prose goes to the human queue, not to Mar: the draft sits in
         # descricao_rascunho for a steward, and the reason overrides the score one so the DLQ
@@ -1071,6 +1124,14 @@ class PlacesEnrichmentAgent:
         if cascade is not None and cascade.motivo == "municipio_nao_confirmado":
             rio.routing = "dlq"
             rio.dlq_reason = "municipio_nao_confirmado"
+        # Over the score, recency and description verdicts (the category is judged first:
+        # no description is written while it holds), never over a human's or Google's.
+        if held and (
+            rio.dlq_reason not in STICKY_DLQ_REASONS
+            or rio.dlq_reason in _CATEGORIA_OVERRIDES
+        ):
+            rio.routing = "dlq"
+            rio.dlq_reason = CATEGORIA_REVISAO_REASON
         # Temporarily closed (Places, confident match): enriched like any other record, but
         # never promoted — a steward decides. Wins over the other DLQ reasons: it is the one
         # the steward must see first (the Painel badges it "Fechado Temporariamente").
@@ -1092,6 +1153,9 @@ class PlacesEnrichmentAgent:
             message=(
                 "Google Places marca como fechado temporariamente — mantido no DLQ"
                 if temporarily_closed
+                else f"Categoria {normalized.get('category') or 'ausente'} não é de atrativo e o "
+                "Google não confirma um lugar — revisão humana"
+                if rio.dlq_reason == CATEGORIA_REVISAO_REASON
                 else None
             ),
             entity_type="attraction",

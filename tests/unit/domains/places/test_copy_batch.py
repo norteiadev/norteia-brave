@@ -1083,3 +1083,19 @@ def test_ta_record_without_backfill_marker_is_not_a_description_candidate(tx_ses
 
     stmt = select(RioRecord.id).where(*description_candidates_filter(), RioRecord.id.in_(mine))
     assert set(tx_session.scalars(stmt).all()) == {backfilled, places_lane}
+
+
+def test_submit_skips_a_card_the_brave_does_not_categorize_as_an_atrativo() -> None:
+    """The SQL filter cannot fold accents per category segment; the batch drops a TA card
+    whose category and Google types name no place (categoria_nao_confirmada) before paying."""
+    shop = _make_rio(category="Lojas especializadas e de suvenir", google_types=["gas_station"])
+    church = _make_rio(category="Igrejas e catedrais")
+    shop.canonical_key = church.canonical_key = "tripadvisor:attraction:1"
+    batches = _FakeBatches()
+
+    submit_batch(_FakeSession([shop, church]), _fake_client(batches),
+                 redis_client=_redis(), llm_config=LLMConfig())
+
+    (requests,) = batches.created
+    assert [r["custom_id"] for r in requests] == [str(church.id)]
+    assert shop.descricao_batch_id is None
