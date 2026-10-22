@@ -16,6 +16,7 @@ Notes (Phase 12 changes):
 """
 
 import json
+import ssl
 from pathlib import Path
 
 import httpx
@@ -614,6 +615,7 @@ class TestTripAdvisorClientProxyAndPaging:
         class _FakeClient:
             def __init__(self, *args, **kwargs):
                 captured["proxy"] = kwargs.get("proxy")
+                captured["verify"] = kwargs.get("verify")
 
             async def __aenter__(self):
                 return self
@@ -634,6 +636,9 @@ class TestTripAdvisorClientProxyAndPaging:
         await ta_client.fetch_destinations(uf="BA")
 
         assert captured["proxy"] == "socks5://user:pass@proxy:1080"
+        # DataDome passes http.client's TLS hello on HTML pages, not httpx's default one.
+        assert captured["verify"].post_handshake_auth is True
+        assert captured["verify"].verify_mode == ssl.CERT_REQUIRED
 
     @pytest.mark.asyncio
     async def test_fetch_destinations_no_proxy_passes_none(self, monkeypatch):
