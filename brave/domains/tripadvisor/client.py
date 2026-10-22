@@ -34,6 +34,7 @@ import asyncio
 import contextlib
 import json
 import re
+import ssl
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -41,6 +42,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
 
+import certifi
 import httpx
 import structlog
 
@@ -205,6 +207,18 @@ class SessionMissingError(SourceSessionError):
     """
 
 
+def _tls_context() -> ssl.SSLContext:
+    """httpx's TLS context (certifi) plus post-handshake auth, as Python's http.client sends.
+
+    DataDome 403s httpx's default ClientHello on TA's HTML pages from the Linux worker
+    (OpenSSL 3.5) while passing this one, with the same session (10/2026); GraphQL passes
+    either way.
+    """
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    ctx.post_handshake_auth = True
+    return ctx
+
+
 class TripAdvisorClient:
     """TripAdvisor GraphQL hybrid client (real implementation).
 
@@ -232,7 +246,7 @@ class TripAdvisorClient:
 
     async def __aenter__(self) -> TripAdvisorClient:
         self._hc = httpx.AsyncClient(
-            follow_redirects=True, proxy=self._config.proxy_url or None
+            follow_redirects=True, proxy=self._config.proxy_url or None, verify=_tls_context()
         )
         return self
 
@@ -254,7 +268,7 @@ class TripAdvisorClient:
         """
         if self._hc is None:
             async with httpx.AsyncClient(
-                cookies=cookies, follow_redirects=True, proxy=proxy
+                cookies=cookies, follow_redirects=True, proxy=proxy, verify=_tls_context()
             ) as hc:
                 yield hc
             return
