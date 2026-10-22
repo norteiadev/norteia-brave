@@ -366,6 +366,13 @@ def test_attraction_keeps_raw_ta_category():
     assert "category" not in _run_rio("attraction", _payload()).normalized
 
 
+def test_attraction_carries_the_ta_contact_floor():
+    payload = _payload(phone="+55 31 3274 9434", website="http://mercadocentral.com.br")
+    n = _run_rio("attraction", payload).normalized
+    assert n["phone"] == "+55 31 3274 9434" and n["website"] == "http://mercadocentral.com.br"
+    assert "phone" not in _run_rio("attraction", _payload()).normalized
+
+
 def test_destination_carries_mtur_flags_even_when_false():
     canonical = {"participates_mtur": False, "mtur_categoria": "A", "regiao_turistica": "Costa"}
     rio = _run_rio("destination", _payload(canonical=canonical))

@@ -468,19 +468,17 @@ class TestAtrativosGeoEnrichment:
 
 
 # ---------------------------------------------------------------------------
-# TestAtrativosGeoFallback — TA-ftx: fetch_attraction_geo-based IBGE fallback
+# TestAtrativosGeoFallback — TA's attraction page (fetch_attraction_address) places the card
 # ---------------------------------------------------------------------------
 
 
 class TestAtrativosGeoFallback:
-    """Verify the rewired tertiary IBGE fallback using fetch_attraction_geo.
+    """Verify the município step that reads TA's own attraction page.
 
-    TA-ftx replaces the broken parents[0].localizedName path (rmz-04) with a
-    single GraphQL query (qid d3d4987463b78a39) that returns cityName/stateName
-    directly. state_name_to_uf derives the UF; resolve_municipio finishes the
-    IBGE match.
+    fetch_attraction_address returns addressLocality/addressRegion (city_name/state_name);
+    state_name_to_uf derives the UF; resolve_municipio finishes the IBGE match.
 
-    Tests use FakeTripAdvisorClient with fixture_geo + geo_calls to verify the
+    Tests use FakeTripAdvisorClient with fixture_address + address_calls to verify the
     correct method is called and the correct behavior follows.
     """
 
@@ -490,12 +488,12 @@ class TestAtrativosGeoFallback:
         return {"4108304": (uuid.uuid4(), "tripadvisor:destination:303444")}
 
     @pytest.mark.asyncio
-    async def test_geo_fallback_resolves_ibge_via_fetch_attraction_geo(self) -> None:
-        """Coordless card with non-matching name resolves via fetch_attraction_geo.
+    async def test_geo_fallback_resolves_ibge_via_fetch_attraction_address(self) -> None:
+        """Coordless card with non-matching name resolves via TA's attraction page.
 
-        'Cachoeira do Tabuleiro' does NOT match any IBGE município name. The
-        geo fallback fires, calls fetch_attraction_geo(312332), gets
-        {city_name:'Uberlândia', state_name:'State of Minas Gerais'}, derives UF='MG',
+        'Cachoeira do Tabuleiro' does NOT match any IBGE município name. The page
+        step calls fetch_attraction_address(312332), gets
+        {city_name:'Uberlândia', state_name:'Minas Gerais'}, derives UF='MG',
         then resolve_municipio resolves to the MG IBGE record. store_raw is called.
         """
         from brave.config.settings import TripAdvisorConfig
@@ -506,13 +504,7 @@ class TestAtrativosGeoFallback:
             fixture_attractions={_GEO_ID_MG: [card]},
             gql_pages=[(0, [card])],  # produce() paginates via fetch_attractions_paginated_gql
             geo_ids={"MG": _GEO_ID_MG},
-            fixture_geo={312332: {
-                "location_id": 312332,
-                "city_name": "Uberlândia",
-                "state_name": "State of Minas Gerais",
-                "city_geo_id": 303380,
-                "state_geo_id": 303383,
-            }},
+            fixture_address={312332: {"city_name": "Uberlândia", "state_name": "Minas Gerais"}},
         )
         ta_config = TripAdvisorConfig(page_throttle_seconds=0)
 
@@ -534,22 +526,18 @@ class TestAtrativosGeoFallback:
             )
             await ingest.produce("MG", run_rio=False)
 
-        # fetch_attraction_geo was called for locationId 312332
-        assert fake_client.geo_calls == [312332], (
-            f"Expected geo_calls==[312332], got {fake_client.geo_calls}. "
-            "fetch_attraction_geo must be called, not fetch_attraction_detail."
-        )
+        assert fake_client.address_calls == [312332]
         # record was stored (not quarantined)
         assert mock_store_raw.called, (
-            "store_raw must be called — the geo fallback must resolve Uberlândia/MG "
+            "store_raw must be called — TA's page must resolve Uberlândia/MG "
             "and store the record, not quarantine as ibge_unmatched"
         )
 
     @pytest.mark.asyncio
     async def test_geo_fallback_skipped_when_ta_config_none(self) -> None:
-        """When ta_config=None, fetch_attraction_geo is never called.
+        """When ta_config=None, fetch_attraction_address is never called.
 
-        Without ta_config the geo fallback is skipped entirely. The coordless card
+        Without ta_config the page step is skipped entirely. The coordless card
         may quarantine as ibge_unmatched — that is correct behavior.
         """
         from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
@@ -559,13 +547,7 @@ class TestAtrativosGeoFallback:
             fixture_attractions={_GEO_ID_MG: [card]},
             gql_pages=[(0, [card])],  # produce() paginates via fetch_attractions_paginated_gql
             geo_ids={"MG": _GEO_ID_MG},
-            fixture_geo={312332: {
-                "location_id": 312332,
-                "city_name": "Uberlândia",
-                "state_name": "State of Minas Gerais",
-                "city_geo_id": 303380,
-                "state_geo_id": 303383,
-            }},
+            fixture_address={312332: {"city_name": "Uberlândia", "state_name": "Minas Gerais"}},
         )
 
         with patch("brave.domains.tripadvisor.atrativos.quarantine_poison"):
@@ -579,18 +561,14 @@ class TestAtrativosGeoFallback:
             )
             await ingest.produce("MG", run_rio=False)
 
-        # fetch_attraction_geo must NOT have been called
-        assert fake_client.geo_calls == [], (
-            f"Expected geo_calls==[] when ta_config=None, got {fake_client.geo_calls}. "
-            "The geo fallback must be gated behind ta_config."
-        )
+        assert fake_client.address_calls == [], "TA's page must be gated behind ta_config"
 
     @pytest.mark.asyncio
     async def test_geo_fallback_returns_none_no_crash(self) -> None:
-        """When fetch_attraction_geo returns None (empty fixture), no crash occurs.
+        """When TA has no page for the card ({}), no crash occurs.
 
         The card quarantines as ibge_unmatched, but no exception is raised.
-        geo_calls is still populated (the method was called).
+        address_calls is still populated (the method was called).
         """
         from brave.config.settings import TripAdvisorConfig
         from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
@@ -600,7 +578,7 @@ class TestAtrativosGeoFallback:
             fixture_attractions={_GEO_ID_MG: [card]},
             gql_pages=[(0, [card])],  # produce() paginates via fetch_attractions_paginated_gql
             geo_ids={"MG": _GEO_ID_MG},
-            fixture_geo={},  # geo returns None for all locationIds
+            fixture_address={},  # no page for any locationId
         )
         ta_config = TripAdvisorConfig(page_throttle_seconds=0)
 
@@ -616,10 +594,7 @@ class TestAtrativosGeoFallback:
             # Must not raise — geo returning None leads to quarantine, not crash
             await ingest.produce("MG", run_rio=False)
 
-        # fetch_attraction_geo was called (but returned None)
-        assert fake_client.geo_calls == [312332], (
-            f"Expected geo_calls==[312332], got {fake_client.geo_calls}"
-        )
+        assert fake_client.address_calls == [312332]
         # Quarantine occurred (ibge_unmatched — geo returned None)
         quarantine_calls = [
             c for c in mock_q.call_args_list
@@ -648,7 +623,7 @@ class _GqlListingClient:
     - resolve_geo_id(uf)                     → fixed geoId
     - fetch_attractions_paginated_gql(geo)   → yields the configured (offset, cards) pages
     - fetch_recent_review(location_id)       → configured recency dict or None (records calls)
-    - fetch_attraction_geo(location_id)      → None (geo fallback dormant; names IBGE-resolve)
+    - fetch_attraction_address(location_id)  → {} (no page; names IBGE-resolve)
     """
 
     def __init__(
@@ -676,8 +651,8 @@ class _GqlListingClient:
         self.recent_review_calls.append(location_id)
         return self._recent.get(location_id)
 
-    async def fetch_attraction_geo(self, location_id: int) -> dict[str, Any] | None:
-        return None
+    async def fetch_attraction_address(self, location_id: int) -> dict[str, Any]:
+        return {}
 
 
 def _ub_card(location_id: int) -> dict[str, Any]:
@@ -1363,7 +1338,7 @@ async def test_produce_skips_already_synced_before_any_ta_call() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Município fallbacks C (distrito by TA cityName) and D (Places Text Search), and
+# Município fallbacks C (distrito by TA's page locality) and D (Places Text Search), and
 # the resolver-version skip of cards already quarantined as ibge_unmatched.
 # ---------------------------------------------------------------------------
 
@@ -1378,13 +1353,7 @@ def _go_client(card: dict[str, Any], city_name: str | None) -> FakeTripAdvisorCl
     return FakeTripAdvisorClient(
         gql_pages=[(0, [card])],
         geo_ids={"GO": _GEO_ID_GO},
-        fixture_geo={312332: {
-            "location_id": 312332,
-            "city_name": city_name,
-            "state_name": "State of Goias",
-            "city_geo_id": 2159104,
-            "state_geo_id": _GEO_ID_GO,
-        }},
+        fixture_address={312332: {"city_name": city_name, "state_name": "Goiás"}},
     )
 
 
@@ -1427,7 +1396,7 @@ async def _produce_go(card, city_name, *, places_agent=None, distritos=None):
 
 
 @pytest.mark.asyncio
-async def test_fallback_c_links_card_through_the_distrito_ta_named() -> None:
+async def test_fallback_c_links_card_through_the_distrito_the_ta_page_named() -> None:
     from brave.shared.ibge_distritos import IbgeDistrito
 
     sao_jorge = IbgeDistrito("520060525", "São Jorge", "5200605", "Alto Paraíso de Goiás", "GO")
@@ -1469,7 +1438,7 @@ async def test_fallback_d_places_links_card_and_hands_over_the_place_id() -> Non
 
 @pytest.mark.asyncio
 async def test_unmatched_quarantine_is_stamped_with_the_resolver_version() -> None:
-    """Every fallback ran with live clients (TA geo, distritos, Places) → current stamp."""
+    """Every fallback ran with live clients (TA page, distritos, Places) → current stamp."""
     from brave.domains.tripadvisor.atrativos import IBGE_RESOLVER_VERSION
     from brave.shared.ibge_distritos import IbgeDistrito
 
@@ -1562,6 +1531,171 @@ async def test_produce_skips_card_already_unmatched_under_the_current_resolver()
     assert "resolver_version" in poison_sql
 
 
+# ---------------------------------------------------------------------------
+# TA's own attraction page places the card before any name-only step
+# ---------------------------------------------------------------------------
+
+_BH = IbgeMunicipio("3106200", "Belo Horizonte", "MG", -19.9167, -43.9345)
+_PORTO_VELHO = IbgeMunicipio("1100205", "Porto Velho", "RO", -8.7612, -63.9004)
+_PIMENTA_BUENO = IbgeMunicipio("1100189", "Pimenta Bueno", "RO", -11.672, -61.198)
+_MERCADO_PAGE = {
+    "city_name": "Belo Horizonte", "state_name": "Minas Gerais",
+    "lat": -19.922617, "lng": -43.94297,
+    "address": "Avenida Augusto de Lima, 744, Belo Horizonte, 30190-922",
+    "phone": "+55 31 3274 9434", "website": "http://mercadocentral.com.br",
+}
+
+
+async def _produce_page(uf, card, *, page=None, records, address_error=None, geocoder=None,
+                        places_agent=None, run_rio=False, process=None, distritos=None):
+    from brave.config.settings import TripAdvisorConfig
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+    client = FakeTripAdvisorClient(
+        gql_pages=[(0, [card])], geo_ids={uf: 1},
+        fixture_address={card["locationId"]: page} if page else {},
+        address_error=address_error,
+        recent_review={"review_count": 100, "rating": None,
+                       "most_recent_review_at": datetime.now(UTC) - timedelta(days=3)},
+    )
+    with (
+        patch("brave.domains.tripadvisor.atrativos.store_raw") as store,
+        patch("brave.domains.tripadvisor.atrativos.quarantine_poison") as quarantine,
+        patch("brave.domains.tripadvisor.atrativos.process_nascente_record",
+              return_value=process),
+        patch("brave.domains.tripadvisor.atrativos.persist_normalized") as persist,
+        patch("brave.domains.tripadvisor.atrativos.TripAdvisorAtrativosIngest._ensure_destino",
+              return_value=(uuid.uuid4(), "ibge:destination:x")),
+    ):
+        store.return_value = MagicMock(id=uuid.uuid4())
+        ingest = TripAdvisorAtrativosIngest(
+            ta_client=client, session=MagicMock(), config=_make_config(),
+            ibge_records=records, ta_config=TripAdvisorConfig(page_throttle_seconds=0),
+            geocoder=geocoder, places_agent=places_agent, distritos=distritos,
+        )
+        await ingest.produce(uf, run_rio=run_rio, enrich_reviews=True)
+    return store, quarantine, persist
+
+
+@pytest.mark.asyncio
+async def test_ta_page_places_the_card_before_any_name_fallback() -> None:
+    geocoder = FakeGeocoderClient()
+    agent = _LocatingAgent(None)
+    store, quarantine, _ = await _produce_page(
+        "MG", _make_coordless_card("Mercado Central"), page=_MERCADO_PAGE,
+        records=[_BH, *_IBGE_RECORDS], geocoder=geocoder, places_agent=agent,
+    )
+
+    assert not quarantine.called
+    assert geocoder.geocode_calls == [] and agent.locate_calls == []
+    kwargs = store.call_args.kwargs
+    payload = kwargs["payload"]
+    assert payload["municipio_id"] == "3106200"
+    assert (payload["lat"], payload["lng"]) == (-19.922617, -43.94297)
+    assert payload["address"] == _MERCADO_PAGE["address"]
+    assert payload["phone"] == "+55 31 3274 9434"
+    assert payload["website"] == "http://mercadocentral.com.br"
+    # name, uf, location_id, lat, lng, rating, review_count, address, category.
+    assert payload["completude_value"] == 90.0
+    vias = [e["data"]["via"] for e in kwargs["timeline"] if e["stage"] == "geo_enriched"]
+    assert vias == ["ta_page"]
+
+
+@pytest.mark.asyncio
+async def test_ta_page_coords_contradicting_the_locality_are_dropped() -> None:
+    """Balneário Água Gelada (RO 10/2026): locality Porto Velho, point at Pimenta Bueno."""
+    page = {"city_name": "Porto Velho", "state_name": "Rondônia",
+            "lat": -11.652802, "lng": -61.19651}
+    store, _, _ = await _produce_page(
+        "RO", _make_coordless_card("Balneário Água Gelada"), page=page,
+        records=[_PORTO_VELHO, _PIMENTA_BUENO],
+    )
+
+    payload = store.call_args.kwargs["payload"]
+    assert payload["municipio_id"] == "1100205"
+    assert payload["lat"] is None and payload["lng"] is None
+
+
+@pytest.mark.asyncio
+async def test_ta_page_far_point_without_another_seat_is_kept() -> None:
+    """Fortaleza do Abunã: a Porto Velho distrito ~210 km from the seat, no other seat near."""
+    page = {"city_name": "Porto Velho", "state_name": "Rondônia",
+            "lat": -9.77477, "lng": -65.51704}
+    store, _, _ = await _produce_page(
+        "RO", _make_coordless_card("Praia De Fortaleza Do Abunã"), page=page,
+        records=[_PORTO_VELHO, _PIMENTA_BUENO],
+    )
+
+    payload = store.call_args.kwargs["payload"]
+    assert payload["municipio_id"] == "1100205"
+    assert (payload["lat"], payload["lng"]) == (-9.77477, -65.51704)
+
+
+@pytest.mark.asyncio
+async def test_nominatim_never_overwrites_the_ta_point() -> None:
+    # Locality TA names no IBGE seat; its point is ~25 km from BH (out of the name step's
+    # 15 km, inside Nominatim's 50 km).
+    page = {"city_name": "Lugar Nenhum", "state_name": "Minas Gerais", "lat": -20.14, "lng": -43.94}
+    geocoder = FakeGeocoderClient(fixture_results={"312332": {
+        "lat": -19.92, "lon": -43.94, "osm_id": 1, "municipio_name": "Belo Horizonte"}})
+    store, _, _ = await _produce_page(
+        "MG", _make_coordless_card("Mirante Sem Nome"), page=page, records=[_BH],
+        geocoder=geocoder,
+    )
+
+    payload = store.call_args.kwargs["payload"]
+    assert len(geocoder.geocode_calls) == 1
+    assert payload["municipio_id"] == "3106200"
+    assert (payload["lat"], payload["lng"]) == (-20.14, -43.94)
+
+
+class _RunRecordingAgent(_LocatingAgent):
+    def __init__(self) -> None:
+        super().__init__(None)
+        self.run_calls: list[Any] = []
+
+    async def run(self, rio: Any) -> None:
+        self.run_calls.append(rio)
+
+
+@pytest.mark.asyncio
+async def test_failed_ta_page_falls_back_without_marker_or_places() -> None:
+    from brave.shared.exceptions import SourceRecordError
+    from brave.shared.ibge_distritos import IbgeDistrito
+
+    card = _make_card()  # "Uberlândia": the name step still places it
+    rio = MagicMock(canonical_key="tripadvisor:attraction:312332", normalized={},
+                    id=uuid.uuid4())
+    agent = _RunRecordingAgent()
+    store, _, persist = await _produce_page(
+        "MG", card, records=_IBGE_RECORDS, address_error=SourceRecordError("no block"),
+        places_agent=agent, run_rio=True, process=rio,
+    )
+
+    assert store.call_args.kwargs["payload"]["municipio_id"] == _IBGE_CODE_UB
+    assert not persist.called  # no ta_backfilled_at: the backfill redoes the page
+    assert agent.run_calls == []  # placed by name: Places would pin a possibly wrong seat
+
+    # A card nothing places: the quarantine is retryable (the chain did not fully run).
+    _, quarantine, _ = await _produce_page(
+        "GO", _make_coordless_card("Jardim de Maytreia"), records=[_ALTO_PARAISO],
+        address_error=SourceRecordError("no block"), places_agent=_LocatingAgent(None),
+        distritos=[IbgeDistrito("520060525", "São Jorge", "5200605", "Alto Paraíso de Goiás",
+                                "GO")],
+    )
+    assert quarantine.call_args.kwargs["payload"]["resolver_version"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ta_page_session_error_stops_the_sweep() -> None:
+    from brave.domains.tripadvisor.client import SessionExpiredError
+
+    with pytest.raises(SessionExpiredError):
+        await _produce_page(
+            "MG", _make_card(), records=_IBGE_RECORDS, address_error=SessionExpiredError("x"),
+        )
+
+
 @pytest.fixture
 def tx_session(db_engine):
     from sqlalchemy.orm import Session
@@ -1578,9 +1712,9 @@ def tx_session(db_engine):
 
 
 @pytest.mark.integration
-def test_resolver_version_releases_the_v4_quarantines(tx_session) -> None:
-    """v5 (locality, coords, majority consensus): a card quarantined as ibge_unmatched under
-    v4 is retried; one stamped with the CURRENT version is skipped (it would fail the same)."""
+def test_resolver_version_releases_the_v5_quarantines(tx_session) -> None:
+    """v6 (TA's own attraction page first): a card quarantined as ibge_unmatched under v5 is
+    retried; one stamped with the CURRENT version is skipped (it would fail the same)."""
     from brave.core.models import PoisonQuarantine
     from brave.domains.tripadvisor.atrativos import (
         _IBGE_UNMATCHED_TASK,
@@ -1588,8 +1722,8 @@ def test_resolver_version_releases_the_v4_quarantines(tx_session) -> None:
         TripAdvisorAtrativosIngest,
     )
 
-    assert IBGE_RESOLVER_VERSION == 5
-    for location_id, version in (("990001", 4), ("990002", IBGE_RESOLVER_VERSION)):
+    assert IBGE_RESOLVER_VERSION == 6
+    for location_id, version in (("990001", 5), ("990002", IBGE_RESOLVER_VERSION)):
         tx_session.add(PoisonQuarantine(
             task_name=_IBGE_UNMATCHED_TASK,
             error_message="ibge_unmatched",

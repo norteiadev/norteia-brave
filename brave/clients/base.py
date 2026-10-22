@@ -340,6 +340,20 @@ class TripAdvisorClientProtocol(Protocol):
         ...
 
 
+    async def fetch_attraction_address(self, location_id: int) -> dict[str, Any]:
+        """TA's own address block for one attraction (LocalBusiness JSON-LD of its page).
+
+        Returns {city_name, state_name, lat, lng, address, phone, website} (any may be
+        None), or {} when TA has no such page or the address is not in Brazil.
+
+        Raises:
+            SessionMissingError / SessionExpiredError / SourceRateLimitError: run-level.
+            SourceRecordError: this card's page has no address block.
+            SourceSchemaError: a run of pages without it (TA dropped the block).
+        """
+        ...
+
+
 class GeocoderClientProtocol(Protocol):
     """OpenStreetMap Nominatim forward-geocoder (Phase 14, TA-14).
 

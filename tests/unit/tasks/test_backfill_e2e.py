@@ -95,9 +95,8 @@ def test_bulk_backfill_cap_pause_and_resume(tx_session):
     recent = datetime.now(UTC) - timedelta(days=4)
     ta = FakeTripAdvisorClient(
         gql_pages=[(0, cards)],
-        fixture_geo={i: {"location_id": i, "city_name": "Uberlandia",
-                         "state_name": "State of Minas Gerais", "city_geo_id": 1,
-                         "state_geo_id": 2} for i in ids},
+        fixture_address={i: {"city_name": "Uberlandia", "state_name": "Minas Gerais"}
+                         for i in ids},
         recent_review={"review_count": 40, "rating": None, "most_recent_review_at": recent},
     )
     rc = fakeredis.FakeRedis()
@@ -138,7 +137,7 @@ def test_bulk_backfill_cap_pause_and_resume(tx_session):
     assert in_flight.normalized.get("google_enriched") is not True
     assert not untouched.normalized.get("ta_backfilled_at")
     assert pending() == {in_flight.id, untouched.id}
-    ta_calls_before = len(ta.geo_calls)
+    ta_calls_before = len(ta.address_calls)
 
     # 3. Resume (new key / next day): only what is pending runs; the in-flight record
     # does NOT redo its TA calls.
@@ -150,4 +149,4 @@ def test_bulk_backfill_cap_pause_and_resume(tx_session):
 
     assert state["stop"] is None
     assert pending() == set()
-    assert len(ta.geo_calls) - ta_calls_before == 1  # only the untouched record
+    assert len(ta.address_calls) - ta_calls_before == 1  # only the untouched record

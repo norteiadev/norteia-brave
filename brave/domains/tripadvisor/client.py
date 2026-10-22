@@ -34,6 +34,7 @@ import asyncio
 import contextlib
 import json
 import re
+import ssl
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -41,6 +42,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
 
+import certifi
 import httpx
 import structlog
 
@@ -77,6 +79,14 @@ _TA_HTML_URL: str = (
     "https://www.tripadvisor.com/Attractions-g{geo_id}-Activities-"
     "a_allAttractions.true-oa{offset}-Brazil.html"
 )
+
+# Attraction detail page: g1 works for any attraction (TA redirects to the canonical URL).
+_TA_ATTRACTION_URL: str = (
+    "https://www.tripadvisor.com.br/Attraction_Review-g1-d{location_id}-Reviews.html"
+)
+_JSON_LD = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
+# Pages in a row without the LocalBusiness block → systemic (TA dropped it), not per-card.
+_PAGE_ERRORS_SYSTEMIC = 5
 
 # TripAdvisor caps its paginated listing at 10000 results (offset 9990 == page 334).
 # The page loop is clamped to this regardless of start_page + max_pages (LOW-3 fix).
@@ -150,6 +160,25 @@ def _graphql_errors(data: Any) -> list[str] | None:
     return [str(e.get("message") if isinstance(e, dict) else e) for e in errors]
 
 
+def _json_ld_blocks(html: str) -> list[Any]:
+    """Every parseable JSON-LD block of a page; a malformed one is skipped."""
+    blocks = []
+    for raw in _JSON_LD.findall(html):
+        with contextlib.suppress(ValueError):
+            blocks.append(json.loads(raw))
+    return blocks
+
+
+def _num(value: Any) -> float | None:
+    """A JSON-LD coordinate (number or numeric string) as float, else None."""
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value) if isinstance(value, int | float | str) else None
+    except ValueError:
+        return None
+
+
 class SessionExpiredError(SourceSessionError):
     """Raised when a request returns 403 (or a 429 carrying a DataDome captcha).
 
@@ -178,6 +207,18 @@ class SessionMissingError(SourceSessionError):
     """
 
 
+def _tls_context() -> ssl.SSLContext:
+    """httpx's TLS context (certifi) plus post-handshake auth, as Python's http.client sends.
+
+    DataDome 403s httpx's default ClientHello on TA's HTML pages from the Linux worker
+    (OpenSSL 3.5) while passing this one, with the same session (10/2026); GraphQL passes
+    either way.
+    """
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    ctx.post_handshake_auth = True
+    return ctx
+
+
 class TripAdvisorClient:
     """TripAdvisor GraphQL hybrid client (real implementation).
 
@@ -197,6 +238,7 @@ class TripAdvisorClient:
         self._redis = redis
         self._hc: httpx.AsyncClient | None = None
         self._review_errors_in_a_row = 0  # per-card reviews errors; a run of them is systemic
+        self._page_errors_in_a_row = 0  # attraction pages without the block; same rule
 
     # ------------------------------------------------------------------
     # Persistent HTTP client (opt-in: ``async with ta_client:`` around a sweep)
@@ -204,7 +246,7 @@ class TripAdvisorClient:
 
     async def __aenter__(self) -> TripAdvisorClient:
         self._hc = httpx.AsyncClient(
-            follow_redirects=True, proxy=self._config.proxy_url or None
+            follow_redirects=True, proxy=self._config.proxy_url or None, verify=_tls_context()
         )
         return self
 
@@ -226,7 +268,7 @@ class TripAdvisorClient:
         """
         if self._hc is None:
             async with httpx.AsyncClient(
-                cookies=cookies, follow_redirects=True, proxy=proxy
+                cookies=cookies, follow_redirects=True, proxy=proxy, verify=_tls_context()
             ) as hc:
                 yield hc
             return
@@ -850,6 +892,98 @@ class TripAdvisorClient:
             "state_name": loc_data.get("stateName"),
             "city_geo_id": city_geo_id,
             "state_geo_id": state_geo_id,
+        }
+
+    def _count_page_error(self) -> None:
+        """One more attraction page without the block; _PAGE_ERRORS_SYSTEMIC in a row is TA
+        changing every page, not one card: SourceSchemaError."""
+        self._page_errors_in_a_row += 1
+        if self._page_errors_in_a_row >= _PAGE_ERRORS_SYSTEMIC:
+            logger.error("ta.page.schema_error")
+            raise SourceSchemaError("TripAdvisor attraction pages lost their address block")
+
+    async def fetch_attraction_address(self, location_id: int) -> dict[str, Any]:
+        """TA's own address block for one attraction: the LocalBusiness JSON-LD of its page.
+
+        Returns {city_name, state_name, lat, lng, address, phone, website} (any may be None;
+        city_name/state_name = raw addressLocality/addressRegion, state_name_to_uf maps
+        them), or {} when TA has no such attraction page (404/410, redirect off
+        Attraction_Review — a removed listing lands on its city page) or the address is not
+        in Brazil: conclusive. A missing page still counts toward the streak below (TA
+        dropping the g1 shortcut would 404 or redirect EVERY card, and {} stamps
+        ta_backfilled_at — C1); only a page with the block resets it.
+        LGPD: only these keys are read; aggregateRating/reviews/reviewer data never touched
+        or logged.
+        Raises: TypeError (non-int id, before any GET), SessionMissingError,
+        SessionExpiredError (403/DataDome 429 via _send, or a 200 captcha page),
+        SourceRateLimitError, SourceRecordError (an attraction page without the block —
+        this card), SourceSchemaError (_PAGE_ERRORS_SYSTEMIC pages without the block in a
+        row, missing pages included).
+        """
+        # SSRF guard: the URL is a fixed template + an int id. bool is an int subclass.
+        if not isinstance(location_id, int) or isinstance(location_id, bool):
+            raise TypeError(
+                f"location_id must be an int (SSRF guard); got {type(location_id).__name__}"
+            )
+        session = self._get_session()
+        cookies = session.get("cookies", {})
+        user_agent = session.get("user_agent", "")
+        # Browser-like Accept headers: DataDome 403s a UA-only GET of an HTML page.
+        headers: dict[str, str] = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": _TA_ACCEPT_LANGUAGE,
+        }
+        if user_agent:
+            headers["User-Agent"] = user_agent
+        proxy = self._config.proxy_url or None
+        url = _TA_ATTRACTION_URL.format(location_id=location_id)
+        try:
+            resp = await self._send("get", url, cookies, proxy, "attraction page", headers=headers)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (404, 410):
+                self._count_page_error()
+                return {}
+            raise
+        ld = next(
+            (b for b in _json_ld_blocks(resp.text)
+             if isinstance(b, dict) and b.get("@type") == "LocalBusiness"),
+            None,
+        )
+        if ld is None:
+            if "captcha-delivery.com" in resp.text:
+                raise SessionExpiredError("TripAdvisor attraction page answered a captcha")
+            self._count_page_error()
+            if "Attraction_Review" not in str(resp.url):
+                return {}
+            logger.warning("ta.page.record_error", location_id=location_id)
+            raise SourceRecordError(f"TripAdvisor page of location {location_id} has no address")
+        self._page_errors_in_a_row = 0
+        addr = ld["address"] if isinstance(ld.get("address"), dict) else {}
+        geo = ld["geo"] if isinstance(ld.get("geo"), dict) else {}
+        if addr.get("addressCountry") and addr["addressCountry"] != "BR":
+            return {}
+        street = (addr.get("streetAddress") or "").strip()
+        address = (
+            ", ".join(p for p in (street, addr.get("addressLocality"), addr.get("postalCode")) if p)
+            if street
+            else None
+        )
+        phone = ld.get("telephone")
+        same_as = ld.get("sameAs")
+        website = None
+        if isinstance(same_as, str):
+            if same_as.startswith("http"):
+                website = same_as
+            elif same_as.startswith("www."):
+                website = f"https://{same_as}"
+        return {
+            "city_name": addr.get("addressLocality"),
+            "state_name": addr.get("addressRegion"),
+            "lat": _num(geo.get("latitude")),
+            "lng": _num(geo.get("longitude")),
+            "address": address,
+            "phone": phone if isinstance(phone, str) and phone else None,
+            "website": website,
         }
 
     async def fetch_attractions_paginated(

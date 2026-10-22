@@ -244,6 +244,10 @@ def _build_normalized(nascente: NascenteRecord) -> dict[str, Any]:
         # TA atrativo publish as type='outros'.
         if payload.get("category"):
             normalized["category"] = payload["category"]
+        # TA's contact floor (its attraction page); Places/Apify overwrite it when they have one.
+        for key in ("phone", "website"):
+            if payload.get(key):
+                normalized[key] = payload[key]
 
     # Destination-specific: the MTur flags ensure_destino writes into canonical. Presence,
     # not truthiness — an explicit False must reach the push too (build_push_payload reads
