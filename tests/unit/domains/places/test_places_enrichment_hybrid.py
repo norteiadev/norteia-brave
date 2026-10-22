@@ -491,3 +491,58 @@ def test_steward_reenrich_uses_the_hybrid_from_the_clients_bag(monkeypatch) -> N
 
     assert apify.lookup_calls == [{"queries": [f"place_id:{PID}"], "max_reviews": 1}]
     assert rio.normalized["google_place_id"] == PID and rio.normalized["weekday_text"]
+
+
+# -- near pick: Google's own name for the same building ---------------------------------
+
+
+def _palacio_agent():
+    """Apify names the pick "Palácio Presidente Vargas" (score 78 against TA's name)."""
+    return _agent(
+        {Q: _apify(title="Palácio Presidente Vargas")},
+        ids={"Palácio Getúlio Vargas, Vila Velha - ES": [PID]},
+    )
+
+
+@pytest.mark.asyncio
+async def test_near_pick_passes_at_a_lower_name_score() -> None:
+    agent, _, _ = _palacio_agent()
+    rio = _rio(name="Palácio Getúlio Vargas")  # TA's point ~150 m from Google's
+    await _run(agent, rio)
+
+    assert rio.normalized["google_place_id"] == PID
+
+
+@pytest.mark.asyncio
+async def test_pick_beyond_the_near_radius_keeps_the_full_name_score() -> None:
+    agent, _, _ = _palacio_agent()
+    rio = _rio(name="Palácio Getúlio Vargas", lat=_TA_LAT - 0.011)  # ~1.3 km: inside the pick
+    await _run(agent, rio)
+
+    assert rio.normalized["google_enriched"] is True
+    assert "place_id_cache" not in rio.normalized
+
+
+@pytest.mark.asyncio
+async def test_near_rule_never_measures_from_the_seat() -> None:
+    from brave.core.models import Municipio
+
+    agent, _, _ = _palacio_agent()
+    loc = _essentials()["location"]  # the seat sits right on Google's point
+    agent._session.get.return_value = Municipio(
+        ibge_code="3205200", nome="Vila Velha", uf="ES", lat=loc["lat"], lng=loc["lng"]
+    )
+    rio = _rio(name="Palácio Getúlio Vargas", lat=None, lon=None)
+    await _run(agent, rio)
+
+    assert "place_id_cache" not in rio.normalized
+
+
+def test_google_mode_best_match_keeps_the_full_name_score() -> None:
+    from brave.domains.places.places_enrichment import _best_match
+
+    result = {"name": "Palácio Presidente Vargas", "types": ["museum"],
+              "location": {"lat": _TA_LAT, "lng": _TA_LNG}}
+    assert _best_match([result], "Palácio Getúlio Vargas", _TA_LAT, _TA_LNG, 20.0) is None
+    assert _best_match([result], "Palácio Getúlio Vargas", _TA_LAT, _TA_LNG, 20.0,
+                       near_km=0.5) is result

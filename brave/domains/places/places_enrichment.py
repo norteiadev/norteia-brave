@@ -151,6 +151,13 @@ _SEAT_RADIUS_KM: float = 80.0
 # (89 cards): 1 km 51 matches, 2 km 60, 5 km 67 (more same-name businesses).
 _PICK_RADIUS_KM: float = 2.0
 
+# Hybrid: a pick within _NEAR_KM of the record's own point passes at a lower name score —
+# Google often names the same building differently (RO 10/2026, all ≤0.4 km: Palácio Getúlio
+# Vargas = "Palácio Presidente Vargas" 78, Museu da EFMM = "Complexo Madeira-Mamoré" 76,
+# Arquidiocese 83). The wrong picks there scored ≤64.
+_NEAR_KM: float = 0.5
+_NEAR_NAME_MATCH_THRESHOLD: int = 75
+
 # Radius from a Text Search result's own coords to the nearest município seat of the UF, for
 # a result whose addressComponents name no município (AL 10/2026: "Farol - Ponta Verde"
 # came with only the state). Same radius the TA ingest gives a Nominatim point.
@@ -334,6 +341,7 @@ def _best_match(
     target_lng: float | None,
     max_distance_km: float,
     category: Any = None,
+    near_km: float = 0.0,
 ) -> dict[str, Any] | None:
     """Pick the Text Search result that confidently IS the target atrativo.
 
@@ -364,7 +372,15 @@ def _best_match(
             continue  # município/bairro/sublocalidade — carries none of the fields we want
         name = r.get("name") or ""
         score = fuzz.token_set_ratio(folded_target, _normalize_name(name))
-        if score < _NAME_MATCH_THRESHOLD:
+        loc = r.get("location") or {}
+        rlat, rlng = loc.get("lat"), loc.get("lng")
+        dist = (
+            _haversine_km(target_lat, target_lng, rlat, rlng)
+            if have_target_coords and rlat is not None and rlng is not None
+            else None
+        )
+        near = near_km > 0 and dist is not None and dist <= near_km
+        if score < (_NEAR_NAME_MATCH_THRESHOLD if near else _NAME_MATCH_THRESHOLD):
             continue
         # No target coords → no distance guard, and a name alone matched a church in Vitória
         # for one in Pirenópolis, and the river "Rio Preto" for "Cachoeira Saltos do Rio
@@ -373,14 +389,7 @@ def _best_match(
         # already dropped places Google puts in another UF, with or without coords here).
         if not have_target_coords and r.get("municipio_ibge") == "":
             continue
-        loc = r.get("location") or {}
-        rlat, rlng = loc.get("lat"), loc.get("lng")
-        if (
-            have_target_coords
-            and rlat is not None
-            and rlng is not None
-            and _haversine_km(target_lat, target_lng, rlat, rlng) > max_distance_km
-        ):
+        if dist is not None and dist > max_distance_km:
             continue  # right name, wrong place (different city)
         passers.append((score, r))
     if not passers:
@@ -854,6 +863,7 @@ class PlacesEnrichmentAgent:
                 if not place_id and nome:
                     ref_lat, ref_lng, radius, pick = self._reference(lat, lng, municipio_ibge)
                     search = getattr(self._places_client, "search", None)
+                    near_km = 0.0
                     if consensus is not None and consensus[0] == (normalize_name(nome), uf):
                         results = consensus[1]
                     elif search is not None:
@@ -868,10 +878,13 @@ class PlacesEnrichmentAgent:
                             nome, municipio, uf, lat=ref_lat, lng=ref_lng, radius_km=pick,
                             include_reviews=include_reviews,
                         )
+                        if lat is not None and lng is not None:  # its own point, not a seat
+                            near_km = _NEAR_KM
                     else:
                         results = await self._places_client.text_search(nome, uf)
                     match = _best_match(
-                        results, nome, ref_lat, ref_lng, radius, normalized.get("category")
+                        results, nome, ref_lat, ref_lng, radius, normalized.get("category"),
+                        near_km=near_km,
                     )
                     if match is not None:
                         place_id = match.get("place_id") or ""
