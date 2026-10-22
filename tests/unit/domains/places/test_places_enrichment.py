@@ -1589,6 +1589,19 @@ async def test_locate_consensus_by_two_thirds_majority() -> None:
         "consensus": True,
     }
 
+    # A batching client defers run() to the lot: the slot would reach another card's run().
+    class Batching(FakePlacesClient):
+        async def prefetch(self, items):
+            pass
+
+    agent = PlacesEnrichmentAgent(
+        places_client=Batching(fixture_results={"Praia de Pratagi": results}),
+        session=_make_session(),
+        config=ScoreConfig(),
+    )
+    assert (await agent.locate("Praia de Pratagi", "AL"))["consensus"] is True
+    assert agent._consensus_search is None
+
     # Below 2/3 (2 of 4) → still no verdict.
     split = [res("A", "2704302"), res("B", "2704302"), res("C", "2706901"), res("D", "2700300")]
     agent = PlacesEnrichmentAgent(

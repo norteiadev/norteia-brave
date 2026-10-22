@@ -128,6 +128,41 @@ def test_real_places_gets_the_cost_guard_wired(real_env, monkeypatch):
     assert built["api_key"] == "k"
 
 
+def test_default_provider_builds_plain_google(real_env, monkeypatch):
+    monkeypatch.setenv("BRAVE_PLACES_API_KEY", "k")
+    from brave.clients.places import RealPlacesClient
+
+    assert AppConfig().places_provider == "google"
+    assert type(clients_for(_cfg(run_real_externals=True)).places) is RealPlacesClient
+
+
+def test_hybrid_provider_wraps_google_and_apify(real_env, monkeypatch):
+    from brave.clients.apify_places import RealApifyPlacesClient
+    from brave.clients.hybrid_places import HybridPlacesClient
+    from brave.clients.places import RealPlacesClient
+
+    monkeypatch.setenv("BRAVE_PLACES_API_KEY", "k")
+    monkeypatch.setenv("BRAVE_APIFY_API_KEY", "apify-k")
+    places = clients_for(
+        _cfg(
+            run_real_externals=True, places_provider="hybrid", apify_max_reviews=2,
+            apify_daily_usd_cap=1.0, apify_total_usd_cap=3.0,
+        )
+    ).places
+
+    assert isinstance(places, HybridPlacesClient)
+    assert isinstance(places._google, RealPlacesClient)
+    assert isinstance(places._apify, RealApifyPlacesClient)
+    assert places._max_reviews == 2
+
+
+def test_hybrid_provider_without_apify_token_raises(real_env, monkeypatch):
+    monkeypatch.setenv("BRAVE_PLACES_API_KEY", "k")
+    monkeypatch.delenv("BRAVE_APIFY_API_KEY", raising=False)
+    with pytest.raises(RuntimeError):
+        _ = clients_for(_cfg(run_real_externals=True, places_provider="hybrid")).places
+
+
 def test_places_key_env_override(real_env, monkeypatch):
     built = {}
     monkeypatch.setenv("BRAVE_PLACES_API_KEY", "main")

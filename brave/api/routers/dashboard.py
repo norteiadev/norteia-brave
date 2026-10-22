@@ -36,6 +36,8 @@ from brave.core.models import (
     RioRecord,
 )
 from brave.observability.cost_guard import (
+    apify_daily_spend,
+    apify_total_spend,
     daily_spend,
     places_key_id,
     places_lane,
@@ -251,6 +253,17 @@ def _places_cost(redis: Redis) -> dict:
     }
 
 
+def _apify_cost(redis: Redis) -> dict:
+    """Apify spend (places_provider="hybrid") — today (UTC), since first use, and both caps."""
+    cfg = AppConfig()
+    return {
+        "usd_today": apify_daily_spend(redis),
+        "daily_cap_usd": cfg.apify_daily_usd_cap,
+        "usd_total": apify_total_spend(redis),
+        "total_cap_usd": cfg.apify_total_usd_cap,
+    }
+
+
 @router.get("/api/v1/cost", dependencies=[Depends(require_bearer)])
 def get_cost(
     group_by: str = Query("lane"),
@@ -261,8 +274,9 @@ def get_cost(
     """Return LLM spend aggregated by lane or model over llm_generations (DASH-04, D-01).
 
     Plus ``places``: the current Places API key's spend — today (UTC) and since its first
-    use — from its Redis cost-guard counters, and the caps they are checked against. Places writes no llm_generations rows, so it is not in
-    ``rows`` and ``since`` does not apply to it.
+    use — from its Redis cost-guard counters, and the caps they are checked against; ``apify``
+    the same for the hybrid provider's Apify runs. Neither writes llm_generations rows, so neither is
+    in ``rows`` and ``since`` does not apply to them.
 
     A straight GROUP BY — no pipeline logic, no writes (D-01). For each group it
     returns the summed USD cost, the summed token usage (prompt + completion), and
@@ -294,6 +308,7 @@ def get_cost(
     return {
         "group_by": group_by,
         "places": _places_cost(redis),
+        "apify": _apify_cost(redis),
         "rows": [
             {
                 "key": key,

@@ -17,6 +17,10 @@ from typing import Any
 from brave.clients.base import PlacesClientProtocol
 
 
+class NotFound(Exception):  # noqa: N818 — named like google.api_core's, which run() matches
+    """What Google raises for a retired place id (the agent matches the class name)."""
+
+
 class FakePlacesClient:
     """Fake Google Places client that returns pre-configured fixture results.
 
@@ -29,6 +33,9 @@ class FakePlacesClient:
         self,
         fixture_results: dict[str, list[dict[str, Any]]] | None = None,
         fixture_details: dict[str, dict[str, Any]] | None = None,
+        fixture_essentials: dict[str, dict[str, Any]] | None = None,
+        fixture_ids: dict[str, list[str]] | None = None,
+        search_ids_error: BaseException | None = None,
     ) -> None:
         """Initialize with optional fixture data.
 
@@ -37,6 +44,9 @@ class FakePlacesClient:
                              Returned by text_search().
             fixture_details: Dict mapping place_id → place detail dict.
                              Returned by place_details().
+            fixture_essentials: Dict mapping place_id → place_essentials() dict.
+            fixture_ids: Dict mapping query string → place ids. Returned by search_ids().
+            search_ids_error: Raised by search_ids() when set.
         """
         self._fixture_results = fixture_results or {}
         self._fixture_details = fixture_details or {}
@@ -44,6 +54,11 @@ class FakePlacesClient:
         self.place_details_calls: list[str] = []
         # include_reviews flag of each place_details call (parallel to place_details_calls)
         self.place_details_include_reviews: list[bool] = []
+        self._fixture_essentials = fixture_essentials or {}
+        self.place_essentials_calls: list[dict[str, Any]] = []
+        self._fixture_ids = fixture_ids or {}
+        self.search_ids_error = search_ids_error
+        self.search_ids_calls: list[dict[str, Any]] = []
 
     async def text_search(self, query: str, uf: str) -> list[dict[str, Any]]:
         """Return fixture results for the given query.
@@ -77,6 +92,24 @@ class FakePlacesClient:
         if not include_reviews and details:
             return {**details, "reviews": []}
         return details
+
+    async def search_ids(
+        self, query: str, *, lat: float, lng: float, radius_m: float, max_results: int = 5
+    ) -> list[str]:
+        """Return the fixture ids for ``query`` (the free IDs-only Text Search)."""
+        self.search_ids_calls.append(
+            {"query": query, "lat": lat, "lng": lng, "radius_m": radius_m}
+        )
+        if self.search_ids_error is not None:
+            raise self.search_ids_error
+        return self._fixture_ids.get(query, [])[:max_results]
+
+    async def place_essentials(self, place_id: str, uf: str) -> dict[str, Any]:
+        """Return the fixture essentials for place_id; NotFound (a retired id) otherwise."""
+        self.place_essentials_calls.append({"place_id": place_id, "uf": uf})
+        if place_id not in self._fixture_essentials:
+            raise NotFound(f"place {place_id} not found")
+        return self._fixture_essentials[place_id]
 
 
 # Structural type check: FakePlacesClient must satisfy PlacesClientProtocol

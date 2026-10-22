@@ -37,6 +37,7 @@ D-18 boundary: no imports from other domains or brave.tasks.
 
 from __future__ import annotations
 
+import inspect
 import math
 import uuid
 from collections import Counter
@@ -49,6 +50,7 @@ from rapidfuzz import fuzz
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from brave.clients.hybrid_places import ApifyBatchFailedError, ApifyNoResultError
 from brave.clients.null_places import NullPlacesClient
 from brave.clients.places import (
     USD_DETAILS_ENTERPRISE,
@@ -144,6 +146,18 @@ _GEOGRAPHIC_TYPE_MARKER: str = "political"
 # 60+ km from São João d'Aliança's) and border parks sit in the next município (Terra
 # Ronca, ~40 km); the same-name mismatches it must reject were all 190+ km away.
 _SEAT_RADIUS_KM: float = 80.0
+
+# The hybrid picks within the same radius _best_match then checks: TA's own pin is often off
+# by kilometres (RO 10/2026: a 2 km pick missed 11 places Google mode matched, 2.9-20 km from
+# TA's point — Casa de Rondon 3.7, Parque Natural de Porto Velho 6.8); the name check
+# validates the pick.
+
+# Hybrid: a pick within _NEAR_KM of the record's own point passes at a lower name score —
+# Google often names the same building differently (RO 10/2026, all ≤0.4 km: Palácio Getúlio
+# Vargas = "Palácio Presidente Vargas" 78, Museu da EFMM = "Complexo Madeira-Mamoré" 76,
+# Arquidiocese 83). The wrong picks there scored ≤64.
+_NEAR_KM: float = 0.5
+_NEAR_NAME_MATCH_THRESHOLD: int = 75
 
 # Radius from a Text Search result's own coords to the nearest município seat of the UF, for
 # a result whose addressComponents name no município (AL 10/2026: "Farol - Ponta Verde"
@@ -277,12 +291,23 @@ def _business_type(t: str) -> bool:
     return t in _NOT_ATRATIVO_PRIMARY_TYPES or t.endswith(_BUSINESS_SUFFIXES)
 
 
+def _is_mall(details: dict[str, Any]) -> bool:
+    """Operator: malls are never atrativos, park or not. Hybrid details carry no primaryType
+    (a Pro field; Essentials only), so there the Essentials ``types`` say it."""
+    if details.get("primary_type") == "shopping_mall":
+        return True
+    return details.get("provider") == "hybrid" and "shopping_mall" in (details.get("types") or ())
+
+
 def _google_not_atrativo(details: dict[str, Any]) -> bool:
     """Google says this is a business, not an atrativo: a non-place primaryType and no place
-    type among ``types``. No primaryType (Google left it unset) → not judged here."""
-    primary = details.get("primary_type") or ""
-    if primary == "shopping_mall":  # operator: malls are never atrativos, park or not
+    type among ``types``. No primaryType (Google left it unset) → not judged here, except on
+    hybrid details, which never carry one: judged on ``types`` like a Text Search result."""
+    if _is_mall(details):
         return True
+    if details.get("provider") == "hybrid":
+        return _result_is_business(details)
+    primary = details.get("primary_type") or ""
     business = _business_type(primary)
     return business and not _PLACE_TYPES.intersection(details.get("types") or ())
 
@@ -317,6 +342,7 @@ def _best_match(
     target_lng: float | None,
     max_distance_km: float,
     category: Any = None,
+    near_km: float = 0.0,
 ) -> dict[str, Any] | None:
     """Pick the Text Search result that confidently IS the target atrativo.
 
@@ -347,7 +373,15 @@ def _best_match(
             continue  # município/bairro/sublocalidade — carries none of the fields we want
         name = r.get("name") or ""
         score = fuzz.token_set_ratio(folded_target, _normalize_name(name))
-        if score < _NAME_MATCH_THRESHOLD:
+        loc = r.get("location") or {}
+        rlat, rlng = loc.get("lat"), loc.get("lng")
+        dist = (
+            _haversine_km(target_lat, target_lng, rlat, rlng)
+            if have_target_coords and rlat is not None and rlng is not None
+            else None
+        )
+        near = near_km > 0 and dist is not None and dist <= near_km
+        if score < (_NEAR_NAME_MATCH_THRESHOLD if near else _NAME_MATCH_THRESHOLD):
             continue
         # No target coords → no distance guard, and a name alone matched a church in Vitória
         # for one in Pirenópolis, and the river "Rio Preto" for "Cachoeira Saltos do Rio
@@ -356,14 +390,7 @@ def _best_match(
         # already dropped places Google puts in another UF, with or without coords here).
         if not have_target_coords and r.get("municipio_ibge") == "":
             continue
-        loc = r.get("location") or {}
-        rlat, rlng = loc.get("lat"), loc.get("lng")
-        if (
-            have_target_coords
-            and rlat is not None
-            and rlng is not None
-            and _haversine_km(target_lat, target_lng, rlat, rlng) > max_distance_km
-        ):
+        if dist is not None and dist > max_distance_km:
             continue  # right name, wrong place (different city)
         passers.append((score, r))
     if not passers:
@@ -378,6 +405,15 @@ def _best_match(
         if places:
             best = max(places, key=lambda p: p[0])[1]
     return best
+
+
+def _places_done(normalized: dict[str, Any], refresh: bool) -> bool:
+    """run()'s Step 1: the PAID Places sub-step already ran (marker, or the cross-lane
+    SignalAgent paid the Details: place_id_cache + weekday_text). ``refresh`` re-runs it."""
+    return not refresh and bool(
+        normalized.get("google_enriched")
+        or (normalized.get("place_id_cache") and normalized.get("weekday_text"))
+    )
 
 
 def ta_unplaced(rio: RioRecord) -> bool:
@@ -527,7 +563,10 @@ class PlacesEnrichmentAgent:
         ):
             # Keyed on the ingest's normalize_name: run() reads the Rio's normalized name
             # (title-cased), locate() gets the raw TA card name ("Cachoeira do Abismo").
-            self._consensus_search = ((normalize_name(nome), uf), results)
+            # Not when the client batches: run() is deferred to the lot, after later
+            # locate()s, and its pick is prefetched — the slot would reach the wrong run().
+            if not self.prefetches:
+                self._consensus_search = ((normalize_name(nome), uf), results)
             return {"municipio_ibge": counts[0][0], "consensus": True}
         return None
 
@@ -573,6 +612,75 @@ class PlacesEnrichmentAgent:
                     r = {**r, "municipio_ibge": seat.ibge_code if near else ""}
             out.append(r)
         return out
+
+    @property
+    def prefetches(self) -> bool:
+        """The client batches lookups (the hybrid: an Apify run costs ~60 s FIXED, so a page
+        or lot goes in one run). Class-level check: a MagicMock client never qualifies."""
+        client = self._places_client
+        return not isinstance(client, NullPlacesClient) and inspect.iscoroutinefunction(
+            getattr(type(client), "prefetch", None)
+        )
+
+    def _reference(
+        self, lat: float | None, lng: float | None, municipio_ibge: str | None
+    ) -> tuple[float | None, float | None, float]:
+        """(lat, lng, radius) a lookup — and the hybrid's pick — measures from: the record's
+        own point at max_distance_km, else its município seat at _SEAT_RADIUS_KM — otherwise
+        a same-name place anywhere in the UF wins (Luziânia's Igreja N. S. do Rosário took
+        the one in Flores de Goiás, ~190 km away). (None, None, …) when neither."""
+        if lat is not None and lng is not None:
+            return lat, lng, self._max_distance_km
+        seat = self._session.get(Municipio, municipio_ibge) if municipio_ibge else None
+        if isinstance(seat, Municipio):
+            return seat.lat, seat.lng, max(self._max_distance_km, _SEAT_RADIUS_KM)
+        return None, None, self._max_distance_km
+
+    def _prefetch_item(self, rio: RioRecord, refresh: bool) -> dict[str, Any] | None:
+        """The lookup run() will make for ``rio`` (same skips, same reference), or None."""
+        normalized = rio.normalized or {}
+        if ta_unplaced(rio) or _places_done(normalized, refresh):
+            return None
+        include_reviews = float(normalized.get("atualidade_value") or 0.0) < 100.0
+        if normalized.get("place_id_cache"):
+            return {"place_id": normalized["place_id_cache"], "include_reviews": include_reviews}
+        if not normalized.get("name"):
+            return None
+        ref_lat, ref_lng, radius = self._reference(
+            normalized.get("lat"), normalized.get("lon"), normalized.get("municipio_id")
+        )
+        if ref_lat is None:
+            return None  # run() will not search it either
+        return {
+            "nome": normalized["name"],
+            "municipio": normalized.get("municipio") or "",
+            "uf": rio.uf or normalized.get("uf") or "",
+            "lat": ref_lat,
+            "lng": ref_lng,
+            "radius_km": radius,
+            "include_reviews": include_reviews,
+        }
+
+    def prefetch_items(self, rios: Any, *, refresh: bool = False) -> list[dict[str, Any]]:
+        """The lookups run() will make for ``rios`` (same skips, same reference). Reads the
+        session (município seats): call it BEFORE closing the transaction the batched run
+        must not hold."""
+        if not self.prefetches:
+            return []
+        return [i for i in (self._prefetch_item(r, refresh) for r in rios) if i is not None]
+
+    async def prefetch(self, items: list[dict[str, Any]]) -> None:
+        """One batched lookup for ``items``. Never raises but _PROPAGATE: after a failed
+        prefetch run() keeps each record's TA floor (ApifyBatchFailedError) and a later lot
+        retries it."""
+        if not items:
+            return
+        try:
+            await self._places_client.prefetch(items)  # type: ignore[attr-defined]
+        except _PROPAGATE:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("places_prefetch_failed", items=len(items), error=type(exc).__name__)
 
     def wants_description(self, rio: RioRecord, normalized: dict[str, Any] | None = None) -> bool:
         """The description sub-step's gate. Reads ``rio`` only — no I/O, no writes.
@@ -682,10 +790,7 @@ class PlacesEnrichmentAgent:
         # empty → the copywriter grounds on web_search alone). wants_description
         # mirrors the description sub-step's own condition below.
         normalized = rio.normalized or {}
-        places_done = not refresh and bool(
-            normalized.get("google_enriched")
-            or (normalized.get("place_id_cache") and normalized.get("weekday_text"))
-        )
+        places_done = _places_done(normalized, refresh)
         attempts = int(normalized.get("descricao_attempts") or 0)
         wants_description = self.wants_description(rio)
         # Exhausted budget is SILENT otherwise (the record just stops getting descriptions,
@@ -755,23 +860,30 @@ class PlacesEnrichmentAgent:
                     # Details would leave a Text Search paid for nothing (paid again on resume).
                     check_budget(USD_TEXT_SEARCH_PRO + details_usd)
                 if not place_id and nome:
-                    results = (
-                        consensus[1]
-                        if consensus is not None and consensus[0] == (normalize_name(nome), uf)
-                        else await self._places_client.text_search(nome, uf)
-                    )
-                    ref_lat, ref_lng, radius = lat, lng, self._max_distance_km
-                    if (lat is None or lng is None) and municipio_ibge:
-                        # No coords of its own: measure from the município seat instead,
-                        # wider (see _SEAT_RADIUS_KM) — otherwise a same-name place anywhere
-                        # in the UF wins (Luziânia's Igreja N. S. do Rosário took the one
-                        # in Flores de Goiás, ~190 km away).
-                        seat = self._session.get(Municipio, municipio_ibge)
-                        if isinstance(seat, Municipio):
-                            ref_lat, ref_lng = seat.lat, seat.lng
-                            radius = max(radius, _SEAT_RADIUS_KM)
+                    ref_lat, ref_lng, radius = self._reference(lat, lng, municipio_ibge)
+                    search = getattr(self._places_client, "search", None)
+                    near_km = 0.0
+                    if consensus is not None and consensus[0] == (normalize_name(nome), uf):
+                        results = consensus[1]
+                    elif search is not None:
+                        # Hybrid: Google picks the place around the reference and Apify names
+                        # it; the _best_match below is the validation. No match is
+                        # conclusive — never a fallback to the Text Search Pro.
+                        if ref_lat is None:
+                            # Nothing to pick around (no point, no seat): no answer — no
+                            # marker, retried later.
+                            raise LookupError("hybrid: no reference point")
+                        results = await search(
+                            nome, municipio, uf, lat=ref_lat, lng=ref_lng, radius_km=radius,
+                            include_reviews=include_reviews,
+                        )
+                        if lat is not None and lng is not None:  # its own point, not a seat
+                            near_km = _NEAR_KM
+                    else:
+                        results = await self._places_client.text_search(nome, uf)
                     match = _best_match(
-                        results, nome, ref_lat, ref_lng, radius, normalized.get("category")
+                        results, nome, ref_lat, ref_lng, radius, normalized.get("category"),
+                        near_km=near_km,
                     )
                     if match is not None:
                         place_id = match.get("place_id") or ""
@@ -792,8 +904,16 @@ class PlacesEnrichmentAgent:
             except _PROPAGATE:
                 raise
             except Exception as exc:  # noqa: BLE001 — Places failure keeps the TA floor
+                if refresh and isinstance(exc, ApifyBatchFailedError):
+                    # Nothing was asked for this record: raise so refresh_places rolls it
+                    # back unstamped (still due) instead of skipping it for 60-90 days.
+                    raise
                 logger.warning("places_enrich_failed_kept_floor", rio_id=str(rio.id))
                 details = {}
+                if isinstance(exc, ApifyNoResultError):
+                    # Apify answered and cannot open this id's listing: conclusive, like a
+                    # Google no-match — else every backfill pass re-pays it, forever.
+                    places_consulted = True
                 if "NotFound" in type(exc).__name__ and normalized.get("place_id_cache"):
                     # Google retired the cached id: clear it (persist_normalized merges, so
                     # None, not pop) so the next pass re-resolves by Text Search instead of
@@ -820,7 +940,7 @@ class PlacesEnrichmentAgent:
             accepted = (
                 bool(place_id)
                 and normalized.get(GOOGLE_TIPO_ACEITO_KEY) == place_id
-                and details.get("primary_type") != "shopping_mall"
+                and not _is_mall(details)
             )
             if closed or (_google_not_atrativo(details) and not accepted):
                 # A business match on a card TA files as a place to visit (Praias, Museus…)
@@ -828,15 +948,15 @@ class PlacesEnrichmentAgent:
                 # of its data is written. Malls stay out regardless (operator rule). Closed:
                 # the same for a business match, and for a natural place, which never closes.
                 category = normalized.get("category")
-                primary = details.get("primary_type") or ""
+                mall = _is_mall(details)
                 if closed:
-                    review = primary != "shopping_mall" and (
+                    review = not mall and (
                         _ta_nature_category(category)
                         or (_ta_attraction_category(category) and _google_not_atrativo(details))
                     )
                     reason = GOOGLE_FECHADO_REVISAO_REASON if review else "closed_place"
                 else:
-                    review = primary != "shopping_mall" and _ta_attraction_category(category)
+                    review = not mall and _ta_attraction_category(category)
                     reason = GOOGLE_TIPO_NEGOCIO_REASON if review else "nao_atrativo"
                 new_normalized["google_enriched"] = True
                 if review:
@@ -857,6 +977,12 @@ class PlacesEnrichmentAgent:
                     "place_name": details.get("name") or None,
                     "place_address": details.get("formatted_address") or None,
                 }
+                # What the Log says Google filed it as: hybrid details have no primaryType.
+                kind = cause["primary_type"] or next(
+                    (t for t in details.get("types") or () if t == "shopping_mall"
+                     or _business_type(t)),
+                    None,
+                )
                 write_audit(
                     session=self._session,
                     action="places_hard_descarte",
@@ -880,10 +1006,10 @@ class PlacesEnrichmentAgent:
                             f"Google Places marca como {_CLOSED_LABELS.get(business_status, business_status)}"
                             + (f", mas o TripAdvisor diz {category} — revisão humana" if review else "")
                             if closed
-                            else f"Google Places classifica como {cause['primary_type']}, mas o "
+                            else f"Google Places classifica como {kind}, mas o "
                             f"TripAdvisor diz {normalized.get('category')} — revisão humana"
                             if review
-                            else f"Google Places classifica como {cause['primary_type']}, não é atrativo"
+                            else f"Google Places classifica como {kind}, não é atrativo"
                         )
                         + (f" ({cause['place_name']})" if cause["place_name"] else "")
                     ),
@@ -947,9 +1073,11 @@ class PlacesEnrichmentAgent:
             # SignalAgent writes) — without it the TA lane pushes both as null.
             # No reviews fetched ≠ zero recent reviews: keep the last known count, or leave
             # it unknown (the push sends null) rather than claim 0.
+            # Hybrid: Apify scrapes apify_max_reviews (1, newest) per place — a count of that
+            # sample would cap the field at 1, so it is not a count either.
             reviews_recent_count = (
                 sum(1 for r in reviews if _is_recent_review(r, ref_date))
-                if include_reviews
+                if include_reviews and details.get("provider") != "hybrid"
                 else (normalized.get("signal") or {}).get("reviews_recent_count")
             )
             new_normalized["signal"] = SignalResult(

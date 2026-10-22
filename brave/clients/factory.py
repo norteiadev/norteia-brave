@@ -104,12 +104,29 @@ class Clients:
                 return NullPlacesClient()
             from brave.clients.places import RealPlacesClient  # noqa: PLC0415
 
-            return RealPlacesClient(
+            google = RealPlacesClient(
                 api_key=os.environ.get(self._places_api_key_env, ""),
                 ibge_lookup=self._ibge_lookup() if self._ibge_lookup else None,
                 redis_client=self._redis(),
                 daily_usd_cap=self._cfg.places_daily_usd_cap,
                 total_usd_cap=self._cfg.places_total_usd_cap,
+            )
+            if self._cfg.places_provider != "hybrid":
+                return google
+            # Hybrid: Apify search/details + Google Essentials only (see hybrid_places).
+            from brave.clients.apify_places import RealApifyPlacesClient  # noqa: PLC0415
+            from brave.clients.hybrid_places import HybridPlacesClient  # noqa: PLC0415
+
+            return HybridPlacesClient(
+                google=google,
+                apify=RealApifyPlacesClient(
+                    os.environ.get("BRAVE_APIFY_API_KEY", ""),
+                    actor_id=self._cfg.apify_actor_id,
+                    redis_client=self._redis(),
+                    daily_usd_cap=self._cfg.apify_daily_usd_cap,
+                    total_usd_cap=self._cfg.apify_total_usd_cap,
+                ),
+                max_reviews=self._cfg.apify_max_reviews,
             )
 
         return self._get("places", build)

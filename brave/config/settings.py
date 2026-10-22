@@ -531,6 +531,23 @@ class AppConfig(BaseSettings):
     places_total_usd_cap: float = 300.0
     places_daily_usd_cap: float = 300.0
 
+    # places_provider: "google" (default, unchanged) = Text Search Pro + Details Enterprise;
+    # "hybrid" = Apify crawler-google-places (search, hours/phone/site, closed flags and the
+    # NEWEST review — Places (New) sorts reviews by relevance) + Google Details Essentials
+    # only (place_id/location/types/address, US$5/1k). Env-only (PLACES_PROVIDER).
+    places_provider: Literal["google", "hybrid"] = "google"
+    # Apify actor and how many reviews it scrapes per place (newest first; 1 proves liveness).
+    apify_actor_id: str = "compass~crawler-google-places"
+    apify_max_reviews: int = 1
+    # Apify spend caps (brave:cost:apify:* counters, see cost_guard), checked BEFORE each run
+    # with its projected cost: daily → CostGuardError (auto-resumed next UTC day); total →
+    # ProviderBalanceError (operator raises it / recharges, never auto-resumed). The token is
+    # BRAVE_APIFY_API_KEY, read by the client factory — not a settings field.
+    # Daily below total: the total is checked first and counts every day's spend, so a daily
+    # cap >= total could never trip (every stop would wait for the operator).
+    apify_daily_usd_cap: float = 2.0
+    apify_total_usd_cap: float = 5.0
+
     # TripAdvisor backfill (brave.backfill_ta_atrativos): completes the bulk listing's
     # records (TA geo + recency, then Places) in batches inside an engine run. Env-only.
     #   ta_backfill_enabled — the bulk sweep chains into it when done, and the beat restarts

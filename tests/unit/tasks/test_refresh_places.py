@@ -118,3 +118,68 @@ def test_refresh_uses_its_own_key_when_set(harness, monkeypatch, env, expected):
                         lambda *a, **k: seen.append(k.get("places_api_key_env")) or MagicMock())
     pipeline.refresh_places()
     assert seen and set(seen) == {expected}
+
+
+def test_hybrid_refresh_uses_one_bag_and_one_prefetch_for_the_lot(harness, monkeypatch):
+    """places_provider=hybrid: an Apify run costs ~60 s fixed, so the due lot is prefetched
+    once (place_ids) inside ONE Clients bag, then each record runs as in google mode."""
+    harness.effective = _effective(places_provider="hybrid")
+    built, prefetched = [], []
+
+    class HybridAgent:
+        prefetches = True
+
+        def prefetch_items(self, rios, *, refresh=False):
+            return [(r.id, refresh) for r in rios]
+
+        async def prefetch(self, items):
+            prefetched.append(([i for i, _ in items], all(r for _, r in items)))
+
+        async def run(self, rio, refresh=False):
+            assert refresh is True
+            harness.runs.append(rio.id)
+
+    monkeypatch.setattr(pipeline, "clients_for", lambda *a, **k: built.append(k) or MagicMock())
+    monkeypatch.setattr(pipeline, "_enrich_agent", lambda *a, **k: HybridAgent())
+    harness.session.scalars.return_value.all.return_value = list(harness.rios.values())
+
+    assert pipeline.refresh_places() == 2
+    assert len(built) == 1 and prefetched == [(harness.ids, True)]
+    assert harness.runs == harness.ids
+    assert harness.session.commit.call_count == 2
+
+
+def test_hybrid_refresh_prefetches_one_run_worth_then_commits_it(harness, monkeypatch):
+    """Runs are ≤ APIFY_RUN_MAX_QUERIES: the lot goes run by run, each part committed before
+    the next run, so the time limit never kills a lot whose runs were all paid up front."""
+    harness.effective = _effective(places_provider="hybrid")
+    events = []
+
+    class HybridAgent:
+        prefetches = True
+
+        def prefetch_items(self, rios, *, refresh=False):
+            return [r.id for r in rios]
+
+        async def prefetch(self, items):
+            events.append(("prefetch", items))
+
+        async def run(self, rio, refresh=False):
+            events.append(("run", rio.id))
+
+    monkeypatch.setattr("brave.clients.hybrid_places.APIFY_RUN_MAX_QUERIES", 1)
+    monkeypatch.setattr(pipeline, "_enrich_agent", lambda *a, **k: HybridAgent())
+    a, b = harness.ids
+    harness.session.scalars.return_value.all.side_effect = [[harness.rios[a]], [harness.rios[b]]]
+
+    assert pipeline.refresh_places() == 2
+    assert events == [("prefetch", [a]), ("run", a), ("prefetch", [b]), ("run", b)]
+
+
+def test_google_refresh_never_prefetches(harness, monkeypatch):
+    built = []
+    monkeypatch.setattr(pipeline, "clients_for", lambda *a, **k: built.append(k) or MagicMock())
+    pipeline.refresh_places()
+    # A bag per record, as before the hybrid (the hybrid branch builds ONE for the lot).
+    assert len(built) == len(harness.ids)
+    harness.session.scalars.assert_not_called()  # _prefetch_places is not reached
