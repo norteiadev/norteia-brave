@@ -118,13 +118,6 @@ def test_guard_raises_without_real_externals_or_token(monkeypatch):
         RealApifyPlacesClient("", actor_id=ACTOR, daily_usd_cap=5, total_usd_cap=5)
 
 
-def test_apify_query_format():
-    from brave.clients.apify_places import apify_query
-
-    assert apify_query("Convento da Penha", "Vila Velha", "ES") == Q_NAME
-    assert apify_query("Pico da Bandeira", "", "ES") == "Pico da Bandeira - ES"
-
-
 @respx.mock
 async def test_lookup_one_run_keyed_back_pii_stripped_cost_recorded(monkeypatch, fake_redis):
     from brave.observability.cost_guard import apify_daily_spend, apify_total_spend, daily_spend

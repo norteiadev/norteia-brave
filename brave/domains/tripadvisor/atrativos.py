@@ -379,6 +379,9 @@ class TripAdvisorAtrativosIngest:
         # Rio ids of atrativos ingested this sweep — returned for description enrichment.
         ingested_ids: list[str] = []
 
+        # Hybrid Places: a page's rows go in ONE batched lookup after its card loop (_places_lot).
+        hybrid = run_rio and getattr(self._places_agent, "prefetches", False) is True
+
         async for _offset, cards in self._client.fetch_attractions_paginated_gql(geo_id):
             # Mid-sweep pause/off/stop: this producer was fanned out per UF and keeps
             # paginating after the orchestrator's dispatch loop broke. Poll the engine
@@ -395,21 +398,7 @@ class TripAdvisorAtrativosIngest:
             # COMPLETED via backfill_record instead of skipped. The bulk path
             # (produce_paginated) keeps skipping every Rio row, so its page resume is intact.
             backfill = self._backfill_candidates(cards) if (enrich_reviews and run_rio) else {}
-            if run_rio and getattr(self._places_agent, "prefetches", False) is True:
-                # Hybrid Places: one Apify run (~60 s fixed) for the page, not one per card.
-                # Same skip predicate (and cap) as the loop below.
-                todo = [
-                    e for e in cards
-                    if not ((_source_ref(e) in synced and _source_ref(e) not in backfill)
-                            or _is_not_atrativo(e))
-                ]
-                if max_per_uf is not None:
-                    todo = todo[: max(0, max_per_uf - processed)]
-                await self._places_agent.prefetch(
-                    [backfill[r] for e in todo if (r := _source_ref(e)) in backfill],
-                    cards=[e for e in todo if _source_ref(e) not in backfill],
-                    uf=uf,
-                )
+            page_due: list[RioRecord] = []  # hybrid: this page's rows still due for Places
             for entity in cards:
                 ref = _source_ref(entity)
                 # Already in Brave: the TA signals were consumed by the score on the first
@@ -424,22 +413,25 @@ class TripAdvisorAtrativosIngest:
                 # otherwise the map would point the next same-município atrativo at a parent
                 # rio whose rows no longer exist.
                 keys_before = set(self._destino_rio_map)
+                due: list[RioRecord] | None = [] if hybrid else None
                 try:
                     if ref in backfill:
-                        await self.backfill_record(backfill[ref])
+                        await self.backfill_record(backfill[ref], defer=due)
                     else:
                         # Non-enrich path commits per page: a SAVEPOINT per card reverts only
                         # this card on a flush error (e.g. IntegrityError), leaving the
                         # transaction healthy for the poison row and the page's other cards.
                         with nullcontext() if enrich_reviews else self._session.begin_nested():
                             _rio_id = await self._ingest_one(
-                                uf, entity, run_rio=run_rio, enrich_reviews=enrich_reviews
+                                uf, entity, run_rio=run_rio, enrich_reviews=enrich_reviews,
+                                defer=due,
                             )
                         if _rio_id is not None:
                             ingested_ids.append(_rio_id)
                     if enrich_reviews:
                         # Per-atrativo durability: persist this atrativo's rows now.
                         self._session.commit()
+                    page_due += due or ()  # only once this card's rows are kept
                 except _PAUSE_ERRORS:
                     # Run-level (balance/budget wall, dead or throttled session, retired qid,
                     # soft time limit) — escape produce() entirely; quarantining it would
@@ -490,6 +482,8 @@ class TripAdvisorAtrativosIngest:
                 if max_per_uf is not None and processed >= max_per_uf:
                     reached_cap = True
                     break
+            if page_due:
+                await self._places_lot(page_due)
             if not enrich_reviews:
                 # Live kanban: commit each page's ingested rows immediately so they become
                 # visible in the /painel board WHILE the sweep is still running (mirrors
@@ -510,6 +504,25 @@ class TripAdvisorAtrativosIngest:
 
         logger.info("ta_atrativos_producer_done", uf=uf, processed=processed, skipped=skipped)
         return ingested_ids
+
+    async def _places_lot(self, rios: list[RioRecord]) -> None:
+        """Hybrid Places for one page: ONE batched lookup for the rows the loop just placed (TA
+        page, or a fallback — their own normalized is what run() searches), then run() per
+        row. A crash in between leaves them google_enriched-less: the backfill picks them up."""
+        items = self._places_agent.prefetch_items(rios)
+        self._session.commit()  # no transaction idles through the Apify run
+        await self._places_agent.prefetch(items)
+        for rio in rios:
+            try:
+                with self._session.begin_nested():
+                    await self._places_agent.run(rio)
+            except _PAUSE_ERRORS:
+                raise
+            except Exception as exc:  # noqa: BLE001 — the TA floor stays; the backfill retries
+                logger.warning(
+                    "places_enrich_failed", rio_id=str(rio.id), error=type(exc).__name__
+                )
+            self._session.commit()
 
     def _already_synced(
         self, cards: list[dict[str, Any]], *, run_rio: bool, bulk: bool = False
@@ -606,7 +619,9 @@ class TripAdvisorAtrativosIngest:
     # Backfill of a record ALREADY in Rio (contract C2) — the bulk lane's completion step.
     # -----------------------------------------------------------------------
 
-    async def backfill_record(self, rio: RioRecord) -> str:
+    async def backfill_record(
+        self, rio: RioRecord, *, defer: list[RioRecord] | None = None
+    ) -> str:
         """Complete one TA atrativo already in Rio: TA page + review recency, then Places.
 
         Idempotent, keyed on the C1 markers: the TA part runs only while
@@ -625,6 +640,9 @@ class TripAdvisorAtrativosIngest:
         the DLQ; Places is skipped — a search in the stored, wrong UF could only match a
         homonym), or "municipio_pendente" for the same case when a resolver was off or
         failing (DLQ too, but no marker: the next backfill retries it).
+
+        ``defer`` (hybrid): the Places step is appended there instead of run — the caller's
+        batched lookup runs it — and is not counted in the steps.
         """
         steps: list[str] = []
         if not (rio.normalized or {}).get(TA_BACKFILLED_KEY):
@@ -643,10 +661,31 @@ class TripAdvisorAtrativosIngest:
             and normalized.get("google_enriched") is not True
             and "ta_page_pendente" not in steps
         ):
-            with self._session.begin_nested():
-                await self._places_agent.run(rio)
-            steps.append("places")
+            if defer is not None:
+                defer.append(rio)
+            else:
+                with self._session.begin_nested():
+                    await self._places_agent.run(rio)
+                steps.append("places")
         return "+".join(steps) or "noop"
+
+    async def prefetch_ta(self, rio: RioRecord) -> None:
+        """Hybrid backfill: a record's TA side (page → município/point) ahead of its sub-lot's
+        batched Places lookup, which must search where TA puts it. A failure of its own (a lone
+        SourceSchemaError included) is left to backfill_record — no marker, so it is redone and
+        counted there against the right record; other run-level errors stop the lot."""
+        keys_before = set(self._destino_rio_map)
+        try:
+            with self._session.begin_nested():
+                await self.backfill_record(rio, defer=[])
+        except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, _PAUSE_ERRORS) and not isinstance(exc, SourceSchemaError):
+                raise
+            for k in set(self._destino_rio_map) - keys_before:
+                del self._destino_rio_map[k]
+            logger.warning(
+                "ta_prefetch_record_failed", rio_id=str(rio.id), error=type(exc).__name__
+            )
 
     async def _throttle(self) -> None:
         if self._ta_config is not None and self._ta_config.page_throttle_seconds > 0:
@@ -946,6 +985,7 @@ class TripAdvisorAtrativosIngest:
         *,
         run_rio: bool,
         enrich_reviews: bool = False,
+        defer: list[RioRecord] | None = None,
     ) -> str | None:
         """Ingest a single TripAdvisor attraction entity.
 
@@ -1424,7 +1464,10 @@ class TripAdvisorAtrativosIngest:
                 and (rio.canonical_key or "").startswith("tripadvisor:")
                 and not page_failed
             ):
-                await self._places_agent.run(rio)
+                if defer is not None:
+                    defer.append(rio)  # hybrid: the page's batched lookup runs it (produce)
+                else:
+                    await self._places_agent.run(rio)
             return str(rio.id)
         return None
 

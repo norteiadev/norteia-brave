@@ -17,6 +17,7 @@ import asyncio
 import functools
 import os
 import uuid
+from collections.abc import Callable
 from datetime import UTC
 from typing import Any, NamedTuple
 
@@ -1325,21 +1326,37 @@ def _enrich_agent(
 
 
 async def _prefetch_places(
-    session: Session, agent: Any, ids: list[uuid.UUID], *, refresh: bool = False
+    session: Session,
+    agent: Any,
+    ids: list[uuid.UUID],
+    *,
+    refresh: bool = False,
+    ingest: Any = None,
+    should_stop: Callable[[], bool] = lambda: False,
 ) -> None:
     """Hybrid Places: one Apify run (~60 s FIXED per run) for a whole lot, before its
     per-record loop. No-op unless the agent's client batches (google mode: nothing runs).
 
-    The rows are read detached and the transaction closed first, so no connection sits idle
-    in transaction through the run; the loop re-reads each row FOR UPDATE.
+    With ``ingest`` (backfill) each record's TA side goes first — the lookups must search
+    where TA puts it. Items are built before the transaction closes: none idles through the
+    run; the loop re-reads each row FOR UPDATE.
     """
     if getattr(agent, "prefetches", False) is not True or not ids:
         return
-    rios = list(session.scalars(select(RioRecord).where(RioRecord.id.in_(ids))).all())
-    for rio in rios:
-        session.expunge(rio)
+    if ingest is not None:
+        for rio_id in ids:
+            if should_stop():
+                return
+            rio = session.get(RioRecord, rio_id, with_for_update=True)
+            if rio is not None:
+                await ingest.prefetch_ta(rio)
+            session.commit()
+        if should_stop():
+            return
+    rios = session.scalars(select(RioRecord).where(RioRecord.id.in_(ids))).all()
+    items = agent.prefetch_items(rios, refresh=refresh)
     session.rollback()
-    await agent.prefetch(rios, refresh=refresh)
+    await agent.prefetch(items)
 
 
 def _enrich_one(session: Session, rio: RioRecord, ctx: _EnrichCtx | None = None) -> None:
@@ -2084,6 +2101,9 @@ async def _backfill_batch(
                 await _prefetch_places(
                     session, getattr(ingest, "_places_agent", None),
                     ids[i:i + _BACKFILL_PREFETCH_LOT],
+                    ingest=ingest,
+                    should_stop=lambda: collection_engine.should_halt_producer(rc)
+                    or (deadline is not None and _time.monotonic() > deadline),
                 )
             # FOR UPDATE: the agents merge onto the row's current normalized under this lock.
             rio = session.get(RioRecord, rio_id, with_for_update=True)

@@ -147,6 +147,10 @@ _GEOGRAPHIC_TYPE_MARKER: str = "political"
 # Ronca, ~40 km); the same-name mismatches it must reject were all 190+ km away.
 _SEAT_RADIUS_KM: float = 80.0
 
+# Hybrid pick radius around the record's OWN point (TA's — its attraction page). RO 10/2026
+# (89 cards): 1 km 51 matches, 2 km 60, 5 km 67 (more same-name businesses).
+_PICK_RADIUS_KM: float = 2.0
+
 # Radius from a Text Search result's own coords to the nearest município seat of the UF, for
 # a result whose addressComponents name no município (AL 10/2026: "Farol - Ponta Verde"
 # came with only the state). Same radius the TA ingest gives a Nominatim point.
@@ -605,8 +609,24 @@ class PlacesEnrichmentAgent:
             getattr(type(client), "prefetch", None)
         )
 
+    def _reference(
+        self, lat: float | None, lng: float | None, municipio_ibge: str | None
+    ) -> tuple[float | None, float | None, float, float]:
+        """(lat, lng, match radius, hybrid pick radius) a lookup measures from: the record's
+        own point at max_distance_km / _PICK_RADIUS_KM, else its município seat at
+        _SEAT_RADIUS_KM for both — otherwise a same-name place anywhere in the UF wins
+        (Luziânia's Igreja N. S. do Rosário took the one in Flores de Goiás, ~190 km away).
+        (None, None, …) when neither."""
+        if lat is not None and lng is not None:
+            return lat, lng, self._max_distance_km, _PICK_RADIUS_KM
+        seat = self._session.get(Municipio, municipio_ibge) if municipio_ibge else None
+        if isinstance(seat, Municipio):
+            radius = max(self._max_distance_km, _SEAT_RADIUS_KM)
+            return seat.lat, seat.lng, radius, radius
+        return None, None, self._max_distance_km, _PICK_RADIUS_KM
+
     def _prefetch_item(self, rio: RioRecord, refresh: bool) -> dict[str, Any] | None:
-        """The lookup run() will make for ``rio`` (same skips, same query), or None."""
+        """The lookup run() will make for ``rio`` (same skips, same reference), or None."""
         normalized = rio.normalized or {}
         if ta_unplaced(rio) or _places_done(normalized, refresh):
             return None
@@ -615,44 +635,40 @@ class PlacesEnrichmentAgent:
             return {"place_id": normalized["place_id_cache"], "include_reviews": include_reviews}
         if not normalized.get("name"):
             return None
+        ref_lat, ref_lng, _radius, pick = self._reference(
+            normalized.get("lat"), normalized.get("lon"), normalized.get("municipio_id")
+        )
+        if ref_lat is None:
+            return None  # run() will not search it either
         return {
             "nome": normalized["name"],
             "municipio": normalized.get("municipio") or "",
             "uf": rio.uf or normalized.get("uf") or "",
+            "lat": ref_lat,
+            "lng": ref_lng,
+            "radius_km": pick,
             "include_reviews": include_reviews,
         }
 
-    async def prefetch(
-        self,
-        rios: Any = (),
-        *,
-        refresh: bool = False,
-        cards: Any = (),
-        uf: str = "",
-    ) -> None:
-        """Warm the client's cache for a whole lot in one batched lookup; no-op otherwise.
-
-        ``rios``: records run() is about to enrich (``refresh`` as run()'s). ``cards``: TA
-        cards of ``uf`` not ingested yet — no município (the ingest resolves it) and no TA
-        recency yet, so searched by name with reviews on. Never raises but _PROPAGATE: after a
-        failed prefetch run() keeps each record's TA floor (the client raises
-        ApifyBatchFailedError) and a later lot retries it.
-        """
+    def prefetch_items(self, rios: Any, *, refresh: bool = False) -> list[dict[str, Any]]:
+        """The lookups run() will make for ``rios`` (same skips, same reference). Reads the
+        session (município seats): call it BEFORE closing the transaction the batched run
+        must not hold."""
         if not self.prefetches:
-            return
-        items = [i for i in (self._prefetch_item(r, refresh) for r in rios) if i is not None]
-        items += [
-            {"nome": c["name"], "municipio": "", "uf": uf, "include_reviews": True}
-            for c in cards
-            if c.get("name")
-        ]
+            return []
+        return [i for i in (self._prefetch_item(r, refresh) for r in rios) if i is not None]
+
+    async def prefetch(self, items: list[dict[str, Any]]) -> None:
+        """One batched lookup for ``items``. Never raises but _PROPAGATE: after a failed
+        prefetch run() keeps each record's TA floor (ApifyBatchFailedError) and a later lot
+        retries it."""
         if not items:
             return
         try:
             await self._places_client.prefetch(items)  # type: ignore[attr-defined]
         except _PROPAGATE:
             raise
-        except Exception as exc:  # noqa: BLE001 — run() falls back to per-record lookups
+        except Exception as exc:  # noqa: BLE001
             logger.warning("places_prefetch_failed", items=len(items), error=type(exc).__name__)
 
     def wants_description(self, rio: RioRecord, normalized: dict[str, Any] | None = None) -> bool:
@@ -833,40 +849,27 @@ class PlacesEnrichmentAgent:
                     # Details would leave a Text Search paid for nothing (paid again on resume).
                     check_budget(USD_TEXT_SEARCH_PRO + details_usd)
                 if not place_id and nome:
+                    ref_lat, ref_lng, radius, pick = self._reference(lat, lng, municipio_ibge)
                     search = getattr(self._places_client, "search", None)
                     if consensus is not None and consensus[0] == (normalize_name(nome), uf):
                         results = consensus[1]
                     elif search is not None:
-                        # Hybrid: Apify finds the place by name + município and Essentials
-                        # places it; the _best_match below is the validation. No match is
+                        # Hybrid: Google picks the place around the reference and Apify names
+                        # it; the _best_match below is the validation. No match is
                         # conclusive — never a fallback to the Text Search Pro.
+                        if ref_lat is None:
+                            # Nothing to pick around (no point, no seat): no answer — no
+                            # marker, retried later.
+                            raise LookupError("hybrid: no reference point")
                         results = await search(
-                            nome, municipio, uf, include_reviews=include_reviews
+                            nome, municipio, uf, lat=ref_lat, lng=ref_lng, radius_km=pick,
+                            include_reviews=include_reviews,
                         )
                     else:
                         results = await self._places_client.text_search(nome, uf)
-                    ref_lat, ref_lng, radius = lat, lng, self._max_distance_km
-                    if (lat is None or lng is None) and municipio_ibge:
-                        # No coords of its own: measure from the município seat instead,
-                        # wider (see _SEAT_RADIUS_KM) — otherwise a same-name place anywhere
-                        # in the UF wins (Luziânia's Igreja N. S. do Rosário took the one
-                        # in Flores de Goiás, ~190 km away).
-                        seat = self._session.get(Municipio, municipio_ibge)
-                        if isinstance(seat, Municipio):
-                            ref_lat, ref_lng = seat.lat, seat.lng
-                            radius = max(radius, _SEAT_RADIUS_KM)
                     match = _best_match(
                         results, nome, ref_lat, ref_lng, radius, normalized.get("category")
                     )
-                    if match is None and municipio and results and results[0].get("via_alias"):
-                        # Hybrid: a prefetched "Nome - UF" hit failed (a homonym elsewhere in
-                        # the UF; EFMM took a tow service 28 km away): search WITH the município.
-                        results = await search(  # type: ignore[misc]
-                            nome, municipio, uf, include_reviews=include_reviews, alias=False
-                        )
-                        match = _best_match(
-                            results, nome, ref_lat, ref_lng, radius, normalized.get("category")
-                        )
                     if match is not None:
                         place_id = match.get("place_id") or ""
                 if place_id:

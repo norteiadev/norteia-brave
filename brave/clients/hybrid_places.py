@@ -1,10 +1,13 @@
-"""HybridPlacesClient — Apify search/details + Google Place Details Essentials.
+"""HybridPlacesClient — Google picks the place, Apify brings its fields.
 
-Behind ``AppConfig.places_provider == "hybrid"``. Apify (compass~crawler-google-places)
-finds the place and brings hours, phone, site, closed flags and the NEWEST review (Places
-(New) returns reviews by relevance only, so a busy attraction looked stale); Google
-Essentials (US$ 0.005, first-party) brings the id, coords, ``types`` enum, address and
-addressComponents (município → IBGE, distrito). No network of its own: it composes a
+Behind ``AppConfig.places_provider == "hybrid"``. Per atrativo: the TA page gives the
+município and a point; Google Text Search IDs Only (free) lists candidates for
+"Nome, Município - UF" biased around that point; Place Details Essentials (US$ 0.005,
+first-party: id, coords, ``types`` enum, address, addressComponents) on the top ones, in
+Google's rank order, until one sits in the UF within the pick radius; Apify
+(compass~crawler-google-places) then fetches THAT ``place_id:`` for hours, phone, site,
+closed flags and the NEWEST review (Places (New) returns reviews by relevance only, so a
+busy attraction looked stale). No network of its own: it composes a
 ``RealApifyPlacesClient`` and a ``RealPlacesClient`` and adapts their output to the exact
 ``RealPlacesClient`` dict shapes, so consumers do not change.
 
@@ -15,13 +18,13 @@ then read the cache and spend nothing on Apify.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
 import structlog
 
-from brave.clients.apify_places import apify_query, apify_run_cost
-from brave.clients.nominatim import UF_NAME
+from brave.clients.apify_places import apify_run_cost
 from brave.clients.places import USD_DETAILS_ESSENTIALS, _normalize_name
 from brave.shared.exceptions import CostGuardError, ProviderBalanceError
 from brave.shared.opening_hours import _day_index
@@ -30,6 +33,11 @@ logger = structlog.get_logger(__name__)
 
 # A wall stops the caller; it never marks a lot's queries as failed (see prefetch).
 _WALLS = (ProviderBalanceError, CostGuardError)
+
+# Essentials paid in Google's rank order (RO: ~1.47 calls per atrativo).
+PICK_CANDIDATES = 3
+# Search bias: 5 km around a point (RO POC); Google caps a circle at 50 km.
+_BIAS_MIN_KM, _BIAS_MAX_KM = 5.0, 50.0
 
 # Queries per Apify run: ~6 s each on top of ~50 s fixed (smoke 2026-10-21: 13 in 128 s),
 # so 50 finish well inside the run's 900 s timeout (a TIMED-OUT run loses its paid items).
@@ -52,6 +60,19 @@ class ApifyBatchFailedError(RuntimeError):
 def _fold(text: str) -> str:
     """Accent/case/space-insensitive key: the raw TA card name vs the Rio's normalize_name."""
     return " ".join(_normalize_name(text).split())
+
+
+def _key(nome: str, municipio: str, uf: str) -> tuple[str, str, str]:
+    """One lookup's identity: prefetch and run() read the same normalized, so they agree."""
+    return _fold(nome), _fold(municipio), uf.upper()
+
+
+def _km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Haversine. Inlined: clients never import brave.domains (test_domain_boundaries CHECK D)."""
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    a = (math.sin(math.radians(lat2 - lat1) / 2) ** 2
+         + math.cos(phi1) * math.cos(phi2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2)
+    return 6371.0 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 _SEARCH_KEYS = (
@@ -128,15 +149,15 @@ class HybridPlacesClient:
         self._google = google
         self._apify = apify
         self._max_reviews = max_reviews
-        # ponytail: in-memory caches scoped to one Clients bag (one task run); entries are
-        # popped when consumed, so only prefetched-but-unused queries linger until the bag
-        # dies. Move to Redis if prefetch and consumption ever split across processes.
-        self._found: dict[tuple[str, bool], dict[str, Any] | None] = {}  # (query, reviews)
+        # ponytail: in-memory caches scoped to one Clients bag (one task run): entries live
+        # as long as the bag, and a duplicate card / record is served by the same entry.
+        # Move to Redis if prefetch and consumption ever split across processes.
+        self._found: dict[tuple[str, bool], dict[str, Any] | None] = {}  # ("place_id:…", reviews)
         self._pairs: dict[tuple[str, bool], tuple[dict, dict]] = {}  # (place_id, reviews)
-        # (folded name, UF) → a prefetched município-less name query. A TA sweep prefetches a
-        # page before the ingest resolves each card's município ("Nome - UF"); run() then
-        # searches with the Rio's município ("Nome, Município - UF") and lands here.
-        self._by_name: dict[tuple[str, str], tuple[str, bool]] = {}
+        # _key → the Essentials Google's pick chose (None: no candidate passed).
+        self._picked: dict[tuple[str, str, str], dict[str, Any] | None] = {}
+        # _keys whose pick failed in a prefetch: search() raises instead of a lookup of its own.
+        self._pick_failed: set[tuple[str, str, str]] = set()
         # Queries whose batched run failed: looked up again by the NEXT lot, never one run per
         # record (~60 s each — a 200-record refresh would blow its time limit).
         self._failed: set[str] = set()
@@ -151,49 +172,75 @@ class HybridPlacesClient:
     def _reviews(self, include_reviews: bool) -> int:
         return self._max_reviews if include_reviews else 0
 
-    async def prefetch(self, items: list[dict[str, Any]]) -> None:
-        """Apify runs of ≤ APIFY_RUN_MAX_QUERIES, one after another, for a whole lot.
+    async def _pick(
+        self, nome: str, municipio: str, uf: str, lat: float, lng: float, radius_km: float
+    ) -> dict[str, Any] | None:
+        """Google's own pick: the first of the top PICK_CANDIDATES (free IDs-only search, biased
+        to the reference) that is not a geographic entity, sits in ``uf`` (a TA point fell in
+        Juína-MT) and lies within ``radius_km`` of (lat, lng). Essentials only for the ones
+        looked at."""
+        query = f"{nome}, {municipio} - {uf}" if municipio else f"{nome} - {uf}"
+        bias_km = min(max(radius_km, _BIAS_MIN_KM), _BIAS_MAX_KM)
+        ids = await self._google.search_ids(query, lat=lat, lng=lng, radius_m=bias_km * 1000)
+        for place_id in ids[:PICK_CANDIDATES]:
+            ess = await self._google.place_essentials(place_id, uf)
+            loc = ess.get("location") or {}
+            uf_short = (ess.get("uf_short") or "").upper()
+            if (
+                "political" in (ess.get("types") or ())
+                or loc.get("lat") is None
+                or (len(uf_short) == 2 and uf_short != uf.upper())
+            ):
+                continue
+            if _km(lat, lng, loc["lat"], loc["lng"]) <= radius_km:
+                return ess
+        return None
 
-        item = {"place_id": ...} or {"nome", "municipio", "uf"} (an "include_reviews" key is
-        ignored). Every run asks max_reviews: one 4 GB run at a time (two at once fill the
-        FREE plan's 8 GB and every other run gets a busy 402), and a review costs US$ 0.0005
-        — to_place_details drops it for a caller that skips reviews. A query missing from a
+    async def prefetch(self, items: list[dict[str, Any]]) -> None:
+        """Google picks for the name items, then Apify runs of ≤ APIFY_RUN_MAX_QUERIES
+        ``place_id:`` queries, one after another, for the whole lot.
+
+        item = {"place_id"} or {"nome", "municipio", "uf", "lat", "lng", "radius_km"} (an
+        "include_reviews" key is ignored). A pick that fails (not a wall) is remembered:
+        search() then raises ApifyBatchFailedError instead of paying a lookup of its own.
+        Every run asks max_reviews: one 4 GB run at a time (two at once fill the FREE plan's
+        8 GB and every other run gets a busy 402), and a review costs US$ 0.0005 —
+        to_place_details drops it for a caller that skips reviews. A query missing from a
         SUCCEEDED run is a real no-hit OR a request the crawler gave up on
-        (indistinguishable), so the exact ones (place_id / with município) get ONE more
-        batched run; a miss there is cached as None (conclusive). A failed run marks its
-        queries failed (see ``_failed``); the other runs still go, then the error raises.
+        (indistinguishable), so misses get ONE more batched run; a miss there is cached as
+        None (conclusive). A failed run marks its queries failed (see ``_failed``); the other
+        runs still go, then the error raises.
         ponytail: +1 run (~60 s) per lot with misses; read the crawler's failed-request
         stats instead if Apify ever exposes them on the run.
         """
-        # locationQuery is one per run: a município-less sweep name runs bounded to its UF
-        # (None = no bound: a place_id, or a query that already names the município).
-        by_location: dict[str | None, list[str]] = {}
-        exact: set[str] = set()
+        queries: list[str] = []
         for item in items:
-            location = None
-            if item.get("place_id"):
-                query = f"place_id:{item['place_id']}"
-                exact.add(query)
-            else:
-                query = apify_query(item["nome"], item.get("municipio") or "", item["uf"])
-                if item.get("municipio"):
-                    exact.add(query)
-                elif item["uf"].upper() in UF_NAME:
-                    location = f"{UF_NAME[item['uf'].upper()]}, Brasil"
-                # Also for an exact one: a backfill's TA can move the record to another
-                # município before run() searches; the alias still serves it (the agent's
-                # _best_match judges the distance).
-                self._by_name.setdefault((_fold(item["nome"]), item["uf"].upper()), (query, True))
-            queries = by_location.setdefault(location, [])
+            place_id = item.get("place_id")
+            if not place_id:
+                key = _key(item["nome"], item["municipio"], item["uf"])
+                if key not in self._picked:
+                    try:
+                        self._picked[key] = await self._pick(
+                            item["nome"], item["municipio"], item["uf"],
+                            item["lat"], item["lng"], item["radius_km"],
+                        )
+                        self._pick_failed.discard(key)
+                    except _WALLS:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 — that record raises in search()
+                        logger.warning("hybrid_pick_failed", error=type(exc).__name__)
+                        self._pick_failed.add(key)
+                        continue
+                place_id = (self._picked[key] or {}).get("place_id")
+                if not place_id:
+                    continue
+            query = f"place_id:{place_id}"
             if (query, True) not in self._found and query not in queries:
                 queries.append(query)
 
-        async def lookup(chunk: list[str], location: str | None) -> dict[str, Any]:
+        async def lookup(chunk: list[str]) -> dict[str, Any]:
             try:
-                found = await self._apify.lookup(
-                    chunk, max_reviews=self._max_reviews,
-                    **({"location": location} if location else {}),
-                )
+                found = await self._apify.lookup(chunk, max_reviews=self._max_reviews)
                 self._failed.difference_update(chunk)
                 return found
             except _WALLS:
@@ -204,20 +251,16 @@ class HybridPlacesClient:
 
         self._lot_failed = False
         error: Exception | None = None
-        chunks = [
-            (location, queries[start:start + APIFY_RUN_MAX_QUERIES])
-            for location, queries in by_location.items()
-            for start in range(0, len(queries), APIFY_RUN_MAX_QUERIES)
-        ]
-        for location, chunk in chunks:
+        for start in range(0, len(queries), APIFY_RUN_MAX_QUERIES):
+            chunk = queries[start:start + APIFY_RUN_MAX_QUERIES]
             try:
-                found = await lookup(chunk, location)
-                missed = [q for q in chunk if found.get(q) is None and q in exact]
+                found = await lookup(chunk)
+                missed = [q for q in chunk if found.get(q) is None]
                 for q in chunk:
                     if q not in missed:
-                        self._found[(q, True)] = found.get(q)
+                        self._found[(q, True)] = found[q]
                 if missed:
-                    again = await lookup(missed, location)
+                    again = await lookup(missed)
                     for q in missed:
                         self._found[(q, True)] = again.get(q)
             except _WALLS:
@@ -228,7 +271,7 @@ class HybridPlacesClient:
         if error is not None:
             raise error
 
-    def _check_budgets(self, include_reviews: bool) -> None:
+    def _check_budgets(self, include_reviews: bool, essentials: int) -> None:
         """Before an uncached lookup pays: no single run on a degraded Apify (``_lot_failed``),
         then both caps — a Places cap must not strand a paid Apify run."""
         if self._lot_failed:
@@ -238,91 +281,59 @@ class HybridPlacesClient:
             "review-scraped": self._reviews(include_reviews), "apify-actor-start": 4,
         }))
         google_check = getattr(self._google, "check_budget", None)
-        if google_check is not None:
-            google_check(USD_DETAILS_ESSENTIALS)
+        if google_check is not None and essentials:
+            google_check(essentials * USD_DETAILS_ESSENTIALS)
 
     def _take(self, query: str, include_reviews: bool) -> tuple[bool, dict[str, Any] | None]:
-        """(cached?, item) for ``query``, consumed. An entry fetched WITH reviews also serves
-        a caller that skips them (to_place_details drops them); never the other way round.
-        A query whose batched run failed raises instead of paying a run of its own."""
+        """(cached?, item) for ``query``. An entry fetched WITH reviews also serves a caller
+        that skips them (to_place_details drops them); never the other way round. A query
+        whose batched run failed raises instead of paying a run of its own."""
         for key in ((query, include_reviews), (query, True)):
             if key in self._found:
-                return True, self._found.pop(key)
+                return True, self._found[key]
         if query in self._failed:
             raise ApifyBatchFailedError(f"apify: the batched run for {query!r} failed")
         return False, None
 
-    def _take_by_name(self, nome: str, uf: str) -> dict[str, Any] | None:
-        """A prefetched hit for this name anywhere in the UF, consumed.
-
-        Not checked against the record's município: Apify's city disagreed on 27 of 82 RO
-        names that sat in the right place (a neighbouring município, "Pres. Médici", the TA
-        filing another one). The agent's ``_best_match`` judges it by distance, and a
-        rejected alias is searched again with the município (``search(alias=False)``).
-        A cached no-hit is not trusted (the narrower query may hit).
-        """
-        alias = (_fold(nome), uf.upper())
-        entry = self._by_name.get(alias)
-        if entry is None:
-            return None
-        if entry[0] in self._failed:
-            raise ApifyBatchFailedError(f"apify: the batched run for {entry[0]!r} failed")
-        item = self._found.get(entry)
-        if item is None:
-            return None
-        del self._by_name[alias]
-        return self._found.pop(entry)
-
-    def _take_by_place_id(self, place_id: str, include_reviews: bool) -> dict[str, Any] | None:
-        """A prefetched name hit that turned out to be ``place_id`` (a locate() match or
-        consensus in the sweep reaches place_details() with an id, never via search())."""
-        for key, item in self._found.items():
-            if item and item.get("placeId") == place_id and (key[1] or not include_reviews):
-                return self._found.pop(key)
-        return None
-
-    async def _apify_single(
-        self, query: str, include_reviews: bool, *, exact: bool
-    ) -> dict[str, Any] | None:
-        """One run for ``query``; an exact one that misses gets ONE more (as in prefetch: a
-        miss may be a request the crawler gave up on, and a miss here is conclusive)."""
-        for _ in range(2 if exact else 1):
+    async def _apify_single(self, query: str, include_reviews: bool) -> dict[str, Any] | None:
+        """One run for ``query``; a miss gets ONE more (as in prefetch: a miss may be a
+        request the crawler gave up on, and a miss here is conclusive)."""
+        for _ in range(2):
             found = await self._apify.lookup([query], max_reviews=self._reviews(include_reviews))
             if found.get(query) is not None:
                 return found[query]
         return None
 
     async def search(
-        self, nome: str, municipio: str, uf: str, *, include_reviews: bool = True,
-        alias: bool = True,
+        self, nome: str, municipio: str, uf: str, *, lat: float, lng: float, radius_km: float,
+        include_reviews: bool = True,
     ) -> list[dict[str, Any]]:
-        """0 or 1 result in ``RealPlacesClient.text_search()`` shape, plus ``via_alias``.
-
-        [] when Apify had no hit or Essentials puts the place in another UF. The record's
-        own exact query wins over a prefetched name alias; ``alias=False`` skips the alias
-        (the agent's retry once an alias hit fails its validation).
-        """
-        query = apify_query(nome, municipio, uf)
-        cached, item = self._take(query, include_reviews)
-        via_alias = False
-        if not cached:
-            item = self._take_by_name(nome, uf) if alias else None
-            via_alias = item is not None
-            if item is None:
-                self._check_budgets(include_reviews)
-                item = await self._apify_single(query, include_reviews, exact=bool(municipio))
-        if item is None:
+        """0 or 1 result in ``RealPlacesClient.text_search()`` shape: Google's pick (see
+        _pick) named by Apify's title, for the agent's _best_match name check. [] with no pick
+        or no Apify item for the picked id. The caller always has a reference point (run()
+        never searches without one)."""
+        key = _key(nome, municipio, uf)
+        if key in self._picked:
+            essentials = self._picked[key]
+        elif key in self._pick_failed:
+            raise ApifyBatchFailedError("hybrid: this lot's Google pick failed")
+        else:
+            self._check_budgets(include_reviews, PICK_CANDIDATES)  # before any Essentials
+            essentials = await self._pick(nome, municipio, uf, lat, lng, radius_km)
+        if essentials is None:
             return []
-        essentials = await self._google.place_essentials(item["placeId"], uf)
-        uf_short = (essentials.get("uf_short") or "").upper()
-        if len(uf_short) == 2 and uf_short != uf.upper():
+        query = f"place_id:{essentials['place_id']}"
+        cached, item = self._take(query, include_reviews)  # raises after a failed lot
+        if not cached:
+            self._check_budgets(include_reviews, 0)
+            item = await self._apify_single(query, include_reviews)
+        if item is None:
             return []
         # Kept so the place_details() that follows a match is free.
         self._pairs[(essentials["place_id"], include_reviews)] = (item, essentials)
         result = {k: essentials.get(k) for k in _SEARCH_KEYS}
         result["name"] = item.get("title") or ""
         result["location"] = essentials.get("location") or item.get("location")
-        result["via_alias"] = via_alias
         return [result]
 
     async def place_details(
@@ -339,18 +350,16 @@ class HybridPlacesClient:
         if pair is not None:
             return to_place_details(*pair, include_reviews=include_reviews)
         query = f"place_id:{place_id}"
-        item = self._take_by_place_id(place_id, include_reviews)
-        if item is None:
-            cached, item = self._take(query, include_reviews)
-            if cached and item is None:
-                raise ApifyNoResultError(f"apify: no result for place_id {place_id}")
-            if not cached:
-                self._check_budgets(include_reviews)
+        cached, item = self._take(query, include_reviews)
+        if cached and item is None:
+            raise ApifyNoResultError(f"apify: no result for place_id {place_id}")
+        if not cached:
+            self._check_budgets(include_reviews, 1)
         # Essentials first: a retired id raises NotFound before an Apify run is paid.
         # No uf is known here: municipio_ibge is not part of the details dict.
         essentials = await self._google.place_essentials(place_id, "")
         if item is None:
-            item = await self._apify_single(query, include_reviews, exact=True)
+            item = await self._apify_single(query, include_reviews)
         if item is None:
             raise ApifyNoResultError(f"apify: no result for place_id {place_id}")
         return to_place_details(item, essentials, include_reviews=include_reviews)

@@ -153,10 +153,22 @@ def test_bulk_backfill_cap_pause_and_resume(tx_session):
     assert len(ta.address_calls) - ta_calls_before == 1  # only the untouched record
 
 
-def test_hybrid_backfill_lot_is_one_apify_run(tx_session):
-    """places_provider=hybrid: the lot is prefetched in ONE Apify run (~60 s fixed per run)
-    before the record loop; every record then enriches off the cache."""
-    from brave.clients.apify_places import apify_query
+class _TA(FakeTripAdvisorClient):
+    """Fake TA whose page fails (RuntimeError) for ``bad`` locationIds."""
+
+    def __init__(self, *a, bad=(), **kw):
+        super().__init__(*a, **kw)
+        self._bad = set(bad)
+
+    async def fetch_attraction_address(self, location_id: int) -> dict[str, Any]:
+        if location_id in self._bad:
+            self.address_calls.append(location_id)
+            raise RuntimeError("TA 500")
+        return await super().fetch_attraction_address(location_id)
+
+
+def _hybrid_lot(tx_session, *, bad=()):
+    """Three bulk records in Uberlândia + a hybrid client that picks each one's own place."""
     from brave.clients.hybrid_places import HybridPlacesClient
 
     base = random.randint(10**9, 2 * 10**9)
@@ -165,11 +177,14 @@ def test_hybrid_backfill_lot_is_one_apify_run(tx_session):
               "category": "Parks"} for i in ids]
     national = {str(i): {"lat": _LAT, "lon": _LNG, "osm_id": i, "municipio_name": "Uberlândia",
                          "uf": "MG"} for i in ids}
-    ta = FakeTripAdvisorClient(
+    page = {"city_name": "Uberlandia", "state_name": "Minas Gerais",
+            "lat": _LAT + 0.001, "lng": _LNG}  # TA's point, ~110 m from Google's
+    ta = _TA(
         gql_pages=[(0, cards)],
-        fixture_address={i: {"city_name": "Uberlandia", "state_name": "Minas Gerais"} for i in ids},
+        fixture_address=dict.fromkeys(ids, page),
         recent_review={"review_count": 40, "rating": None,
                        "most_recent_review_at": datetime.now(UTC) - timedelta(days=4)},
+        bad=[ids[i] for i in bad],
     )
     rc = fakeredis.FakeRedis()
     bulk = _ingest(tx_session, ta)
@@ -179,12 +194,12 @@ def test_hybrid_backfill_lot_is_one_apify_run(tx_session):
     rows = list(tx_session.scalars(
         select(RioRecord).where(RioRecord.canonical_key.in_(keys)).order_by(RioRecord.id)
     ))
-    row_ids = [r.id for r in rows]
     loc = {"lat": _LAT, "lng": _LNG}
-    found, essentials = {}, {}
+    found, essentials, picks = {}, {}, {}
     for r in rows:
         name, pid = r.normalized["name"], f"ChIJ-{r.id}"
-        found[apify_query(name, r.normalized["municipio"], "MG")] = {
+        picks[f"{name}, Uberlândia - MG"] = [pid]
+        found[f"place_id:{pid}"] = {
             "placeId": pid, "title": name, "location": loc, "city": "Uberlândia",
             "address": "Rua X, Uberlândia - MG", "permanentlyClosed": False,
             "temporarilyClosed": False, "openingHours": [{"day": "segunda-feira",
@@ -198,19 +213,75 @@ def test_hybrid_backfill_lot_is_one_apify_run(tx_session):
             "municipio_from_locality": False, "distrito_hint": "",
         }
     apify = FakeApifyClient(found)
-    hybrid = HybridPlacesClient(FakePlacesClient(fixture_essentials=essentials), apify)
+    google = FakePlacesClient(fixture_ids=picks, fixture_essentials=essentials)
+    hybrid = HybridPlacesClient(google, apify)
+    return rows, ids, ta, rc, apify, _ingest(tx_session, ta, hybrid)
+
+
+def test_hybrid_backfill_lot_is_one_apify_run(tx_session):
+    """places_provider=hybrid: each record's TA side goes first (the pick searches where TA
+    puts it), then the lot is ONE Apify run of place_id queries (~60 s fixed per run) before
+    the record loop; every record then enriches off the cache, its TA page fetched once."""
+    rows, ids, ta, rc, apify, ingest = _hybrid_lot(tx_session)
+    row_ids = [r.id for r in rows]
 
     state: dict[str, Any] = {"cursor": None, "stop": None}
-    asyncio.run(pipeline._backfill_batch(
-        tx_session, _ingest(tx_session, ta, hybrid), row_ids, rc, state, None, 0.0
-    ))
+    asyncio.run(pipeline._backfill_batch(tx_session, ingest, row_ids, rc, state, None, 0.0))
 
     assert state["stop"] is None
-    assert len(apify.lookup_calls) == 1 and sorted(apify.lookup_calls[0]["queries"]) == sorted(found)
+    assert len(apify.lookup_calls) == 1
+    assert sorted(apify.lookup_calls[0]["queries"]) == sorted(f"place_id:ChIJ-{r}" for r in row_ids)
+    assert sorted(ta.address_calls) == sorted(ids)  # the pre-pass did it; the loop did not
     tx_session.expire_all()
     for rid in row_ids:
         n = tx_session.get(RioRecord, rid).normalized
         assert n["google_enriched"] is True and n["google_place_id"] == f"ChIJ-{rid}"
+
+
+def test_backfill_ta_prepass_failure_is_left_to_the_record(tx_session):
+    """A record's own TA failure in the pre-pass is swallowed: the others go in the lot, and
+    it fails (and is reported) in its own pass, against the right record."""
+    rows, ids, ta, rc, apify, ingest = _hybrid_lot(tx_session, bad=[1])
+    row_ids = [r.id for r in rows]
+    bad_id = next(r.id for r in rows if r.canonical_key == f"tripadvisor:attraction:{ids[1]}")
+
+    state: dict[str, Any] = {"cursor": None, "stop": None}
+    asyncio.run(pipeline._backfill_batch(tx_session, ingest, row_ids, rc, state, None, 0.0))
+
+    assert state["stop"] is None and state["cursor"] == str(row_ids[-1])
+    assert ta.address_calls.count(ids[1]) == 2  # pre-pass + its own pass
+    assert rc.hget(pipeline._BACKFILL_PROGRESS_KEY, "failed") == b"1"
+    assert len(apify.lookup_calls) == 1
+    tx_session.expire_all()
+    for rid in row_ids:
+        n = tx_session.get(RioRecord, rid).normalized
+        if rid == bad_id:
+            assert not n.get("ta_backfilled_at") and n.get("google_enriched") is not True
+        else:
+            assert n["google_enriched"] is True
+
+
+def test_backfill_prepass_stops_on_halt_before_the_run(tx_session, monkeypatch):
+    """Engine paused during the TA pre-pass: no batched Apify run is started for the lot."""
+    from brave.core import engine
+
+    rows, _, ta, rc, apify, ingest = _hybrid_lot(tx_session)
+    agent = ingest._places_agent
+    lots: list[Any] = []
+
+    async def no_lot(items):
+        lots.append(items)
+
+    monkeypatch.setattr(agent, "prefetch", no_lot)
+    monkeypatch.setattr(engine, "should_halt_producer", lambda _rc: len(ta.address_calls) >= 1)
+
+    state: dict[str, Any] = {"cursor": None, "stop": None}
+    asyncio.run(pipeline._backfill_batch(
+        tx_session, ingest, [r.id for r in rows], rc, state, None, 0.0
+    ))
+
+    assert lots == [] and len(ta.address_calls) == 1
+    assert state["stop"] == "halted"
 
 
 def test_google_backfill_lot_never_prefetches():

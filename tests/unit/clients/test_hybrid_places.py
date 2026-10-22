@@ -21,7 +21,11 @@ from tests.fakes.fake_places import FakePlacesClient
 
 _FIX = Path(__file__).resolve().parents[2] / "fixtures"
 PID = "ChIJixdqrlIWuAARlfIafNUX-qk"
-QUERY = "Morro do Moreno, Vila Velha - ES"
+QUERY = "Morro do Moreno, Vila Velha - ES"  # Google's IDs-only search
+Q = f"place_id:{PID}"  # Apify's
+LAT, LNG = -20.3263, -40.2775  # the record's TA point, at the place
+ITEM = {"nome": "Morro do Moreno", "municipio": "Vila Velha", "uf": "ES",
+        "lat": LAT, "lng": LNG, "radius_km": 2.0}
 
 # RealPlacesClient.place_details() keys (brave/clients/places.py).
 DETAILS_KEYS = {
@@ -55,10 +59,25 @@ def _essentials(uf_short: str = "ES") -> dict:
     }
 
 
-def _hybrid(apify_fixture=None, essentials=None, **kw):
-    apify = FakeApifyClient(apify_fixture if apify_fixture is not None else {QUERY: _apify()}, **kw)
-    google = FakePlacesClient(fixture_essentials={PID: essentials or _essentials()})
+def _hybrid(apify_fixture=None, essentials=None, ids=None, search_ids_error=None, **kw):
+    apify = FakeApifyClient(apify_fixture if apify_fixture is not None else {Q: _apify()}, **kw)
+    google = FakePlacesClient(
+        fixture_essentials=essentials or {PID: _essentials()},
+        fixture_ids={QUERY: [PID]} if ids is None else ids,
+        search_ids_error=search_ids_error,
+    )
     return HybridPlacesClient(google, apify, max_reviews=1), apify, google
+
+
+def _search(hybrid, nome="Morro do Moreno", municipio="Vila Velha", uf="ES", **kw):
+    kw = {"lat": LAT, "lng": LNG, "radius_km": 2.0, **kw}
+    return asyncio.run(hybrid.search(nome, municipio, uf, **kw))
+
+
+def _ess(place_id: str, *, km_north: float = 0.0, **over) -> dict:
+    """Essentials for ``place_id`` ``km_north`` km north of the reference."""
+    return {**_essentials(), "place_id": place_id,
+            "location": {"lat": LAT + km_north / 111.2, "lng": LNG}, **over}
 
 
 # -- adapter ---------------------------------------------------------------------------
@@ -139,19 +158,23 @@ def test_adapter_weekday_text_is_monday_first_whatever_the_scrape_day():
 def test_prefetch_is_one_run_at_max_reviews_and_caches():
     """One 4 GB run at a time (two at once fill the FREE plan's 8 GB → busy 402 for every
     other run); a no-reviews caller is served the same hit, reviews dropped."""
-    hybrid, apify, _ = _hybrid({QUERY: _apify(), f"place_id:{PID}": _apify()})
+    hybrid, apify, google = _hybrid(
+        {Q: _apify(), "place_id:P2": {**_apify(), "placeId": "P2"}},
+        {PID: _essentials(), "P2": _ess("P2")},
+    )
     items = [
-        {"nome": "Morro do Moreno", "municipio": "Vila Velha", "uf": "ES"},
-        {"nome": "Morro do Moreno", "municipio": "Vila Velha", "uf": "ES"},  # dup
-        {"place_id": PID, "include_reviews": False},
-        {"place_id": PID, "include_reviews": True},  # twin record, other recency
+        ITEM,
+        dict(ITEM),  # dup
+        {"place_id": "P2", "include_reviews": False},
+        {"place_id": "P2", "include_reviews": True},  # twin record, other recency
     ]
     asyncio.run(hybrid.prefetch(items))
 
-    assert apify.lookup_calls == [{"queries": [QUERY, f"place_id:{PID}"], "max_reviews": 1}]
-    asyncio.run(hybrid.prefetch(items))  # already cached → no run
-    assert len(apify.lookup_calls) == 1
-    assert asyncio.run(hybrid.place_details(PID, include_reviews=False))["reviews"] == []
+    assert apify.lookup_calls == [{"queries": [Q, "place_id:P2"], "max_reviews": 1}]
+    assert len(google.search_ids_calls) == 1
+    asyncio.run(hybrid.prefetch(items))  # already cached → no run, no pick
+    assert len(apify.lookup_calls) == 1 and len(google.search_ids_calls) == 1
+    assert asyncio.run(hybrid.place_details("P2", include_reviews=False))["reviews"] == []
     assert len(apify.lookup_calls) == 1
 
 
@@ -191,57 +214,29 @@ def test_prefetch_splits_a_big_lot_and_a_failed_run_spares_the_others():
     assert len(apify.lookup_calls) == 3
 
 
-def test_prefetch_retries_exact_misses_once_in_one_batch():
-    """A miss in a SUCCEEDED run may be a dropped request: the exact queries (place_id /
-    with município) get one more batched run; município-less sweep names do not."""
-    hybrid, apify, _ = _hybrid({f"place_id:{PID}": _apify()})
-    asyncio.run(hybrid.prefetch([
-        {"place_id": PID},
-        {"nome": "Lugar X", "municipio": "Vila Velha", "uf": "ES"},
-        {"nome": "Card Y", "municipio": "", "uf": "ES"},
-    ]))
-    assert [c["queries"] for c in apify.lookup_calls] == [
-        [f"place_id:{PID}", "Lugar X, Vila Velha - ES"],
-        ["Lugar X, Vila Velha - ES"],
-        ["Card Y - ES"],
-    ]
-    # Missed twice: a conclusive no-hit, no fourth run.
-    assert asyncio.run(hybrid.search("Lugar X", "Vila Velha", "ES")) == []
-    assert len(apify.lookup_calls) == 3
+def test_prefetch_retries_misses_once_in_one_batch():
+    """A miss in a SUCCEEDED run may be a dropped request: one more batched run for the
+    misses; a second miss is a conclusive no-hit."""
+    from brave.clients.hybrid_places import ApifyNoResultError
 
-
-def test_prefetch_bounds_municipio_less_names_to_their_uf():
-    """A "Nome - UF" with no bound landed in Rio Branco, Salvador, Lisboa (RO pilot): it
-    runs with the UF as locationQuery, apart from the queries that need none."""
-    hybrid, apify, _ = _hybrid()
-    asyncio.run(hybrid.prefetch([
-        {"place_id": PID},
-        {"nome": "Lugar X", "municipio": "Vila Velha", "uf": "ES"},
-        {"nome": "Card Y", "municipio": "", "uf": "ES"},
-        {"nome": "Card Z", "municipio": "", "uf": "RO"},
-    ]))
-    by_location = {c.get("location"): c["queries"] for c in apify.lookup_calls}
-    assert by_location["Espírito Santo, Brasil"] == ["Card Y - ES"]
-    assert by_location["Rondônia, Brasil"] == ["Card Z - RO"]
-    assert f"place_id:{PID}" in by_location[None]
+    hybrid, apify, google = _hybrid()
+    asyncio.run(hybrid.prefetch([ITEM, {"place_id": "P2"}]))
+    assert [c["queries"] for c in apify.lookup_calls] == [[Q, "place_id:P2"], ["place_id:P2"]]
+    with pytest.raises(ApifyNoResultError):
+        asyncio.run(hybrid.place_details("P2"))
+    assert len(apify.lookup_calls) == 2
+    assert [c["place_id"] for c in google.place_essentials_calls] == [PID]  # the pick only
 
 
 def test_failed_prefetch_raises_per_record_instead_of_single_runs():
     hybrid, apify, google = _hybrid(raise_exc=RuntimeError("apify run FAILED"))
     with pytest.raises(RuntimeError):
-        asyncio.run(hybrid.prefetch([
-            {"place_id": PID}, {"nome": "Morro do Moreno", "municipio": "Vila Velha", "uf": "ES"},
-            {"nome": "Card Y", "municipio": "", "uf": "ES"},
-        ]))
-    for call in (
-        hybrid.place_details(PID),
-        hybrid.search("Morro do Moreno", "Vila Velha", "ES"),
-        hybrid.search("Card Y", "Serra", "ES"),  # via the sweep alias
-    ):
+        asyncio.run(hybrid.prefetch([{"place_id": "P2"}, ITEM]))
+    for call in (lambda: asyncio.run(hybrid.place_details("P2")), lambda: _search(hybrid)):
         with pytest.raises(RuntimeError, match="batched run"):
-            asyncio.run(call)
-    # One run per locationQuery group, both failed; no single runs after.
-    assert len(apify.lookup_calls) == 2 and google.place_essentials_calls == []
+            call()
+    # One failed run, no single runs after; the only Essentials is the pick's.
+    assert len(apify.lookup_calls) == 1 and len(google.place_essentials_calls) == 1
 
 
 def test_a_wall_in_prefetch_does_not_mark_the_lot_failed():
@@ -254,76 +249,25 @@ def test_a_wall_in_prefetch_does_not_mark_the_lot_failed():
         asyncio.run(hybrid.place_details(PID))
 
 
-def test_record_exact_hit_wins_over_a_homonym_alias():
-    """Two 'Igreja Matriz' of one lot: each record takes its OWN cached hit, even when the
-    other's Apify address names its município (Rua Cachoeira, Lençóis)."""
-    cach = {**_apify(), "placeId": "P_CACH", "city": "Cachoeira", "address": "Centro, Cachoeira - BA"}
-    lenc = {**_apify(), "placeId": "P_LENC", "city": "Lençóis",
-            "address": "Rua Cachoeira, 10, Lençóis - BA"}
-    q_cach, q_lenc = "Igreja Matriz, Cachoeira - BA", "Igreja Matriz, Lençóis - BA"
-    apify = FakeApifyClient({q_cach: cach, q_lenc: lenc})
-    essentials = {pid: {**_essentials(uf_short="BA"), "place_id": pid} for pid in ("P_CACH", "P_LENC")}
-    hybrid = HybridPlacesClient(FakePlacesClient(fixture_essentials=essentials), apify)
-    asyncio.run(hybrid.prefetch([
-        {"nome": "Igreja Matriz", "municipio": "Cachoeira", "uf": "BA"},
-        {"nome": "Igreja Matriz", "municipio": "Lençóis", "uf": "BA"},
-    ]))
-
-    [hit_c] = asyncio.run(hybrid.search("Igreja Matriz", "Cachoeira", "BA"))
-    [hit_l] = asyncio.run(hybrid.search("Igreja Matriz", "Lençóis", "BA"))
-    assert (hit_c["place_id"], hit_l["place_id"]) == ("P_CACH", "P_LENC")
-    assert len(apify.lookup_calls) == 1
-
-
-def test_sweep_alias_elsewhere_in_the_uf_is_served_for_the_agent_to_judge():
-    """Apify's city is not checked (27/82 RO names sat in the right place under another
-    city): the alias is served, flagged, and _best_match judges the distance."""
-    lenc = {**_apify(), "city": "Lençóis", "address": "Rua Cachoeira, 10, Lençóis - BA"}
-    apify = FakeApifyClient({"Igreja Matriz - BA": lenc})
-    essentials = {PID: _essentials(uf_short="BA")}
-    hybrid = HybridPlacesClient(FakePlacesClient(fixture_essentials=essentials), apify)
-    asyncio.run(hybrid.prefetch([{"nome": "Igreja Matriz", "municipio": "", "uf": "BA"}]))
-    [hit] = asyncio.run(hybrid.search("Igreja Matriz", "Cachoeira", "BA"))
-    assert hit["place_id"] == PID and hit["via_alias"] is True
-    assert len(apify.lookup_calls) == 1
-
-
-def test_search_without_alias_runs_the_municipio_query():
-    """The agent's retry after a rejected alias: the record's own query, never the alias."""
-    apify = FakeApifyClient({"Igreja Matriz - BA": _apify(), "Igreja Matriz, Cachoeira - BA": _apify()})
-    hybrid = HybridPlacesClient(FakePlacesClient(fixture_essentials={PID: _essentials("BA")}), apify)
-    asyncio.run(hybrid.prefetch([{"nome": "Igreja Matriz", "municipio": "", "uf": "BA"}]))
-    [hit] = asyncio.run(hybrid.search("Igreja Matriz", "Cachoeira", "BA", alias=False))
-    assert hit["via_alias"] is False
-    assert [c["queries"] for c in apify.lookup_calls] == [
-        ["Igreja Matriz - BA"], ["Igreja Matriz, Cachoeira - BA"],
-    ]
-
-
-def test_record_moved_by_the_ta_is_served_by_its_prefetched_name():
-    """Backfill: prefetched as 'Nome, A - UF' (the geocoder's município), then the TA moves
-    the record to B: Apify's hit sits in B → served, no single run of its own."""
-    hybrid, apify, _ = _hybrid({"Morro do Moreno, Serra - ES": _apify()})  # city Vila Velha
-    asyncio.run(hybrid.prefetch([{"nome": "Morro do Moreno", "municipio": "Serra", "uf": "ES"}]))
-    [hit] = asyncio.run(hybrid.search("Morro do Moreno", "Vila Velha", "ES"))
-    assert hit["place_id"] == PID and len(apify.lookup_calls) == 1
-
-
 def test_failed_lot_blocks_single_runs_for_ids_it_never_carried():
     """Sweep: a card's id from locate()/consensus was never in the page's lot; on a degraded
     Apify it must fail like the lot, not pay a ~60 s+ run per card."""
     from brave.clients.hybrid_places import ApifyBatchFailedError
 
-    hybrid, apify, _ = _hybrid(raise_exc=RuntimeError("apify 500"))
+    hybrid, apify, google = _hybrid(
+        essentials={PID: _essentials(), "P2": _ess("P2")}, raise_exc=RuntimeError("apify 500")
+    )
     with pytest.raises(RuntimeError):
-        asyncio.run(hybrid.prefetch([{"nome": "Card 0", "municipio": "", "uf": "ES"}]))
+        asyncio.run(hybrid.prefetch([ITEM]))
     with pytest.raises(ApifyBatchFailedError):
-        asyncio.run(hybrid.place_details(PID))
-    assert len(apify.lookup_calls) == 1
+        asyncio.run(hybrid.place_details("P2"))
+    with pytest.raises(ApifyBatchFailedError):  # a live search, before any Google spend
+        _search(hybrid, nome="Outro Lugar")
+    assert len(apify.lookup_calls) == 1 and len(google.search_ids_calls) == 1
 
-    hybrid._apify = FakeApifyClient({f"place_id:{PID}": _apify()})  # Apify back: next lot clears it
+    hybrid._apify = FakeApifyClient({"place_id:P2": _apify()})  # Apify back: next lot clears it
     asyncio.run(hybrid.prefetch([]))
-    assert asyncio.run(hybrid.place_details(PID))["place_id"] == PID
+    assert asyncio.run(hybrid.place_details("P2"))["place_id"] == "P2"
 
 
 def test_place_details_known_no_hit_raises_before_paying_essentials():
@@ -338,14 +282,97 @@ def test_place_details_known_no_hit_raises_before_paying_essentials():
 
 def test_prefetched_search_and_details_spend_nothing_more_on_apify():
     hybrid, apify, google = _hybrid()
-    asyncio.run(hybrid.prefetch([{"nome": "Morro do Moreno", "municipio": "Vila Velha", "uf": "ES"}]))
+    asyncio.run(hybrid.prefetch([ITEM]))
 
-    [hit] = asyncio.run(hybrid.search("Morro do Moreno", "Vila Velha", "ES"))
+    [hit] = _search(hybrid)
     d = asyncio.run(hybrid.place_details(hit["place_id"]))
 
     assert len(apify.lookup_calls) == 1 and apify.check_budget_calls == []
-    assert google.place_essentials_calls == [{"place_id": PID, "uf": "ES"}]  # one Essentials
+    assert google.place_essentials_calls == [{"place_id": PID, "uf": "ES"}]  # the pick's one
+    assert len(google.search_ids_calls) == 1
     assert d["provider"] == "hybrid" and d["reviews"]
+
+
+def test_apify_is_asked_by_place_id_only():
+    hybrid, apify, _ = _hybrid(essentials={PID: _essentials(), "P2": _ess("P2")},
+                               ids={QUERY: [PID], "Outro Lugar, Vila Velha - ES": ["P2"]})
+    asyncio.run(hybrid.prefetch([ITEM, {"place_id": "P3"}]))
+    _search(hybrid, nome="Outro Lugar")  # live
+    queries = [q for c in apify.lookup_calls for q in c["queries"]]
+    assert queries and all(q.startswith("place_id:") for q in queries)
+
+
+def test_duplicate_key_and_same_place_id_are_one_run_no_extra_lookup():
+    """Two cards with the same key, and a third whose pick is the same place: all served
+    from the one cached entry (read, never consumed)."""
+    hybrid, apify, google = _hybrid(ids={QUERY: [PID], "Mirante do Moreno, Vila Velha - ES": [PID]})
+    other = {**ITEM, "nome": "Mirante do Moreno"}
+    asyncio.run(hybrid.prefetch([ITEM, {**ITEM, "nome": "MORRO DO  MORENO"}, other]))
+
+    hits = [_search(hybrid), _search(hybrid, nome="Morro do Moreno"),
+            _search(hybrid, nome="Mirante do Moreno")]
+    assert [h[0]["place_id"] for h in hits] == [PID] * 3
+    assert apify.lookup_calls == [{"queries": [Q], "max_reviews": 1}]
+    assert len(google.search_ids_calls) == 2  # one pick per distinct key
+
+
+def test_failed_pick_in_prefetch_raises_batch_failed_in_search():
+    from brave.clients.hybrid_places import ApifyBatchFailedError
+
+    hybrid, apify, google = _hybrid(search_ids_error=RuntimeError("places 503"))
+    asyncio.run(hybrid.prefetch([ITEM]))  # swallowed: that record raises in search()
+    with pytest.raises(ApifyBatchFailedError):
+        _search(hybrid)
+    assert len(google.search_ids_calls) == 1 and apify.lookup_calls == []
+
+
+def test_wall_in_pick_propagates_from_prefetch():
+    from brave.shared.exceptions import ProviderBalanceError
+
+    hybrid, apify, _ = _hybrid(search_ids_error=ProviderBalanceError("places", "403"))
+    with pytest.raises(ProviderBalanceError):
+        asyncio.run(hybrid.prefetch([ITEM]))
+    assert apify.lookup_calls == []
+
+
+# -- pick ------------------------------------------------------------------------------
+
+
+def test_pick_takes_the_first_candidate_in_the_uf_within_radius():
+    essentials = {
+        "POL": _ess("POL", types=["locality", "political"]),
+        "MT": _ess("MT", uf_short="MT"),  # a TA point fell in Juína-MT
+        PID: _ess(PID, km_north=1.0),
+    }
+    hybrid, _, google = _hybrid(essentials=essentials, ids={QUERY: ["POL", "MT", PID]})
+    [hit] = _search(hybrid)
+    assert hit["place_id"] == PID
+    assert [c["place_id"] for c in google.place_essentials_calls] == ["POL", "MT", PID]
+
+
+def test_pick_stops_at_the_first_passer():
+    hybrid, _, google = _hybrid(essentials={PID: _essentials(), "P2": _ess("P2")},
+                                ids={QUERY: [PID, "P2"]})
+    [hit] = _search(hybrid)
+    assert hit["place_id"] == PID and len(google.place_essentials_calls) == 1
+
+
+def test_pick_looks_at_the_top_three_only():
+    far = {f"F{i}": _ess(f"F{i}", km_north=10.0) for i in range(3)}
+    hybrid, apify, google = _hybrid(essentials={**far, PID: _essentials()},
+                                    ids={QUERY: ["F0", "F1", "F2", PID]})
+    assert _search(hybrid) == []
+    assert len(google.place_essentials_calls) == 3 and apify.lookup_calls == []
+
+
+def test_pick_bias_is_5_km_around_a_point_and_50_km_max():
+    hybrid, _, google = _hybrid(ids={})
+    _search(hybrid, radius_km=2.0)
+    _search(hybrid, nome="Outro", radius_km=80.0)
+    assert [(c["lat"], c["lng"], c["radius_m"]) for c in google.search_ids_calls] == [
+        (LAT, LNG, 5000.0), (LAT, LNG, 50000.0),
+    ]
+    assert google.search_ids_calls[0]["query"] == QUERY
 
 
 # -- search ----------------------------------------------------------------------------
@@ -353,28 +380,28 @@ def test_prefetched_search_and_details_spend_nothing_more_on_apify():
 
 def test_search_hit_has_text_search_shape():
     hybrid, apify, _ = _hybrid()
-    [hit] = asyncio.run(hybrid.search("Morro do Moreno", "Vila Velha", "ES"))
+    [hit] = _search(hybrid)
 
-    assert set(hit) == SEARCH_KEYS | {"via_alias"}
-    assert hit["place_id"] == PID and hit["name"] == "Morro do Moreno" and not hit["via_alias"]
+    assert set(hit) == SEARCH_KEYS
+    assert hit["place_id"] == PID and hit["name"] == "Morro do Moreno"
     assert hit["municipio_ibge"] == "3205200"
-    assert apify.lookup_calls == [{"queries": [QUERY], "max_reviews": 1}]
+    assert apify.lookup_calls == [{"queries": [Q], "max_reviews": 1}]
 
 
 def test_search_no_hit_returns_empty_without_essentials():
-    hybrid, _, google = _hybrid({})
-    assert asyncio.run(hybrid.search("Morro do Moreno", "Vila Velha", "ES")) == []
-    assert google.place_essentials_calls == []
+    hybrid, apify, google = _hybrid(ids={})
+    assert _search(hybrid) == []
+    assert google.place_essentials_calls == [] and apify.lookup_calls == []
 
 
 def test_search_out_of_uf_returns_empty():
-    hybrid, _, _ = _hybrid(essentials=_essentials(uf_short="RJ"))
-    assert asyncio.run(hybrid.search("Morro do Moreno", "Vila Velha", "ES")) == []
+    hybrid, apify, _ = _hybrid(essentials={PID: _essentials(uf_short="RJ")})
+    assert _search(hybrid) == [] and apify.lookup_calls == []
 
 
 def test_search_without_reviews_asks_zero():
     hybrid, apify, _ = _hybrid()
-    asyncio.run(hybrid.search("Morro do Moreno", "Vila Velha", "ES", include_reviews=False))
+    _search(hybrid, include_reviews=False)
     assert apify.lookup_calls[0]["max_reviews"] == 0
 
 
@@ -382,14 +409,18 @@ def test_uncached_search_checks_both_budgets_before_paying():
     from brave.shared.exceptions import CostGuardError
 
     hybrid, apify, google = _hybrid()
+    asked: list[float] = []
 
     def capped(usd):
+        asked.append(usd)
         raise CostGuardError("places daily cap")
 
     google.check_budget = capped
     with pytest.raises(CostGuardError):
-        asyncio.run(hybrid.search("Morro do Moreno", "Vila Velha", "ES"))
+        _search(hybrid)
+    assert asked == [pytest.approx(3 * 0.005)]  # every Essentials the pick may pay
     assert apify.check_budget_calls and apify.lookup_calls == []  # Apify never paid
+    assert google.search_ids_calls == [] and google.place_essentials_calls == []
 
 
 # -- place_details ---------------------------------------------------------------------
@@ -411,16 +442,14 @@ def test_place_details_apify_no_hit_raises_after_one_more_run():
     with pytest.raises(RuntimeError, match="no result"):
         asyncio.run(hybrid.place_details(PID))
     assert len(apify.lookup_calls) == 2
-    asyncio.run(hybrid.search("Card Y", "", "ES"))  # município-less: not exact, one run
-    assert len(apify.lookup_calls) == 3
 
 
 def test_place_details_cache_is_consumed_once():
-    hybrid, apify, _ = _hybrid({QUERY: _apify(), f"place_id:{PID}": _apify()})
-    asyncio.run(hybrid.search("Morro do Moreno", "Vila Velha", "ES"))
+    hybrid, apify, _ = _hybrid()
+    _search(hybrid)
     asyncio.run(hybrid.place_details(PID))
-    asyncio.run(hybrid.place_details(PID))  # cache popped → pays a place_id run
-    assert [c["queries"] for c in apify.lookup_calls] == [[QUERY], [f"place_id:{PID}"]]
+    asyncio.run(hybrid.place_details(PID))  # pair popped → pays a place_id run
+    assert [c["queries"] for c in apify.lookup_calls] == [[Q], [Q]]
 
 
 def test_text_search_delegates_to_google_and_no_check_budget():

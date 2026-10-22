@@ -5,9 +5,9 @@ search strings (measured 2026-10-21), so callers batch (HybridPlacesClient.prefe
 ``lookup`` matches each dataset item back to its input by ``searchString`` / ``inputPlaceId``.
 A search string with no hit simply has no item → None.
 
-Input that works across municípios in one run (6/6 right places, no locationQuery):
-``"{nome}, {municipio} - {uf}"`` or ``"place_id:ChIJ..."``. Paid actor filters
-(categoryFilterWords, searchMatching, placeMinimumStars) are never sent.
+Input: ``"place_id:ChIJ..."`` queries only — Google picks the place (HybridPlacesClient), Apify
+just opens it. Paid actor filters (categoryFilterWords, searchMatching, placeMinimumStars) are
+never sent.
 
 LGPD: ``scrapeReviewsPersonalData: false`` is sent, but review objects still carry reviewer
 ids/counts/photos — ``normalize_apify_item`` keeps only publishedAtDate, stars and text.
@@ -71,11 +71,6 @@ _KEPT_FIELDS = (
     "permanentlyClosed", "temporarilyClosed", "openingHours", "categories", "categoryName",
     "price", "reviewsCount", "totalScore",
 )
-
-
-def apify_query(nome: str, municipio: str, uf: str) -> str:
-    """The search string one place is looked up by (and matched back by)."""
-    return f"{nome}, {municipio} - {uf}" if municipio else f"{nome} - {uf}"
 
 
 def normalize_apify_item(item: dict) -> dict:
@@ -210,14 +205,8 @@ class RealApifyPlacesClient:
                 daily_cap_usd=self._daily_usd_cap, total_cap_usd=self._total_usd_cap,
             )
 
-    async def lookup(
-        self, queries: list[str], *, max_reviews: int, location: str | None = None
-    ) -> dict[str, dict | None]:
-        """ONE actor run for every (deduped) query → {query: normalize_apify_item | None}.
-
-        ``location`` (Apify ``locationQuery``, one per run) bounds the search to that area:
-        a "Nome - RO" with none landed in Rio Branco, Salvador, even Lisboa (RO pilot).
-        """
+    async def lookup(self, queries: list[str], *, max_reviews: int) -> dict[str, dict | None]:
+        """ONE actor run for every (deduped) query → {query: normalize_apify_item | None}."""
         queries = list(dict.fromkeys(queries))
         if not queries:
             return {}
@@ -237,8 +226,6 @@ class RealApifyPlacesClient:
             "scrapeReviewsPersonalData": False,
             "maxImages": 0,
         }
-        if location:
-            body["locationQuery"] = location
         headers = {"Authorization": f"Bearer {self._token}"}
         try:
             async with httpx.AsyncClient(timeout=self._timeout_s, headers=headers) as http:

@@ -129,8 +129,11 @@ def test_hybrid_refresh_uses_one_bag_and_one_prefetch_for_the_lot(harness, monke
     class HybridAgent:
         prefetches = True
 
-        async def prefetch(self, rios, *, refresh=False):
-            prefetched.append(([r.id for r in rios], refresh))
+        def prefetch_items(self, rios, *, refresh=False):
+            return [(r.id, refresh) for r in rios]
+
+        async def prefetch(self, items):
+            prefetched.append(([i for i, _ in items], all(r for _, r in items)))
 
         async def run(self, rio, refresh=False):
             assert refresh is True
@@ -155,8 +158,11 @@ def test_hybrid_refresh_prefetches_one_run_worth_then_commits_it(harness, monkey
     class HybridAgent:
         prefetches = True
 
-        async def prefetch(self, rios, *, refresh=False):
-            events.append(("prefetch", [r.id for r in rios]))
+        def prefetch_items(self, rios, *, refresh=False):
+            return [r.id for r in rios]
+
+        async def prefetch(self, items):
+            events.append(("prefetch", items))
 
         async def run(self, rio, refresh=False):
             events.append(("run", rio.id))

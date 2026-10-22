@@ -113,3 +113,44 @@ async def test_essentials_permission_denied_is_a_balance_wall(monkeypatch):
     sdk.get_place = AsyncMock(side_effect=PermissionDenied("SERVICE_DISABLED"))
     with pytest.raises(ProviderBalanceError):
         await client.place_essentials("ChIJx", "ES")
+
+
+def _ids_client(monkeypatch, redis=None, **search_text):
+    from tenacity import wait_none
+
+    from brave.clients.places import RealPlacesClient
+
+    client, sdk = _client(monkeypatch, _place(), redis)
+    monkeypatch.setattr(RealPlacesClient._search_text_once.retry, "wait", wait_none())
+    response = MagicMock()
+    response.places = [MagicMock(id="P1"), MagicMock(id="P2")]
+    sdk.search_text = AsyncMock(**(search_text or {"return_value": response}))
+    return client, sdk
+
+
+async def test_search_ids_mask_bias_and_no_spend(monkeypatch, fake_redis):
+    """Text Search IDs Only is free: no budget check (a spent cap does not block it), no spend."""
+    from brave.observability.cost_guard import places_total_spend, record_places_spend
+
+    record_places_spend(fake_redis, 300.0, "test-key")  # cap fully spent
+    client, sdk = _ids_client(monkeypatch, fake_redis)
+    ids = await client.search_ids("Morro do Moreno, Vila Velha - ES", lat=-20.3, lng=-40.2, radius_m=5000)
+
+    assert ids == ["P1", "P2"]
+    request = sdk.search_text.call_args.args[0]
+    assert dict(sdk.search_text.call_args.kwargs["metadata"])["x-goog-fieldmask"] == "places.id"
+    assert request.max_result_count == 5 and request.text_query == "Morro do Moreno, Vila Velha - ES"
+    circle = request.location_bias.circle
+    assert (circle.center.latitude, circle.center.longitude, circle.radius) == (-20.3, -40.2, 5000)
+    assert places_total_spend(fake_redis, "test-key") == pytest.approx(300.0)
+
+
+async def test_search_ids_permission_denied_is_a_balance_wall(monkeypatch):
+    from brave.shared.exceptions import ProviderBalanceError
+
+    class PermissionDenied(Exception):  # noqa: N818 — matched by the SDK class name
+        pass
+
+    client, _ = _ids_client(monkeypatch, side_effect=PermissionDenied("SERVICE_DISABLED"))
+    with pytest.raises(ProviderBalanceError):
+        await client.search_ids("X - ES", lat=0.0, lng=0.0, radius_m=5000)

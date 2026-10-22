@@ -59,6 +59,10 @@ _TEXT_SEARCH_FIELD_MASK = (
     "places.addressComponents"
 )
 
+# Text Search Essentials (IDs Only): no charge, unlimited (pricing page, 10/2026). One more
+# field bills Pro.
+_TEXT_SEARCH_IDS_FIELD_MASK = "places.id"
+
 # Place Details SKU is billed by the HIGHEST tier field in the mask:
 #   Enterprise ($20/1k)              — regularOpeningHours, internationalPhoneNumber,
 #                                      websiteUri, priceLevel
@@ -366,9 +370,11 @@ class RealPlacesClient:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    async def _search_text_once(self, request: Any) -> Any:
+    async def _search_text_once(
+        self, request: Any, field_mask: str = _TEXT_SEARCH_FIELD_MASK
+    ) -> Any:
         return await self._get_client().search_text(
-            request, metadata=[("x-goog-fieldmask", _TEXT_SEARCH_FIELD_MASK)]
+            request, metadata=[("x-goog-fieldmask", field_mask)]
         )
 
     @retry(
@@ -460,6 +466,28 @@ class RealPlacesClient:
 
         logger.info("places_text_search_ok", query=query, uf=uf, count=len(results))
         return results
+
+    async def search_ids(
+        self, query: str, *, lat: float, lng: float, radius_m: float, max_results: int = 5
+    ) -> list[str]:
+        """Place ids for ``query`` biased to a circle (hybrid pick). Free: no budget check, no spend."""
+        from google.maps.places_v1.types import Circle, SearchTextRequest  # type: ignore[import]
+        from google.type.latlng_pb2 import LatLng  # type: ignore[import]
+
+        request = SearchTextRequest(
+            text_query=query, language_code="pt-BR", region_code="BR",
+            max_result_count=max_results,
+            location_bias=SearchTextRequest.LocationBias(circle=Circle(
+                center=LatLng(latitude=lat, longitude=lng), radius=radius_m,
+            )),
+        )
+        try:
+            response = await self._search_text_once(request, _TEXT_SEARCH_IDS_FIELD_MASK)
+        except Exception as exc:
+            logger.error("places_search_ids_error", error=type(exc).__name__)
+            _raise_if_places_balance_wall(exc)
+            raise
+        return [p.id for p in response.places]
 
     async def place_details(
         self, place_id: str, *, include_reviews: bool = True

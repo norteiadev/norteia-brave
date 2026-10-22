@@ -1,7 +1,7 @@
 """Fake Apify Google-Places client for offline tests (RealApifyPlacesClient's surface).
 
-    fake = FakeApifyClient({"Morro do Moreno, Vila Velha - ES": item, "X - ES": None})
-    found = await fake.lookup(["Morro do Moreno, Vila Velha - ES"], max_reviews=1)
+    fake = FakeApifyClient({"place_id:ChIJx": item, "place_id:ChIJy": None})
+    found = await fake.lookup(["place_id:ChIJx"], max_reviews=1)
 
 ``fixture`` maps an exact query string → normalized item (``normalize_apify_item``
 shape) or None (no hit). Unknown queries are a no-hit too.
@@ -18,18 +18,15 @@ class FakeApifyClient:
     ) -> None:
         self._fixture = fixture or {}
         self._raise_exc = raise_exc
-        self.lookup_calls: list[dict[str, Any]] = []  # {"queries", "max_reviews"[, "location"]} per run
+        self.lookup_calls: list[dict[str, Any]] = []  # {"queries", "max_reviews"} per run
         self.check_budget_calls: list[float] = []
 
     async def lookup(
-        self, queries: list[str], *, max_reviews: int, location: str | None = None
+        self, queries: list[str], *, max_reviews: int
     ) -> dict[str, dict[str, Any] | None]:
         if not queries:
             return {}
-        call: dict[str, Any] = {"queries": list(queries), "max_reviews": max_reviews}
-        if location is not None:
-            call["location"] = location
-        self.lookup_calls.append(call)
+        self.lookup_calls.append({"queries": list(queries), "max_reviews": max_reviews})
         if self._raise_exc is not None:
             raise self._raise_exc
         return {q: self._fixture.get(q) for q in dict.fromkeys(queries)}
