@@ -2087,7 +2087,7 @@ def backfill_ta_atrativos(
 ) -> str:
     """One backfill link: up to ta_backfill_batch_size candidates after ``after_id``.
 
-    Per record, TripAdvisorAtrativosIngest.backfill_record (C2): TA geo → UF/município +
+    Per record, TripAdvisorAtrativosIngest.backfill_record (C2): TA page → UF/município +
     parent destino, TA review recency, then the inline Places agent (built exactly like
     the per-UF sweep's — none when Places is off). Ordered by id (keyset), one commit per
     record, ta_backfill_throttle_seconds between records, honors the engine halt.

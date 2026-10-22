@@ -1818,7 +1818,20 @@ class TestFetchAttractionAddress:
         with respx.mock:
             respx.get(_PAGE_URL).mock(return_value=httpx.Response(status))
             assert await client.fetch_attraction_address(1534420) == {}
-        assert client._page_errors_in_a_row == 0
+        assert client._page_errors_in_a_row == 1  # conclusive, but counts toward the streak
+
+    @pytest.mark.asyncio
+    async def test_missing_pages_in_a_row_are_systemic(self, monkeypatch):
+        """TA dropping the g1 shortcut 404s every card: {} on all would stamp the marker."""
+        from brave.shared.exceptions import SourceSchemaError
+
+        client = self._client(monkeypatch)
+        with respx.mock:
+            respx.get(_PAGE_URL).mock(return_value=httpx.Response(404))
+            for _ in range(4):
+                assert await client.fetch_attraction_address(1534420) == {}
+            with pytest.raises(SourceSchemaError):
+                await client.fetch_attraction_address(1534420)
 
     @pytest.mark.asyncio
     async def test_redirect_off_the_attraction_page_is_conclusive_empty(self, monkeypatch):
@@ -1828,7 +1841,7 @@ class TestFetchAttractionAddress:
             respx.get(_PAGE_URL).mock(return_value=httpx.Response(301, headers={"Location": city}))
             respx.get(city).mock(return_value=httpx.Response(200, text="<html></html>"))
             assert await client.fetch_attraction_address(1534420) == {}
-        assert client._page_errors_in_a_row == 0
+        assert client._page_errors_in_a_row == 1
 
     @pytest.mark.asyncio
     async def test_non_br_address_is_empty(self, monkeypatch):

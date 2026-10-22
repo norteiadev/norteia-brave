@@ -1,7 +1,7 @@
 """Review fixes of the TA backfill / bulk lane (wave 2).
 
 C1 marker only on a conclusive verdict, run-level errors through the paid in-UF fallbacks,
-parent linkage without usable TA geo, same-UF moves only without evidence, stale Google /
+parent linkage without usable TA page, same-UF moves only without evidence, stale Google /
 description fields dropped on a move, deliberate DLQ verdicts preserved by the re-score,
 the Places savepoint, and the bulk's TA-geo fallback for cards the national geocode
 missed. 100% offline: fake TA client / geocoder, MagicMock session.
@@ -144,7 +144,7 @@ async def test_run_level_errors_escape_the_nominatim_fallback(error) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Parent linkage without usable TA geo
+# Parent linkage without usable TA page
 # ---------------------------------------------------------------------------
 
 
@@ -382,12 +382,14 @@ async def test_backfill_page_without_block_withholds_the_marker() -> None:
     from brave.shared.exceptions import SourceRecordError
 
     client = FakeTripAdvisorClient(address_error=SourceRecordError("no block"))
-    ingest = _ingest(client)
+    agent = _Agent()
+    ingest = _ingest(client, places_agent=agent)
     rio = _bulk_rio(parent_rio_id="p")
 
-    assert await ingest.backfill_record(rio) == "ta"
+    assert await ingest.backfill_record(rio) == "ta_page_pendente"
     assert client.address_calls == [555] and client.recent_review_calls == [555]
     assert "ta_backfilled_at" not in rio.normalized  # the next backfill redoes the page
+    assert agent.run_calls == []  # then Places: a name-placed seat must not pin a place_id
 
 
 @pytest.mark.asyncio

@@ -604,7 +604,8 @@ class TripAdvisorAtrativosIngest:
         SAVEPOINT: when it raises, only its writes are undone and the TA side (marker
         included) is left for the caller to commit.
 
-        Returns "+"-joined steps run ("ta", "places"), "noop", "municipio_nao_confirmado"
+        Returns "+"-joined steps run ("ta", "places"; "ta_page_pendente" when TA's page
+        failed — no marker, no Places), "noop", "municipio_nao_confirmado"
         when TA puts the card in another UF and no resolver could place it there (routed to
         the DLQ; Places is skipped — a search in the stored, wrong UF could only match a
         homonym), or "municipio_pendente" for the same case when a resolver was off or
@@ -619,7 +620,14 @@ class TripAdvisorAtrativosIngest:
             if not normalized.get(TA_BACKFILLED_KEY):
                 return "municipio_pendente"
             return "municipio_nao_confirmado"
-        if self._places_agent is not None and normalized.get("google_enriched") is not True:
+        # A card whose TA page failed this pass is still placed by name: Places would
+        # measure from a possibly wrong seat and its place_id_cache would pin it
+        # (_apply_ta_geo keep-rule). The next backfill redoes the page, then Places.
+        if (
+            self._places_agent is not None
+            and normalized.get("google_enriched") is not True
+            and "ta_page_pendente" not in steps
+        ):
             with self._session.begin_nested():
                 await self._places_agent.run(rio)
             steps.append("places")
@@ -687,8 +695,9 @@ class TripAdvisorAtrativosIngest:
     async def _backfill_ta(self, rio: RioRecord) -> str:
         """TA page → UF/município/parent destino; TA reviews → recency. Sets the marker.
 
-        The marker is withheld only for "municipio_pendente" (C1: a verdict reached while a
-        resolver was off or failing is not "conclusively empty").
+        The marker is withheld for "municipio_pendente" (C1: a verdict reached while a
+        resolver was off or failing is not "conclusively empty"), "ta_page_pendente" (the
+        page failed) and a failed reviews call.
         """
         before = dict(rio.normalized or {})
         after = dict(before)
@@ -707,6 +716,8 @@ class TripAdvisorAtrativosIngest:
                 recency, reviews_failed = None, True  # no marker: retried later
             if page:
                 status = await self._apply_ta_geo(rio, loc_id_raw, page, after)
+            elif page is None:
+                status = "ta_page_pendente"
             if recency is not None:
                 _merge_recency(after, recency)
         unplaced = status in ("municipio_nao_confirmado", "municipio_pendente")

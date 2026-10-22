@@ -880,6 +880,14 @@ class TripAdvisorClient:
             "state_geo_id": state_geo_id,
         }
 
+    def _count_page_error(self) -> None:
+        """One more attraction page without the block; _PAGE_ERRORS_SYSTEMIC in a row is TA
+        changing every page, not one card: SourceSchemaError."""
+        self._page_errors_in_a_row += 1
+        if self._page_errors_in_a_row >= _PAGE_ERRORS_SYSTEMIC:
+            logger.error("ta.page.schema_error")
+            raise SourceSchemaError("TripAdvisor attraction pages lost their address block")
+
     async def fetch_attraction_address(self, location_id: int) -> dict[str, Any]:
         """TA's own address block for one attraction: the LocalBusiness JSON-LD of its page.
 
@@ -887,13 +895,16 @@ class TripAdvisorClient:
         city_name/state_name = raw addressLocality/addressRegion, state_name_to_uf maps
         them), or {} when TA has no such attraction page (404/410, redirect off
         Attraction_Review — a removed listing lands on its city page) or the address is not
-        in Brazil: conclusive, no streak.
+        in Brazil: conclusive. A missing page still counts toward the streak below (TA
+        dropping the g1 shortcut would 404 or redirect EVERY card, and {} stamps
+        ta_backfilled_at — C1); only a page with the block resets it.
         LGPD: only these keys are read; aggregateRating/reviews/reviewer data never touched
         or logged.
         Raises: TypeError (non-int id, before any GET), SessionMissingError,
         SessionExpiredError (403/DataDome 429 via _send, or a 200 captcha page),
         SourceRateLimitError, SourceRecordError (an attraction page without the block —
-        this card), SourceSchemaError (_PAGE_ERRORS_SYSTEMIC such pages in a row).
+        this card), SourceSchemaError (_PAGE_ERRORS_SYSTEMIC pages without the block in a
+        row, missing pages included).
         """
         # SSRF guard: the URL is a fixed template + an int id. bool is an int subclass.
         if not isinstance(location_id, int) or isinstance(location_id, bool):
@@ -916,6 +927,7 @@ class TripAdvisorClient:
             resp = await self._send("get", url, cookies, proxy, "attraction page", headers=headers)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code in (404, 410):
+                self._count_page_error()
                 return {}
             raise
         ld = next(
@@ -926,12 +938,9 @@ class TripAdvisorClient:
         if ld is None:
             if "captcha-delivery.com" in resp.text:
                 raise SessionExpiredError("TripAdvisor attraction page answered a captcha")
+            self._count_page_error()
             if "Attraction_Review" not in str(resp.url):
                 return {}
-            self._page_errors_in_a_row += 1
-            if self._page_errors_in_a_row >= _PAGE_ERRORS_SYSTEMIC:
-                logger.error("ta.page.schema_error")
-                raise SourceSchemaError("TripAdvisor attraction pages lost their address block")
             logger.warning("ta.page.record_error", location_id=location_id)
             raise SourceRecordError(f"TripAdvisor page of location {location_id} has no address")
         self._page_errors_in_a_row = 0
