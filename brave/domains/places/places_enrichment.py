@@ -147,9 +147,10 @@ _GEOGRAPHIC_TYPE_MARKER: str = "political"
 # Ronca, ~40 km); the same-name mismatches it must reject were all 190+ km away.
 _SEAT_RADIUS_KM: float = 80.0
 
-# Hybrid pick radius around the record's OWN point (TA's — its attraction page). RO 10/2026
-# (89 cards): 1 km 51 matches, 2 km 60, 5 km 67 (more same-name businesses).
-_PICK_RADIUS_KM: float = 2.0
+# The hybrid picks within the same radius _best_match then checks: TA's own pin is often off
+# by kilometres (RO 10/2026: a 2 km pick missed 11 places Google mode matched, 2.9-20 km from
+# TA's point — Casa de Rondon 3.7, Parque Natural de Porto Velho 6.8); the name check
+# validates the pick.
 
 # Hybrid: a pick within _NEAR_KM of the record's own point passes at a lower name score —
 # Google often names the same building differently (RO 10/2026, all ≤0.4 km: Palácio Getúlio
@@ -623,19 +624,17 @@ class PlacesEnrichmentAgent:
 
     def _reference(
         self, lat: float | None, lng: float | None, municipio_ibge: str | None
-    ) -> tuple[float | None, float | None, float, float]:
-        """(lat, lng, match radius, hybrid pick radius) a lookup measures from: the record's
-        own point at max_distance_km / _PICK_RADIUS_KM, else its município seat at
-        _SEAT_RADIUS_KM for both — otherwise a same-name place anywhere in the UF wins
-        (Luziânia's Igreja N. S. do Rosário took the one in Flores de Goiás, ~190 km away).
-        (None, None, …) when neither."""
+    ) -> tuple[float | None, float | None, float]:
+        """(lat, lng, radius) a lookup — and the hybrid's pick — measures from: the record's
+        own point at max_distance_km, else its município seat at _SEAT_RADIUS_KM — otherwise
+        a same-name place anywhere in the UF wins (Luziânia's Igreja N. S. do Rosário took
+        the one in Flores de Goiás, ~190 km away). (None, None, …) when neither."""
         if lat is not None and lng is not None:
-            return lat, lng, self._max_distance_km, _PICK_RADIUS_KM
+            return lat, lng, self._max_distance_km
         seat = self._session.get(Municipio, municipio_ibge) if municipio_ibge else None
         if isinstance(seat, Municipio):
-            radius = max(self._max_distance_km, _SEAT_RADIUS_KM)
-            return seat.lat, seat.lng, radius, radius
-        return None, None, self._max_distance_km, _PICK_RADIUS_KM
+            return seat.lat, seat.lng, max(self._max_distance_km, _SEAT_RADIUS_KM)
+        return None, None, self._max_distance_km
 
     def _prefetch_item(self, rio: RioRecord, refresh: bool) -> dict[str, Any] | None:
         """The lookup run() will make for ``rio`` (same skips, same reference), or None."""
@@ -647,7 +646,7 @@ class PlacesEnrichmentAgent:
             return {"place_id": normalized["place_id_cache"], "include_reviews": include_reviews}
         if not normalized.get("name"):
             return None
-        ref_lat, ref_lng, _radius, pick = self._reference(
+        ref_lat, ref_lng, radius = self._reference(
             normalized.get("lat"), normalized.get("lon"), normalized.get("municipio_id")
         )
         if ref_lat is None:
@@ -658,7 +657,7 @@ class PlacesEnrichmentAgent:
             "uf": rio.uf or normalized.get("uf") or "",
             "lat": ref_lat,
             "lng": ref_lng,
-            "radius_km": pick,
+            "radius_km": radius,
             "include_reviews": include_reviews,
         }
 
@@ -861,7 +860,7 @@ class PlacesEnrichmentAgent:
                     # Details would leave a Text Search paid for nothing (paid again on resume).
                     check_budget(USD_TEXT_SEARCH_PRO + details_usd)
                 if not place_id and nome:
-                    ref_lat, ref_lng, radius, pick = self._reference(lat, lng, municipio_ibge)
+                    ref_lat, ref_lng, radius = self._reference(lat, lng, municipio_ibge)
                     search = getattr(self._places_client, "search", None)
                     near_km = 0.0
                     if consensus is not None and consensus[0] == (normalize_name(nome), uf):
@@ -875,7 +874,7 @@ class PlacesEnrichmentAgent:
                             # marker, retried later.
                             raise LookupError("hybrid: no reference point")
                         results = await search(
-                            nome, municipio, uf, lat=ref_lat, lng=ref_lng, radius_km=pick,
+                            nome, municipio, uf, lat=ref_lat, lng=ref_lng, radius_km=radius,
                             include_reviews=include_reviews,
                         )
                         if lat is not None and lng is not None:  # its own point, not a seat

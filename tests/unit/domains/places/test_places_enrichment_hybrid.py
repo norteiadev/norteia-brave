@@ -284,7 +284,7 @@ async def test_prefetch_items_then_run_spend_nothing_more() -> None:
     items = agent.prefetch_items([rio])
     assert items == [{
         "nome": "Morro do Moreno", "municipio": "Vila Velha", "uf": "ES",
-        "lat": _TA_LAT, "lng": _TA_LNG, "radius_km": 2.0, "include_reviews": True,
+        "lat": _TA_LAT, "lng": _TA_LNG, "radius_km": 20.0, "include_reviews": True,
     }]
     await agent.prefetch(items)
     await _run(agent, rio)
@@ -420,7 +420,7 @@ async def test_run_searches_around_the_record_point_with_the_pick_radius() -> No
     rio = _rio()
     await _run(agent, rio)
 
-    assert (seen[0]["lat"], seen[0]["lng"], seen[0]["radius_km"]) == (_TA_LAT, _TA_LNG, 2.0)
+    assert (seen[0]["lat"], seen[0]["lng"], seen[0]["radius_km"]) == (_TA_LAT, _TA_LNG, 20.0)
     assert rio.normalized["google_place_id"] == PID
 
 

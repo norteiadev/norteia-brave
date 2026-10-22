@@ -806,7 +806,7 @@ class TripAdvisorAtrativosIngest:
         Balneário Água Gelada (RO 10/2026): locality Porto Velho, point 2 km from Pimenta
         Bueno's seat, 437 km away. A far point with no other seat near is kept (Fortaleza do
         Abunã, a Porto Velho distrito 210 km out). ponytail: nearest seat, not a polygon;
-        Ariquemes' park (37 km off, 1 km from Alto Paraíso) passes — the hybrid's 2 km pick
+        Ariquemes' park (37 km off, 1 km from Alto Paraíso) passes — the hybrid's 20 km pick
         rejects it."""
         lat, lng = page.get("lat"), page.get("lng")
         if lat is None or lng is None:
