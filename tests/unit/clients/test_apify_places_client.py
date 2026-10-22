@@ -135,6 +135,8 @@ async def test_lookup_one_run_keyed_back_pii_stripped_cost_recorded(monkeypatch,
     # Started without a held connection (a gateway 5xx there is ambiguous), Apify-side timeout.
     assert "waitForFinish" not in req.url.params
     assert req.url.params["timeout"] == "900"
+    three = 3 * (0.004 + 0.002 + 0.0005) + 4 * 0.00005
+    assert float(req.url.params["maxTotalChargeUsd"]) == pytest.approx(2 * three, abs=1e-5)
     body = json.loads(req.content)
     assert body["searchStringsArray"] == [Q_NAME, Q_ID, Q_MISS], "deduped, order kept"
     assert body["scrapeReviewsPersonalData"] is False
@@ -157,6 +159,10 @@ async def test_lookup_one_run_keyed_back_pii_stripped_cost_recorded(monkeypatch,
     assert apify_daily_spend(fake_redis) == pytest.approx(COUNTS_USD)
     assert apify_total_spend(fake_redis) == pytest.approx(COUNTS_USD)
     assert daily_spend(fake_redis) == 0.0, "Apify must not consume the LLM budget"
+
+    fields = set(respx.calls[-1].request.url.params["fields"].split(","))
+    assert {"searchString", "inputPlaceId", "reviews", "placeId", "openingHours"} <= fields
+    assert "imageUrl" not in fields, "only what normalize_apify_item keeps is downloaded"
 
 
 async def test_empty_lookup_makes_no_call(monkeypatch):

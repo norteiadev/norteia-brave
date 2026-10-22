@@ -16,7 +16,8 @@ Budget: brave:cost:apify:* counters (cost_guard). The run's projected cost is ch
 RESERVED before the run (a run takes minutes; every run checked meanwhile must see it), then
 settled to max(``chargedEventCounts``, the projection from the items returned) — the counts
 can still be preliminary right after the finish. A run that fails, or that Brave loses track
-of, keeps its reservation. The token travels only as the
+of, keeps its reservation; Apify itself stops charging it at 2x the projection
+(``maxTotalChargeUsd``). The token travels only as the
 Authorization header — never in a URL, a log line or an error message.
 """
 
@@ -71,6 +72,12 @@ _KEPT_FIELDS = (
     "permanentlyClosed", "temporarilyClosed", "openingHours", "categories", "categoryName",
     "price", "reviewsCount", "totalScore",
 )
+# Dataset read: only what normalize_apify_item keeps plus the keys lookup matches on.
+_ITEM_FIELDS = ",".join(("searchString", "inputPlaceId", "reviews", *_KEPT_FIELDS))
+# Apify-side charge cap per run (maxTotalChargeUsd), over the projection. A capped actor stops
+# scraping and still SUCCEEDS, so a cap AT the projection would turn a capped place into a
+# silent no-hit; the headroom only bounds a runaway run.
+_CHARGE_CAP_FACTOR = 2
 
 
 def normalize_apify_item(item: dict) -> dict:
@@ -232,7 +239,11 @@ class RealApifyPlacesClient:
                 try:
                     run = (await _start(
                         http, "POST", f"/acts/{self._actor_id}/runs",
-                        params={"timeout": _RUN_TIMEOUT_S}, json=body,
+                        params={
+                            "timeout": _RUN_TIMEOUT_S,
+                            "maxTotalChargeUsd": round(projected * _CHARGE_CAP_FACTOR, 5),
+                        },
+                        json=body,
                     ))["data"]
                 except Exception as exc:
                     if _never_started(exc):
@@ -253,7 +264,7 @@ class RealApifyPlacesClient:
                         raise RuntimeError(f"Apify run {run_id} ended {status}")
                     items = await _call(
                         http, "GET", f"/datasets/{run['defaultDatasetId']}/items",
-                        params={"clean": "true"},
+                        params={"clean": "true", "fields": _ITEM_FIELDS},
                     )
                 finally:
                     if run.get("status") not in _TERMINAL:
