@@ -858,6 +858,15 @@ class PlacesEnrichmentAgent:
                     match = _best_match(
                         results, nome, ref_lat, ref_lng, radius, normalized.get("category")
                     )
+                    if match is None and municipio and results and results[0].get("via_alias"):
+                        # Hybrid: a prefetched "Nome - UF" hit failed (a homonym elsewhere in
+                        # the UF; EFMM took a tow service 28 km away): search WITH the município.
+                        results = await search(  # type: ignore[misc]
+                            nome, municipio, uf, include_reviews=include_reviews, alias=False
+                        )
+                        match = _best_match(
+                            results, nome, ref_lat, ref_lng, radius, normalized.get("category")
+                        )
                     if match is not None:
                         place_id = match.get("place_id") or ""
                 if place_id:

@@ -181,8 +181,8 @@ class HybridPlacesClient:
                 elif item["uf"].upper() in UF_NAME:
                     location = f"{UF_NAME[item['uf'].upper()]}, Brasil"
                 # Also for an exact one: a backfill's TA can move the record to another
-                # município before run() searches; the alias still serves it when Apify's
-                # city is the new one (_take_by_name checks).
+                # município before run() searches; the alias still serves it (the agent's
+                # _best_match judges the distance).
                 self._by_name.setdefault((_fold(item["nome"]), item["uf"].upper()), (query, True))
             queries = by_location.setdefault(location, [])
             if (query, True) not in self._found and query not in queries:
@@ -252,16 +252,14 @@ class HybridPlacesClient:
             raise ApifyBatchFailedError(f"apify: the batched run for {query!r} failed")
         return False, None
 
-    def _take_by_name(
-        self, nome: str, municipio: str, uf: str, include_reviews: bool
-    ) -> dict[str, Any] | None:
-        """A sweep's município-less hit for this name, when it sits in ``municipio``.
+    def _take_by_name(self, nome: str, uf: str) -> dict[str, Any] | None:
+        """A prefetched hit for this name anywhere in the UF, consumed.
 
-        Apify's own city (else its address) must name the município: a "Nome - UF" search
-        can land on a homonym elsewhere in the UF, and the per-record search (with the
-        município) is the better bet then. A cached no-hit is not trusted either (the
-        narrower query may hit). ponytail: address substring when Apify has no city;
-        Essentials' municipio_ibge would be exact but costs the Essentials call first.
+        Not checked against the record's município: Apify's city disagreed on 27 of 82 RO
+        names that sat in the right place (a neighbouring município, "Pres. Médici", the TA
+        filing another one). The agent's ``_best_match`` judges it by distance, and a
+        rejected alias is searched again with the município (``search(alias=False)``).
+        A cached no-hit is not trusted (the narrower query may hit).
         """
         alias = (_fold(nome), uf.upper())
         entry = self._by_name.get(alias)
@@ -272,13 +270,6 @@ class HybridPlacesClient:
         item = self._found.get(entry)
         if item is None:
             return None
-        if municipio:
-            city, wanted = _fold(item.get("city") or ""), _fold(municipio)
-            sits = city == wanted if city else wanted in _fold(item.get("address") or "")
-            if not sits:
-                # Measures the sweep's alias miss rate (each miss pays a run of its own).
-                logger.info("apify_alias_rejected", uf=uf, apify_city=item.get("city") or "")
-                return None
         del self._by_name[alias]
         return self._found.pop(entry)
 
@@ -302,17 +293,21 @@ class HybridPlacesClient:
         return None
 
     async def search(
-        self, nome: str, municipio: str, uf: str, *, include_reviews: bool = True
+        self, nome: str, municipio: str, uf: str, *, include_reviews: bool = True,
+        alias: bool = True,
     ) -> list[dict[str, Any]]:
-        """0 or 1 result in ``RealPlacesClient.text_search()`` shape.
+        """0 or 1 result in ``RealPlacesClient.text_search()`` shape, plus ``via_alias``.
 
         [] when Apify had no hit or Essentials puts the place in another UF. The record's
-        own exact query wins over a sweep's name alias.
+        own exact query wins over a prefetched name alias; ``alias=False`` skips the alias
+        (the agent's retry once an alias hit fails its validation).
         """
         query = apify_query(nome, municipio, uf)
         cached, item = self._take(query, include_reviews)
+        via_alias = False
         if not cached:
-            item = self._take_by_name(nome, municipio, uf, include_reviews)
+            item = self._take_by_name(nome, uf) if alias else None
+            via_alias = item is not None
             if item is None:
                 self._check_budgets(include_reviews)
                 item = await self._apify_single(query, include_reviews, exact=bool(municipio))
@@ -327,6 +322,7 @@ class HybridPlacesClient:
         result = {k: essentials.get(k) for k in _SEARCH_KEYS}
         result["name"] = item.get("title") or ""
         result["location"] = essentials.get("location") or item.get("location")
+        result["via_alias"] = via_alias
         return [result]
 
     async def place_details(

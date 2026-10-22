@@ -275,16 +275,29 @@ def test_record_exact_hit_wins_over_a_homonym_alias():
     assert len(apify.lookup_calls) == 1
 
 
-def test_sweep_alias_matches_apify_city_not_an_address_substring():
+def test_sweep_alias_elsewhere_in_the_uf_is_served_for_the_agent_to_judge():
+    """Apify's city is not checked (27/82 RO names sat in the right place under another
+    city): the alias is served, flagged, and _best_match judges the distance."""
     lenc = {**_apify(), "city": "Lençóis", "address": "Rua Cachoeira, 10, Lençóis - BA"}
     apify = FakeApifyClient({"Igreja Matriz - BA": lenc})
-    hybrid = HybridPlacesClient(FakePlacesClient(), apify)
+    essentials = {PID: _essentials(uf_short="BA")}
+    hybrid = HybridPlacesClient(FakePlacesClient(fixture_essentials=essentials), apify)
     asyncio.run(hybrid.prefetch([{"nome": "Igreja Matriz", "municipio": "", "uf": "BA"}]))
-    asyncio.run(hybrid.search("Igreja Matriz", "Cachoeira", "BA"))
+    [hit] = asyncio.run(hybrid.search("Igreja Matriz", "Cachoeira", "BA"))
+    assert hit["place_id"] == PID and hit["via_alias"] is True
+    assert len(apify.lookup_calls) == 1
+
+
+def test_search_without_alias_runs_the_municipio_query():
+    """The agent's retry after a rejected alias: the record's own query, never the alias."""
+    apify = FakeApifyClient({"Igreja Matriz - BA": _apify(), "Igreja Matriz, Cachoeira - BA": _apify()})
+    hybrid = HybridPlacesClient(FakePlacesClient(fixture_essentials={PID: _essentials("BA")}), apify)
+    asyncio.run(hybrid.prefetch([{"nome": "Igreja Matriz", "municipio": "", "uf": "BA"}]))
+    [hit] = asyncio.run(hybrid.search("Igreja Matriz", "Cachoeira", "BA", alias=False))
+    assert hit["via_alias"] is False
     assert [c["queries"] for c in apify.lookup_calls] == [
-        ["Igreja Matriz - BA"],
-        ["Igreja Matriz, Cachoeira - BA"], ["Igreja Matriz, Cachoeira - BA"],  # miss: once more
-    ], "the Lençóis hit is not Cachoeira's"
+        ["Igreja Matriz - BA"], ["Igreja Matriz, Cachoeira - BA"],
+    ]
 
 
 def test_record_moved_by_the_ta_is_served_by_its_prefetched_name():
@@ -342,8 +355,8 @@ def test_search_hit_has_text_search_shape():
     hybrid, apify, _ = _hybrid()
     [hit] = asyncio.run(hybrid.search("Morro do Moreno", "Vila Velha", "ES"))
 
-    assert set(hit) == SEARCH_KEYS
-    assert hit["place_id"] == PID and hit["name"] == "Morro do Moreno"
+    assert set(hit) == SEARCH_KEYS | {"via_alias"}
+    assert hit["place_id"] == PID and hit["name"] == "Morro do Moreno" and not hit["via_alias"]
     assert hit["municipio_ibge"] == "3205200"
     assert apify.lookup_calls == [{"queries": [QUERY], "max_reviews": 1}]
 

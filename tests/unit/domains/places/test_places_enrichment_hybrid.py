@@ -369,15 +369,68 @@ async def test_sweep_card_prefetch_serves_the_rio_search_by_name() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sweep_card_prefetch_in_another_municipio_is_looked_up_again() -> None:
-    elsewhere = _apify(city="Serra", address="Rod. ES-010, Serra - ES")
-    agent, apify, _ = _agent({"Morro do Moreno - ES": elsewhere, QUERY: _apify()})
+async def test_sweep_alias_under_another_city_is_kept_when_it_passes_validation() -> None:
+    """Apify files it under Serra, but Google's point is the TA's: _best_match accepts it
+    and no run of its own is paid."""
+    agent, apify, _ = _agent({"Morro do Moreno - ES": _apify(city="Serra")})
+    await agent.prefetch(cards=[{"name": "Morro do Moreno"}], uf="ES")
+    rio = _rio()
+    await _run(agent, rio)
+
+    assert [c["queries"] for c in apify.lookup_calls] == [["Morro do Moreno - ES"]]
+    assert rio.normalized["google_place_id"] == PID
+
+
+def _homonym_agent(apify_fixture):
+    """A far homonym (P_FAR, ~25 km off the TA point, like EFMM's tow service) + PID."""
+    apify = FakeApifyClient(apify_fixture)
+    far = _essentials(place_id="P_FAR", location={"lat": -20.10, "lng": -40.30})
+    google = FakePlacesClient(fixture_essentials={PID: _essentials(), "P_FAR": far})
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    agent = PlacesEnrichmentAgent(
+        places_client=HybridPlacesClient(google, apify, max_reviews=1),
+        session=_make_session(), now=_NOW, config=ScoreConfig(),
+    )
+    return agent, apify
+
+
+@pytest.mark.asyncio
+async def test_sweep_alias_failing_validation_is_searched_again_with_the_municipio() -> None:
+    agent, apify = _homonym_agent(
+        {"Morro do Moreno - ES": _apify(placeId="P_FAR"), QUERY: _apify()}
+    )
     await agent.prefetch(cards=[{"name": "Morro do Moreno"}], uf="ES")
     rio = _rio()
     await _run(agent, rio)
 
     assert [c["queries"] for c in apify.lookup_calls] == [["Morro do Moreno - ES"], [QUERY]]
     assert rio.normalized["google_place_id"] == PID
+
+
+@pytest.mark.asyncio
+async def test_sweep_alias_retry_without_a_hit_is_a_conclusive_no_match() -> None:
+    agent, apify = _homonym_agent({"Morro do Moreno - ES": _apify(placeId="P_FAR")})
+    await agent.prefetch(cards=[{"name": "Morro do Moreno"}], uf="ES")
+    rio = _rio()
+    await _run(agent, rio)
+
+    # The município query misses twice (one more run, as in prefetch), then gives up.
+    assert [c["queries"] for c in apify.lookup_calls] == [
+        ["Morro do Moreno - ES"], [QUERY], [QUERY],
+    ]
+    assert rio.normalized["google_enriched"] is True
+    assert "place_id_cache" not in rio.normalized
+
+
+@pytest.mark.asyncio
+async def test_record_exact_query_failing_validation_is_not_searched_again() -> None:
+    """Only an alias hit gets the retry: the record's own query already was the município one."""
+    agent, apify = _homonym_agent({QUERY: _apify(placeId="P_FAR")})
+    rio = _rio()
+    await _run(agent, rio)
+    assert [c["queries"] for c in apify.lookup_calls] == [[QUERY]]
+    assert rio.normalized["google_enriched"] is True
 
 
 @pytest.mark.asyncio
