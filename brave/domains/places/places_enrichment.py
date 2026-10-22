@@ -553,7 +553,10 @@ class PlacesEnrichmentAgent:
         ):
             # Keyed on the ingest's normalize_name: run() reads the Rio's normalized name
             # (title-cased), locate() gets the raw TA card name ("Cachoeira do Abismo").
-            self._consensus_search = ((normalize_name(nome), uf), results)
+            # Not when the client batches: run() is deferred to the lot, after later
+            # locate()s, and its pick is prefetched — the slot would reach the wrong run().
+            if not self.prefetches:
+                self._consensus_search = ((normalize_name(nome), uf), results)
             return {"municipio_ibge": counts[0][0], "consensus": True}
         return None
 

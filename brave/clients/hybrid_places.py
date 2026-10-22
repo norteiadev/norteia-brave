@@ -23,6 +23,7 @@ import re
 from typing import Any
 
 import structlog
+from celery.exceptions import SoftTimeLimitExceeded
 
 from brave.clients.apify_places import apify_run_cost
 from brave.clients.places import USD_DETAILS_ESSENTIALS, _normalize_name
@@ -31,8 +32,9 @@ from brave.shared.opening_hours import _day_index
 
 logger = structlog.get_logger(__name__)
 
-# A wall stops the caller; it never marks a lot's queries as failed (see prefetch).
-_WALLS = (ProviderBalanceError, CostGuardError)
+# A wall stops the caller; it never marks a lot's queries as failed (see prefetch). The soft
+# time limit too: swallowed per record, the lot would start its Apify run and be hard-killed.
+_WALLS = (ProviderBalanceError, CostGuardError, SoftTimeLimitExceeded)
 
 # Essentials paid in Google's rank order (RO: ~1.47 calls per atrativo).
 PICK_CANDIDATES = 3

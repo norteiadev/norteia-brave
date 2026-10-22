@@ -326,11 +326,16 @@ def test_failed_pick_in_prefetch_raises_batch_failed_in_search():
     assert len(google.search_ids_calls) == 1 and apify.lookup_calls == []
 
 
-def test_wall_in_pick_propagates_from_prefetch():
+@pytest.mark.parametrize("wall", ["balance", "soft_time_limit"])
+def test_wall_in_pick_propagates_from_prefetch(wall):
+    from celery.exceptions import SoftTimeLimitExceeded
+
     from brave.shared.exceptions import ProviderBalanceError
 
-    hybrid, apify, _ = _hybrid(search_ids_error=ProviderBalanceError("places", "403"))
-    with pytest.raises(ProviderBalanceError):
+    error = (ProviderBalanceError("places", "403") if wall == "balance"
+             else SoftTimeLimitExceeded())
+    hybrid, apify, _ = _hybrid(search_ids_error=error)
+    with pytest.raises(type(error)):
         asyncio.run(hybrid.prefetch([ITEM]))
     assert apify.lookup_calls == []
 

@@ -262,7 +262,8 @@ def test_backfill_ta_prepass_failure_is_left_to_the_record(tx_session):
 
 
 def test_backfill_prepass_stops_on_halt_before_the_run(tx_session, monkeypatch):
-    """Engine paused during the TA pre-pass: no batched Apify run is started for the lot."""
+    """Engine paused during the TA pre-pass: no batched Apify run is started for the lot, and
+    the record in flight is not run live either (no unbatched pick or Apify run)."""
     from brave.core import engine
 
     rows, _, ta, rc, apify, ingest = _hybrid_lot(tx_session)
@@ -281,7 +282,10 @@ def test_backfill_prepass_stops_on_halt_before_the_run(tx_session, monkeypatch):
     ))
 
     assert lots == [] and len(ta.address_calls) == 1
-    assert state["stop"] == "halted"
+    assert state["stop"] == "halted" and state["cursor"] is None
+    google = ingest._places_agent._places_client._google
+    assert apify.lookup_calls == [] and google.search_ids_calls == []
+    assert google.place_essentials_calls == []
 
 
 def test_google_backfill_lot_never_prefetches():

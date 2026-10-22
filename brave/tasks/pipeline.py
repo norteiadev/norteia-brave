@@ -1333,30 +1333,35 @@ async def _prefetch_places(
     refresh: bool = False,
     ingest: Any = None,
     should_stop: Callable[[], bool] = lambda: False,
-) -> None:
+    throttle: float = 0.0,
+) -> bool:
     """Hybrid Places: one Apify run (~60 s FIXED per run) for a whole lot, before its
     per-record loop. No-op unless the agent's client batches (google mode: nothing runs).
 
     With ``ingest`` (backfill) each record's TA side goes first — the lookups must search
-    where TA puts it. Items are built before the transaction closes: none idles through the
-    run; the loop re-reads each row FOR UPDATE.
+    where TA puts it — ``throttle`` seconds apart. Items are built before the transaction
+    closes: none idles through the run; the loop re-reads each row FOR UPDATE. True when
+    ``should_stop`` cut it short: the caller must not process the lot live.
     """
     if getattr(agent, "prefetches", False) is not True or not ids:
-        return
+        return False
     if ingest is not None:
-        for rio_id in ids:
+        for n, rio_id in enumerate(ids):
             if should_stop():
-                return
+                return True
+            if n and throttle > 0:
+                await asyncio.sleep(throttle)
             rio = session.get(RioRecord, rio_id, with_for_update=True)
             if rio is not None:
                 await ingest.prefetch_ta(rio)
             session.commit()
         if should_stop():
-            return
+            return True
     rios = session.scalars(select(RioRecord).where(RioRecord.id.in_(ids))).all()
     items = agent.prefetch_items(rios, refresh=refresh)
     session.rollback()
     await agent.prefetch(items)
+    return False
 
 
 def _enrich_one(session: Session, rio: RioRecord, ctx: _EnrichCtx | None = None) -> None:
@@ -2079,14 +2084,18 @@ async def _backfill_batch(
         SourceSessionError,
     )
 
+    def stop_reason() -> str | None:
+        if collection_engine.should_halt_producer(rc):
+            return "halted"
+        if deadline is not None and _time.monotonic() > deadline:
+            return "budget"
+        return None
+
     failures: list[uuid.UUID] = []  # the current run of consecutive per-record failures
     schema_errors = 0  # how many of the latest failures in a row were SourceSchemaError
     for i, rio_id in enumerate(ids):
-        if collection_engine.should_halt_producer(rc):
-            state["stop"] = "halted"
-            return
-        if deadline is not None and _time.monotonic() > deadline:
-            state["stop"] = "budget"
+        if reason := stop_reason():
+            state["stop"] = reason
             return
         if i and throttle > 0:
             await asyncio.sleep(throttle)
@@ -2095,16 +2104,19 @@ async def _backfill_batch(
         destino_cache = getattr(ingest, "_destino_rio_map", None)
         destinos_before = set(destino_cache or ())
         try:
-            if i % _BACKFILL_PREFETCH_LOT == 0:  # after the halt/deadline checks
-                # Sub-lots: an early stop (TA 429, session, budget) re-selects the rest on the
-                # next link with an empty cache — it re-pays only this sub-lot's run.
-                await _prefetch_places(
-                    session, getattr(ingest, "_places_agent", None),
-                    ids[i:i + _BACKFILL_PREFETCH_LOT],
-                    ingest=ingest,
-                    should_stop=lambda: collection_engine.should_halt_producer(rc)
-                    or (deadline is not None and _time.monotonic() > deadline),
-                )
+            # Sub-lots (after the halt/deadline checks): an early stop (TA 429, session,
+            # budget) re-selects the rest on the next link with an empty cache — it re-pays
+            # only this sub-lot's run. A stop in the TA pre-pass leaves record i unprocessed:
+            # run live, it would pay an unbatched lookup (Essentials + Apify runs).
+            if i % _BACKFILL_PREFETCH_LOT == 0 and await _prefetch_places(
+                session, getattr(ingest, "_places_agent", None),
+                ids[i:i + _BACKFILL_PREFETCH_LOT],
+                ingest=ingest,
+                should_stop=lambda: stop_reason() is not None,
+                throttle=throttle,
+            ):
+                state["stop"] = stop_reason() or "halted"
+                return
             # FOR UPDATE: the agents merge onto the row's current normalized under this lock.
             rio = session.get(RioRecord, rio_id, with_for_update=True)
             status = await ingest.backfill_record(rio) if rio is not None else "missing"
