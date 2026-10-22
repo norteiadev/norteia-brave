@@ -134,6 +134,9 @@ TA_BACKFILLED_KEY = "ta_backfilled_at"
 # nearest seat is the finer label. Farther than this, the coords are a homonym's point.
 _SAME_UF_KEEP_KM = 50.0
 
+# Cards whose TA calls (page + newest review) run at once ahead of a sweep page's card loop.
+_TA_CONCURRENCY = 4
+
 # Written for the place where the bulk put a card; stale once TA page moves it (_apply_ta_geo).
 _MOVED_STALE_KEYS = (
     "place_id_cache", "google_place_id", "distrito_name", "distrito_code",
@@ -321,6 +324,9 @@ class TripAdvisorAtrativosIngest:
         # run INLINE per record after Rio routing — like the other completude steps. None
         # (unit tests / bulk path) → no enrichment, record just routes on its TA floor.
         self._places_agent = places_agent
+        # _fetch_ta_ahead's results for the current page: (locationId, page) → _ta_fetch's
+        # result, or the error its card raises.
+        self._ta_ahead: dict[tuple[int, bool], Any] = {}
 
     async def produce(
         self,
@@ -399,6 +405,9 @@ class TripAdvisorAtrativosIngest:
             # (produce_paginated) keeps skipping every Rio row, so its page resume is intact.
             backfill = self._backfill_candidates(cards) if (enrich_reviews and run_rio) else {}
             page_due: list[RioRecord] = []  # hybrid: this page's rows still due for Places
+            if enrich_reviews:
+                cap = None if max_per_uf is None else max_per_uf - processed
+                await self._fetch_ta_ahead(cards, synced, backfill, cap)
             for entity in cards:
                 ref = _source_ref(entity)
                 # Already in Brave: the TA signals were consumed by the score on the first
@@ -720,6 +729,11 @@ class TripAdvisorAtrativosIngest:
         (SourceRecordError) or was not asked. Both are retried later, never a verdict. Any
         other error (session, systemic) is raised once both calls settled, the page's first.
         """
+        ahead = self._ta_ahead.pop((location_id, page), None) if reviews else None
+        if isinstance(ahead, Exception):
+            raise ahead
+        if ahead is not None:
+            return ahead
         await self._throttle()
 
         async def _page() -> dict[str, Any] | None:
@@ -743,6 +757,46 @@ class TripAdvisorAtrativosIngest:
             if isinstance(result, BaseException):
                 raise result
         return got_page, *got_reviews
+
+    async def _fetch_ta_ahead(
+        self,
+        cards: list[dict[str, Any]],
+        synced: set[str],
+        backfill: dict[str, RioRecord],
+        cap: int | None,
+    ) -> None:
+        """A sweep page's TA calls, _TA_CONCURRENCY cards at a time (each still throttled),
+        for the cards the loop will process (up to the operator cap): the loop's _ta_fetch
+        then serves them in card order. A card's own error is kept for its _ta_fetch, so
+        earlier cards still land; a run-level one (_PAUSE_ERRORS) stops the page now."""
+        due = [
+            e for e in cards
+            if not ((_source_ref(e) in synced and _source_ref(e) not in backfill)
+                    or _is_not_atrativo(e))
+        ][:cap]
+        keys = [
+            (int(lid), _source_ref(e) in backfill or self._ta_config is not None)
+            for e in due
+            if (lid := str(e.get("locationId", ""))).isdigit()
+        ]
+        self._ta_ahead = {}
+        gate = asyncio.Semaphore(_TA_CONCURRENCY)
+
+        async def _one(key: tuple[int, bool]) -> None:
+            async with gate:
+                try:
+                    self._ta_ahead[key] = await self._ta_fetch(key[0], page=key[1], reviews=True)
+                except _PAUSE_ERRORS:
+                    raise
+                except Exception as exc:  # noqa: BLE001 — raised by its card's _ta_fetch
+                    self._ta_ahead[key] = exc
+
+        try:
+            async with asyncio.TaskGroup() as tg:
+                for key in keys:
+                    tg.create_task(_one(key))
+        except ExceptionGroup as group:
+            raise group.exceptions[0] from None
 
     def _ta_coords(
         self, page: dict[str, Any], match: IbgeMunicipio | None

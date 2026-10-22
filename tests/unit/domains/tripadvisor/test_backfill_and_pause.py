@@ -293,7 +293,8 @@ async def test_produce_propagates_run_level_errors_instead_of_poisoning(error) -
         with pytest.raises(type(error)):
             await ingest.produce("MG", run_rio=True, enrich_reviews=True)
 
-    assert client.recent_review_calls == [1]  # stopped at the first card
+    # Stopped within the page's first window of TA calls (both cards' were in flight).
+    assert sorted(client.recent_review_calls) == [1, 2]
     assert not poison.called
 
 
@@ -540,3 +541,85 @@ async def test_backfill_raises_a_session_error_once_both_calls_settled() -> None
         await ingest.backfill_record(_bulk_rio())
 
     assert client.recent_review_calls == [555]
+
+
+class _Inflight(FakeTripAdvisorClient):
+    """Counts the attraction pages in flight at once; one page id may fail."""
+
+    def __init__(self, fail: int | None = None, **kw: Any) -> None:
+        super().__init__(**kw)
+        self._fail = fail
+        self.now = self.peak = 0
+
+    async def fetch_attraction_address(self, location_id: int) -> dict[str, Any]:
+        self.now += 1
+        self.peak = max(self.peak, self.now)
+        await asyncio.sleep(0.01)
+        self.now -= 1
+        if location_id == self._fail:
+            raise RuntimeError("boom")
+        return await super().fetch_attraction_address(location_id)
+
+
+def _sweep_client(n: int, **kw: Any) -> _Inflight:
+    chapada = _geo("Chapada dos Guimaraes", "State of Mato Grosso")
+    return _Inflight(
+        gql_pages=[(0, [_card(i, name=f"Mirante {i}") for i in range(1, n + 1)])],
+        geo_ids={"MT": 1},
+        fixture_address={i: chapada for i in range(1, n + 1)},
+        recent_review={"review_count": 3, "rating": None, "most_recent_review_at": None},
+        **kw,
+    )
+
+
+async def _sweep(client: _Inflight, **kw: Any) -> tuple[MagicMock, MagicMock]:
+    with (
+        patch("brave.domains.tripadvisor.atrativos.store_raw") as store,
+        patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
+        patch("brave.domains.tripadvisor.atrativos.quarantine_poison") as poison,
+    ):
+        ingest = _ingest(client, destino_rio_map={"5103007": _PARENT})
+        await ingest.produce("MT", run_rio=False, enrich_reviews=True, **kw)
+    return store, poison
+
+
+@pytest.mark.asyncio
+async def test_sweep_page_runs_ta_calls_four_cards_at_a_time() -> None:
+    client = _sweep_client(10)
+
+    store, _ = await _sweep(client)
+
+    assert client.peak == 4
+    assert sorted(client.address_calls) == list(range(1, 11))  # once each, never refetched
+    assert sorted(client.recent_review_calls) == list(range(1, 11))
+    refs = [c.kwargs["source_ref"] for c in store.call_args_list]
+    assert refs == [f"tripadvisor:attraction:{i}" for i in range(1, 11)]  # card order kept
+
+
+@pytest.mark.asyncio
+async def test_sweep_ahead_fetches_only_up_to_the_operator_cap() -> None:
+    client = _sweep_client(10)
+
+    store, _ = await _sweep(client, max_per_uf=3)
+
+    assert sorted(client.address_calls) == [1, 2, 3]
+    assert store.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_sweep_ahead_error_lands_on_its_own_card() -> None:
+    client = _sweep_client(3, fail=2)
+
+    store, poison = await _sweep(client)
+
+    refs = [c.kwargs["source_ref"] for c in store.call_args_list]
+    assert refs == ["tripadvisor:attraction:1", "tripadvisor:attraction:3"]
+    assert poison.call_count == 1 and poison.call_args.kwargs["payload"]["locationId"] == "2"
+
+
+@pytest.mark.asyncio
+async def test_sweep_ahead_session_error_stops_the_page_before_any_card() -> None:
+    client = _sweep_client(3, address_error=SessionExpiredError("captcha"))
+
+    with pytest.raises(SessionExpiredError):
+        await _sweep(client)
