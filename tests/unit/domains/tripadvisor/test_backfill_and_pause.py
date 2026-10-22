@@ -1,9 +1,9 @@
 """Bulk-completion backfill (C2) + run-level error propagation of the TA lane.
 
-Covers: backfill_record (TA geo → UF/município/parent, review recency max-merge, Places
+Covers: backfill_record (TA page → UF/município/parent, review recency max-merge, Places
 step, idempotency, propagation), run-level errors escaping produce()/produce_paginated
 instead of poisoning every card (F00/F06), per-card savepoints (F15), Nominatim failure not
-aborting the município chain (F07), cross-UF fallback B (F12), the bulk's UF consistency
+aborting the município chain (F07), a cross-UF TA page (F12), the bulk's UF consistency
 (F02) and per-UF completion of records already in Rio (F09).
 
 100% offline: fake TA client / geocoder, MagicMock session, store_raw/route patched.
@@ -80,8 +80,8 @@ def _bulk_rio(**normalized: Any) -> RioRecord:
 
 
 def _geo(city: str | None, state: str) -> dict[str, Any]:
-    return {"location_id": 555, "city_name": city, "state_name": state,
-            "city_geo_id": 1, "state_geo_id": 2}
+    """TA's attraction-page (or geo query) answer: locality + region."""
+    return {"city_name": city, "state_name": state}
 
 
 class _Agent:
@@ -130,7 +130,7 @@ _PARENT = (uuid.uuid4(), "ibge:destination:5103007")
 async def test_backfill_moves_a_wrong_uf_bulk_record_to_ta_city_and_links_parent() -> None:
     recent = datetime.now(UTC) - timedelta(days=5)
     client = FakeTripAdvisorClient(
-        fixture_geo={555: _geo("Chapada dos Guimaraes", "State of Mato Grosso")},
+        fixture_address={555: _geo("Chapada dos Guimaraes", "State of Mato Grosso")},
         recent_review={"review_count": 250, "rating": None, "most_recent_review_at": recent},
     )
     agent = _Agent()
@@ -161,7 +161,7 @@ async def test_backfill_same_uf_keeps_municipio_links_parent_and_never_regresses
     newer = datetime.now(UTC) - timedelta(days=2)
     older = newer - timedelta(days=300)
     client = FakeTripAdvisorClient(
-        fixture_geo={555: _geo(None, "State of Minas Gerais")},  # TA gives no city
+        fixture_address={555: _geo(None, "State of Minas Gerais")},  # TA gives no city
         recent_review={"review_count": 40, "rating": None, "most_recent_review_at": older},
     )
     ingest = _ingest(client)
@@ -181,7 +181,7 @@ async def test_backfill_same_uf_keeps_municipio_links_parent_and_never_regresses
 @pytest.mark.asyncio
 async def test_backfill_unplaceable_other_uf_goes_to_dlq_and_skips_places() -> None:
     client = FakeTripAdvisorClient(
-        fixture_geo={555: _geo(None, "State of Mato Grosso")}, recent_review=None
+        fixture_address={555: _geo(None, "State of Mato Grosso")}, recent_review=None
     )
     agent = _Agent(place=None)  # Places locate cannot place it in MT either
     ingest = _ingest(client, places_agent=agent)
@@ -202,7 +202,7 @@ async def test_backfill_unplaceable_other_uf_goes_to_dlq_and_skips_places() -> N
 
 @pytest.mark.asyncio
 async def test_backfill_places_locate_hands_over_place_id() -> None:
-    client = FakeTripAdvisorClient(fixture_geo={555: _geo(None, "State of Mato Grosso")})
+    client = FakeTripAdvisorClient(fixture_address={555: _geo(None, "State of Mato Grosso")})
     agent = _Agent(place={"place_id": "ChIJ-veu", "municipio_ibge": "5103007",
                           "location": {"lat": -15.4, "lng": -55.8}})
     ingest = _ingest(client, places_agent=agent)
@@ -223,7 +223,7 @@ async def test_backfill_is_idempotent_on_the_markers() -> None:
     rio = _bulk_rio(ta_backfilled_at="2026-10-01T00:00:00+00:00", google_enriched=True)
 
     assert await ingest.backfill_record(rio) == "noop"
-    assert client.geo_calls == [] and client.recent_review_calls == [] and agent.run_calls == []
+    assert client.address_calls == [] and client.recent_review_calls == [] and agent.run_calls == []
 
 
 @pytest.mark.asyncio
@@ -239,7 +239,7 @@ async def test_backfill_is_idempotent_on_the_markers() -> None:
     ids=lambda e: type(e).__name__,
 )
 async def test_backfill_propagates_run_level_errors_without_marking(error) -> None:
-    client = FakeTripAdvisorClient(fixture_geo={555: _geo("Uberlandia", "State of Minas Gerais")},
+    client = FakeTripAdvisorClient(fixture_address={555: _geo("Uberlandia", "State of Minas Gerais")},
                                    recent_review_error=error)
     ingest = _ingest(client)
     rio = _bulk_rio()
@@ -251,7 +251,7 @@ async def test_backfill_propagates_run_level_errors_without_marking(error) -> No
 
 @pytest.mark.asyncio
 async def test_backfill_propagates_places_cost_cap_after_ta_marker() -> None:
-    client = FakeTripAdvisorClient(fixture_geo={555: _geo("Uberlandia", "State of Minas Gerais")})
+    client = FakeTripAdvisorClient(fixture_address={555: _geo("Uberlandia", "State of Minas Gerais")})
     agent = _Agent(run_error=CostGuardError("places cap"))
     ingest = _ingest(client, places_agent=agent)
     rio = _bulk_rio(parent_rio_id="p")
@@ -358,11 +358,11 @@ class _BannedGeocoder(FakeGeocoderClient):
 
 
 @pytest.mark.asyncio
-async def test_nominatim_failure_does_not_skip_the_ta_geo_fallback() -> None:
+async def test_banned_nominatim_never_blocks_the_ta_page() -> None:
     card = _card(7, name="Mirante Sem Nome")
     client = FakeTripAdvisorClient(
         gql_pages=[(0, [card])], geo_ids={"MT": 1},
-        fixture_geo={7: _geo("Chapada dos Guimaraes", "State of Mato Grosso")},
+        fixture_address={7: _geo("Chapada dos Guimaraes", "State of Mato Grosso")},
     )
     with (
         patch("brave.domains.tripadvisor.atrativos.store_raw") as store,
@@ -373,16 +373,16 @@ async def test_nominatim_failure_does_not_skip_the_ta_geo_fallback() -> None:
         await ingest.produce("MT", run_rio=False)
 
     assert not poison.called
-    assert client.geo_calls == [7]
+    assert client.address_calls == [7]
     assert store.call_args.kwargs["payload"]["municipio_id"] == "5103007"
 
 
 @pytest.mark.asyncio
-async def test_fallback_b_in_another_uf_writes_a_consistent_uf() -> None:
+async def test_ta_page_region_moves_the_card_to_its_uf() -> None:
     card = _card(8, name="Transpantaneira")
     client = FakeTripAdvisorClient(
         gql_pages=[(0, [card])], geo_ids={"MS": 1},
-        fixture_geo={8: _geo("Pocone", "State of Mato Grosso")},  # listed under MS
+        fixture_address={8: _geo("Pocone", "State of Mato Grosso")},  # listed under MS
     )
     with patch("brave.domains.tripadvisor.atrativos.store_raw") as store:
         ingest = _ingest(client, destino_rio_map={"5106505": _PARENT})
@@ -436,7 +436,7 @@ async def test_per_uf_sweep_backfills_rio_records_missing_the_marker() -> None:
     session.scalars.side_effect = [["tripadvisor:attraction:1"], [], [rio]]
     client = FakeTripAdvisorClient(
         gql_pages=[(0, [_card(1)])], geo_ids={"MG": 1},
-        fixture_geo={1: _geo("Uberlandia", "State of Minas Gerais")},
+        fixture_address={1: _geo("Uberlandia", "State of Minas Gerais")},
         recent_review={"review_count": 120, "rating": None,
                        "most_recent_review_at": datetime.now(UTC) - timedelta(days=3)},
     )

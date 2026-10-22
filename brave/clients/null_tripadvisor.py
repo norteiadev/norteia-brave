@@ -135,6 +135,10 @@ class NullTripAdvisorClient:
         """
         return None
 
+    async def fetch_attraction_address(self, location_id: int) -> dict:
+        """Return {} — offline stub has no attraction page."""
+        return {}
+
 
 # Structural type check: NullTripAdvisorClient must satisfy TripAdvisorClientProtocol
 def _check_protocol_compliance() -> None:

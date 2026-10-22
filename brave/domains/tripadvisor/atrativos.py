@@ -103,14 +103,15 @@ TA_ATRATIVO_ORIGEM_VALUE = 80.0
 # A card quarantined under THIS version is skipped by later sweeps (its per-card TA calls
 # would only fail again and eat a max_per_uf slot); one quarantined under an older chain
 # is retried once. Bump it whenever the chain learns a new way to place a card.
-# The stamp is written only when the WHOLE chain really ran (TA geo with a live config,
+# The stamp is written only when the WHOLE chain really ran (TA page with a live config,
 # distritos loaded, Nominatim answered, Places consulted with a live client); otherwise the
 # quarantine carries resolver_version=0 and the next sweep retries the card.
 # 2 = + distrito by TA cityName + Google Places Text Search.
 # 3 = + Places município consensus when no result matches the name.
 # 4 = v3 stamps were also written when Places was off/failing — release them once.
 # 5 = Places município from locality / the result's coords + 2/3-majority consensus.
-IBGE_RESOLVER_VERSION = 5
+# 6 = TA's own attraction page (addressLocality/addressRegion + its point) first.
+IBGE_RESOLVER_VERSION = 6
 _IBGE_UNMATCHED_TASK = "brave.ta.atrativos.ibge_unmatched"
 
 # Run-level failures: not a property of the card, so they must escape the per-card
@@ -125,7 +126,7 @@ _PAUSE_ERRORS: tuple[type[BaseException], ...] = (
     SoftTimeLimitExceeded,
 )
 
-# Marker of the TA-side backfill (contract C1): set once TA geo + review recency ran.
+# Marker of the TA-side backfill (contract C1): set once TA page + review recency ran.
 TA_BACKFILLED_KEY = "ta_backfilled_at"
 
 # Inside the right UF, a record whose own coords lie within this radius of TA's city seat
@@ -133,7 +134,7 @@ TA_BACKFILLED_KEY = "ta_backfilled_at"
 # nearest seat is the finer label. Farther than this, the coords are a homonym's point.
 _SAME_UF_KEEP_KM = 50.0
 
-# Written for the place where the bulk put a card; stale once TA geo moves it (_apply_ta_geo).
+# Written for the place where the bulk put a card; stale once TA page moves it (_apply_ta_geo).
 _MOVED_STALE_KEYS = (
     "place_id_cache", "google_place_id", "distrito_name", "distrito_code",
     "distrito_municipio_ibge", "weekday_text", "phone", "website", "address", "price_level",
@@ -591,7 +592,7 @@ class TripAdvisorAtrativosIngest:
     # -----------------------------------------------------------------------
 
     async def backfill_record(self, rio: RioRecord) -> str:
-        """Complete one TA atrativo already in Rio: TA geo + review recency, then Places.
+        """Complete one TA atrativo already in Rio: TA page + review recency, then Places.
 
         Idempotent, keyed on the C1 markers: the TA part runs only while
         ``normalized['ta_backfilled_at']`` is missing, the Places part only while
@@ -646,8 +647,45 @@ class TripAdvisorAtrativosIngest:
                     return match, distrito
         return match, None
 
+    async def _ta_address(self, location_id: int) -> dict[str, Any] | None:
+        """TA's own page for one card, paced like every TA call. None = the page had no
+        address block (SourceRecordError): retried later, never a verdict."""
+        await self._throttle()
+        try:
+            return await self._client.fetch_attraction_address(location_id)
+        except SourceRecordError:
+            return None
+
+    def _ta_coords(
+        self, page: dict[str, Any], match: IbgeMunicipio | None
+    ) -> tuple[float, float] | None:
+        """TA's point, unless it contradicts TA's own locality: farther than _SAME_UF_KEEP_KM
+        from the município seat AND within 50 km of ANOTHER município's seat (any UF).
+        Balneário Água Gelada (RO 10/2026): locality Porto Velho, point 2 km from Pimenta
+        Bueno's seat, 437 km away. A far point with no other seat near is kept (Fortaleza do
+        Abunã, a Porto Velho distrito 210 km out). ponytail: nearest seat, not a polygon;
+        Ariquemes' park (37 km off, 1 km from Alto Paraíso) passes — the hybrid's 2 km pick
+        rejects it."""
+        lat, lng = page.get("lat"), page.get("lng")
+        if lat is None or lng is None:
+            return None
+        if match is None or haversine_km(lat, lng, match.lat, match.lng) <= _SAME_UF_KEEP_KM:
+            return lat, lng
+        nearest = resolve_municipio_national(lat, lng, self._ibge_records)  # default 50 km
+        return None if nearest is not None and nearest.ibge_code != match.ibge_code else (lat, lng)
+
+    def _place_ta_page(
+        self, page: dict[str, Any], uf: str
+    ) -> tuple[str, IbgeMunicipio | None, IbgeDistrito | None, tuple[float, float] | None]:
+        """Where TA's own page puts a card: UF from addressRegion (the sweep's when absent or
+        unknown), município from addressLocality or the distrito it names, and TA's point
+        unless it contradicts them."""
+        page_uf = state_name_to_uf(page.get("state_name") or "") or uf
+        match, distrito = self._resolve_ta_city(page.get("city_name"), page_uf)
+        return page_uf, match, distrito, self._ta_coords(page, match)
+
     async def _backfill_ta(self, rio: RioRecord) -> str:
-        """TA geo → UF/município/parent destino; TA reviews → recency. Sets the marker.
+        """TA page → UF/município/parent destino; TA reviews → recency. Sets the marker.
 
         The marker is withheld only for "municipio_pendente" (C1: a verdict reached while a
         resolver was off or failing is not "conclusively empty").
@@ -657,32 +695,32 @@ class TripAdvisorAtrativosIngest:
         uf_before = rio.uf
         status = "ta"
         reviews_failed = False
+        page: dict[str, Any] | None = {}
         loc_id_raw = (rio.canonical_key or "").removeprefix("tripadvisor:attraction:")
         if loc_id_raw.isdigit():  # else nothing to fetch, ever — mark it done
             loc_id = int(loc_id_raw)
-            await self._throttle()
-            geo = await self._client.fetch_attraction_geo(loc_id)
+            page = await self._ta_address(loc_id)
             await self._throttle()
             try:
                 recency = await self._client.fetch_recent_review(loc_id)
             except SourceRecordError:
                 recency, reviews_failed = None, True  # no marker: retried later
-            if geo is not None:
-                status = await self._apply_ta_geo(rio, loc_id_raw, geo, after)
+            if page:
+                status = await self._apply_ta_geo(rio, loc_id_raw, page, after)
             if recency is not None:
                 _merge_recency(after, recency)
         unplaced = status in ("municipio_nao_confirmado", "municipio_pendente")
         if not unplaced and not after.get("parent_rio_id"):
             # A moved record lost its parent (as did bulk records ingested before the bulk
             # linked one): link it to the destino of its (confirmed or kept) município — also
-            # when TA gave no usable geo.
+            # when TA's page gave no usable address.
             current = self._ibge(rio.municipio_id)
             if current is not None:
                 entry = self._parent_destino(current)
                 after["parent_rio_id"], after["parent_source_ref"] = str(entry[0]), entry[1]
                 if after.get("parent_mar_id"):
                     after["parent_mar_id"] = None
-        if status != "municipio_pendente" and not reviews_failed:
+        if status != "municipio_pendente" and not reviews_failed and page is not None:
             after[TA_BACKFILLED_KEY] = datetime.now(UTC).isoformat()
         persist_normalized(self._session, rio, before, after)
         if (
@@ -713,13 +751,14 @@ class TripAdvisorAtrativosIngest:
     async def _apply_ta_geo(
         self, rio: RioRecord, location_id: str, geo: dict[str, Any], after: dict[str, Any]
     ) -> str:
-        """Re-derive the record's UF/município from TA's own geo; write the deltas to ``after``.
+        """Re-derive the record's UF/município from TA's own page; write the deltas to ``after``.
 
         The bulk placed the card by a name-only national geocode (a homonym in another state
-        is possible); TA's stateName is authoritative for the UF. Its cityName is TA's PARENT
-        geo (often the touristic town next door), so inside the right UF it only overrides a
-        município the record has no evidence of its own for: no place_id, and no coords — or
-        coords farther than _SAME_UF_KEEP_KM from TA's city seat (a homonym's point).
+        is possible); TA's addressRegion is authoritative for the UF. Its addressLocality can
+        be TA's PARENT geo (often the touristic town next door), so inside the right UF it
+        only overrides a município the record has no evidence of its own for: no place_id,
+        and no coords — or coords farther than _SAME_UF_KEEP_KM from TA's city seat (a
+        homonym's point). TA's point and contact are a floor under Google's.
         """
         ta_uf = state_name_to_uf(geo.get("state_name") or "")
         if ta_uf is None:
@@ -728,6 +767,7 @@ class TripAdvisorAtrativosIngest:
         current = self._ibge(rio.municipio_id)
         current_ok = current is not None and current.uf == ta_uf
         match, distrito = self._resolve_ta_city(geo.get("city_name"), ta_uf)
+        ta_coords = self._ta_coords(geo, match)
         if current_ok and match is not None and match.ibge_code != current.ibge_code:
             lat, lon = after.get("lat"), after.get("lon")
             near = (
@@ -756,7 +796,8 @@ class TripAdvisorAtrativosIngest:
         if match is None:
             match = current
         assert match is not None
-        if current is None or match.ibge_code != current.ibge_code:
+        moved = current is None or match.ibge_code != current.ibge_code
+        if moved:
             rio.uf = match.uf
             rio.municipio_id = match.ibge_code
             after["municipio"] = match.nome
@@ -766,7 +807,7 @@ class TripAdvisorAtrativosIngest:
             # date), and a description anchored on the old município. persist_normalized
             # merges, so None (not pop). The paid Places step is re-opened; the TA recency
             # fetched in this same pass is merged back right after.
-            after["lat"], after["lon"] = coords or (None, None)
+            after["lat"], after["lon"] = ta_coords or coords or (None, None)
             for key in _MOVED_STALE_KEYS:
                 if after.get(key) is not None:
                     after[key] = None
@@ -779,6 +820,18 @@ class TripAdvisorAtrativosIngest:
             if after.get("parent_rio_id"):
                 after["parent_rio_id"] = None
                 after["parent_source_ref"] = None
+        if place_id:
+            after["place_id_cache"] = place_id
+        # TA's own point beats a name geocode (the bulk's geocode_national, Nominatim); only a
+        # Google match keeps Google's point.
+        if ta_coords and (
+            not after.get("place_id_cache") or after.get("lat") is None or after.get("lon") is None
+        ):
+            after["lat"], after["lon"] = ta_coords
+        for key in ("address", "phone", "website"):  # TA floor: never over Google's
+            if geo.get(key) and not after.get(key):
+                after[key] = geo[key]
+        if moved:
             # completude counted the dropped coords/address and the description (which
             # raised it to 90): recount it like the ingest did, from the card + what is left.
             card = getattr(self._session.get(NascenteRecord, rio.nascente_id), "payload", None)
@@ -795,8 +848,6 @@ class TripAdvisorAtrativosIngest:
                 },
                 cap=100,
             )
-        if place_id:
-            after["place_id_cache"] = place_id
         if distrito is not None:
             after.update(
                 distrito_name=distrito.nome,
@@ -969,26 +1020,62 @@ class TripAdvisorAtrativosIngest:
         corroboracao_value = corroboracao_from_reviews(review_count, rating)
         atualidade_value = atualidade_from_recency(most_recent_dt)
 
-        # Resolve IBGE municipality (first attempt: card lat/lng, may be None for coordless cards)
-        ibge_match = resolve_municipio(
-            name,
-            uf,
-            self._ibge_records,
-            candidate_lat=lat,
-            candidate_lng=lng,
-        )
+        address = phone = website = None
+        page_failed = False
+        distrito = None
+        ibge_match = None
+        # TA's own attraction page first: the name-only steps below placed homonyms (RO
+        # 10/2026: 9/89 wrong municípios, Places matches 439-602 km away measured from the
+        # wrong seat).
+        if self._ta_config is not None and location_id.isdigit():
+            page = await self._ta_address(int(location_id))
+            page_failed = page is None
+            if page:
+                # The record follows TA's UF (a cross-border card listed under this sweep).
+                uf, ibge_match, distrito, coords = self._place_ta_page(page, uf)
+                if coords:
+                    lat, lng = coords
+                address, phone, website = (page.get(k) for k in ("address", "phone", "website"))
+                if ibge_match is not None:
+                    timeline.append(
+                        {
+                            "source": "tripadvisor",
+                            "source_ref": source_ref,
+                            "stage": "geo_enriched",
+                            "status": "ok",
+                            "message": name if distrito is None
+                            else f"{name} → distrito {distrito.nome}",
+                            "entity_type": "attraction",
+                            "uf": uf,
+                            "data": {
+                                "via": "ta_page",
+                                **({"distrito_code": distrito.distrito_code} if distrito else {}),
+                            },
+                        }
+                    )
 
-        # TA-15: geo-enrichment via Nominatim — only when first attempt missed.
+        # Name resolution (card lat/lng, or TA's point; None for coordless cards).
+        if ibge_match is None:
+            ibge_match = resolve_municipio(
+                name,
+                uf,
+                self._ibge_records,
+                candidate_lat=lat,
+                candidate_lng=lng,
+            )
+
+        # TA-15: geo-enrichment via Nominatim — only when every step above missed.
         # Promote geocoded lat/lng into working variables so completude and the
         # persisted payload carry real coordinates (WR-01 fix: previously these
         # were discarded and lat/lng remained None even after a successful geocode).
+        # TA's own point beats a geocode by name: it is kept when present.
         nominatim_failed = False
         if ibge_match is None and self._geocoder is not None:
             try:
                 geo = await self._geocoder.geocode(location_id, name, uf)
             except _PAUSE_ERRORS:
                 raise
-            except Exception as exc:  # noqa: BLE001 — a Nominatim 429/ban must not skip B/C/D
+            except Exception as exc:  # noqa: BLE001 — a Nominatim 429/ban must not skip D
                 logger.warning(
                     "nominatim_geocode_failed",
                     location_id=location_id,
@@ -998,14 +1085,14 @@ class TripAdvisorAtrativosIngest:
                 geo = None
                 nominatim_failed = True
             if geo is not None:
-                lat = geo["lat"]
-                lng = geo["lon"]
+                if lat is None:
+                    lat, lng = geo["lat"], geo["lon"]
                 ibge_match = resolve_municipio(
                     geo.get("municipio_name") or name,
                     uf,
                     self._ibge_records,
-                    candidate_lat=lat,
-                    candidate_lng=lng,
+                    candidate_lat=geo["lat"],
+                    candidate_lng=geo["lon"],
                     max_distance_km=50.0,
                 )
                 if ibge_match is not None:
@@ -1020,72 +1107,6 @@ class TripAdvisorAtrativosIngest:
                             "entity_type": "attraction",
                             "uf": uf,
                             "data": {"via": "nominatim"},
-                        }
-                    )
-
-        # TA-ftx: geo-linkage via d3d4987463b78a39 — single GraphQL query returns
-        # cityName + stateName directly. Replaces the broken parents[0].localizedName
-        # path (rmz-04) where that field is absent from live TA data.
-        # Validated: 5 attractions / 2 cities (SPIKE-2 2026-06-30).
-        # ToS/LGPD: aggregate geo only (cityName/stateName/geoIds), no PII.
-        ta_city: str | None = None
-        if ibge_match is None and self._ta_config is not None:
-            try:
-                loc_id_int = int(location_id) if location_id else None
-            except (ValueError, TypeError):
-                loc_id_int = None
-            if loc_id_int is not None:
-                if self._ta_config.page_throttle_seconds > 0:
-                    await asyncio.sleep(self._ta_config.page_throttle_seconds)
-                geo = await self._client.fetch_attraction_geo(loc_id_int)
-                if geo is not None:
-                    derived_uf = state_name_to_uf(geo["state_name"])
-                    if derived_uf == uf:
-                        ta_city = geo.get("city_name")
-                    if derived_uf and geo.get("city_name"):
-                        ibge_match = resolve_municipio(
-                            geo["city_name"],
-                            derived_uf,
-                            self._ibge_records,
-                        )
-                        if ibge_match is not None:
-                            # Stage — geolocation complemented via TA geo query (fallback B).
-                            timeline.append(
-                                {
-                                    "source": "tripadvisor",
-                                    "source_ref": source_ref,
-                                    "stage": "geo_enriched",
-                                    "status": "ok",
-                                    "message": name,
-                                    "entity_type": "attraction",
-                                    "uf": uf,
-                                    "data": {"via": "ta_geo"},
-                                }
-                            )
-
-        # Fallback C (free): TA's cityName is often a DISTRITO, not a município ("Vila de
-        # Sao Jorge" = distrito São Jorge of Alto Paraíso de Goiás). Resolve it against
-        # the IBGE DTB within the UF and take the distrito's parent município.
-        distrito = None
-        if ibge_match is None and ta_city and self._distritos:
-            distrito = resolve_distrito_in_uf(ta_city, uf, self._distritos)
-            if distrito is not None:
-                ibge_match = next(
-                    (r for r in self._ibge_records if r.ibge_code == distrito.ibge_code), None
-                )
-                if ibge_match is None:
-                    distrito = None
-                else:
-                    timeline.append(
-                        {
-                            "source": "tripadvisor",
-                            "source_ref": source_ref,
-                            "stage": "geo_enriched",
-                            "status": "ok",
-                            "message": f"{name} → distrito {distrito.nome}",
-                            "entity_type": "attraction",
-                            "uf": uf,
-                            "data": {"via": "ibge_distrito", "distrito_code": distrito.distrito_code},
                         }
                     )
 
@@ -1148,6 +1169,7 @@ class TripAdvisorAtrativosIngest:
             "location_id": location_id,
             "lat": lat,
             "lng": lng,
+            "address": address or entity.get("address"),
         }
         completude_value = completude_from_fields(completude_entity, cap=100)  # atrativo cap=100
 
@@ -1159,6 +1181,7 @@ class TripAdvisorAtrativosIngest:
                 and bool(self._distritos)
                 and not nominatim_failed
                 and places_consulted
+                and not page_failed
             )
             quarantine_poison(
                 session=self._session,
@@ -1193,8 +1216,8 @@ class TripAdvisorAtrativosIngest:
             )
             return
 
-        # Fallback B may resolve in ANOTHER UF (TA stateName of a cross-border card): the
-        # record's UF follows its município, never the sweep's (A/C/D resolve within uf).
+        # TA's page may place it in ANOTHER UF (addressRegion of a cross-border card): the
+        # record's UF follows its município, never the sweep's.
         uf = ibge_match.uf
 
         # Município resolved — public-geo (IBGE code + name).
@@ -1304,8 +1327,11 @@ class TripAdvisorAtrativosIngest:
             },
         }
 
-        # Where fallback C/D placed the card: the distrito it named, and the Places id the
-        # inline enrichment reuses (routing copies place_id_cache + canonical distrito_*).
+        # TA's attraction page: its contact floor (Places overwrites it when it has one).
+        payload.update({k: v for k, v in (("address", address), ("phone", phone),
+                                          ("website", website)) if v})
+        # Where TA's page / fallback D placed the card: the distrito it named, and the Places id
+        # the inline enrichment reuses (routing copies place_id_cache + canonical distrito_*).
         if distrito is not None:
             payload["canonical"].update(
                 distrito_name=distrito.nome,
@@ -1348,6 +1374,7 @@ class TripAdvisorAtrativosIngest:
             # row — a dedup may have returned another record.
             if (
                 recency_fetched
+                and not page_failed
                 and rio.canonical_key == source_ref
                 and not (rio.normalized or {}).get(TA_BACKFILLED_KEY)
             ):
@@ -1363,8 +1390,13 @@ class TripAdvisorAtrativosIngest:
             # and a later task-kill can't strand it (the old post-produce dispatch could).
             # The agent flushes into this session; produce() owns the commit. Its own
             # re-score is the final word on routing. Never raises (keeps the TA floor).
-            if self._places_agent is not None and (rio.canonical_key or "").startswith(
-                "tripadvisor:"
+            # A card TA's page could not place was placed by name: Places would measure from
+            # a possibly wrong seat and its place_id_cache would pin it (_apply_ta_geo
+            # keep-rule). The backfill redoes the page, then Places.
+            if (
+                self._places_agent is not None
+                and (rio.canonical_key or "").startswith("tripadvisor:")
+                and not page_failed
             ):
                 await self._places_agent.run(rio)
             return str(rio.id)
@@ -1510,7 +1542,7 @@ class TripAdvisorAtrativosIngest:
 
         # Derive UF from the matched IBGE record — NOT from any input arg. PROVISIONAL: the
         # geocode was by name alone (a homonym in another state is possible), so the record
-        # carries no ta_backfilled_at and backfill_record re-derives UF/município from TA geo.
+        # carries no ta_backfilled_at and backfill_record re-derives UF/município from TA page.
         uf = ibge_match.uf
 
         # Link the parent destino exactly like the per-UF path (F43-b): the CMS groups by it

@@ -831,7 +831,7 @@ def sweep_tripadvisor(
             # in scope for the per-UF TripAdvisorAtrativosIngest constructor. Without
             # this, ta_config is only defined inside the run_real_externals block and
             # the offline path would raise NameError; passing None keeps the
-            # fetch_attraction_geo guard (ta_config is not None) dormant offline.
+            # fetch_attraction_address guard (ta_config is not None) dormant offline.
             ta_config = None
             if effective.run_real_externals:
                 from brave.config.settings import TripAdvisorConfig
@@ -988,7 +988,7 @@ def sweep_tripadvisor(
 
             # Run atrativos producer using destino_rio_map.
             # ta_config=ta_config wires the TripAdvisorConfig instance so the
-            # fetch_attraction_geo ftx geo-linkage guard activates under real externals.
+            # fetch_attraction_address município guard activates under real externals.
             atrativos_ingest = TripAdvisorAtrativosIngest(
                 ta_client=ta_client,
                 session=session,

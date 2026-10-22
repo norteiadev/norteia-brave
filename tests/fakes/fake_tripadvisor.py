@@ -42,7 +42,8 @@ class FakeTripAdvisorClient:
         gql_pages: list[tuple[int, list[dict[str, Any]]]] | None = None,
         recent_review: dict[str, Any] | None = None,
         recent_review_error: BaseException | None = None,
-        geo_error: BaseException | None = None,
+        fixture_address: dict[int, dict[str, Any]] | None = None,
+        address_error: BaseException | None = None,
     ) -> None:
         """Initialize with optional fixture data.
 
@@ -69,7 +70,9 @@ class FakeTripAdvisorClient:
                                   for any location_id.
             recent_review_error:  When set, fetch_recent_review() raises it (after
                                   recording the call) — e.g. SessionExpiredError.
-            geo_error:            When set, fetch_attraction_geo() raises it likewise.
+            fixture_address:      Dict mapping locationId -> attraction-page dict.
+                                  Returned by fetch_attraction_address(); absent → {}.
+            address_error:        When set, fetch_attraction_address() raises it likewise.
         """
         self._fixture_destinations = fixture_destinations or {}
         self._fixture_attractions = fixture_attractions or {}
@@ -80,7 +83,8 @@ class FakeTripAdvisorClient:
         self._gql_pages: list[tuple[int, list[dict[str, Any]]]] = gql_pages or []
         self._recent_review: dict[str, Any] | None = recent_review
         self._recent_review_error = recent_review_error
-        self._geo_error = geo_error
+        self._fixture_address: dict[int, dict[str, Any]] = fixture_address or {}
+        self._address_error = address_error
 
         # Call recording lists for test assertions
         self.destinations_calls: list[dict[str, Any]] = []
@@ -90,6 +94,7 @@ class FakeTripAdvisorClient:
         self.resolve_calls: list[str] = []
         self.detail_calls: list[int] = []
         self.geo_calls: list[int] = []
+        self.address_calls: list[int] = []
         self.recent_review_calls: list[int] = []
 
     async def fetch_destinations(self, uf: str) -> list[dict[str, Any]]:
@@ -215,9 +220,14 @@ class FakeTripAdvisorClient:
             Fixture geo dict if locationId is in fixture_geo, else None.
         """
         self.geo_calls.append(location_id)
-        if self._geo_error is not None:
-            raise self._geo_error
         return self._fixture_geo.get(location_id)
+
+    async def fetch_attraction_address(self, location_id: int) -> dict[str, Any]:
+        """Record the call; raise address_error if set, else the fixture page dict or {}."""
+        self.address_calls.append(location_id)
+        if self._address_error is not None:
+            raise self._address_error
+        return self._fixture_address.get(location_id, {})
 
 
 # Structural type check: FakeTripAdvisorClient must satisfy TripAdvisorClientProtocol

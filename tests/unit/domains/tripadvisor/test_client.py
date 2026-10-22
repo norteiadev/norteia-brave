@@ -16,6 +16,7 @@ Notes (Phase 12 changes):
 """
 
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -1694,6 +1695,187 @@ class TestFakeTripAdvisorClientGeo:
         await fake.fetch_attraction_geo(312332)
         await fake.fetch_attraction_geo(999)
         assert fake.geo_calls == [312332, 999]
+
+
+# ---------------------------------------------------------------------------
+# TestFetchAttractionAddress — TA's own attraction page (LocalBusiness JSON-LD)
+# ---------------------------------------------------------------------------
+
+_PAGE_URL = "https://www.tripadvisor.com.br/Attraction_Review-g1-d1534420-Reviews.html"
+_MERCADO_HTML = (
+    Path(__file__).parents[3]
+    / "fixtures" / "tripadvisor" / "attraction_review_mercado_central.html"
+).read_text(encoding="utf-8")
+
+
+def _ld_page(ld: dict) -> str:
+    return f'<html><script type="application/ld+json">{json.dumps(ld)}</script></html>'
+
+
+class TestFetchAttractionAddress:
+    """fetch_attraction_address reads only the LocalBusiness address block of TA's page."""
+
+    @staticmethod
+    def _client(monkeypatch):
+        import fakeredis
+
+        from brave.config.settings import AppConfig
+        from brave.domains.tripadvisor.client import TripAdvisorClient
+
+        client = TripAdvisorClient(config=AppConfig().tripadvisor, redis=fakeredis.FakeRedis())
+        stub_session = {"cookies": {"datadome": "abc"}, "user_agent": "Mozilla/5.0 test",
+                        "acquired_at": "x"}
+        monkeypatch.setattr(client, "_get_session", lambda: stub_session)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_parses_the_local_business_block(self, monkeypatch):
+        client = self._client(monkeypatch)
+        with respx.mock:
+            route = respx.get(_PAGE_URL).mock(return_value=httpx.Response(200, text=_MERCADO_HTML))
+            result = await client.fetch_attraction_address(1534420)
+
+        assert result == {
+            "city_name": "Belo Horizonte",
+            "state_name": "Minas Gerais",
+            "lat": -19.922617,
+            "lng": -43.94297,
+            "address": "Avenida Augusto de Lima, 744, Belo Horizonte, 30190-922",
+            "phone": "+55 31 3274 9434",
+            "website": "http://mercadocentral.com.br",
+        }
+        request = route.calls.last.request
+        assert "-g1-" in str(request.url)
+        assert request.headers["Accept"].startswith("text/html")
+        assert request.headers["User-Agent"] == "Mozilla/5.0 test"
+
+    @pytest.mark.asyncio
+    async def test_block_without_address_gives_none_fields(self, monkeypatch):
+        client = self._client(monkeypatch)
+        with respx.mock:
+            respx.get(_PAGE_URL).mock(return_value=httpx.Response(
+                200, text=_ld_page({"@type": "LocalBusiness", "name": "X", "sameAs": 7})
+            ))
+            result = await client.fetch_attraction_address(1534420)
+        assert result == dict.fromkeys(
+            ("city_name", "state_name", "lat", "lng", "address", "phone", "website")
+        )
+
+    @pytest.mark.asyncio
+    async def test_page_without_block_is_a_record_error_then_systemic(self, monkeypatch):
+        from brave.shared.exceptions import SourceRecordError, SourceSchemaError
+
+        client = self._client(monkeypatch)
+        bare = httpx.Response(200, text="<html>Attraction_Review</html>")
+        ok = httpx.Response(200, text=_MERCADO_HTML)
+        with respx.mock:
+            respx.get(_PAGE_URL).mock(side_effect=[bare] * 3 + [ok] + [bare] * 5)
+            for _ in range(3):
+                with pytest.raises(SourceRecordError):
+                    await client.fetch_attraction_address(1534420)
+            assert await client.fetch_attraction_address(1534420)  # resets the streak
+            for _ in range(4):
+                with pytest.raises(SourceRecordError):
+                    await client.fetch_attraction_address(1534420)
+            with pytest.raises(SourceSchemaError):
+                await client.fetch_attraction_address(1534420)
+
+    @pytest.mark.asyncio
+    async def test_403_raises_session_expired(self, monkeypatch):
+        from brave.domains.tripadvisor.client import SessionExpiredError
+
+        client = self._client(monkeypatch)
+        with respx.mock:
+            respx.get(_PAGE_URL).mock(return_value=httpx.Response(403))
+            with pytest.raises(SessionExpiredError):
+                await client.fetch_attraction_address(1534420)
+
+    @pytest.mark.asyncio
+    async def test_200_captcha_page_is_a_dead_session(self, monkeypatch):
+        from brave.domains.tripadvisor.client import SessionExpiredError
+
+        client = self._client(monkeypatch)
+        captcha = '<html><script src="https://ct.captcha-delivery.com/c.js"></script></html>'
+        with respx.mock:
+            respx.get(_PAGE_URL).mock(return_value=httpx.Response(200, text=captcha))
+            with pytest.raises(SessionExpiredError):
+                await client.fetch_attraction_address(1534420)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad", ["1534420", True, 1.5])
+    async def test_non_int_location_id_raises_before_any_get(self, monkeypatch, bad):
+        client = self._client(monkeypatch)
+        with respx.mock:
+            route = respx.get(url__regex=r".*").mock(return_value=httpx.Response(200))
+            with pytest.raises(TypeError):
+                await client.fetch_attraction_address(bad)
+            assert not route.called
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [404, 410])
+    async def test_404_and_410_are_conclusive_empty(self, monkeypatch, status):
+        client = self._client(monkeypatch)
+        with respx.mock:
+            respx.get(_PAGE_URL).mock(return_value=httpx.Response(status))
+            assert await client.fetch_attraction_address(1534420) == {}
+        assert client._page_errors_in_a_row == 0
+
+    @pytest.mark.asyncio
+    async def test_redirect_off_the_attraction_page_is_conclusive_empty(self, monkeypatch):
+        city = "https://www.tripadvisor.com.br/Attractions-g303631-Activities-Porto_Velho.html"
+        client = self._client(monkeypatch)
+        with respx.mock:
+            respx.get(_PAGE_URL).mock(return_value=httpx.Response(301, headers={"Location": city}))
+            respx.get(city).mock(return_value=httpx.Response(200, text="<html></html>"))
+            assert await client.fetch_attraction_address(1534420) == {}
+        assert client._page_errors_in_a_row == 0
+
+    @pytest.mark.asyncio
+    async def test_non_br_address_is_empty(self, monkeypatch):
+        client = self._client(monkeypatch)
+        ld = {"@type": "LocalBusiness", "address": {
+            "addressLocality": "Buenos Aires", "addressRegion": "Buenos Aires",
+            "addressCountry": "AR"}}
+        with respx.mock:
+            respx.get(_PAGE_URL).mock(return_value=httpx.Response(200, text=_ld_page(ld)))
+            assert await client.fetch_attraction_address(1534420) == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("same_as", "website"),
+        [("www.parque.com.br", "https://www.parque.com.br"), ("parque.com.br", None)],
+    )
+    async def test_same_as_www_gets_https(self, monkeypatch, same_as, website):
+        client = self._client(monkeypatch)
+        ld = {"@type": "LocalBusiness", "sameAs": same_as}
+        with respx.mock:
+            respx.get(_PAGE_URL).mock(return_value=httpx.Response(200, text=_ld_page(ld)))
+            result = await client.fetch_attraction_address(1534420)
+        assert result["website"] == website
+
+
+class TestFakeTripAdvisorClientAddress:
+    """FakeTripAdvisorClient.fetch_attraction_address (fixture_address + address_calls)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_the_fixture_or_empty_and_records_calls(self):
+        from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
+
+        page = {"city_name": "Belo Horizonte", "state_name": "Minas Gerais"}
+        fake = FakeTripAdvisorClient(fixture_address={1534420: page})
+        assert await fake.fetch_attraction_address(1534420) == page
+        assert await fake.fetch_attraction_address(999) == {}
+        assert fake.address_calls == [1534420, 999]
+
+    @pytest.mark.asyncio
+    async def test_address_error_is_raised_after_recording(self):
+        from brave.shared.exceptions import SourceRecordError
+        from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
+
+        fake = FakeTripAdvisorClient(address_error=SourceRecordError("no block"))
+        with pytest.raises(SourceRecordError):
+            await fake.fetch_attraction_address(1)
+        assert fake.address_calls == [1]
 
 
 # ---------------------------------------------------------------------------
