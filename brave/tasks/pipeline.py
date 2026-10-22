@@ -1324,6 +1324,24 @@ def _enrich_agent(
     )
 
 
+async def _prefetch_places(
+    session: Session, agent: Any, ids: list[uuid.UUID], *, refresh: bool = False
+) -> None:
+    """Hybrid Places: one Apify run (~60 s FIXED per run) for a whole lot, before its
+    per-record loop. No-op unless the agent's client batches (google mode: nothing runs).
+
+    The rows are read detached and the transaction closed first, so no connection sits idle
+    in transaction through the run; the loop re-reads each row FOR UPDATE.
+    """
+    if getattr(agent, "prefetches", False) is not True or not ids:
+        return
+    rios = list(session.scalars(select(RioRecord).where(RioRecord.id.in_(ids))).all())
+    for rio in rios:
+        session.expunge(rio)
+    session.rollback()
+    await agent.prefetch(rios, refresh=refresh)
+
+
 def _enrich_one(session: Session, rio: RioRecord, ctx: _EnrichCtx | None = None) -> None:
     """Run PlacesEnrichmentAgent on one RioRecord (no commit — the caller owns it)."""
     if ctx is None:
@@ -1443,11 +1461,11 @@ def refresh_places() -> int:
 
     No-op while externals or Places enrichment are off. A balance wall or the Places cost
     cap stops the run (no call is made past the cap).
-    """
-    from brave.core.mar.service import promote_to_mar  # noqa: PLC0415
-    from brave.core.models import MarRecord  # noqa: PLC0415
-    from brave.shared.exceptions import CostGuardError, ProviderBalanceError  # noqa: PLC0415
 
+    Hybrid Places (places_provider="hybrid"): ONE Clients bag and event loop for the lot and
+    one Apify run for all due place_ids up front — a run per record (~60 s fixed each) would
+    blow the time limit long before the daily limit.
+    """
     session, _ = _get_session()
     refreshed = 0
     try:
@@ -1456,38 +1474,39 @@ def refresh_places() -> int:
         limit = effective.places_refresh_daily_limit
         if not (effective.run_real_externals and effective.places_enrichment_enabled and limit > 0):
             return 0
-        for rio_id in _places_refresh_due(session, limit):
-            try:
-                rio = session.get(RioRecord, rio_id, with_for_update=True)
-                if rio is None:
-                    continue
-                clients = clients_for(
-                    effective,
-                    ibge_lookup=ctx.ibge_lookup,
-                    places_api_key_env=(
-                        _PLACES_REFRESH_KEY_ENV
-                        if os.environ.get(_PLACES_REFRESH_KEY_ENV)
-                        else "BRAVE_PLACES_API_KEY"
-                    ),
-                )
-                agent = _enrich_agent(session, ctx, clients, str(rio_id))
-                asyncio.run(_using(clients, agent.run(rio, refresh=True)))
-                in_mar = session.scalar(
-                    select(MarRecord.id).where(
-                        MarRecord.rio_id == rio_id, MarRecord.superseded_by_id.is_(None)
+        due = _places_refresh_due(session, limit)
+        key_env = (
+            _PLACES_REFRESH_KEY_ENV
+            if os.environ.get(_PLACES_REFRESH_KEY_ENV)
+            else "BRAVE_PLACES_API_KEY"
+        )
+        if getattr(effective, "places_provider", "google") == "hybrid":
+            clients = clients_for(
+                effective, ibge_lookup=ctx.ibge_lookup, places_api_key_env=key_env
+            )
+            agent = _enrich_agent(session, ctx, clients, "refresh_places")
+
+            async def lot() -> int:
+                await _prefetch_places(session, agent, due, refresh=True)
+                n = 0
+                for rio_id in due:
+                    n += await _refresh_one(
+                        session, rio_id, lambda rio: agent.run(rio, refresh=True)
                     )
-                )
-                republish = bool(in_mar and rio.routing == "mar" and promote_to_mar(session, rio))
-                session.commit()
-                refreshed += 1
-                if republish:
-                    _dispatch_chain(publish_mar, str(rio_id))
-            except (ProviderBalanceError, CostGuardError):
-                session.rollback()
-                raise
-            except Exception as exc:  # noqa: BLE001 — one bad record never aborts the run
-                session.rollback()
-                logger.warning("places_refresh_record_failed", rio_id=str(rio_id), error=str(exc))
+                return n
+
+            refreshed = asyncio.run(_using(clients, lot()))
+        else:
+            for rio_id in due:
+
+                def run(rio: RioRecord, rio_id: uuid.UUID = rio_id) -> Any:
+                    clients = clients_for(
+                        effective, ibge_lookup=ctx.ibge_lookup, places_api_key_env=key_env
+                    )
+                    agent = _enrich_agent(session, ctx, clients, str(rio_id))
+                    return _using(clients, agent.run(rio, refresh=True))
+
+                refreshed += asyncio.run(_refresh_one(session, rio_id, run))
     except Exception as exc:
         _beat_health("brave.refresh_places", exc)
         raise
@@ -1495,6 +1514,39 @@ def refresh_places() -> int:
         session.close()
     _beat_health("brave.refresh_places")
     logger.info("places_refresh_done", refreshed=refreshed)
+    return refreshed
+
+
+async def _refresh_one(session: Session, rio_id: uuid.UUID, run: Any) -> int:
+    """refresh_places' per-record step: ``await run(rio)`` under FOR UPDATE, then commit and
+    re-publish a Mar record. 1 when refreshed; a balance wall / cost cap stops the run, any
+    other failure skips the record."""
+    from brave.core.mar.service import promote_to_mar  # noqa: PLC0415
+    from brave.core.models import MarRecord  # noqa: PLC0415
+    from brave.shared.exceptions import CostGuardError, ProviderBalanceError  # noqa: PLC0415
+
+    refreshed = 0
+    try:
+        rio = session.get(RioRecord, rio_id, with_for_update=True)
+        if rio is None:
+            return 0
+        await run(rio)
+        in_mar = session.scalar(
+            select(MarRecord.id).where(
+                MarRecord.rio_id == rio_id, MarRecord.superseded_by_id.is_(None)
+            )
+        )
+        republish = bool(in_mar and rio.routing == "mar" and promote_to_mar(session, rio))
+        session.commit()
+        refreshed = 1
+        if republish:
+            _dispatch_chain(publish_mar, str(rio_id))
+    except (ProviderBalanceError, CostGuardError):
+        session.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001 — one bad record never aborts the run
+        session.rollback()
+        logger.warning("places_refresh_record_failed", rio_id=str(rio_id), error=str(exc))
     return refreshed
 
 
@@ -2018,6 +2070,8 @@ async def _backfill_batch(
         destino_cache = getattr(ingest, "_destino_rio_map", None)
         destinos_before = set(destino_cache or ())
         try:
+            if i == 0:  # after the halt/deadline checks: a halted lot pays no Apify run
+                await _prefetch_places(session, getattr(ingest, "_places_agent", None), ids)
             # FOR UPDATE: the agents merge onto the row's current normalized under this lock.
             rio = session.get(RioRecord, rio_id, with_for_update=True)
             status = await ingest.backfill_record(rio) if rio is not None else "missing"

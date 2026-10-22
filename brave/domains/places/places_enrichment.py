@@ -37,6 +37,7 @@ D-18 boundary: no imports from other domains or brave.tasks.
 
 from __future__ import annotations
 
+import inspect
 import math
 import uuid
 from collections import Counter
@@ -49,6 +50,7 @@ from rapidfuzz import fuzz
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from brave.clients.hybrid_places import ApifyNoResultError
 from brave.clients.null_places import NullPlacesClient
 from brave.clients.places import (
     USD_DETAILS_ENTERPRISE,
@@ -277,12 +279,23 @@ def _business_type(t: str) -> bool:
     return t in _NOT_ATRATIVO_PRIMARY_TYPES or t.endswith(_BUSINESS_SUFFIXES)
 
 
+def _is_mall(details: dict[str, Any]) -> bool:
+    """Operator: malls are never atrativos, park or not. Hybrid details carry no primaryType
+    (a Pro field; Essentials only), so there the Essentials ``types`` say it."""
+    if details.get("primary_type") == "shopping_mall":
+        return True
+    return details.get("provider") == "hybrid" and "shopping_mall" in (details.get("types") or ())
+
+
 def _google_not_atrativo(details: dict[str, Any]) -> bool:
     """Google says this is a business, not an atrativo: a non-place primaryType and no place
-    type among ``types``. No primaryType (Google left it unset) → not judged here."""
-    primary = details.get("primary_type") or ""
-    if primary == "shopping_mall":  # operator: malls are never atrativos, park or not
+    type among ``types``. No primaryType (Google left it unset) → not judged here, except on
+    hybrid details, which never carry one: judged on ``types`` like a Text Search result."""
+    if _is_mall(details):
         return True
+    if details.get("provider") == "hybrid":
+        return _result_is_business(details)
+    primary = details.get("primary_type") or ""
     business = _business_type(primary)
     return business and not _PLACE_TYPES.intersection(details.get("types") or ())
 
@@ -378,6 +391,15 @@ def _best_match(
         if places:
             best = max(places, key=lambda p: p[0])[1]
     return best
+
+
+def _places_done(normalized: dict[str, Any], refresh: bool) -> bool:
+    """run()'s Step 1: the PAID Places sub-step already ran (marker, or the cross-lane
+    SignalAgent paid the Details: place_id_cache + weekday_text). ``refresh`` re-runs it."""
+    return not refresh and bool(
+        normalized.get("google_enriched")
+        or (normalized.get("place_id_cache") and normalized.get("weekday_text"))
+    )
 
 
 def ta_unplaced(rio: RioRecord) -> bool:
@@ -574,6 +596,64 @@ class PlacesEnrichmentAgent:
             out.append(r)
         return out
 
+    @property
+    def prefetches(self) -> bool:
+        """The client batches lookups (the hybrid: an Apify run costs ~60 s FIXED, so a page
+        or lot goes in one run). Class-level check: a MagicMock client never qualifies."""
+        client = self._places_client
+        return not isinstance(client, NullPlacesClient) and inspect.iscoroutinefunction(
+            getattr(type(client), "prefetch", None)
+        )
+
+    def _prefetch_item(self, rio: RioRecord, refresh: bool) -> dict[str, Any] | None:
+        """The lookup run() will make for ``rio`` (same skips, same query), or None."""
+        normalized = rio.normalized or {}
+        if ta_unplaced(rio) or _places_done(normalized, refresh):
+            return None
+        include_reviews = float(normalized.get("atualidade_value") or 0.0) < 100.0
+        if normalized.get("place_id_cache"):
+            return {"place_id": normalized["place_id_cache"], "include_reviews": include_reviews}
+        if not normalized.get("name"):
+            return None
+        return {
+            "nome": normalized["name"],
+            "municipio": normalized.get("municipio") or "",
+            "uf": rio.uf or normalized.get("uf") or "",
+            "include_reviews": include_reviews,
+        }
+
+    async def prefetch(
+        self,
+        rios: Any = (),
+        *,
+        refresh: bool = False,
+        cards: Any = (),
+        uf: str = "",
+    ) -> None:
+        """Warm the client's cache for a whole lot in one batched lookup; no-op otherwise.
+
+        ``rios``: records run() is about to enrich (``refresh`` as run()'s). ``cards``: TA
+        cards of ``uf`` not ingested yet — no município (the ingest resolves it) and no TA
+        recency yet, so searched by name with reviews on. Never raises but _PROPAGATE: a
+        failed prefetch only means run() looks each record up on its own.
+        """
+        if not self.prefetches:
+            return
+        items = [i for i in (self._prefetch_item(r, refresh) for r in rios) if i is not None]
+        items += [
+            {"nome": c["name"], "municipio": "", "uf": uf, "include_reviews": True}
+            for c in cards
+            if c.get("name")
+        ]
+        if not items:
+            return
+        try:
+            await self._places_client.prefetch(items)  # type: ignore[attr-defined]
+        except _PROPAGATE:
+            raise
+        except Exception as exc:  # noqa: BLE001 — run() falls back to per-record lookups
+            logger.warning("places_prefetch_failed", items=len(items), error=type(exc).__name__)
+
     def wants_description(self, rio: RioRecord, normalized: dict[str, Any] | None = None) -> bool:
         """The description sub-step's gate. Reads ``rio`` only — no I/O, no writes.
 
@@ -682,10 +762,7 @@ class PlacesEnrichmentAgent:
         # empty → the copywriter grounds on web_search alone). wants_description
         # mirrors the description sub-step's own condition below.
         normalized = rio.normalized or {}
-        places_done = not refresh and bool(
-            normalized.get("google_enriched")
-            or (normalized.get("place_id_cache") and normalized.get("weekday_text"))
-        )
+        places_done = _places_done(normalized, refresh)
         attempts = int(normalized.get("descricao_attempts") or 0)
         wants_description = self.wants_description(rio)
         # Exhausted budget is SILENT otherwise (the record just stops getting descriptions,
@@ -755,11 +832,18 @@ class PlacesEnrichmentAgent:
                     # Details would leave a Text Search paid for nothing (paid again on resume).
                     check_budget(USD_TEXT_SEARCH_PRO + details_usd)
                 if not place_id and nome:
-                    results = (
-                        consensus[1]
-                        if consensus is not None and consensus[0] == (normalize_name(nome), uf)
-                        else await self._places_client.text_search(nome, uf)
-                    )
+                    search = getattr(self._places_client, "search", None)
+                    if consensus is not None and consensus[0] == (normalize_name(nome), uf):
+                        results = consensus[1]
+                    elif search is not None:
+                        # Hybrid: Apify finds the place by name + município and Essentials
+                        # places it; the _best_match below is the validation. No match is
+                        # conclusive — never a fallback to the Text Search Pro.
+                        results = await search(
+                            nome, municipio, uf, include_reviews=include_reviews
+                        )
+                    else:
+                        results = await self._places_client.text_search(nome, uf)
                     ref_lat, ref_lng, radius = lat, lng, self._max_distance_km
                     if (lat is None or lng is None) and municipio_ibge:
                         # No coords of its own: measure from the município seat instead,
@@ -794,6 +878,10 @@ class PlacesEnrichmentAgent:
             except Exception as exc:  # noqa: BLE001 — Places failure keeps the TA floor
                 logger.warning("places_enrich_failed_kept_floor", rio_id=str(rio.id))
                 details = {}
+                if isinstance(exc, ApifyNoResultError):
+                    # Apify answered and cannot open this id's listing: conclusive, like a
+                    # Google no-match — else every backfill pass re-pays it, forever.
+                    places_consulted = True
                 if "NotFound" in type(exc).__name__ and normalized.get("place_id_cache"):
                     # Google retired the cached id: clear it (persist_normalized merges, so
                     # None, not pop) so the next pass re-resolves by Text Search instead of
@@ -820,7 +908,7 @@ class PlacesEnrichmentAgent:
             accepted = (
                 bool(place_id)
                 and normalized.get(GOOGLE_TIPO_ACEITO_KEY) == place_id
-                and details.get("primary_type") != "shopping_mall"
+                and not _is_mall(details)
             )
             if closed or (_google_not_atrativo(details) and not accepted):
                 # A business match on a card TA files as a place to visit (Praias, Museus…)
@@ -828,15 +916,15 @@ class PlacesEnrichmentAgent:
                 # of its data is written. Malls stay out regardless (operator rule). Closed:
                 # the same for a business match, and for a natural place, which never closes.
                 category = normalized.get("category")
-                primary = details.get("primary_type") or ""
+                mall = _is_mall(details)
                 if closed:
-                    review = primary != "shopping_mall" and (
+                    review = not mall and (
                         _ta_nature_category(category)
                         or (_ta_attraction_category(category) and _google_not_atrativo(details))
                     )
                     reason = GOOGLE_FECHADO_REVISAO_REASON if review else "closed_place"
                 else:
-                    review = primary != "shopping_mall" and _ta_attraction_category(category)
+                    review = not mall and _ta_attraction_category(category)
                     reason = GOOGLE_TIPO_NEGOCIO_REASON if review else "nao_atrativo"
                 new_normalized["google_enriched"] = True
                 if review:
@@ -857,6 +945,12 @@ class PlacesEnrichmentAgent:
                     "place_name": details.get("name") or None,
                     "place_address": details.get("formatted_address") or None,
                 }
+                # What the Log says Google filed it as: hybrid details have no primaryType.
+                kind = cause["primary_type"] or next(
+                    (t for t in details.get("types") or () if t == "shopping_mall"
+                     or _business_type(t)),
+                    None,
+                )
                 write_audit(
                     session=self._session,
                     action="places_hard_descarte",
@@ -880,10 +974,10 @@ class PlacesEnrichmentAgent:
                             f"Google Places marca como {_CLOSED_LABELS.get(business_status, business_status)}"
                             + (f", mas o TripAdvisor diz {category} — revisão humana" if review else "")
                             if closed
-                            else f"Google Places classifica como {cause['primary_type']}, mas o "
+                            else f"Google Places classifica como {kind}, mas o "
                             f"TripAdvisor diz {normalized.get('category')} — revisão humana"
                             if review
-                            else f"Google Places classifica como {cause['primary_type']}, não é atrativo"
+                            else f"Google Places classifica como {kind}, não é atrativo"
                         )
                         + (f" ({cause['place_name']})" if cause["place_name"] else "")
                     ),
@@ -947,9 +1041,11 @@ class PlacesEnrichmentAgent:
             # SignalAgent writes) — without it the TA lane pushes both as null.
             # No reviews fetched ≠ zero recent reviews: keep the last known count, or leave
             # it unknown (the push sends null) rather than claim 0.
+            # Hybrid: Apify scrapes apify_max_reviews (1, newest) per place — a count of that
+            # sample would cap the field at 1, so it is not a count either.
             reviews_recent_count = (
                 sum(1 for r in reviews if _is_recent_review(r, ref_date))
-                if include_reviews
+                if include_reviews and details.get("provider") != "hybrid"
                 else (normalized.get("signal") or {}).get("reviews_recent_count")
             )
             new_normalized["signal"] = SignalResult(

@@ -241,6 +241,73 @@ def pre_dispatch_check_places(
         )
 
 
+# Apify (places_provider="hybrid") has its own pair of counters, not per token: one account,
+# and the operator raises APIFY_TOTAL_USD_CAP when recharging it.
+#   daily: brave:cost:apify:daily:{date} (expires with the UTC day) → CostGuardError;
+#   total: brave:cost:apify:total (no TTL) → ProviderBalanceError.
+APIFY_LANE = "apify"
+_APIFY_TOTAL_KEY = f"brave:cost:{APIFY_LANE}:total"
+
+
+def apify_daily_spend(redis_client: Redis) -> float:
+    """Today's (UTC) recorded Apify USD."""
+    return daily_spend(redis_client, APIFY_LANE)
+
+
+def apify_total_spend(redis_client: Redis) -> float:
+    """Apify USD recorded since the counter was created (no expiry)."""
+    raw = redis_client.get(_APIFY_TOTAL_KEY)
+    return float(raw) if raw is not None else 0.0
+
+
+def record_apify_spend(redis_client: Redis, usd: float) -> None:
+    """Record one Apify run's charge on the daily AND total counters."""
+    usd = max(0.0, usd)
+    record_spend(redis_client, usd, APIFY_LANE)
+    redis_client.incrbyfloat(_APIFY_TOTAL_KEY, usd)
+
+
+def settle_apify_spend(
+    redis_client: Redis, reserved_usd: float, actual_usd: float, reserved_at: datetime
+) -> None:
+    """Settle one Apify run's reservation (record_apify_spend at its check) to its real cost.
+
+    Total: the full signed delta (it has no day), floored at 0. Daily: reconcile_spend's rule —
+    a reservation booked on an earlier UTC day only ever adds today.
+    """
+    delta = actual_usd - reserved_usd
+    total = float(redis_client.incrbyfloat(_APIFY_TOTAL_KEY, delta))
+    if total < 0.0:
+        redis_client.incrbyfloat(_APIFY_TOTAL_KEY, -total)
+    if _daily_key(reserved_at) != _daily_key():
+        delta = max(0.0, delta)
+    _incr(redis_client, delta, APIFY_LANE)
+
+
+def pre_dispatch_check_apify(
+    redis_client: Redis, projected_usd: float, *, daily_cap_usd: float, total_cap_usd: float
+) -> None:
+    """Raise BEFORE an Apify run whose projected cost would cross a cap — no run started.
+
+    Total first, for the same reason as pre_dispatch_check_places (operator action wins).
+    The client reserves the projection right after this check (a run takes minutes), so only
+    runs checked in the same instant can overshoot — ponytail: not atomic; a Lua
+    check-and-reserve if that ever shows.
+    """
+    if apify_total_spend(redis_client) + projected_usd > total_cap_usd:
+        raise ProviderBalanceError(
+            "apify",
+            "Apify spend cap reached (APIFY_TOTAL_USD_CAP) — recharge the Apify account or "
+            "swap BRAVE_APIFY_API_KEY, raise APIFY_TOTAL_USD_CAP in .env, RECREATE the worker "
+            "and api containers (docker compose up -d worker api) and resume.",
+        )
+    if apify_daily_spend(redis_client) + projected_usd > daily_cap_usd:
+        raise CostGuardError(
+            "Daily Apify budget exceeded. Halting dispatch. "
+            "Reset happens automatically at midnight UTC."
+        )
+
+
 def reconcile_spend(
     redis_client: Redis,
     reserved_usd: float,

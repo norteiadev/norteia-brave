@@ -25,6 +25,7 @@ from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
 from brave.domains.tripadvisor.ibge import IbgeMunicipio
 from brave.shared.exceptions import CostGuardError
 from brave.tasks import pipeline
+from tests.fakes.fake_apify import FakeApifyClient
 from tests.fakes.fake_nominatim import FakeGeocoderClient
 from tests.fakes.fake_places import FakePlacesClient
 from tests.fakes.fake_tripadvisor import FakeTripAdvisorClient
@@ -151,3 +152,75 @@ def test_bulk_backfill_cap_pause_and_resume(tx_session):
     assert state["stop"] is None
     assert pending() == set()
     assert len(ta.geo_calls) - ta_calls_before == 1  # only the untouched record
+
+
+def test_hybrid_backfill_lot_is_one_apify_run(tx_session):
+    """places_provider=hybrid: the lot is prefetched in ONE Apify run (~60 s fixed per run)
+    before the record loop; every record then enriches off the cache."""
+    from brave.clients.apify_places import apify_query
+    from brave.clients.hybrid_places import HybridPlacesClient
+
+    base = random.randint(10**9, 2 * 10**9)
+    ids = [base + i for i in range(3)]
+    cards = [{"locationId": i, "name": f"Atrativo {i}", "review_count": 30, "rating": 4.5,
+              "category": "Parks"} for i in ids]
+    national = {str(i): {"lat": _LAT, "lon": _LNG, "osm_id": i, "municipio_name": "Uberlândia",
+                         "uf": "MG"} for i in ids}
+    ta = FakeTripAdvisorClient(
+        gql_pages=[(0, cards)],
+        fixture_geo={i: {"location_id": i, "city_name": "Uberlandia", "state_name": "Minas Gerais",
+                         "city_geo_id": 1, "state_geo_id": 2} for i in ids},
+        recent_review={"review_count": 40, "rating": None,
+                       "most_recent_review_at": datetime.now(UTC) - timedelta(days=4)},
+    )
+    rc = fakeredis.FakeRedis()
+    bulk = _ingest(tx_session, ta)
+    bulk._geocoder = FakeGeocoderClient(fixture_national_results=national)
+    asyncio.run(bulk.produce_paginated(294280, 1, 1, rc, run_rio=True))
+    keys = [f"tripadvisor:attraction:{i}" for i in ids]
+    rows = list(tx_session.scalars(
+        select(RioRecord).where(RioRecord.canonical_key.in_(keys)).order_by(RioRecord.id)
+    ))
+    row_ids = [r.id for r in rows]
+    loc = {"lat": _LAT, "lng": _LNG}
+    found, essentials = {}, {}
+    for r in rows:
+        name, pid = r.normalized["name"], f"ChIJ-{r.id}"
+        found[apify_query(name, r.normalized["municipio"], "MG")] = {
+            "placeId": pid, "title": name, "location": loc, "city": "Uberlândia",
+            "address": "Rua X, Uberlândia - MG", "permanentlyClosed": False,
+            "temporarilyClosed": False, "openingHours": [{"day": "segunda-feira",
+                                                           "hours": "08:00 to 17:00"}],
+            "reviews": [],
+        }
+        essentials[pid] = {
+            "place_id": pid, "formatted_address": "Rua X, Uberlândia - MG",
+            "types": ["park", "tourist_attraction"], "location": loc,
+            "municipio_nome": "Uberlândia", "municipio_ibge": "3170107", "uf_short": "MG",
+            "municipio_from_locality": False, "distrito_hint": "",
+        }
+    apify = FakeApifyClient(found)
+    hybrid = HybridPlacesClient(FakePlacesClient(fixture_essentials=essentials), apify)
+
+    state: dict[str, Any] = {"cursor": None, "stop": None}
+    asyncio.run(pipeline._backfill_batch(
+        tx_session, _ingest(tx_session, ta, hybrid), row_ids, rc, state, None, 0.0
+    ))
+
+    assert state["stop"] is None
+    assert len(apify.lookup_calls) == 1 and sorted(apify.lookup_calls[0]["queries"]) == sorted(found)
+    tx_session.expire_all()
+    for rid in row_ids:
+        n = tx_session.get(RioRecord, rid).normalized
+        assert n["google_enriched"] is True and n["google_place_id"] == f"ChIJ-{rid}"
+
+
+def test_google_backfill_lot_never_prefetches():
+    """Google mode: the agent's client has no prefetch → no lot query, nothing paid."""
+    from unittest.mock import MagicMock
+
+    session = MagicMock()
+    agent = PlacesEnrichmentAgent(places_client=FakePlacesClient(), session=session,
+                                  config=ScoreConfig())
+    asyncio.run(pipeline._prefetch_places(session, agent, [1, 2]))
+    session.scalars.assert_not_called()

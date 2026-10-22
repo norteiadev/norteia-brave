@@ -82,12 +82,21 @@ _GET_PLACE_FIELD_MASK_NO_REVIEWS = (
 
 _GET_PLACE_FIELD_MASK = _GET_PLACE_FIELD_MASK_NO_REVIEWS + ",reviews"
 
+# places_provider="hybrid": Apify brings name/hours/phone/site/status/reviews, so Google only
+# supplies the first-party geo fields. All five are Place Details Essentials (id is the even
+# cheaper IDs Only); ONE Pro field (displayName, primaryType) would bill the whole call as Pro.
+# Verified 2026-10-21 on developers.google.com/maps/documentation/places/web-service/data-fields
+# and developers.google.com/maps/billing-and-pricing/sku-details (US$5/1k, 10k free/month:
+# developers.google.com/maps/billing-and-pricing/pricing).
+_GET_PLACE_FIELD_MASK_ESSENTIALS = "id,location,types,formattedAddress,addressComponents"
+
 # Approximate USD per call by SKU (source: Google Maps Platform pricing, validated 2026-10-14).
 # Text Search bills Pro because its mask asks for location/types/addressComponents; Details
 # bills by the highest-tier field (see the masks above). Feeds the Places daily cost guard.
 USD_TEXT_SEARCH_PRO: float = 0.032
 USD_DETAILS_ENTERPRISE: float = 0.020
 USD_DETAILS_ENTERPRISE_ATMOSPHERE: float = 0.025
+USD_DETAILS_ESSENTIALS: float = 0.005
 
 
 # ---------------------------------------------------------------------------
@@ -561,6 +570,57 @@ class RealPlacesClient:
         logger.info(
             "places_place_details_ok", place_id=place_id, include_reviews=include_reviews
         )
+        return result
+
+    async def place_essentials(self, place_id: str, uf: str) -> dict[str, Any]:
+        """Place Details at the Essentials SKU only (places_provider="hybrid").
+
+        Returns the geo half of a text_search() result for one place_id: place_id,
+        formatted_address, types, location, municipio_nome / municipio_ibge (resolved within
+        ``uf``, or Google's own state when ``uf`` is ""), uf_short, municipio_from_locality,
+        distrito_hint. Unlike text_search the
+        place is NOT dropped when Google puts it in another state — the caller compares
+        ``uf_short`` itself; municipio_ibge is "" then (a homonym município would otherwise
+        get the requested UF's code).
+        """
+        from google.maps.places_v1.types import GetPlaceRequest  # type: ignore[import]
+
+        request = GetPlaceRequest(name=f"places/{place_id}", language_code="pt-BR")
+        self.check_budget(USD_DETAILS_ESSENTIALS)
+        try:
+            place = await self._get_place_once(request, _GET_PLACE_FIELD_MASK_ESSENTIALS)
+        except Exception as exc:
+            logger.error("places_place_essentials_error", place_id=place_id, error=str(exc))
+            _raise_if_places_balance_wall(exc)
+            raise
+        self._record_spend(USD_DETAILS_ESSENTIALS)
+
+        components = place.address_components or []
+        municipio_nome, uf_short = _extract_municipio_from_components(components)
+        uf_short = (uf_short or "").upper()
+        # uf "" (a refresh by place_id knows no UF): resolve against Google's own state.
+        uf = (uf or uf_short).upper()
+        in_other_uf = len(uf_short) == 2 and uf_short != uf
+        municipio_ibge = (
+            "" if in_other_uf
+            else self._ibge_lookup.get((_normalize_name(municipio_nome), uf), "")
+        )
+        result = {
+            "place_id": place.id,
+            "formatted_address": place.formatted_address or "",
+            "types": list(place.types or []),
+            "location": (
+                {"lat": place.location.latitude, "lng": place.location.longitude}
+                if place.location else None
+            ),
+            "municipio_nome": municipio_nome,
+            "municipio_ibge": municipio_ibge,
+            "uf_short": uf_short,
+            "municipio_from_locality": bool(municipio_nome)
+            and not any("administrative_area_level_2" in c.types for c in components),
+            "distrito_hint": _extract_distrito_from_components(components),
+        }
+        logger.info("places_place_essentials_ok", place_id=place_id, uf=uf)
         return result
 
 

@@ -394,6 +394,21 @@ class TripAdvisorAtrativosIngest:
             # COMPLETED via backfill_record instead of skipped. The bulk path
             # (produce_paginated) keeps skipping every Rio row, so its page resume is intact.
             backfill = self._backfill_candidates(cards) if (enrich_reviews and run_rio) else {}
+            if run_rio and getattr(self._places_agent, "prefetches", False) is True:
+                # Hybrid Places: one Apify run (~60 s fixed) for the page, not one per card.
+                # Same skip predicate (and cap) as the loop below.
+                todo = [
+                    e for e in cards
+                    if not ((_source_ref(e) in synced and _source_ref(e) not in backfill)
+                            or _is_not_atrativo(e))
+                ]
+                if max_per_uf is not None:
+                    todo = todo[: max(0, max_per_uf - processed)]
+                await self._places_agent.prefetch(
+                    [backfill[r] for e in todo if (r := _source_ref(e)) in backfill],
+                    cards=[e for e in todo if _source_ref(e) not in backfill],
+                    uf=uf,
+                )
             for entity in cards:
                 ref = _source_ref(entity)
                 # Already in Brave: the TA signals were consumed by the score on the first

@@ -118,3 +118,38 @@ def test_refresh_uses_its_own_key_when_set(harness, monkeypatch, env, expected):
                         lambda *a, **k: seen.append(k.get("places_api_key_env")) or MagicMock())
     pipeline.refresh_places()
     assert seen and set(seen) == {expected}
+
+
+def test_hybrid_refresh_uses_one_bag_and_one_prefetch_for_the_lot(harness, monkeypatch):
+    """places_provider=hybrid: an Apify run costs ~60 s fixed, so the due lot is prefetched
+    once (place_ids) inside ONE Clients bag, then each record runs as in google mode."""
+    harness.effective = _effective(places_provider="hybrid")
+    built, prefetched = [], []
+
+    class HybridAgent:
+        prefetches = True
+
+        async def prefetch(self, rios, *, refresh=False):
+            prefetched.append(([r.id for r in rios], refresh))
+
+        async def run(self, rio, refresh=False):
+            assert refresh is True
+            harness.runs.append(rio.id)
+
+    monkeypatch.setattr(pipeline, "clients_for", lambda *a, **k: built.append(k) or MagicMock())
+    monkeypatch.setattr(pipeline, "_enrich_agent", lambda *a, **k: HybridAgent())
+    harness.session.scalars.return_value.all.return_value = list(harness.rios.values())
+
+    assert pipeline.refresh_places() == 2
+    assert len(built) == 1 and prefetched == [(harness.ids, True)]
+    assert harness.runs == harness.ids
+    assert harness.session.commit.call_count == 2
+
+
+def test_google_refresh_never_prefetches(harness, monkeypatch):
+    built = []
+    monkeypatch.setattr(pipeline, "clients_for", lambda *a, **k: built.append(k) or MagicMock())
+    pipeline.refresh_places()
+    # A bag per record, as before the hybrid (the hybrid branch builds ONE for the lot).
+    assert len(built) == len(harness.ids)
+    harness.session.scalars.assert_not_called()  # _prefetch_places is not reached

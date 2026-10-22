@@ -122,6 +122,8 @@ function continuarConfirmText(reason: { reason: string; provider: string | null 
   if (reason.reason === "manual") return "Retomar o backfill?";
   if (reason.provider === "google_places")
     return "Saldo recarregado? Se trocou BRAVE_PLACES_API_KEY no .env, recrie worker e api antes (docker compose up -d worker api) — restart não relê o .env.";
+  if (reason.provider === "apify")
+    return "Saldo Apify recarregado? Suba APIFY_TOTAL_USD_CAP (ou troque BRAVE_APIFY_API_KEY) no .env e recrie worker e api antes (docker compose up -d worker api) — restart não relê o .env.";
   return "Saldo recarregado?";
 }
 
