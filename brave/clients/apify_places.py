@@ -210,8 +210,14 @@ class RealApifyPlacesClient:
                 daily_cap_usd=self._daily_usd_cap, total_cap_usd=self._total_usd_cap,
             )
 
-    async def lookup(self, queries: list[str], *, max_reviews: int) -> dict[str, dict | None]:
-        """ONE actor run for every (deduped) query → {query: normalize_apify_item | None}."""
+    async def lookup(
+        self, queries: list[str], *, max_reviews: int, location: str | None = None
+    ) -> dict[str, dict | None]:
+        """ONE actor run for every (deduped) query → {query: normalize_apify_item | None}.
+
+        ``location`` (Apify ``locationQuery``, one per run) bounds the search to that area:
+        a "Nome - RO" with none landed in Rio Branco, Salvador, even Lisboa (RO pilot).
+        """
         queries = list(dict.fromkeys(queries))
         if not queries:
             return {}
@@ -231,6 +237,8 @@ class RealApifyPlacesClient:
             "scrapeReviewsPersonalData": False,
             "maxImages": 0,
         }
+        if location:
+            body["locationQuery"] = location
         headers = {"Authorization": f"Bearer {self._token}"}
         try:
             async with httpx.AsyncClient(timeout=self._timeout_s, headers=headers) as http:

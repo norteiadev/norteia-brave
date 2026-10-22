@@ -362,7 +362,9 @@ async def test_sweep_card_prefetch_serves_the_rio_search_by_name() -> None:
     rio = _rio()
     await _run(agent, rio)
 
-    assert apify.lookup_calls == [{"queries": ["MORRO DO  MORENO - ES"], "max_reviews": 1}]
+    assert apify.lookup_calls == [{
+        "queries": ["MORRO DO  MORENO - ES"], "max_reviews": 1, "location": "Espírito Santo, Brasil",
+    }]
     assert rio.normalized["google_place_id"] == PID
 
 

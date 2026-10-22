@@ -201,12 +201,29 @@ def test_prefetch_retries_exact_misses_once_in_one_batch():
         {"nome": "Card Y", "municipio": "", "uf": "ES"},
     ]))
     assert [c["queries"] for c in apify.lookup_calls] == [
-        [f"place_id:{PID}", "Lugar X, Vila Velha - ES", "Card Y - ES"],
+        [f"place_id:{PID}", "Lugar X, Vila Velha - ES"],
         ["Lugar X, Vila Velha - ES"],
+        ["Card Y - ES"],
     ]
-    # Missed twice: a conclusive no-hit, no third run.
+    # Missed twice: a conclusive no-hit, no fourth run.
     assert asyncio.run(hybrid.search("Lugar X", "Vila Velha", "ES")) == []
-    assert len(apify.lookup_calls) == 2
+    assert len(apify.lookup_calls) == 3
+
+
+def test_prefetch_bounds_municipio_less_names_to_their_uf():
+    """A "Nome - UF" with no bound landed in Rio Branco, Salvador, Lisboa (RO pilot): it
+    runs with the UF as locationQuery, apart from the queries that need none."""
+    hybrid, apify, _ = _hybrid()
+    asyncio.run(hybrid.prefetch([
+        {"place_id": PID},
+        {"nome": "Lugar X", "municipio": "Vila Velha", "uf": "ES"},
+        {"nome": "Card Y", "municipio": "", "uf": "ES"},
+        {"nome": "Card Z", "municipio": "", "uf": "RO"},
+    ]))
+    by_location = {c.get("location"): c["queries"] for c in apify.lookup_calls}
+    assert by_location["Espírito Santo, Brasil"] == ["Card Y - ES"]
+    assert by_location["Rondônia, Brasil"] == ["Card Z - RO"]
+    assert f"place_id:{PID}" in by_location[None]
 
 
 def test_failed_prefetch_raises_per_record_instead_of_single_runs():
@@ -223,7 +240,8 @@ def test_failed_prefetch_raises_per_record_instead_of_single_runs():
     ):
         with pytest.raises(RuntimeError, match="batched run"):
             asyncio.run(call)
-    assert len(apify.lookup_calls) == 1 and google.place_essentials_calls == []
+    # One run per locationQuery group, both failed; no single runs after.
+    assert len(apify.lookup_calls) == 2 and google.place_essentials_calls == []
 
 
 def test_a_wall_in_prefetch_does_not_mark_the_lot_failed():

@@ -21,6 +21,7 @@ from typing import Any
 import structlog
 
 from brave.clients.apify_places import apify_query, apify_run_cost
+from brave.clients.nominatim import UF_NAME
 from brave.clients.places import USD_DETAILS_ESSENTIALS, _normalize_name
 from brave.shared.exceptions import CostGuardError, ProviderBalanceError
 from brave.shared.opening_hours import _day_index
@@ -164,9 +165,12 @@ class HybridPlacesClient:
         ponytail: +1 run (~60 s) per lot with misses; read the crawler's failed-request
         stats instead if Apify ever exposes them on the run.
         """
-        queries: list[str] = []
+        # locationQuery is one per run: a município-less sweep name runs bounded to its UF
+        # (None = no bound: a place_id, or a query that already names the município).
+        by_location: dict[str | None, list[str]] = {}
         exact: set[str] = set()
         for item in items:
+            location = None
             if item.get("place_id"):
                 query = f"place_id:{item['place_id']}"
                 exact.add(query)
@@ -174,16 +178,22 @@ class HybridPlacesClient:
                 query = apify_query(item["nome"], item.get("municipio") or "", item["uf"])
                 if item.get("municipio"):
                     exact.add(query)
+                elif item["uf"].upper() in UF_NAME:
+                    location = f"{UF_NAME[item['uf'].upper()]}, Brasil"
                 # Also for an exact one: a backfill's TA can move the record to another
                 # município before run() searches; the alias still serves it when Apify's
                 # city is the new one (_take_by_name checks).
                 self._by_name.setdefault((_fold(item["nome"]), item["uf"].upper()), (query, True))
+            queries = by_location.setdefault(location, [])
             if (query, True) not in self._found and query not in queries:
                 queries.append(query)
 
-        async def lookup(chunk: list[str]) -> dict[str, Any]:
+        async def lookup(chunk: list[str], location: str | None) -> dict[str, Any]:
             try:
-                found = await self._apify.lookup(chunk, max_reviews=self._max_reviews)
+                found = await self._apify.lookup(
+                    chunk, max_reviews=self._max_reviews,
+                    **({"location": location} if location else {}),
+                )
                 self._failed.difference_update(chunk)
                 return found
             except _WALLS:
@@ -194,16 +204,20 @@ class HybridPlacesClient:
 
         self._lot_failed = False
         error: Exception | None = None
-        for start in range(0, len(queries), APIFY_RUN_MAX_QUERIES):
-            chunk = queries[start:start + APIFY_RUN_MAX_QUERIES]
+        chunks = [
+            (location, queries[start:start + APIFY_RUN_MAX_QUERIES])
+            for location, queries in by_location.items()
+            for start in range(0, len(queries), APIFY_RUN_MAX_QUERIES)
+        ]
+        for location, chunk in chunks:
             try:
-                found = await lookup(chunk)
+                found = await lookup(chunk, location)
                 missed = [q for q in chunk if found.get(q) is None and q in exact]
                 for q in chunk:
                     if q not in missed:
                         self._found[(q, True)] = found.get(q)
                 if missed:
-                    again = await lookup(missed)
+                    again = await lookup(missed, location)
                     for q in missed:
                         self._found[(q, True)] = again.get(q)
             except _WALLS:

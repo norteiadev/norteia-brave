@@ -18,15 +18,18 @@ class FakeApifyClient:
     ) -> None:
         self._fixture = fixture or {}
         self._raise_exc = raise_exc
-        self.lookup_calls: list[dict[str, Any]] = []  # {"queries", "max_reviews"} per run
+        self.lookup_calls: list[dict[str, Any]] = []  # {"queries", "max_reviews"[, "location"]} per run
         self.check_budget_calls: list[float] = []
 
     async def lookup(
-        self, queries: list[str], *, max_reviews: int
+        self, queries: list[str], *, max_reviews: int, location: str | None = None
     ) -> dict[str, dict[str, Any] | None]:
         if not queries:
             return {}
-        self.lookup_calls.append({"queries": list(queries), "max_reviews": max_reviews})
+        call: dict[str, Any] = {"queries": list(queries), "max_reviews": max_reviews}
+        if location is not None:
+            call["location"] = location
+        self.lookup_calls.append(call)
         if self._raise_exc is not None:
             raise self._raise_exc
         return {q: self._fixture.get(q) for q in dict.fromkeys(queries)}
