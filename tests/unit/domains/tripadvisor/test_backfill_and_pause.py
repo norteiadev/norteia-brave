@@ -11,10 +11,11 @@ aborting the município chain (F07), a cross-UF TA page (F12), the bulk's UF con
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded
@@ -455,3 +456,87 @@ async def test_per_uf_sweep_backfills_rio_records_missing_the_marker() -> None:
     assert client.recent_review_calls == [1]
     assert rio.normalized["ta_backfilled_at"] and rio.normalized["most_recent_review_at"]
     assert session.commit.called
+
+
+# ---------------------------------------------------------------------------
+# Latency — TA page + newest review in parallel, one throttle per card
+# ---------------------------------------------------------------------------
+
+
+class _Together(FakeTripAdvisorClient):
+    """Each call waits until the other one started: two calls in a row time out."""
+
+    def __init__(self, **kw: Any) -> None:
+        super().__init__(**kw)
+        self._started: list[str] = []
+        self._both = asyncio.Event()
+
+    async def _meet(self, what: str) -> None:
+        self._started.append(what)
+        if len(self._started) == 2:
+            self._both.set()
+        await asyncio.wait_for(self._both.wait(), timeout=1)
+
+    async def fetch_attraction_address(self, location_id: int) -> dict[str, Any]:
+        await self._meet("page")
+        return await super().fetch_attraction_address(location_id)
+
+    async def fetch_recent_review(self, location_id: int) -> dict[str, Any] | None:
+        await self._meet("reviews")
+        return await super().fetch_recent_review(location_id)
+
+
+@pytest.mark.asyncio
+async def test_sweep_fetches_ta_page_and_reviews_together_after_one_throttle() -> None:
+    recent = datetime.now(UTC) - timedelta(days=5)
+    client = _Together(
+        gql_pages=[(0, [_card(7, name="Mirante Sem Nome")])], geo_ids={"MT": 1},
+        fixture_address={7: _geo("Chapada dos Guimaraes", "State of Mato Grosso")},
+        recent_review={"review_count": 30, "rating": None, "most_recent_review_at": recent},
+    )
+    with (
+        patch("brave.domains.tripadvisor.atrativos.store_raw") as store,
+        patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
+    ):
+        ingest = _ingest(client, destino_rio_map={"5103007": _PARENT})
+        with patch.object(ingest, "_throttle", AsyncMock()) as throttle:
+            await ingest.produce("MT", run_rio=False, enrich_reviews=True)
+
+    assert throttle.await_count == 1
+    assert client.address_calls == [7] and client.recent_review_calls == [7]
+    payload = store.call_args.kwargs["payload"]
+    assert payload["municipio_id"] == "5103007" and payload["review_count"] == 30
+
+
+@pytest.mark.asyncio
+async def test_backfill_fetches_ta_page_and_reviews_together_after_one_throttle() -> None:
+    recent = datetime.now(UTC) - timedelta(days=5)
+    client = _Together(
+        fixture_address={555: _geo("Chapada dos Guimaraes", "State of Mato Grosso")},
+        recent_review={"review_count": 250, "rating": None, "most_recent_review_at": recent},
+    )
+    ingest = _ingest(client)
+    rio = _bulk_rio(google_enriched=True, place_id_cache="ChIJ-x")
+
+    with (
+        patch.object(type(ingest), "_ensure_destino", return_value=_PARENT),
+        patch.object(ingest, "_throttle", AsyncMock()) as throttle,
+    ):
+        await ingest.backfill_record(rio)
+
+    assert throttle.await_count == 1
+    assert rio.uf == "MT" and rio.normalized["review_count"] == 250
+
+
+@pytest.mark.asyncio
+async def test_backfill_raises_a_session_error_once_both_calls_settled() -> None:
+    client = FakeTripAdvisorClient(
+        address_error=SessionExpiredError("captcha"),
+        recent_review={"review_count": 1, "rating": None, "most_recent_review_at": None},
+    )
+    ingest = _ingest(client)
+
+    with pytest.raises(SessionExpiredError):
+        await ingest.backfill_record(_bulk_rio())
+
+    assert client.recent_review_calls == [555]

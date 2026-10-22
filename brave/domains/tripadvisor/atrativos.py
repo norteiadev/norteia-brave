@@ -655,14 +655,40 @@ class TripAdvisorAtrativosIngest:
                     return match, distrito
         return match, None
 
-    async def _ta_address(self, location_id: int) -> dict[str, Any] | None:
-        """TA's own page for one card, paced like every TA call. None = the page had no
-        address block (SourceRecordError): retried later, never a verdict."""
+    async def _ta_fetch(
+        self, location_id: int, *, page: bool, reviews: bool
+    ) -> tuple[dict[str, Any] | None, dict | None, bool]:
+        """TA's own page and newest review for one card: one throttle, both calls in
+        parallel (~1 s per card, not ~3 s for two paced calls in a row).
+
+        Returns (page, recency, reviews_ok). page None = the page had no address block
+        (SourceRecordError), {} when not asked; reviews_ok False = the reviews call failed
+        (SourceRecordError) or was not asked. Both are retried later, never a verdict. Any
+        other error (session, systemic) is raised once both calls settled, the page's first.
+        """
         await self._throttle()
-        try:
-            return await self._client.fetch_attraction_address(location_id)
-        except SourceRecordError:
-            return None
+
+        async def _page() -> dict[str, Any] | None:
+            if not page:
+                return {}
+            try:
+                return await self._client.fetch_attraction_address(location_id)
+            except SourceRecordError:
+                return None
+
+        async def _reviews() -> tuple[dict | None, bool]:
+            if not reviews:
+                return None, False
+            try:
+                return await self._client.fetch_recent_review(location_id), True
+            except SourceRecordError:
+                return None, False
+
+        got_page, got_reviews = await asyncio.gather(_page(), _reviews(), return_exceptions=True)
+        for result in (got_page, got_reviews):
+            if isinstance(result, BaseException):
+                raise result
+        return got_page, *got_reviews
 
     def _ta_coords(
         self, page: dict[str, Any], match: IbgeMunicipio | None
@@ -708,12 +734,8 @@ class TripAdvisorAtrativosIngest:
         loc_id_raw = (rio.canonical_key or "").removeprefix("tripadvisor:attraction:")
         if loc_id_raw.isdigit():  # else nothing to fetch, ever — mark it done
             loc_id = int(loc_id_raw)
-            page = await self._ta_address(loc_id)
-            await self._throttle()
-            try:
-                recency = await self._client.fetch_recent_review(loc_id)
-            except SourceRecordError:
-                recency, reviews_failed = None, True  # no marker: retried later
+            page, recency, reviews_ok = await self._ta_fetch(loc_id, page=True, reviews=True)
+            reviews_failed = not reviews_ok  # no marker: retried later
             if page:
                 status = await self._apply_ta_geo(rio, loc_id_raw, page, after)
             elif page is None:
@@ -984,28 +1006,24 @@ class TripAdvisorAtrativosIngest:
         # True once the review call answered (a date, or conclusively none): the per-UF
         # record is then TA-complete and gets the backfill marker (C1) below.
         recency_fetched = False
-
-        if enrich_reviews:
-            try:
-                loc_id_int = int(location_id) if location_id else None
-            except (ValueError, TypeError):
-                loc_id_int = None
-            if loc_id_int is not None:
-                # Mirror the geo-enrichment throttle: pace review calls when configured.
-                if self._ta_config is not None and self._ta_config.page_throttle_seconds > 0:
-                    await asyncio.sleep(self._ta_config.page_throttle_seconds)
-                try:
-                    recency = await self._client.fetch_recent_review(loc_id_int)
-                    recency_fetched = True
-                except SourceRecordError:
-                    recency = None  # recency_fetched stays False: no marker, backfill retries
-                if recency is not None:
-                    most_recent_dt = recency.get("most_recent_review_at")
-                    # Prefer the precise review container over the card's aggregate.
-                    if recency.get("review_count") is not None:
-                        review_count = int(recency["review_count"])
-                    if recency.get("rating") is not None:
-                        rating = float(recency["rating"])
+        # TA's own attraction page first (placed below): the name-only steps placed homonyms
+        # (RO 10/2026: 9/89 wrong municípios, Places matches 439-602 km away measured from
+        # the wrong seat). Fetched together with the reviews.
+        want_page = self._ta_config is not None and location_id.isdigit()
+        page: dict[str, Any] | None = {}
+        recency = None
+        if location_id.isdigit() and (want_page or enrich_reviews):
+            # recency_fetched False on a failed reviews call: no marker, backfill retries.
+            page, recency, recency_fetched = await self._ta_fetch(
+                int(location_id), page=want_page, reviews=enrich_reviews
+            )
+        if recency is not None:
+            most_recent_dt = recency.get("most_recent_review_at")
+            # Prefer the precise review container over the card's aggregate.
+            if recency.get("review_count") is not None:
+                review_count = int(recency["review_count"])
+            if recency.get("rating") is not None:
+                rating = float(recency["rating"])
 
         review_signals = TripAdvisorReviewSignals(
             review_count=review_count,
@@ -1032,38 +1050,32 @@ class TripAdvisorAtrativosIngest:
         atualidade_value = atualidade_from_recency(most_recent_dt)
 
         address = phone = website = None
-        page_failed = False
+        page_failed = page is None
         distrito = None
         ibge_match = None
-        # TA's own attraction page first: the name-only steps below placed homonyms (RO
-        # 10/2026: 9/89 wrong municípios, Places matches 439-602 km away measured from the
-        # wrong seat).
-        if self._ta_config is not None and location_id.isdigit():
-            page = await self._ta_address(int(location_id))
-            page_failed = page is None
-            if page:
-                # The record follows TA's UF (a cross-border card listed under this sweep).
-                uf, ibge_match, distrito, coords = self._place_ta_page(page, uf)
-                if coords:
-                    lat, lng = coords
-                address, phone, website = (page.get(k) for k in ("address", "phone", "website"))
-                if ibge_match is not None:
-                    timeline.append(
-                        {
-                            "source": "tripadvisor",
-                            "source_ref": source_ref,
-                            "stage": "geo_enriched",
-                            "status": "ok",
-                            "message": name if distrito is None
-                            else f"{name} → distrito {distrito.nome}",
-                            "entity_type": "attraction",
-                            "uf": uf,
-                            "data": {
-                                "via": "ta_page",
-                                **({"distrito_code": distrito.distrito_code} if distrito else {}),
-                            },
-                        }
-                    )
+        if page:
+            # The record follows TA's UF (a cross-border card listed under this sweep).
+            uf, ibge_match, distrito, coords = self._place_ta_page(page, uf)
+            if coords:
+                lat, lng = coords
+            address, phone, website = (page.get(k) for k in ("address", "phone", "website"))
+            if ibge_match is not None:
+                timeline.append(
+                    {
+                        "source": "tripadvisor",
+                        "source_ref": source_ref,
+                        "stage": "geo_enriched",
+                        "status": "ok",
+                        "message": name if distrito is None
+                        else f"{name} → distrito {distrito.nome}",
+                        "entity_type": "attraction",
+                        "uf": uf,
+                        "data": {
+                            "via": "ta_page",
+                            **({"distrito_code": distrito.distrito_code} if distrito else {}),
+                        },
+                    }
+                )
 
         # Name resolution (card lat/lng, or TA's point; None for coordless cards).
         if ibge_match is None:
