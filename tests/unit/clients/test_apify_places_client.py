@@ -290,6 +290,26 @@ async def test_busy_402_is_retried_not_a_balance_wall(monkeypatch, kind):
 
 
 @respx.mock
+async def test_busy_402_outlasts_the_429_backoff(monkeypatch):
+    """The run holding the plan's memory lasts 45-900 s and a busy 402 has no Retry-After:
+    3 tries in ~4 s (the 429 backoff) give up long before it frees — 30 s steps, ~5 min."""
+    from types import SimpleNamespace
+
+    from brave.clients import apify_places
+
+    busy = httpx.Response(402, json={"error": {"type": "actor-memory-limit-exceeded"}})
+    runs = respx.post(RUNS_URL).mock(side_effect=[busy] * 5 + [httpx.Response(201, json=_run())])
+    respx.get(ITEMS_URL).mock(return_value=httpx.Response(200, json=[ITEM_NAME]))
+    out = await _client(monkeypatch).lookup([Q_NAME], max_reviews=1)
+    assert runs.call_count == 6 and out[Q_NAME] is not None
+
+    exc = httpx.HTTPStatusError("busy", request=httpx.Request("POST", RUNS_URL), response=busy)
+    state = SimpleNamespace(outcome=SimpleNamespace(exception=lambda: exc), attempt_number=3)
+    assert apify_places._start_wait(state) == 30
+    assert apify_places._start_stop(state) is False
+
+
+@respx.mock
 async def test_429_is_retried_then_succeeds(monkeypatch):
     runs = respx.post(RUNS_URL).mock(side_effect=[
         httpx.Response(429), httpx.Response(201, json=_run()),

@@ -1487,12 +1487,18 @@ def refresh_places() -> int:
             agent = _enrich_agent(session, ctx, clients, "refresh_places")
 
             async def lot() -> int:
-                await _prefetch_places(session, agent, due, refresh=True)
+                from brave.clients.hybrid_places import APIFY_RUN_MAX_QUERIES  # noqa: PLC0415
+
                 n = 0
-                for rio_id in due:
-                    n += await _refresh_one(
-                        session, rio_id, lambda rio: agent.run(rio, refresh=True)
-                    )
+                # One run's worth at a time: a lot past ~1400 s of runs would be killed by
+                # the time limit before a record is committed (the prefetched rest is lost).
+                for start in range(0, len(due), APIFY_RUN_MAX_QUERIES):
+                    part = due[start:start + APIFY_RUN_MAX_QUERIES]
+                    await _prefetch_places(session, agent, part, refresh=True)
+                    for rio_id in part:
+                        n += await _refresh_one(
+                            session, rio_id, lambda rio: agent.run(rio, refresh=True)
+                        )
                 return n
 
             refreshed = asyncio.run(_using(clients, lot()))
@@ -2001,6 +2007,8 @@ def backfill_pending_filter(places_on: bool) -> list:
     ]
 
 
+# Hybrid Places: records per Apify prefetch run inside a backfill link (see _backfill_batch).
+_BACKFILL_PREFETCH_LOT = 10
 # Consecutive per-record failures that stop a backfill link as systemic (see _backfill_batch).
 _BACKFILL_MAX_CONSECUTIVE_FAILURES = 10
 # SourceSchemaError in a row (distinct records) that read as a retired query id / changed
@@ -2070,8 +2078,13 @@ async def _backfill_batch(
         destino_cache = getattr(ingest, "_destino_rio_map", None)
         destinos_before = set(destino_cache or ())
         try:
-            if i == 0:  # after the halt/deadline checks: a halted lot pays no Apify run
-                await _prefetch_places(session, getattr(ingest, "_places_agent", None), ids)
+            if i % _BACKFILL_PREFETCH_LOT == 0:  # after the halt/deadline checks
+                # Sub-lots: an early stop (TA 429, session, budget) re-selects the rest on the
+                # next link with an empty cache — it re-pays only this sub-lot's run.
+                await _prefetch_places(
+                    session, getattr(ingest, "_places_agent", None),
+                    ids[i:i + _BACKFILL_PREFETCH_LOT],
+                )
             # FOR UPDATE: the agents merge onto the row's current normalized under this lock.
             rio = session.get(RioRecord, rio_id, with_for_update=True)
             status = await ingest.backfill_record(rio) if rio is not None else "missing"

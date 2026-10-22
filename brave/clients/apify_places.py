@@ -27,7 +27,7 @@ from typing import Any
 
 import httpx
 import structlog
-from tenacity import retry, retry_if_exception, stop_after_attempt
+from tenacity import RetryCallState, retry, retry_if_exception, stop_after_attempt
 
 from brave.clients.tavily import _is_retryable, _wait
 from brave.observability.cost_guard import (
@@ -61,6 +61,10 @@ _MAX_POLLS = 15  # x 60 s → a run still going after ~15 min is aborted, not aw
 _RUN_TIMEOUT_S = _MAX_POLLS * _WAIT_FOR_FINISH_S  # Apify's own stop for a run Brave lost
 # 402s that clear on their own (another run holds the plan's memory/slots): not a wall.
 _BUSY_402 = frozenset({"actor-memory-limit-exceeded", "concurrent-runs-limit-exceeded"})
+# No Retry-After on a busy 402, and the run holding the memory lasts 45-900 s: wait it out
+# in 30 s steps for up to ~5 min (the 429 backoff would give up after ~4 s).
+_BUSY_WAIT_S = 30
+_BUSY_ATTEMPTS = 11
 
 _KEPT_FIELDS = (
     "placeId", "title", "location", "address", "city", "state", "phone", "website",
@@ -97,6 +101,10 @@ def _busy(r: httpx.Response) -> bool:
     return isinstance(body, dict) and (body.get("error") or {}).get("type") in _BUSY_402
 
 
+def _busy_exc(exc: BaseException | None) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and _busy(exc.response)
+
+
 def _post_retryable(exc: BaseException) -> bool:
     """Retry starting a run only when it surely did not start: 429, a busy 402, or no
     connection. A 5xx or a read timeout may come AFTER Apify created the run — a retry would
@@ -104,6 +112,15 @@ def _post_retryable(exc: BaseException) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code == 429 or _busy(exc.response)
     return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+
+
+def _start_wait(state: RetryCallState) -> float:
+    return _BUSY_WAIT_S if _busy_exc(state.outcome.exception()) else _wait(state)
+
+
+def _start_stop(state: RetryCallState) -> bool:
+    busy = _busy_exc(state.outcome.exception())
+    return state.attempt_number >= (_BUSY_ATTEMPTS if busy else 3)
 
 
 def _never_started(exc: BaseException) -> bool:
@@ -135,9 +152,9 @@ async def _send(http: httpx.AsyncClient, method: str, path: str, **kw: Any) -> A
 _call = retry(
     retry=retry_if_exception(_is_retryable), stop=stop_after_attempt(3), wait=_wait, reraise=True,
 )(_send)
-# Starting a run: see _post_retryable.
+# Starting a run: see _post_retryable; a busy 402 waits longer (_BUSY_WAIT_S).
 _start = retry(
-    retry=retry_if_exception(_post_retryable), stop=stop_after_attempt(3), wait=_wait, reraise=True,
+    retry=retry_if_exception(_post_retryable), stop=_start_stop, wait=_start_wait, reraise=True,
 )(_send)
 
 

@@ -279,6 +279,26 @@ async def test_failed_lot_run_keeps_each_record_unmarked_without_a_run_of_its_ow
 
 
 @pytest.mark.asyncio
+async def test_refresh_after_a_failed_lot_raises_so_the_record_stays_due() -> None:
+    """refresh_places: nothing was asked for the record, so it must not be stamped
+    places_refreshed_at (skipped 60-90 days with no data); the raise rolls it back."""
+    from unittest.mock import patch
+
+    from brave.clients.hybrid_places import ApifyBatchFailedError
+
+    agent, apify, google = _agent(raise_exc=RuntimeError("apify run FAILED"))
+    rio = _rio(place_id_cache=PID, places_refreshed_at="2026-01-01T00:00:00+00:00")
+    await agent.prefetch([rio], refresh=True)
+    with patch("brave.domains.places.places_enrichment.write_audit"), \
+         patch("brave.domains.places.places_enrichment.record_event"), \
+         patch("brave.domains.places.places_enrichment.route_by_score"), \
+         pytest.raises(ApifyBatchFailedError):
+        await agent.run(rio, refresh=True)
+    assert rio.normalized["places_refreshed_at"] == "2026-01-01T00:00:00+00:00"
+    assert len(apify.lookup_calls) == 1 and google.place_essentials_calls == []
+
+
+@pytest.mark.asyncio
 async def test_apify_no_hit_on_a_known_id_is_conclusive() -> None:
     """Apify cannot open the listing (after the lot's retry): marked consulted, so the
     backfill stops re-selecting (and re-paying) it; no Essentials paid for it."""

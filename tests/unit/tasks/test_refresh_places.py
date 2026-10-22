@@ -146,6 +146,30 @@ def test_hybrid_refresh_uses_one_bag_and_one_prefetch_for_the_lot(harness, monke
     assert harness.session.commit.call_count == 2
 
 
+def test_hybrid_refresh_prefetches_one_run_worth_then_commits_it(harness, monkeypatch):
+    """Runs are ≤ APIFY_RUN_MAX_QUERIES: the lot goes run by run, each part committed before
+    the next run, so the time limit never kills a lot whose runs were all paid up front."""
+    harness.effective = _effective(places_provider="hybrid")
+    events = []
+
+    class HybridAgent:
+        prefetches = True
+
+        async def prefetch(self, rios, *, refresh=False):
+            events.append(("prefetch", [r.id for r in rios]))
+
+        async def run(self, rio, refresh=False):
+            events.append(("run", rio.id))
+
+    monkeypatch.setattr("brave.clients.hybrid_places.APIFY_RUN_MAX_QUERIES", 1)
+    monkeypatch.setattr(pipeline, "_enrich_agent", lambda *a, **k: HybridAgent())
+    a, b = harness.ids
+    harness.session.scalars.return_value.all.side_effect = [[harness.rios[a]], [harness.rios[b]]]
+
+    assert pipeline.refresh_places() == 2
+    assert events == [("prefetch", [a]), ("run", a), ("prefetch", [b]), ("run", b)]
+
+
 def test_google_refresh_never_prefetches(harness, monkeypatch):
     built = []
     monkeypatch.setattr(pipeline, "clients_for", lambda *a, **k: built.append(k) or MagicMock())

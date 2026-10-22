@@ -50,7 +50,7 @@ from rapidfuzz import fuzz
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brave.clients.hybrid_places import ApifyNoResultError
+from brave.clients.hybrid_places import ApifyBatchFailedError, ApifyNoResultError
 from brave.clients.null_places import NullPlacesClient
 from brave.clients.places import (
     USD_DETAILS_ENTERPRISE,
@@ -634,8 +634,9 @@ class PlacesEnrichmentAgent:
 
         ``rios``: records run() is about to enrich (``refresh`` as run()'s). ``cards``: TA
         cards of ``uf`` not ingested yet — no município (the ingest resolves it) and no TA
-        recency yet, so searched by name with reviews on. Never raises but _PROPAGATE: a
-        failed prefetch only means run() looks each record up on its own.
+        recency yet, so searched by name with reviews on. Never raises but _PROPAGATE: after a
+        failed prefetch run() keeps each record's TA floor (the client raises
+        ApifyBatchFailedError) and a later lot retries it.
         """
         if not self.prefetches:
             return
@@ -876,6 +877,10 @@ class PlacesEnrichmentAgent:
             except _PROPAGATE:
                 raise
             except Exception as exc:  # noqa: BLE001 — Places failure keeps the TA floor
+                if refresh and isinstance(exc, ApifyBatchFailedError):
+                    # Nothing was asked for this record: raise so refresh_places rolls it
+                    # back unstamped (still due) instead of skipping it for 60-90 days.
+                    raise
                 logger.warning("places_enrich_failed_kept_floor", rio_id=str(rio.id))
                 details = {}
                 if isinstance(exc, ApifyNoResultError):

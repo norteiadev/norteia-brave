@@ -224,3 +224,31 @@ def test_google_backfill_lot_never_prefetches():
                                   config=ScoreConfig())
     asyncio.run(pipeline._prefetch_places(session, agent, [1, 2]))
     session.scalars.assert_not_called()
+
+
+def test_hybrid_backfill_prefetches_sub_lots_so_an_early_stop_repays_little(monkeypatch):
+    """A TA 429 on record 0 stops the link; the next one re-selects the rest with an empty
+    cache. Prefetching the whole 25-record lot up front would re-pay 24 places per stop."""
+    from unittest.mock import MagicMock
+
+    from brave.shared.exceptions import SourceRateLimitError
+
+    prefetched: list[list[int]] = []
+
+    async def spy(session, agent, ids, **kw):
+        prefetched.append(list(ids))
+
+    class Ingest:
+        _places_agent = None
+
+        async def backfill_record(self, rio):
+            raise SourceRateLimitError(retry_after=5)
+
+    monkeypatch.setattr(pipeline, "_prefetch_places", spy)
+    ids = list(range(25))
+    state: dict[str, Any] = {"cursor": None, "stop": None}
+    asyncio.run(pipeline._backfill_batch(
+        MagicMock(), Ingest(), ids, fakeredis.FakeRedis(), state, None, 0.0
+    ))
+    assert state["stop"] == "rate_limit"
+    assert prefetched == [ids[:pipeline._BACKFILL_PREFETCH_LOT]]
