@@ -78,6 +78,9 @@ _ITEM_FIELDS = ",".join(("searchString", "inputPlaceId", "reviews", *_KEPT_FIELD
 # scraping and still SUCCEEDS, so a cap AT the projection would turn a capped place into a
 # silent no-hit; the headroom only bounds a runaway run.
 _CHARGE_CAP_FACTOR = 2
+# Apify rejects a lower cap with 400 max-total-charge-usd-below-minimum (seen 2026-10-23).
+# Only the ceiling rises: billing is still per event, and cost_guard reserves the projection.
+_MIN_CHARGE_CAP_USD = 0.50
 
 
 def normalize_apify_item(item: dict) -> dict:
@@ -241,7 +244,9 @@ class RealApifyPlacesClient:
                         http, "POST", f"/acts/{self._actor_id}/runs",
                         params={
                             "timeout": _RUN_TIMEOUT_S,
-                            "maxTotalChargeUsd": round(projected * _CHARGE_CAP_FACTOR, 5),
+                            "maxTotalChargeUsd": max(
+                                round(projected * _CHARGE_CAP_FACTOR, 5), _MIN_CHARGE_CAP_USD
+                            ),
                         },
                         json=body,
                     ))["data"]

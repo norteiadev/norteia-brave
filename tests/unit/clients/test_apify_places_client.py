@@ -136,7 +136,8 @@ async def test_lookup_one_run_keyed_back_pii_stripped_cost_recorded(monkeypatch,
     assert "waitForFinish" not in req.url.params
     assert req.url.params["timeout"] == "900"
     three = 3 * (0.004 + 0.002 + 0.0005) + 4 * 0.00005
-    assert float(req.url.params["maxTotalChargeUsd"]) == pytest.approx(2 * three, abs=1e-5)
+    assert 2 * three < 0.5
+    assert float(req.url.params["maxTotalChargeUsd"]) == 0.5, "Apify's per-run minimum"
     body = json.loads(req.content)
     assert body["searchStringsArray"] == [Q_NAME, Q_ID, Q_MISS], "deduped, order kept"
     assert body["scrapeReviewsPersonalData"] is False
