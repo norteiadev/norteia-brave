@@ -1019,7 +1019,11 @@ class PlacesEnrichmentAgent:
                     data={**cause, "routing_before": routing_before},
                 )
                 self._session.flush()
-                logger.info("places_enrich_hard_descarte", rio_id=str(rio.id))
+                logger.info(
+                    "places_enrich_dlq_review" if review else "places_enrich_hard_descarte",
+                    rio_id=str(rio.id),
+                    reason=reason,
+                )
                 return
 
             # Step 4: opening hours + liveness boost (never lowers the score).
