@@ -28,6 +28,8 @@ const CURATED: Record<string, (l: LogLine) => string> = {
     "Enriquecimento Places falhou — mantido no piso",
   places_enrich_hard_descarte: () =>
     "Atrativo descartado após enriquecimento Places",
+  places_enrich_dlq_review: () =>
+    "Atrativo enviado para revisão humana após enriquecimento Places",
   places_text_search_ok: () => "Places: busca por texto OK",
   places_place_details_ok: () => "Places: detalhes do local OK",
   push_mar_permanent_failure: () => "Falha permanente ao publicar no Mar",

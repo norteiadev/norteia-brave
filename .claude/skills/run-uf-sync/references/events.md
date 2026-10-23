@@ -12,7 +12,8 @@ Read the line, find its row, act. Rows marked **benign** need no action; say so 
 | `[stack] api/worker/beat: NOT RUNNING` → `running` within ~30 s | A planned restart (`docker compose restart worker beat` or `up -d`). |
 | `norteia-api: health=502` / `norteia_api_down` for < 1 min | A DEV deploy restarting the API container. Repush (every 15 min) recovers any skipped push. |
 | funnel `rio` grows past the TA card count | Parent destinos `ibge:<UF>:<ibge>` are synthesized per município. They stay in DLQ (score 38) and reach the API inside the attraction push. |
-| `places_enrich_hard_descarte` | Google marks the place CLOSED_PERMANENTLY → `descarte` (`closed_place`). Correct verdict. |
+| `places_enrich_hard_descarte reason=…` | Google marks the place closed or a business on a non-attraction card → `descarte` (`closed_place` / `nao_atrativo`). Correct verdict. |
+| `places_enrich_dlq_review reason=…` | Google says closed/business but TA files it as a place to visit → DLQ for a steward (`google_tipo_negocio` / `google_fechado_revisao`). |
 | DLQ reason `closed_temporarily`, `descricao_nao_fundamentada`, `municipio_nao_confirmado` | Liveness and description gates holding a record for steward review. |
 | `describe_uf` keeps chaining after the expected chunk count | Records refused by a gate earlier are retried while `descricao_attempts < 3`. Cost ~US$0.002 each. |
 

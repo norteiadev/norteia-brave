@@ -32,6 +32,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from structlog.testing import capture_logs
 
 from brave.config.settings import ScoreConfig
 from tests.fakes.fake_llm import FakeLLMClient
@@ -208,10 +209,14 @@ async def test_closed_place_hard_descarte() -> None:
     )
     rio = _make_rio()
     agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW, config=ScoreConfig())
-    mock_route = await _run(agent, rio)
+    with capture_logs() as logs:
+        mock_route = await _run(agent, rio)
 
     assert rio.routing == "descarte"
     assert rio.dlq_reason == "closed_place"
+    assert any(
+        e["event"] == "places_enrich_hard_descarte" and e["reason"] == "closed_place" for e in logs
+    )
     assert rio.normalized["google_enriched"] is True  # marker set (no re-enrich)
     assert not mock_route.called, "route_by_score must be skipped for a CLOSED place"
 
@@ -1655,9 +1660,14 @@ async def test_business_match_on_a_ta_attraction_category_goes_to_review() -> No
                                       "google_place_id": "ChIJmatriz001"})
     agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW,
                                   config=ScoreConfig())
-    mock_route = await _run(agent, rio)
+    with capture_logs() as logs:
+        mock_route = await _run(agent, rio)
 
     assert (rio.routing, rio.dlq_reason) == ("dlq", "google_tipo_negocio")
+    # A review is not a descarte: the log line must not say it was discarded.
+    events = [entry["event"] for entry in logs]
+    assert "places_enrich_dlq_review" in events
+    assert "places_enrich_hard_descarte" not in events
     assert rio.normalized["google_enriched"] is True
     assert rio.normalized["google_primary_type"] == "restaurant"
     # Cleared: refresh_places would re-bill it, a Mar approval would publish the business id.
