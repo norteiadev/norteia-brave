@@ -24,9 +24,11 @@ import pytest
 
 from brave.core import engine as collection_engine
 from brave.domains.tripadvisor.client import (
+    _PROBE_LOCATION_ID,
     BRAVE_TA_SESSION_KEY,
     SessionExpiredError,
     SessionMissingError,
+    TripAdvisorClient,
 )
 
 # Redis key constants (mirrors pipeline.py)
@@ -39,7 +41,7 @@ _TA_KEEPALIVE_FAILURES_KEY = "brave:ta:keepalive_failures"
 # ---------------------------------------------------------------------------
 
 
-class _StubOkClient:
+class _StubOkClient(TripAdvisorClient):
     """Stub TripAdvisorClient that answers one GraphQL page and records the call.
 
     The HTML transport raises: a call to it is the regression this fix exists for.
@@ -47,7 +49,7 @@ class _StubOkClient:
 
     calls: list[dict] = []
 
-    def __init__(self, config, redis):
+    def __init__(self, config, redis, **kwargs):
         pass
 
     async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=1):
@@ -56,15 +58,26 @@ class _StubOkClient:
         )
         yield 0, [{"name": "Atrativo", "locationId": "1"}]
 
+    async def fetch_attraction_address(self, location_id):
+        _StubOkClient.calls.append({"page": location_id})
+        return {"city_name": "Curitiba"}
+
     async def fetch_attractions_paginated(self, geo_id, start_page, max_pages):
         raise AssertionError("the keepalive must not use the HTML transport (DataDome 403s it)")
         yield  # noqa: unreachable — makes this an async generator  # type: ignore[misc]
 
 
-class _StubExpiredClient:
+class _StubPageBlockedClient(_StubOkClient):
+    """The listing answers, DataDome 403s the attraction page (PR sweep, 24/10)."""
+
+    async def fetch_attraction_address(self, location_id):
+        raise SessionExpiredError("TripAdvisor attraction page returned 403")
+
+
+class _StubExpiredClient(TripAdvisorClient):
     """Stub TripAdvisorClient whose GraphQL ping raises SessionExpiredError."""
 
-    def __init__(self, config, redis):
+    def __init__(self, config, redis, **kwargs):
         pass
 
     async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=1):
@@ -72,10 +85,10 @@ class _StubExpiredClient:
         yield  # noqa: unreachable — makes this an async generator  # type: ignore[misc]
 
 
-class _StubMissingClient:
+class _StubMissingClient(TripAdvisorClient):
     """Stub TripAdvisorClient whose GraphQL ping raises SessionMissingError."""
 
-    def __init__(self, config, redis):
+    def __init__(self, config, redis, **kwargs):
         pass
 
     async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=1):
@@ -83,10 +96,10 @@ class _StubMissingClient:
         yield  # noqa: unreachable — makes this an async generator  # type: ignore[misc]
 
 
-class _StubRuntimeErrorClient:
+class _StubRuntimeErrorClient(TripAdvisorClient):
     """Stub TripAdvisorClient that raises a non-session RuntimeError."""
 
-    def __init__(self, config, redis):
+    def __init__(self, config, redis, **kwargs):
         pass
 
     async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=1):
@@ -173,18 +186,30 @@ class TestTaKeepaliveTask:
             "needs_bootstrap must NOT be set when task skips due to missing session"
         )
 
-    def test_ping_uses_the_graphql_transport(self, monkeypatch):
-        """The beat pings AttractionsFusion over GraphQL — the same transport the sweep
-        uses. The HTML page is 403'd by DataDome even on a healthy session, which is what
-        used to kill live sweeps."""
+    def test_ping_probes_the_listing_and_an_attraction_page(self, monkeypatch):
+        """The beat pings AttractionsFusion over GraphQL, then one attraction page: the two
+        surfaces the per-UF sweep uses. Never the old HTML listing transport."""
         fake = fakeredis.FakeRedis()
         _seed_session(fake, ttl=1800)
         _StubOkClient.calls = []
 
         _run_keepalive(monkeypatch, fake, _StubOkClient)
 
-        assert _StubOkClient.calls == [{"geo_id": 294280, "start_page": 1, "max_pages": 1}]
+        assert _StubOkClient.calls == [
+            {"geo_id": 294280, "start_page": 1, "max_pages": 1},
+            {"page": _PROBE_LOCATION_ID},
+        ]
         assert fake.get(_TA_NEEDS_BOOTSTRAP_KEY) is None
+
+    def test_a_blocked_attraction_page_counts_as_a_failure(self, monkeypatch):
+        """Listing 200 + page 403 is a session the sweep cannot use: it joins the streak."""
+        fake = fakeredis.FakeRedis()
+        _seed_session(fake, ttl=1800)
+
+        _run_keepalive(monkeypatch, fake, _StubPageBlockedClient)
+
+        assert fake.get(_TA_KEEPALIVE_FAILURES_KEY) == b"1"
+        assert collection_engine.get_mode(fake) != collection_engine.DESLIGADO
 
     def test_successful_ping_slides_the_ttl_and_clears_the_streak(self, monkeypatch):
         """A 200 that rotates no cookie still keeps the session alive: the beat expires

@@ -3278,8 +3278,9 @@ def ta_keepalive() -> None:
     """Keep-alive beat: refresh DataDome cookies when session is live (260629-p2v).
 
     Fires on a periodic interval (BRAVE_TA_KEEPALIVE_INTERVAL_SECONDS, default 600s).
-    Issues ONE light AttractionsFusion GraphQL page (the SAME transport the sweep uses)
-    to re-mint datadome + __vt. Cookie write-back happens inside the fetch
+    Runs TripAdvisorClient.probe_session: ONE AttractionsFusion GraphQL page and ONE
+    attraction page (the SAME transports the per-UF sweep uses) to re-mint datadome +
+    __vt. Cookie write-back happens inside the fetch
     (session.persist_rotated_cookies); a successful ping also slides the session TTL
     explicitly, so a 200 that carries no Set-Cookie still keeps the session alive.
 
@@ -3294,6 +3295,8 @@ def ta_keepalive() -> None:
       motor off (R1) — a health beat must not be what kills a healthy run. The old
       behaviour (HTML transport + set_mode(DESLIGADO)) cut the 2026-09-15 pilot at 59
       atrativos: DataDome 403s the HTML page while the GraphQL sweep keeps getting 200.
+      Since the TLS fix (post_handshake_auth) the per-UF sweep reads attraction pages
+      itself, so a page 403 now IS a session the sweep cannot use: it joins the streak.
 
     On any other exception: logs error_type at WARNING and returns. Never raises.
 
@@ -3330,22 +3333,17 @@ def ta_keepalive() -> None:
     )
 
     ta_config = TripAdvisorConfig()
-    ta_client = TripAdvisorClient(config=ta_config, redis=rc)
+    # wait_offline=False: offline, the probe fails fast (logged) instead of holding a worker
+    # slot until the hard time limit kills it.
+    ta_client = TripAdvisorClient(config=ta_config, redis=rc, wait_offline=False)
 
     try:
         import asyncio as _asyncio  # noqa: PLC0415
 
-        async def _ping() -> None:
-            # ONE AttractionsFusion GraphQL page (all-Brazil geoId 294280, page 1) to
-            # re-mint datadome — the same transport, host and query the sweep uses, so
-            # the beat can never call a session dead while the sweep is collecting.
-            # The fetch calls persist_rotated_cookies internally.
-            async for _offset, _cards in ta_client.fetch_attractions_paginated_gql(
-                geo_id=294280, start_page=1, max_pages=1
-            ):
-                break  # one page is enough; write-back happened inside
-
-        _asyncio.run(_ping())
+        # ONE listing page (GraphQL) + ONE attraction page (HTML): the two surfaces the
+        # per-UF sweep uses, each re-minting datadome (write-back inside the fetch). A page
+        # 403 with the listing still 200 (24/10) joins the streak like any dead session.
+        _asyncio.run(ta_client.probe_session())
         # Slide the TTL even when the response carried no Set-Cookie: the ping proved
         # the session works, and persist_rotated_cookies only writes when cookies rotate.
         rc.expire(BRAVE_TA_SESSION_KEY, ta_config.session_ttl)
@@ -3366,6 +3364,7 @@ def ta_keepalive() -> None:
             error_type=type(exc).__name__,
             falhas_consecutivas=falhas,
             marcou_bootstrap=falhas >= _KEEPALIVE_FAILURES_BEFORE_BOOTSTRAP,
+            superficie=(getattr(exc, "__notes__", None) or [None])[0],
             # T-p2v-02: never log str(exc) — may contain cookie fragments
         )
 

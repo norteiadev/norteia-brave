@@ -158,7 +158,9 @@ async def _run_canary(session: dict[str, Any], ta_config: Any, redis: Redis) -> 
     """
     from brave.domains.tripadvisor.client import TripAdvisorClient
 
-    client = TripAdvisorClient(config=ta_config, redis=redis)
+    # wait_offline=False: offline, the ConnectError must reach the 503 branch below, not
+    # wait out the canary timeout and reject a good cURL as invalid_session.
+    client = TripAdvisorClient(config=ta_config, redis=redis, wait_offline=False)
     try:
         # WR-06: a canary only needs to prove the session returns *any* data.
         # Bound it to a single page so a slow large-UF paginate can't exceed the
@@ -173,10 +175,13 @@ async def _run_canary(session: dict[str, Any], ta_config: Any, redis: Redis) -> 
         # cards. Validating against it made every canary read "empty result" and
         # DELETE a perfectly good freshly-injected session — a 422 that no operator
         # could get past, while the lane itself was fine.
+        # The attraction page too: DataDome can 403 it while the listing answers 200
+        # (24/10, PR stopped 5 min in), and the per-UF sweep needs both surfaces.
         async def _first_page() -> list[dict[str, Any]]:
             async for _offset, cards in client.fetch_attractions_paginated_gql(
                 geo_id=303380, max_pages=1
             ):
+                await client.probe_page()
                 return cards
             return []
 

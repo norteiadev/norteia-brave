@@ -23,6 +23,23 @@ ttl=$(rds TTL brave:ta:session)
 if [ "${ttl:--2}" -gt 300 ] 2>/dev/null || [ "$ttl" = -1 ]; then ok "TA session alive (ttl=${ttl}s)"
 elif [ "${ttl:--2}" -gt 0 ] 2>/dev/null; then warn "TA session expiring (ttl=${ttl}s)"
 else fail "TA session ABSENT: inject a fresh listing cURL (references/events.md › TA session)"; fi
+# Live probe of both surfaces the per-UF sweep uses: the listing (GraphQL) can answer 200
+# while DataDome 403s the attraction pages (PR, 24/10) — a TTL check alone passes that session.
+if [ "${ttl:--2}" -gt 0 ] 2>/dev/null || [ "$ttl" = -1 ]; then
+  probe=$(timeout 90 docker compose exec -T worker /app/.venv/bin/python - 2>/dev/null <<'PY' | tail -1
+import asyncio, os, redis
+from brave.config.settings import TripAdvisorConfig
+from brave.domains.tripadvisor.client import TripAdvisorClient
+client = TripAdvisorClient(config=TripAdvisorConfig(), redis=redis.from_url(os.environ["BRAVE_DB_REDIS_URL"]), wait_offline=False)
+try:
+    asyncio.run(client.probe_session())
+    print("ok")
+except Exception as exc:
+    print(type(exc).__name__, *getattr(exc, "__notes__", []))
+PY
+)
+  [ "$probe" = ok ] && ok "TA probe: listing + attraction page answer" || fail "TA probe: ${probe:-no answer} — the sweep cannot use this session: inject a fresh listing cURL"
+fi
 kf=$(rds GET brave:ta:keepalive_failures); [ "${kf:-0}" = 0 ] && ok "keepalive failures 0" || warn "keepalive failures ${kf}"
 
 U="${BRAVE_NORTEIA_API_URL%/}"

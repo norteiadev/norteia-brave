@@ -572,6 +572,11 @@ async def test_canary_probes_fetch_attractions(fake_redis, monkeypatch):
     monkeypatch.setattr(TripAdvisorClient, "fetch_attractions", _raise_if_deprecated)
     monkeypatch.setattr(TripAdvisorClient, "fetch_destinations", _raise_if_called)
 
+    async def _page_ok(self):
+        return None
+
+    monkeypatch.setattr(TripAdvisorClient, "probe_page", _page_ok)
+
     # Should complete without raising (valid non-empty session)
     await ts_module._run_canary(session, TripAdvisorConfig(), fake_redis)
 
@@ -776,3 +781,30 @@ def test_backfill_progress_reports_hash_and_pending(fake_redis, monkeypatch):
     assert body["state"] == "running" and body["run_id"] == "r1"
     assert body["processed"] == 3 and body["failed"] == 1
     assert body["ta_pending"] == 7 and body["places_pending"] == 3
+
+
+@pytest.mark.asyncio
+async def test_canary_rejects_a_session_whose_attraction_pages_are_blocked(
+    fake_redis, monkeypatch
+):
+    """24/10: the listing answered 200 while DataDome 403'd every attraction page; the
+    canary passed it and the PR sweep stopped 5 min in. The page is part of the gate."""
+    from fastapi import HTTPException
+
+    import brave.api.routers.tripadvisor_session as ts_module
+    from brave.config.settings import TripAdvisorConfig
+    from brave.domains.tripadvisor.client import SessionExpiredError, TripAdvisorClient
+
+    async def _listing_ok(self, geo_id, start_page=1, max_pages=334):
+        yield 0, [{"name": "Atrativo", "locationId": 1}]
+
+    async def _page_blocked(self, location_id):
+        raise SessionExpiredError("TripAdvisor attraction page returned 403")
+
+    monkeypatch.setattr(TripAdvisorClient, "fetch_attractions_paginated_gql", _listing_ok)
+    monkeypatch.setattr(TripAdvisorClient, "fetch_attraction_address", _page_blocked)
+
+    with pytest.raises(HTTPException) as ei:
+        await ts_module._run_canary({"cookies": {}}, TripAdvisorConfig(), fake_redis)
+
+    assert ei.value.status_code == 422 and ei.value.detail == "invalid_session"

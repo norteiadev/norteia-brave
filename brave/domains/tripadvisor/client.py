@@ -53,6 +53,7 @@ from brave.shared.exceptions import (
     SourceSessionError,
     TransientError,
 )
+from brave.shared.network import is_online
 
 if TYPE_CHECKING:
     from brave.config.settings import TripAdvisorConfig
@@ -62,6 +63,9 @@ logger = structlog.get_logger(__name__)
 # Redis key for the cached session (cookie jar + queryId map)
 # TTL is set by the injection endpoint (config.session_ttl, default 1800s / 30 min).
 BRAVE_TA_SESSION_KEY: str = "brave:ta:session"
+# Set (ISO time) while a TA request waits out an internet outage; the sweep monitor reads it.
+NETWORK_DOWN_KEY: str = "brave:net:down"
+_NETWORK_POLL_SECONDS: float = 15.0
 
 # GraphQL endpoint — all persisted-query POSTs target this URL. The .com.br TLD is
 # what makes TripAdvisor return pt-BR attraction NAMES (verified live: ".com" →
@@ -87,6 +91,8 @@ _TA_ATTRACTION_URL: str = (
 _JSON_LD = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
 # Pages in a row without the LocalBusiness block → systemic (TA dropped it), not per-card.
 _PAGE_ERRORS_SYSTEMIC = 5
+# The attraction page probe_session fetches: Museu Paranaense (Curitiba), a stable listing.
+_PROBE_LOCATION_ID = 2325503
 
 # TripAdvisor caps its paginated listing at 10000 results (offset 9990 == page 334).
 # The page loop is clamped to this regardless of start_page + max_pages (LOW-3 fix).
@@ -136,6 +142,9 @@ _TA_ACCEPT_LANGUAGE: str = "pt-BR,pt;q=0.9,en;q=0.8"
 _RATE_LIMIT_RETRIES: int = 2
 _RATE_LIMIT_MAX_SLEEP_SECONDS: float = 60.0
 _RATE_LIMIT_DEFAULT_RETRY_AFTER: float = 60.0
+# TA 5xx is its own hiccup (a 503 on one PR card, 24/10): the same backoff and retries as a
+# plain 429, then the HTTPStatusError the caller already handles.
+_RETRY_STATUSES = frozenset({500, 502, 503, 504})
 
 
 def _retry_after_seconds(resp: httpx.Response) -> float | None:
@@ -233,9 +242,12 @@ class TripAdvisorClient:
         redis:  Sync Redis client (compatible with Celery worker thread context).
     """
 
-    def __init__(self, config: TripAdvisorConfig, redis: Any) -> None:
+    def __init__(self, config: TripAdvisorConfig, redis: Any, *, wait_offline: bool = True) -> None:
         self._config = config
         self._redis = redis
+        # A sweep waits out an internet outage (_wait_while_offline); a probe (keep-alive,
+        # injection canary, pre-flight) must answer within its own deadline instead.
+        self._wait_offline = wait_offline
         self._hc: httpx.AsyncClient | None = None
         self._review_errors_in_a_row = 0  # per-card reviews errors; a run of them is systemic
         self._page_errors_in_a_row = 0  # attraction pages without the block; same rule
@@ -290,24 +302,42 @@ class TripAdvisorClient:
         """One TA request with the shared status handling of every transport.
 
         403 (or a DataDome-captcha 429) → SessionExpiredError. A plain 429 is retried with
-        exponential backoff, then → SourceRateLimitError. Any other non-2xx →
-        httpx.HTTPStatusError. On 2xx the response cookies are written back AND the session
-        TTL slides even when nothing rotated, so a long sweep cannot outlive its Redis key
-        while the session is in active use.
+        exponential backoff, then → SourceRateLimitError. A 5xx gets the same retries, then
+        → httpx.HTTPStatusError like any other non-2xx. A transport error with the internet
+        down waits for it to come back and resends (no retry spent: the sweep resumes on the
+        same card); with the internet up it is retried with backoff, then re-raised. On 2xx
+        the response cookies are written back AND the session TTL slides even when nothing
+        rotated, so a long sweep cannot outlive its Redis key while the session is in use.
         """
         from brave.domains.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
 
         base = max(self._config.page_throttle_seconds, 1.0)
-        for attempt in range(_RATE_LIMIT_RETRIES + 1):
-            async with self._http(cookies, proxy) as hc:
-                resp = await getattr(hc, method)(url, **kwargs)
+        # One retry budget per failure class: a 503 must not spend a 429's backoffs.
+        tries = {"transport": 0, "429": 0, "5xx": 0}
+
+        async def backoff(kind: str, hint: float | None = None) -> bool:
+            attempt = tries[kind]
+            if attempt >= _RATE_LIMIT_RETRIES:
+                return False
+            await asyncio.sleep(
+                min(max(hint or 0.0, base * 2**attempt), _RATE_LIMIT_MAX_SLEEP_SECONDS)
+            )
+            tries[kind] += 1
+            return True
+
+        while True:
+            try:
+                async with self._http(cookies, proxy) as hc:
+                    resp = await getattr(hc, method)(url, **kwargs)
+            except httpx.TransportError:
+                if await self._wait_while_offline(what) or await backoff("transport"):
+                    continue
+                raise
             if resp.status_code == 429 and not _is_datadome_challenge(resp):
                 hint = _retry_after_seconds(resp)
-                if attempt < _RATE_LIMIT_RETRIES:
-                    await asyncio.sleep(
-                        min(max(hint or 0.0, base * 2**attempt), _RATE_LIMIT_MAX_SLEEP_SECONDS)
-                    )
+                if await backoff("429", hint):
                     continue
+                attempt = tries["429"]
                 # T-15-04-01: status/attempts only — never cookies/UA/session/proxy.
                 logger.warning("ta_rate_limited", what=what, attempts=attempt + 1)
                 raise SourceRateLimitError(
@@ -319,12 +349,77 @@ class TripAdvisorClient:
                     f"TripAdvisor {what} returned {resp.status_code} — "
                     "DataDome session expired or queryId rotated. Re-inject required."
                 )
+            if resp.status_code in _RETRY_STATUSES and await backoff(
+                "5xx", _retry_after_seconds(resp)
+            ):
+                logger.info("ta_server_error_retry", what=what, status=resp.status_code)
+                continue
             resp.raise_for_status()
             # Best-effort (it already swallows internally): a write-back error never aborts.
             with contextlib.suppress(Exception):
                 persist_rotated_cookies(self._redis, dict(resp.cookies), self._config)
             return resp
-        raise AssertionError("unreachable")  # pragma: no cover
+
+    async def _wait_while_offline(self, what: str) -> bool:
+        """After a transport error: False when the internet is up (the error is this
+        request's), else poll until it is back and return True.
+
+        While waiting, NETWORK_DOWN_KEY tells the sweep monitor, and the session key keeps
+        its TTL: the cookies were not proven dead, we just could not reach TA. Best-effort
+        Redis: an outage wait never raises on it. A Celery time budget that runs out while
+        waiting cancels this sleep and hands the sweep over at the same page, as usual.
+        """
+        # ponytail: is_online probes direct egress; behind a proxy that test says nothing
+        # about TA's reachability, so a proxied client never waits (retry, then raise).
+        if not self._wait_offline or self._config.proxy_url:
+            return False
+        if await asyncio.to_thread(is_online):
+            return False
+        logger.warning("ta_network_down", what=what)
+        since = datetime.now(UTC).isoformat(timespec="seconds")
+        try:
+            while True:
+                # The flag carries a TTL refreshed per poll: a wait killed outright (hard
+                # time limit) cannot leave it set past a few polls.
+                with contextlib.suppress(Exception):
+                    self._redis.set(NETWORK_DOWN_KEY, since, ex=int(_NETWORK_POLL_SECONDS * 4))
+                    self._redis.expire(BRAVE_TA_SESSION_KEY, self._config.session_ttl)
+                await asyncio.sleep(_NETWORK_POLL_SECONDS)
+                if await asyncio.to_thread(is_online):
+                    break
+        finally:  # back online, or the time budget cancelled the wait
+            with contextlib.suppress(Exception):
+                self._redis.delete(NETWORK_DOWN_KEY)
+        logger.info("ta_network_back", what=what)
+        return True
+
+    async def probe_session(self) -> None:
+        """One listing page (GraphQL), then one attraction page (HTML): both surfaces a
+        per-UF sweep needs. DataDome guards the HTML page harder: on 24/10 it 403'd it while
+        the listing kept answering 200, so a listing-only check passed a session the sweep
+        could not use. Raises what the failing call raises, noted ``ta_probe:<surface>``.
+        """
+        try:
+            async for _offset, _cards in self.fetch_attractions_paginated_gql(
+                geo_id=294280, start_page=1, max_pages=1
+            ):
+                break
+        except Exception as exc:
+            exc.add_note("ta_probe:listagem")
+            raise
+        await self.probe_page()
+
+    async def probe_page(self) -> None:
+        """One attraction page must answer with its address block. {} (404/410, redirect
+        off Attraction_Review) is no proof the surface works: it raises too."""
+        try:
+            if not await self.fetch_attraction_address(_PROBE_LOCATION_ID):
+                raise SourceSchemaError(
+                    f"TripAdvisor probe page {_PROBE_LOCATION_ID} answered no attraction"
+                )
+        except Exception as exc:
+            exc.add_note("ta_probe:página")
+            raise
 
     # ------------------------------------------------------------------
     # Session management

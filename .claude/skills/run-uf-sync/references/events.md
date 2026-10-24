@@ -8,6 +8,7 @@
 |---|---|
 | `motor pausado: {reason: …}` | The engine paused itself: `daily_budget` / `provider_balance` rows below. A pause the user asked for needs nothing. |
 | `sessão TA ausente` | Session dead: **TA session** below (reinject the saved cURL with `scripts/ta_bootstrap.py` first; ask for a new one only if the canary fails). |
+| `internet caiu (desde …)` (a notice, not a `FALHA`) | Nothing to do: every TA request waits (polling every 15 s, the session TTL kept alive) and resends once the internet is back, on the same card. The monitor prints `internet voltou` when it does. Hours offline only cycle the producer through its time-budget hand-overs at the same page. |
 | `produtor falhou` | Blocking. Get the traceback (`docker compose logs --since 10m worker`), fix through **Failures and code fixes**, restart the worker and resume the same UF. |
 | `serviço parado: …` | `docker compose up -d <svc>`. A restart you planned is benign. |
 | `norteia-api fora` | Benign for < 1 min (a DEV deploy). Longer: tell the user. Pushes wait for repush. |
@@ -63,7 +64,7 @@ set -a; . ./.env; set +a
 .venv/bin/python scripts/ta_bootstrap.py --curl scripts/single_attraction/ta_session.curl --endpoint http://localhost:8000
 ```
 
-`Session injected — canary result: ready` = done. The first-page load batch of the listing is telemetry only and fails the canary.
+`Session injected — canary result: ready`, then a pre-flight `OK    TA probe` = done. The canary checks the listing only: on 24/10 a 14 h-old cURL passed it while DataDome 403'd every attraction page, and the sweep stopped 5 min in. The first-page load batch of the listing is telemetry only and fails the canary.
 
 ## Token
 
