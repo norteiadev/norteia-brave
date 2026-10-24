@@ -1736,3 +1736,30 @@ def test_resolver_version_releases_the_v5_quarantines(tx_session) -> None:
     )
     cards = [{"locationId": 990001}, {"locationId": 990002}]
     assert ingest._already_synced(cards, run_rio=True) == {"tripadvisor:attraction:990002"}
+
+
+@pytest.mark.asyncio
+async def test_produce_starts_at_start_page_and_tracks_resume_page() -> None:
+    """A time-budget continuation lists from its start_page; resume_page is the page in flight."""
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+
+    card = _make_card()
+    fake_client = FakeTripAdvisorClient(
+        gql_pages=[(2400, [card])], geo_ids={"MG": _GEO_ID_MG}
+    )
+    with (
+        patch("brave.domains.tripadvisor.atrativos.store_raw") as mock_store_raw,
+        patch("brave.domains.tripadvisor.atrativos.process_nascente_record"),
+    ):
+        mock_store_raw.return_value = MagicMock(id=uuid.uuid4())
+        ingest = TripAdvisorAtrativosIngest(
+            ta_client=fake_client,
+            session=MagicMock(),
+            config=_make_config(),
+            ibge_records=_IBGE_RECORDS,
+            destino_rio_map=_DESTINO_RIO_MAP,
+        )
+        await ingest.produce("MG", run_rio=False, start_page=81)
+
+    assert fake_client.paginated_gql_calls[0]["start_page"] == 81
+    assert ingest.resume_page == 81  # offset 2400 = page 81

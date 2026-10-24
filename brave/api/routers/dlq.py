@@ -357,9 +357,10 @@ def release_google_dlq_record(
 
     before_state = {"routing": rio.routing, "dlq_reason": rio.dlq_reason}
     categoria = rio.dlq_reason == CATEGORIA_REVISAO_REASON
-    if categoria:
-        normalized = dict(rio.normalized or {})
-        persist_normalized(db, rio, normalized, {**normalized, CATEGORIA_LIBERADA_KEY: True})
+    # Every release says it IS an atrativo: a market under "Lojas" released from
+    # google_tipo_negocio would otherwise sit behind the category gate with no description.
+    normalized = dict(rio.normalized or {})
+    persist_normalized(db, rio, normalized, {**normalized, CATEGORIA_LIBERADA_KEY: True})
     rio.dlq_reason = None  # sticky: the re-score would keep it otherwise
     route_by_score(db, rio, load_effective_config(db).score)
     after_state = {"routing": rio.routing, "dlq_reason": rio.dlq_reason}

@@ -142,7 +142,7 @@ def test_release_drops_the_google_verdict_and_re_scores(db_session, reason) -> N
     assert rio.routing == "dlq" and rio.dlq_reason.startswith("score=")
     assert rio.score is not None
     # Released as an atrativo: the category gate must not park it again on the next pass.
-    assert bool(rio.normalized.get("categoria_liberada")) is (reason == "categoria_revisao")
+    assert rio.normalized.get("categoria_liberada") is True
     action = "dlq_categoria_released" if reason == "categoria_revisao" else "dlq_google_released"
     assert db_session.scalar(select(AuditLog).where(
         AuditLog.record_id == rio.id, AuditLog.action == action))

@@ -140,7 +140,7 @@ def _run_sweep_with_stub_client(stub_client_class, fake_redis, monkeypatch):
     # Patch the atrativos produce() to actually call the stub client
     # and propagate its errors (destinos step removed — oa3).
     async def _stub_produce(
-        uf, run_rio=True, enrich_reviews=False, redis=None, max_per_uf=None
+        uf, run_rio=True, enrich_reviews=False, redis=None, max_per_uf=None, start_page=1
     ):
         # Errors originate from the atrativos path (no destinos step — oa3).
         # enrich_reviews accepted because the per-UF path now passes enrich_reviews=True.
@@ -821,6 +821,7 @@ class TestSweepTripAdvisorTaConfig:
                 enrich_reviews: bool = False,
                 redis: Any = None,
                 max_per_uf: int | None = None,
+                start_page: int = 1,
             ) -> None:
                 # Record produce() kwargs so the per-UF enrich_reviews wiring is assertable.
                 captured["produce_enrich_reviews"] = enrich_reviews
@@ -1376,7 +1377,8 @@ class TestPerUfPlacesOffAndBudget:
                 captured.update(kw)
 
             async def produce(self, uf: str, **kw: Any) -> list[str]:
-                return await produce() if produce else []
+                captured["start_page"] = kw.get("start_page")
+                return await produce(self) if produce else []
 
         cfg = MagicMock(run_real_externals=False, places_enrichment_enabled=places_on)
         cfg.atrativo_voice_model_slug = "claude-sonnet-4-5"
@@ -1420,7 +1422,8 @@ class TestPerUfPlacesOffAndBudget:
         )
         monkeypatch.setattr(pipeline, "_time_budget", lambda task: 0.05)
 
-        async def _slow():
+        async def _slow(ingest):
+            ingest.resume_page = 81  # the page in flight when the budget cuts it
             await _aio.sleep(5)
 
         rc = fakeredis.FakeRedis()
@@ -1430,8 +1433,33 @@ class TestPerUfPlacesOffAndBudget:
         )
         claimed = collection_engine.claim_producer(rc, run_id)
         collection_engine.dispatch_finished(rc, None, run_id)
-        self._run(monkeypatch, places_on=False, produce=_slow, run_id=claimed, rc=rc)
+        captured, _ = self._run(monkeypatch, places_on=False, produce=_slow, run_id=claimed, rc=rc)
 
-        assert sent == [{"args": ("ES", "nascente_rio"), "max_per_uf": None, "run_id": claimed}]
+        assert captured["start_page"] == 1
+        # The continuation resumes at the cut page, not page 1 (no re-listing of pages done).
+        assert sent == [{
+            "args": ("ES", "nascente_rio"), "max_per_uf": None, "start_page": 81, "run_id": claimed,
+        }]
         # The continuation holds the token: without the hand-over the run would be done.
         assert collection_engine.get_status(rc)["state"] == collection_engine.RUNNING
+
+    def test_per_uf_429_resumes_at_the_page_it_hit(self, monkeypatch):
+        from brave.shared.exceptions import SourceRateLimitError
+        from brave.tasks import pipeline
+
+        sent: list[dict] = []
+        monkeypatch.setattr(
+            pipeline.sweep_tripadvisor, "apply_async",
+            lambda args=(), kwargs=None, countdown=None: sent.append({**kwargs, "countdown": countdown}),
+        )
+
+        async def _rate_limited(ingest):
+            ingest.resume_page = 42
+            raise SourceRateLimitError(retry_after=30)
+
+        self._run(monkeypatch, places_on=False, produce=_rate_limited)
+
+        # Progress since page 1 resets the back-off counter; pages 1-41 are not re-listed.
+        assert sent == [{
+            "max_per_uf": None, "start_page": 42, "run_id": None, "backoffs": 1, "countdown": 30,
+        }]
