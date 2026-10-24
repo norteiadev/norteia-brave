@@ -13,7 +13,7 @@ description: >-
 
 One UF = sweep → backfill gap check → describe → promote → push, watched by the quiet sweep monitor `scripts/monitors/sweep.sh`. The detailed operations manual is `docs/RUNBOOK-EXECUCAO.md`; this skill is the order of operations and the done-criteria. Scripts below are relative to this skill's folder; run them from the repo root.
 
-**Reference baseline (SE, 19/10/2026, 288 atrativos):** sweep 24 min (~2.5 min per TA page of 30 cards), Places US$0.048 per atrativo, describe ~US$0.002 per atrativo and ~12 s per chunk of 25, 84% described, 10% reach score 65. Use it to size a UF before starting and to spot an outlier while it runs.
+**Reference baseline (SE, 19/10/2026, 288 atrativos):** sweep 24 min (~2.5 min per TA page of 30 cards), describe ~US$0.002 per atrativo and ~12 s per chunk of 25, 84% described, 10% reach score 65. **Enrichment cost (hybrid Apify + Places Essentials lane, since 21/10; RO→SC, 3,587 atrativos):** ~US$0.007 Places + ~US$0.007 Apify per atrativo (SC alone: Places US$11.26 for 1,901). SE's US$0.048 is the old Places-only cost. Use these to size a UF before starting and to spot an outlier while it runs.
 
 ## 1. Pre-flight
 
@@ -21,7 +21,7 @@ One UF = sweep → backfill gap check → describe → promote → push, watched
 .claude/skills/run-uf-sync/scripts/preflight.sh
 ```
 
-Done when it prints `PREFLIGHT PASSED`. A `FAIL` stops the sync: fix it via `references/events.md` (TA session, token) and re-run. Read the `WARN` lines to the user, especially Places credit: with ~US$0.05 per atrativo, check the remaining credit covers the UF.
+Done when it prints `PREFLIGHT PASSED`. A `FAIL` stops the sync: fix it via `references/events.md` (TA session, token) and re-run. Read the `WARN` lines to the user, especially the credits: each `places`/`apify` line shows how many atrativos the credit left covers (~US$0.007 each). Check both cover the UF. Apify (`APIFY_TOTAL_USD_CAP`) has the smaller credit and runs out first.
 
 ## 2. Arm the monitor
 
@@ -89,7 +89,7 @@ Done when `select count(*) filter (where pushed_at is null), count(*) filter (wh
 .claude/skills/run-uf-sync/scripts/uf_summary.sh <UF>
 ```
 
-Report to the user from its output: run durations, atrativos collected / described / promoted / pushed, gate and DLQ breakdown, poison, and cost (Places today and credit, LLM, searches), compared with the SE baseline. When the user asks for an HTML report, the monitor outputs (the Monitor tasks' output files) and this summary are the data; the SE report (https://claude.ai/artifact/31YSP9mKYtEhKmxQnZyD3u) is the model to follow.
+Report to the user from its output: run durations, atrativos collected / described / promoted / pushed, gate and DLQ breakdown, poison, and cost (Places and Apify today and credit, LLM, searches), compared with the SE baseline. When the user asks for an HTML report, the monitor outputs (the Monitor tasks' output files) and this summary are the data; the SE report (https://claude.ai/artifact/31YSP9mKYtEhKmxQnZyD3u) is the model to follow.
 
 ## Failures and code fixes
 
