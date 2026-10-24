@@ -57,7 +57,10 @@ def dispatched(monkeypatch):
     return calls
 
 
-def _business_matched_atrativo(db_session, *, audit_reason: str | None) -> RioRecord:
+def _business_matched_atrativo(
+    db_session, *, audit_reason: str | None, primary_type: str | None = "brazilian_restaurant",
+    google_types: list[str] | None = None,
+) -> RioRecord:
     src = f"tripadvisor:attraction:{uuid.uuid4().hex}"
     nascente = NascenteRecord(
         id=uuid.uuid4(), source="tripadvisor", source_ref=src, entity_type="attraction",
@@ -69,7 +72,8 @@ def _business_matched_atrativo(db_session, *, audit_reason: str | None) -> RioRe
         id=uuid.uuid4(), nascente_id=nascente.id, entity_type="attraction", uf="MA",
         routing="dlq", dlq_reason="google_tipo_negocio", canonical_key=src,
         normalized={"name": "Cachoeira Paracupeba", "google_enriched": True,
-                    "place_id_cache": None, "google_place_id": None},
+                    "place_id_cache": None, "google_place_id": None,
+                    "google_types": google_types or []},
     )
     db_session.add(rio)
     db_session.flush()
@@ -79,7 +83,7 @@ def _business_matched_atrativo(db_session, *, audit_reason: str | None) -> RioRe
             record_id=rio.id, before_state={"routing": "dlq"},
             after_state={"routing": "dlq", "reason": audit_reason, "place_id": "ChIJparacupeba",
                          "place_name": "Cachoeira Paracupeba",
-                         "primary_type": "brazilian_restaurant"},
+                         "primary_type": primary_type},
             actor="places_enrichment_agent",
         )
     db_session.commit()
@@ -116,6 +120,28 @@ def test_accept_needs_a_google_tipo_negocio_match(db_session, dispatched, audit_
 
     assert r.status_code == 422
     assert dispatched == []
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("primary_type", "google_types"),
+    [("shopping_mall", None), (None, ["market", "shopping_mall", "point_of_interest"])],
+)
+def test_accept_refuses_a_mall_match(db_session, dispatched, primary_type, google_types) -> None:
+    """Malls never pass the gate: no paid Details call, the steward uses liberar-google."""
+    from brave.api.main import app
+
+    rio = _business_matched_atrativo(
+        db_session, audit_reason="google_tipo_negocio", primary_type=primary_type,
+        google_types=google_types,
+    )
+    r = TestClient(app).patch(f"/api/v1/dlq/{rio.id}/aceitar-place", headers=HEADERS)
+
+    assert r.status_code == 422
+    assert r.json()["detail"].startswith("mall_never_accepted")
+    assert dispatched == []
+    db_session.expire_all()
+    assert db_session.get(RioRecord, rio.id).dlq_reason == "google_tipo_negocio"
 
 
 def _parked(db_session, reason: str) -> RioRecord:
