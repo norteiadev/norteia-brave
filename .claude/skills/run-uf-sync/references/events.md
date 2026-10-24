@@ -2,17 +2,17 @@
 
 ## Sweep monitor failures
 
-`scripts/monitors/sweep.sh` prints `FALHA <what>`. Pause the engine (`POST /api/v1/engine/mode {"mode":"PAUSADO"}`) before any fix that touches code, config or the session. Ask the user before resuming.
+`scripts/monitors/sweep.sh` prints `FALHA <what>`. The run goes on while you fix. Follow **Failures and code fixes** in `SKILL.md` (capture → analyze → fix → review → correction → PR → merge → update `main` → restart only what needs it). A fix to the sweep path is loaded with a short pause, a worker restart and an immediate resume of the same UF; any other fix needs no pause.
 
 | `FALHA …` | Action |
 |---|---|
 | `motor pausado: {reason: …}` | The engine paused itself: `daily_budget` / `provider_balance` rows below. A pause the user asked for needs nothing. |
 | `sessão TA ausente` | Session dead: **TA session** below (reinject the saved cURL with `scripts/ta_bootstrap.py` first; ask for a new one only if the canary fails). |
-| `produtor falhou` | Run `scripts/monitors/logs.sh` for a minute, then match its lines in the tables below. |
+| `produtor falhou` | Blocking. Get the traceback (`docker compose logs --since 10m worker`), fix through **Failures and code fixes**, restart the worker and resume the same UF. |
 | `serviço parado: …` | `docker compose up -d <svc>`. A restart you planned is benign. |
 | `norteia-api fora` | Benign for < 1 min (a DEV deploy). Longer: tell the user. Pushes wait for repush. |
-| `quarentena +N (última: …ibge_unmatched…)` | Agency or shop names and cards TA places in the wrong UF: expected, a handful per UF. Dozens point to the resolver: pause and investigate. |
-| `logs: N linha(s) de erro; 1ª: …` | Read the first line. Match it in the tables below. A traceback that repeats on every card: pause and fix. |
+| `quarentena +N (última: …ibge_unmatched…)` | Agency or shop names and cards TA places in the wrong UF: expected, a handful per UF. Dozens point to the resolver: fix it while the run goes on, bumping `IBGE_RESOLVER_VERSION` so a re-sweep retries them, then pause, restart the worker and resume. |
+| `logs: N linha(s) de erro; 1ª: …` | Read the first line. Match it in the tables below. A traceback that repeats on every card: fix it now, then pause, restart the worker and resume (sweep path in **Failures and code fixes**). |
 | `api: engine/status inacessível` | API container down or bearer wrong: `docker compose ps`, `scripts/monitors/stack.sh`. |
 | `postgres: runs_history ilegível` | Postgres (or `docker compose exec`) unreachable. The monitor keeps watching instead of ending: `docker compose ps postgres`. |
 

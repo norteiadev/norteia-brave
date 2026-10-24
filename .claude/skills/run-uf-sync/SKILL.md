@@ -3,7 +3,7 @@ name: run-uf-sync
 description: >-
   Run a UF sync through the Brave in production mode: pre-flight, the sweep
   monitor armed, TripAdvisor sweep, backfill gap check, describe,
-  promote-bulk and the push to norteia-api, ending with the UF summary. Code fixes go through a PR reviewed by another agent, merged and restarted (PR flow). Use
+  promote-bulk and the push to norteia-api, ending with the UF summary. A failure is fixed while the sweep runs: capture, analyze, fix, review by another agent, PR, merge, pull, restart only what needs it (a fix to the sweep path: short pause, worker restart, resume the same UF). Use
   whenever the user wants to sync, sweep, collect or "rodar" one or more UFs
   (e.g. "roda a sync de BA", "faz o sweep de PE e AL", "popula a API com RN",
   "próxima UF"), or to monitor/resume a UF run that is already going.
@@ -39,13 +39,13 @@ RELATÓRIO run=1a2b3c4d running · SC pág 81/134 · atrativos 1781 (+320) · de
 
 `pág p/x` is the TA listing size, read from `totalResults` on the first page the producer fetches, before any card is processed. A resumed run shows the true total too. The other line it prints is `FALHA <what>`, once per new failure: engine pause reason, beat errors, a failed producer, a dead TA session, a stopped service, the norteia-api down, new poison rows, or error lines in the logs (at most one aggregated line per 5 min).
 
-On each `FALHA`, look it up in `references/events.md` (section **Sweep monitor failures**) and act. If the fix needs code, config or a new session, pause the engine first: `scripts/api.sh POST /api/v1/engine/mode '{"mode":"PAUSADO"}'`. Then tell the user what failed and what you changed. A pause ends the run as `parcial`, and resuming means a new `engine/start`. **Ask the user before resuming** (no sweep without their go-ahead). Already-synced cards are skipped and the per-UF sweep picks up at its page. The monitor exits with the run: re-arm it for the resumed run, and whenever it expires (30 min) while the run is still going.
+On each `FALHA`, look it up in `references/events.md` (section **Sweep monitor failures**) and follow **Failures and code fixes** below. The run goes on while you fix. Pause only to load a fix to the sweep path, after its merge, and resume the same UF right away. The monitor exits with the run: re-arm it for a resumed run, and whenever it expires (30 min) while the run is still going.
 
 Use the seven stage monitors (`engine`, `funnel`, `logs`, `stack`, `ta-session`, `cost`, `api-ingest` in `scripts/monitors/`) only to dig into a `FALHA`, as a one-off, or in tmux for the user (`MONITOR_UF=<UF> scripts/monitors/tmux.sh`). Do not arm them as Monitors for a whole run: they print one line per change and flood the context.
 
 ## 3. Sweep
 
-**Only with the user's explicit go-ahead.** That covers a new UF and resuming a paused run.
+**Only with the user's explicit go-ahead** for each new UF. That go-ahead covers finishing the UF: resuming it after a failure, or after the pause that loads a fix, needs no new ask (see **Failures and code fixes**). A run the user paused needs their go-ahead again.
 
 ```bash
 .claude/skills/run-uf-sync/scripts/api.sh POST /api/v1/engine/start '{"source":"tripadvisor","depth":"nascente_rio","ufs":["<UF>"]}'
@@ -91,12 +91,26 @@ Done when `select count(*) filter (where pushed_at is null), count(*) filter (wh
 
 Report to the user from its output: run durations, atrativos collected / described / promoted / pushed, gate and DLQ breakdown, poison, and cost (Places today and credit, LLM, searches), compared with the SE baseline. When the user asks for an HTML report, the monitor outputs (the Monitor tasks' output files) and this summary are the data; the SE report (https://claude.ai/artifact/31YSP9mKYtEhKmxQnZyD3u) is the model to follow.
 
-## Code changes (PR flow)
+## Failures and code fixes
 
-When a sync needs a code fix, or the user asks for a change, you are authorized to open the PR and take it to `main` without asking. A sweep still needs the user's go-ahead.
+**Rule: a UF sweep must reach the end.** The next UFs (BA, MG, PR, RJ, RS, SP) are bigger and take hours, so a sweep left stopped halfway costs a TA session, a long resume and the user's time. A fix that does not touch the sweep goes live while the run goes on. A fix to code the sweep runs needs a pause: a short, deliberate checkpoint to load it, then resume at once. Never leave the engine paused.
 
-1. **Branch and PR.** Branch from `main` (`fix/…` or `feat/…`), commit, push, `gh pr create`.
-2. **Review by another agent.** Hand the PR to a separate agent (Agent tool) to review the diff, fix what it finds, run the tests and push. Use `.venv/bin/pytest` and `.venv/bin/ruff`, never `uv run`, which rewrites `uv.lock`; if `uv.lock` changes anyway, `git checkout uv.lock`. Read its report before merging. A finding it could not fix blocks the merge: tell the user.
-3. **Merge.** `gh pr merge <n> --merge`, then `git checkout main && git pull`.
-4. **Restart what runs the code.** The repo is mounted in the containers, but the processes do not reload. Run `docker compose restart worker api beat` only with the engine PAUSADO or DESLIGADO: pause it first if a run is going, and ask the user before resuming the sweep.
-5. **Verify.** Check that the restarted processes see the change before using it (`docker compose exec -T worker /app/.venv/bin/python -c "import …"`, `api.sh GET /api/v1/engine/status`). On 24/10, a stale worker ran the old Places gate behind a new endpoint.
+You are authorized to carry a fix all the way to `main` without asking:
+
+1. **Capture the exception.** A `FALHA` line, a traceback in the logs, a poison row, a failed producer. Get the full traceback (`docker compose logs --since 10m worker | grep -B5 -A30 Traceback`) and the record or card it hit.
+2. **Analyze.** Find the root cause in the code, not the symptom: reproduce it in a unit test when you can. Decide whether the fix **touches the sweep path**, step 9 depends on it: the code `worker` runs during the sweep (TA client and producer, the Places enrichment inline in `produce()`, the sweep tasks in `brave/tasks/pipeline.py`, scoring and routing called during ingest). API routes (`brave/api/routers/…`, e.g. `dlq.py`), the dashboard, beat-only tasks and docs do not.
+3. **Fix.** On a branch from `main` (`fix/…`), with a test that fails without the fix. Run `.venv/bin/pytest` and `.venv/bin/ruff`, never `uv run` (it rewrites `uv.lock`; if it changes, `git checkout uv.lock`).
+4. **Code review by another agent.** Push the branch and hand it to a separate agent (Agent tool, `isolation: "worktree"`): it reviews the diff and reports findings. In the worktree it tests with `PYTHONPATH=$PWD <repo>/.venv/bin/pytest`, because the venv of the main checkout points at the main checkout. The branch stays checked out in the main checkout, so git refuses it there: the agent resets its own worktree branch to `origin/<branch>` and pushes with `git push origin HEAD:<branch>`. Run `git pull` in the main checkout after it pushes.
+5. **Correction.** Apply the findings (the reviewer may push the fixes itself), re-run the tests. A finding nobody can fix blocks the merge: tell the user.
+6. **PR.** `gh pr create --base main`.
+7. **Merge.** `gh pr merge <n> --merge`. Remove the agent's worktree and its branch (`git worktree remove --force <path>`, `git branch -D worktree-agent-…`).
+8. **Update local `main`.** `git checkout main && git pull`.
+9. **Restart only what needs it.** The repo is mounted. The sweep runs in `worker`, never in `api` or `beat`:
+   - **The fix does not touch the sweep path**: no pause, the sweep keeps running. `api` runs `uvicorn --reload` and reloads itself on the pull; `beat` does not reload, so `docker compose restart beat` when the fix is in a beat task (the schedule lives in Redis, celery-redbeat). Leave `worker` alone.
+   - **The fix touches the sweep path**: `worker` does not reload, so the running sweep keeps the old code until it restarts.
+     1. Pause: `scripts/api.sh POST /api/v1/engine/mode '{"mode":"PAUSADO"}'` (skip it when the engine already stopped or paused itself). Wait for `FIM run … status=parcial`: the producer stops, and no sweep chunk is left in flight.
+     2. `docker compose restart worker`. With a chunk still in flight the warm shutdown waits for it (up to ~1 h, `stop_grace_period: 65m`): never `docker compose kill worker` or `restart -t <short>` instead, SIGKILL strands the in-flight message (acks_late) for the 3 h `visibility_timeout`.
+     3. Verify that the new worker sees the change (`docker compose exec -T worker /app/.venv/bin/python -c "import …"`). On 24/10, a stale worker ran the old Places gate behind a new endpoint.
+     4. Resume the **same** UF right away with `engine/start` (**3. Sweep**) and re-arm the monitor. The user's go-ahead for that UF covers it; a new UF still needs their go-ahead. The pause ended the run as `parcial`; the per-UF sweep resumes at its page and skips the already-synced cards. Cards quarantined before the fix have no Rio row, so the resumed sweep retries them only on pages it has not done yet: re-sweep the UF after `FIM run … status=concluido` to retry the rest. An `ibge_unmatched` card is retried only when the fix bumps `IBGE_RESOLVER_VERSION`.
+
+Tell the user, in one short message per fix: what failed, the cause, the PR, and when the fix went live.

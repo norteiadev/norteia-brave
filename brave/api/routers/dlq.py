@@ -42,6 +42,7 @@ from brave.domains.places.places_enrichment import (
     GOOGLE_TIPO_ACEITO_KEY,
     GOOGLE_TIPO_NEGOCIO_REASON,
     STEWARD_REVIEW_REASONS,
+    is_mall_match,
 )
 from brave.observability.audit import write_audit
 
@@ -265,7 +266,10 @@ def accept_place_dlq_record(
     Only for a match whose place_name the steward checked — a different establishment
     (a homonym school) needs a descarte, not this.
 
-    422 when the record is not an atrativo in DLQ or never had a google_tipo_negocio match.
+    422 when the record is not an atrativo in DLQ or never had a google_tipo_negocio match,
+    and when the match is a mall: the gate never lets a mall through, so the call would pay a
+    Place Details and park the record again (Mercado Público de Florianópolis under hybrid) —
+    the steward releases it with liberar-google instead.
     """
     rio = db.get(RioRecord, rio_id, with_for_update=True)
     if rio is None:
@@ -288,6 +292,14 @@ def accept_place_dlq_record(
     )
     if match is None:
         raise HTTPException(status_code=422, detail="no_google_tipo_negocio_match")
+    if "types" in match:  # the match's own Details types
+        primary, types = match.get("primary_type"), match["types"]
+    else:  # older audit rows: the record's last Details (stale if re-enriched since)
+        stored = rio.normalized or {}
+        primary = match.get("primary_type") or stored.get("google_primary_type")
+        types = stored.get("google_types")
+    if is_mall_match(primary, types):
+        raise HTTPException(status_code=422, detail="mall_never_accepted: use liberar-google")
     place_id = match["place_id"]
 
     before_state = {"routing": rio.routing, "dlq_reason": rio.dlq_reason}

@@ -303,6 +303,14 @@ def _is_mall(details: dict[str, Any]) -> bool:
     return details.get("provider") == "hybrid" and "shopping_mall" in (details.get("types") or ())
 
 
+def is_mall_match(primary_type: str | None, types: Any) -> bool:
+    """The stored match is a mall (operator rule: never accepted). Hybrid details carry no
+    primaryType, so there the types say it; the steward's way out is liberar-google."""
+    return primary_type == "shopping_mall" or (
+        not primary_type and "shopping_mall" in (types or ())
+    )
+
+
 def _google_not_atrativo(details: dict[str, Any]) -> bool:
     """Google says this is a business, not an atrativo: a non-place primaryType and no place
     type among ``types``. No primaryType (Google left it unset) → not judged here, except on
@@ -998,7 +1006,10 @@ class PlacesEnrichmentAgent:
                     entity_type="attraction",
                     record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
                     before_state={"routing": routing_before},
-                    after_state={"routing": rio.routing, **cause},
+                    # types: aceitar-place judges THIS match (mall?) on them; the record's
+                    # google_types belong to whatever Details call ran last.
+                    after_state={"routing": rio.routing, **cause,
+                                 "types": list(details.get("types") or [])},
                     actor="places_enrichment_agent",
                 )
                 # The atrativo's Log tab must say WHY it left the pipeline — the audit row
