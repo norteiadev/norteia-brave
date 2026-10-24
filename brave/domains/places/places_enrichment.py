@@ -1006,7 +1006,10 @@ class PlacesEnrichmentAgent:
                     entity_type="attraction",
                     record_id=rio.id if isinstance(rio.id, uuid.UUID) else None,
                     before_state={"routing": routing_before},
-                    after_state={"routing": rio.routing, **cause},
+                    # types: aceitar-place judges THIS match (mall?) on them; the record's
+                    # google_types belong to whatever Details call ran last.
+                    after_state={"routing": rio.routing, **cause,
+                                 "types": list(details.get("types") or [])},
                     actor="places_enrichment_agent",
                 )
                 # The atrativo's Log tab must say WHY it left the pipeline — the audit row

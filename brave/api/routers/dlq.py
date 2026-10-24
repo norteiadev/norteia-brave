@@ -292,10 +292,13 @@ def accept_place_dlq_record(
     )
     if match is None:
         raise HTTPException(status_code=422, detail="no_google_tipo_negocio_match")
-    stored = rio.normalized or {}
-    if is_mall_match(
-        match.get("primary_type") or stored.get("google_primary_type"), stored.get("google_types")
-    ):
+    if "types" in match:  # the match's own Details types
+        primary, types = match.get("primary_type"), match["types"]
+    else:  # older audit rows: the record's last Details (stale if re-enriched since)
+        stored = rio.normalized or {}
+        primary = match.get("primary_type") or stored.get("google_primary_type")
+        types = stored.get("google_types")
+    if is_mall_match(primary, types):
         raise HTTPException(status_code=422, detail="mall_never_accepted: use liberar-google")
     place_id = match["place_id"]
 

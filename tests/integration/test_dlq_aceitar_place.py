@@ -59,7 +59,7 @@ def dispatched(monkeypatch):
 
 def _business_matched_atrativo(
     db_session, *, audit_reason: str | None, primary_type: str | None = "brazilian_restaurant",
-    google_types: list[str] | None = None,
+    google_types: list[str] | None = None, audit_types: list[str] | None = None,
 ) -> RioRecord:
     src = f"tripadvisor:attraction:{uuid.uuid4().hex}"
     nascente = NascenteRecord(
@@ -83,7 +83,9 @@ def _business_matched_atrativo(
             record_id=rio.id, before_state={"routing": "dlq"},
             after_state={"routing": "dlq", "reason": audit_reason, "place_id": "ChIJparacupeba",
                          "place_name": "Cachoeira Paracupeba",
-                         "primary_type": primary_type},
+                         "primary_type": primary_type,
+                         # None = an audit row from before the gate stored the match's types.
+                         **({} if audit_types is None else {"types": audit_types})},
             actor="places_enrichment_agent",
         )
     db_session.commit()
@@ -142,6 +144,30 @@ def test_accept_refuses_a_mall_match(db_session, dispatched, primary_type, googl
     assert dispatched == []
     db_session.expire_all()
     assert db_session.get(RioRecord, rio.id).dlq_reason == "google_tipo_negocio"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("audit_types", "google_types", "status"),
+    [
+        # The match is a hybrid mall; a later Details call (another place) wrote a park.
+        (["market", "shopping_mall"], ["park"], 422),
+        # The match is a hybrid market; the record's last Details call was a mall.
+        (["market", "point_of_interest"], ["shopping_mall"], 202),
+    ],
+)
+def test_accept_judges_the_match_on_its_own_audit_types(
+    db_session, dispatched, audit_types, google_types, status
+) -> None:
+    from brave.api.main import app
+
+    rio = _business_matched_atrativo(
+        db_session, audit_reason="google_tipo_negocio", primary_type=None,
+        google_types=google_types, audit_types=audit_types,
+    )
+    r = TestClient(app).patch(f"/api/v1/dlq/{rio.id}/aceitar-place", headers=HEADERS)
+
+    assert r.status_code == status, r.text
 
 
 def _parked(db_session, reason: str) -> RioRecord:

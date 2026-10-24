@@ -1766,6 +1766,29 @@ async def test_market_named_shop_goes_to_a_steward(
     assert (rio.routing, rio.dlq_reason) == (routing, reason)
 
 
+@pytest.mark.asyncio
+async def test_review_audit_carries_the_match_types() -> None:
+    """aceitar-place judges the match (mall?) on the audit's own types, not on the record's
+    google_types, which a later Details call may overwrite."""
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    name = "Mercado Público Municipal"
+    details = {**_details(), "primary_type": "grocery_store", "types": ["grocery_store", "store"]}
+    fake = FakePlacesClient(
+        fixture_results={name: [_search_result(name=name)]},
+        fixture_details={"ChIJmatriz001": details},
+    )
+    rio = _make_rio(extra_normalized={"name": name, "category": "Lojas especializadas e de suvenir"})
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW,
+                                  config=ScoreConfig())
+    with patch("brave.domains.places.places_enrichment.write_audit") as audit, \
+         patch("brave.domains.places.places_enrichment.record_event"), \
+         patch("brave.domains.places.places_enrichment.route_by_score"):
+        await agent.run(rio)
+    after = audit.call_args.kwargs["after_state"]
+    assert (after["reason"], after["types"]) == ("google_tipo_negocio", ["grocery_store", "store"])
+
+
 def test_best_match_keeps_an_exact_name_non_business_over_a_place_typed_homonym() -> None:
     """2b made premise neutral: "Usina Hidrelétrica de Xingó" (premise, exact) must keep
     beating "Mirante da Usina…" (tourist_attraction), which token_set_ratio also scores 100;
