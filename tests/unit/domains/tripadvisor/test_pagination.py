@@ -420,3 +420,30 @@ class TestFetchAttractionsPaginatedGql:
         assert pagees[0] == "0"
         assert pages[0][1][0]["name"] == "Alpha"
         assert pages[1][1][0]["locationId"] == 2
+
+    @pytest.mark.asyncio
+    async def test_gql_records_listing_pages_from_total_results(self):
+        """totalResults on the first page fetched sizes the listing (sweep monitor's 1/x)."""
+        import fakeredis
+
+        from brave.domains.tripadvisor import sweep_progress
+
+        client = _make_client()
+        client._config.page_throttle_seconds = 0.0  # type: ignore[attr-defined]
+        body = _gql_envelope([_flex_card(1, "Alpha")])
+        body[0]["data"]["Result"][0]["totalResults"] = 45  # 2 pages of 30
+
+        with respx.mock:
+            respx.post("https://www.tripadvisor.com.br/data/graphql/ids").mock(
+                return_value=httpx.Response(200, json=body)
+            )
+            async for _ in client.fetch_attractions_paginated_gql(
+                geo_id=303631, start_page=2, max_pages=1
+            ):
+                pass
+
+        assert client.listing_pages == {303631: 2}
+        rc = fakeredis.FakeRedis()
+        sweep_progress.record_uf_page(rc, "SC", 2, client.listing_pages.get(303631))
+        sweep_progress.record_uf_page(rc, "BA", 1, None)
+        assert rc.hgetall("brave:ta:sweep:uf_pages") == {b"SC": b"2/2", b"BA": b"1/?"}

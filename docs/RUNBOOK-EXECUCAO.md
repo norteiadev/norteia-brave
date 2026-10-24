@@ -142,8 +142,18 @@ Notas:
 
 ## 5. Monitores
 
-Sete scripts em `scripts/monitors/`. Cada um imprime **uma linha por mudança** (`HH:MM:SS [tag] mensagem`).
-Servem tanto num painel tmux quanto como `Monitor` do Claude Code (cada linha vira uma notificação).
+**No Claude Code, arme só `scripts/monitors/sweep.sh`.** Ele imprime um `RELATÓRIO` a cada 10 min
+(`MONITOR_REPORT`) e outro no fim do run, quando sai. Fora isso, só uma linha `FALHA …` por falha nova (pausa,
+sessão TA, produtor, serviço, norteia-api, quarentena, erro nos logs). Para o describe, use `MONITOR_SOURCE=descricao`.
+
+```
+RELATÓRIO run=1a2b3c4d running · SC pág 81/134 · atrativos 1781 (+320) · destinos 120 (+12) · falhas 0
+```
+
+O `x` de `pág p/x` vem do `totalResults` da primeira página que o produtor busca (Redis `brave:ta:sweep:uf_pages`).
+
+Os sete scripts abaixo imprimem **uma linha por mudança** (`HH:MM:SS [tag] mensagem`). Servem para o tmux e para
+investigar uma `FALHA`; armados como `Monitor` durante um run inteiro, eles enchem o contexto.
 
 ```bash
 MONITOR_UF=SE scripts/monitors/tmux.sh     # abre os 7 em painéis; logs em .run/monitors/*.log

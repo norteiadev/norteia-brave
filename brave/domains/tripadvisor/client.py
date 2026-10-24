@@ -239,6 +239,8 @@ class TripAdvisorClient:
         self._hc: httpx.AsyncClient | None = None
         self._review_errors_in_a_row = 0  # per-card reviews errors; a run of them is systemic
         self._page_errors_in_a_row = 0  # attraction pages without the block; same rule
+        # geoId → listing size in pages, from the first page's totalResults (sweep monitor)
+        self.listing_pages: dict[int, int] = {}
 
     # ------------------------------------------------------------------
     # Persistent HTTP client (opt-in: ``async with ta_client:`` around a sweep)
@@ -1232,11 +1234,13 @@ class TripAdvisorClient:
             reported_total = result0.get("totalResults") if isinstance(result0, dict) else None
             if isinstance(reported_total, int) and reported_total > 0:
                 total_results = reported_total
+                self.listing_pages[geo_id] = min(-(-reported_total // 30), _TA_MAX_PAGE)
             cards = self._parse_attractions_page(sections)
             logger.info(
                 "ta_paginated_gql_page",
                 offset=offset,
                 page=page,
+                pages_total=self.listing_pages.get(geo_id),
                 card_count=len(cards),
             )
 

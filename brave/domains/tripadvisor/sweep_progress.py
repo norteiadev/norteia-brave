@@ -162,6 +162,15 @@ def mark_done(redis: Any) -> None:
     redis.hset(_PROGRESS_KEY, mapping={_F_STATE: DONE, _F_UPDATED_AT: _now()})
 
 
+_UF_PAGES_KEY = "brave:ta:sweep:uf_pages"  # per-UF sweep: field UF → "page/total"
+
+
+def record_uf_page(redis: Any, uf: str, page: int, pages_total: int | None) -> None:
+    """Per-UF sweep cursor for the monitor ("81/134"; total "?" until TA reports it)."""
+    redis.hset(_UF_PAGES_KEY, uf, f"{page}/{pages_total or '?'}")
+    redis.expire(_UF_PAGES_KEY, 7 * 86400)
+
+
 def get_progress(redis: Any) -> dict[str, Any]:
     """Snapshot for the endpoint — EXACTLY the serialized field set.
 
