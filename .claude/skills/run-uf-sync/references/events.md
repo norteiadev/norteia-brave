@@ -2,13 +2,13 @@
 
 ## Sweep monitor failures
 
-`scripts/monitors/sweep.sh` prints `FALHA <what>`. Pause the engine (`POST /api/v1/engine/mode {"mode":"PAUSADO"}`) before any fix that touches code, config or the session. Ask the user before resuming.
+`scripts/monitors/sweep.sh` prints `FALHA <what>`. The run must go on: do not pause the engine to fix. Follow **Failures and code fixes** in `SKILL.md` (capture → analyze → fix → review → PR → merge → restart only what needs it).
 
 | `FALHA …` | Action |
 |---|---|
 | `motor pausado: {reason: …}` | The engine paused itself: `daily_budget` / `provider_balance` rows below. A pause the user asked for needs nothing. |
 | `sessão TA ausente` | Session dead: **TA session** below (reinject the saved cURL with `scripts/ta_bootstrap.py` first; ask for a new one only if the canary fails). |
-| `produtor falhou` | Run `scripts/monitors/logs.sh` for a minute, then match its lines in the tables below. |
+| `produtor falhou` | Blocking. Get the traceback (`docker compose logs --since 10m worker`), fix through the PR flow, restart the worker and resume the same UF. |
 | `serviço parado: …` | `docker compose up -d <svc>`. A restart you planned is benign. |
 | `norteia-api fora` | Benign for < 1 min (a DEV deploy). Longer: tell the user. Pushes wait for repush. |
 | `quarentena +N (última: …ibge_unmatched…)` | Agency or shop names and cards TA places in the wrong UF: expected, a handful per UF. Dozens point to the resolver: pause and investigate. |
