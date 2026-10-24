@@ -7,13 +7,19 @@ by 10/2026 but two. Shared by the TA card filter and the Places gate (sibling do
 """
 
 import re
+import unicodedata
 
+# Matched on the accent-folded name: "Mercadão", "Casa das Artesãs", "Cerâmicas" and an
+# unaccented "Artesao" all count. Not "Mercadinho" (a grocery chain name in the Nordeste).
 _MARKET_NAME = re.compile(
-    r"\b(mercados?|feiras?|feirinhas?|artesanato|artes[aã]os?|artes|paneleiras|engenhos?"
-    r"|cer[aâ]mica)\b",
+    r"\b(mercad(?:os?|ao|oes)|feiras?|feirinhas?|artesanatos?|artes(?:aos?|oes|as?)?"
+    r"|paneleiras?|engenhos?|ceramicas?)\b",
     re.IGNORECASE,
 )
 
 
 def is_market_name(name: object) -> bool:
-    return bool(_MARKET_NAME.search(str(name or "")))
+    folded = "".join(
+        c for c in unicodedata.normalize("NFKD", str(name or "")) if not unicodedata.combining(c)
+    )
+    return bool(_MARKET_NAME.search(folded))

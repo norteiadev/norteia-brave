@@ -88,6 +88,13 @@ def test_agency_by_name_and_activity(name: str, category: str, expected: bool) -
         ("Associação das Paneleiras de Goiabeiras", 192, False),
         ("Engenho & Cachaçaria", 6, False),
         ("M'BARAYÓ - Cerâmica Marajoara", 5, False),
+        # Augmentative, plurals, feminine and unaccented forms (accent-folded match).
+        ("Mercadão de Madureira", 3000, False),
+        ("Casa das Artesãs", 12, False),
+        ("Centro de Artesanatos do Ceará", 40, False),
+        ("Cerâmicas Brennand", 30, False),
+        ("Casa do Artesao", 20, False),
+        ("Mercadinho São Luiz", 80, True),  # a grocery chain, not a market
         # Malls and stores TA files there, however reviewed (all left via Places before).
         ("Riomar Aracaju", 465, True),
         ("Nugali Chocolates - Loja Centro", 259, True),
