@@ -778,6 +778,7 @@ def sweep_tripadvisor(
                        instead of the per-UF atrativos path.
         start_page:    1-based page to start a FRESH bulk run at (offset = (start_page-1)*30).
                        Ignored when a prior run recorded progress (resume takes precedence).
+                       Per-UF: the page a time-budget continuation resumes at.
         max_pages:     Cap on pages to fetch this bulk run (slice-first). None → full 334.
         geo_id:        TripAdvisor integer geoId for the bulk run (294280 = all Brazil).
         fresh:         Bulk only: ignore a stored unfinished run and start at start_page.
@@ -814,6 +815,7 @@ def sweep_tripadvisor(
     ok = False  # the producer did its work (a policy-swallowed failure leaves it False)
     chained = False  # a continuation owns the inflight token: no producer_done here
     pages_cap = pages_before = None  # bulk: this execution's page window (429 hand-over)
+    atrativos_ingest: Any = None  # per-UF: its resume_page is the 429 hand-over cursor
     try:
         with task_failure_policy(
             self,
@@ -1018,6 +1020,7 @@ def sweep_tripadvisor(
                                 enrich_reviews=True,
                                 redis=engine_rc,
                                 max_per_uf=max_per_uf,
+                                start_page=start_page,
                             ),
                             _time_budget(self),
                         ),
@@ -1026,13 +1029,15 @@ def sweep_tripadvisor(
             except SoftTimeLimitExceeded:
                 outcome = _BUDGET_SPENT
             if outcome is _BUDGET_SPENT:
-                # Per-record commits are durable; the continuation skips them (already
-                # synced) and carries on with the rest of the UF on the same run token.
+                # Per-record commits are durable; the continuation starts at the page in
+                # flight (its committed cards skip as synced) on the same run token, instead
+                # of re-listing every page before it (~3 s each: ~4 min at page 80 in SC).
                 # ponytail: a UF that cannot commit one record per budget would loop; add a
                 # hand-over counter if that is ever observed.
                 session.rollback()
                 chained = _hand_over(
-                    sweep_tripadvisor, uf, depth, run_id=run_id, max_per_uf=max_per_uf
+                    sweep_tripadvisor, uf, depth, run_id=run_id, max_per_uf=max_per_uf,
+                    start_page=getattr(atrativos_ingest, "resume_page", start_page),
                 )
                 ok = chained
                 return
@@ -1079,7 +1084,12 @@ def sweep_tripadvisor(
         session.rollback()
         kwargs: dict[str, Any] = {"max_per_uf": max_per_uf}
         progressed = False
-        if rc is not None:
+        if rc is None:
+            # Per-UF: resume at the page the 429 hit, not page 1 (pages before it are done).
+            resume = getattr(atrativos_ingest, "resume_page", start_page)
+            progressed = resume > start_page
+            kwargs["start_page"] = resume
+        else:
             done_now = sweep_progress.get_progress(rc)["pages_done"] - (pages_before or 0)
             progressed = done_now > 0
             kwargs = {

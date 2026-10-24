@@ -84,6 +84,7 @@ from brave.shared.exceptions import (
     SourceSessionError,
 )
 from brave.shared.ibge_distritos import resolve_distrito_in_uf
+from brave.shared.market_name import is_market_name
 
 if TYPE_CHECKING:
     from brave.clients.base import GeocoderClientProtocol, TripAdvisorClientProtocol
@@ -216,12 +217,13 @@ def _is_not_atrativo(entity: dict[str, Any]) -> bool:
 
     A card mixing in one place category stays (Feira do Turista: "Lojas ... • Passeios
     urbanos"). Shopping malls never stay. Shops ("Lojas ...") count as places only when
-    reviewed: TA lists any local store (Magazine Luiza, a motorcycle dealer) there with no
-    reviews, while the Mercado Thales Ferraz has hundreds. A mall TA files under "Lojas"
-    (Riomar) is caught by Google's primaryType after Places. No category → it stays.
+    reviewed and named a market, fair or craft (is_market_name): the Mercado Thales Ferraz
+    stays, a local store (Magazine Luiza, Nugali Chocolates) or a mall TA files under
+    "Lojas" (Riomar) leaves before Places is paid. No category → it stays.
     """
     # ponytail: pt-BR label match; switch to TA category ids if the session locale changes.
     reviewed = int(entity.get("review_count") or 0) > 0
+    market = reviewed and is_market_name(entity.get("name"))
     parts = [p.strip() for p in str(entity.get("category") or "").split("•") if p.strip()]
     if _is_agency(entity, parts):
         return True
@@ -229,7 +231,7 @@ def _is_not_atrativo(entity: dict[str, Any]) -> bool:
         p in _NOT_ATRATIVO
         or p.startswith(_NOT_ATRATIVO_PREFIXES)
         or p.startswith(_NOT_PLACE_PREFIXES)
-        or (p.startswith("Lojas ") and not reviewed)
+        or (p.startswith("Lojas ") and not market)
         for p in parts
     )
 
@@ -336,6 +338,7 @@ class TripAdvisorAtrativosIngest:
         enrich_reviews: bool = False,
         redis: Any | None = None,
         max_per_uf: int | None = None,
+        start_page: int = 1,
     ) -> list[str]:
         """Ingest one full UF sweep for TripAdvisor attractions.
 
@@ -367,6 +370,9 @@ class TripAdvisorAtrativosIngest:
                             been PROCESSED for this UF (successes + poison both count) and
                             break pagination so no further pages are fetched. ``None``
                             (default) = full sweep, behavior unchanged.
+            start_page:     1-based listing page to start at. A time-budget continuation
+                            passes ``self.resume_page`` (the page in flight when it was cut;
+                            its committed cards are skipped as synced).
 
         Returns:
             The RioRecord ids (str) of every atrativo successfully ingested into Rio
@@ -388,7 +394,11 @@ class TripAdvisorAtrativosIngest:
         # Hybrid Places: a page's rows go in ONE batched lookup after its card loop (_places_lot).
         hybrid = run_rio and getattr(self._places_agent, "prefetches", False) is True
 
-        async for _offset, cards in self._client.fetch_attractions_paginated_gql(geo_id):
+        self.resume_page = start_page
+        async for _offset, cards in self._client.fetch_attractions_paginated_gql(
+            geo_id, start_page=start_page
+        ):
+            self.resume_page = _offset // 30 + 1
             # Mid-sweep pause/off/stop: this producer was fanned out per UF and keeps
             # paginating after the orchestrator's dispatch loop broke. Poll the engine
             # BEFORE ingesting each page so a Motor Pausado/Desligado stops new inserts

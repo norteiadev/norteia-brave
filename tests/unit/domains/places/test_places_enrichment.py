@@ -1737,6 +1737,35 @@ async def test_business_match_without_an_attraction_category_is_still_discarded(
     assert (rio.routing, rio.dlq_reason) == (routing, "nao_atrativo")
 
 
+@pytest.mark.parametrize(
+    ("name", "primary", "routing", "reason"),
+    [
+        # Left as nao_atrativo before (SC/PB, 10/2026): Google files a market as a store.
+        ("Mercado Público Municipal", "grocery_store", "dlq", "google_tipo_negocio"),
+        # Mercado Público de Florianópolis: hybrid types also call it a mall.
+        ("Mercado Público de Florianópolis", "shopping_mall", "dlq", "google_tipo_negocio"),
+        # A store with no market name still leaves (Supermercados does not match "mercado").
+        ("Carnaúba Supermercados", "grocery_store", "descarte", "nao_atrativo"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_market_named_shop_goes_to_a_steward(
+    name: str, primary: str, routing: str, reason: str
+) -> None:
+    from brave.domains.places.places_enrichment import PlacesEnrichmentAgent
+
+    details = {**_details(), "primary_type": primary, "types": [primary, "store"]}
+    fake = FakePlacesClient(
+        fixture_results={name: [_search_result(name=name)]},
+        fixture_details={"ChIJmatriz001": details},
+    )
+    rio = _make_rio(extra_normalized={"name": name, "category": "Lojas especializadas e de suvenir"})
+    agent = PlacesEnrichmentAgent(places_client=fake, session=_make_session(), now=_NOW,
+                                  config=ScoreConfig())
+    await _run(agent, rio)
+    assert (rio.routing, rio.dlq_reason) == (routing, reason)
+
+
 def test_best_match_keeps_an_exact_name_non_business_over_a_place_typed_homonym() -> None:
     """2b made premise neutral: "Usina Hidrelétrica de Xingó" (premise, exact) must keep
     beating "Mirante da Usina…" (tourist_attraction), which token_set_ratio also scores 100;
@@ -1980,3 +2009,14 @@ async def test_category_verdict_over_the_description_verdicts(before: str, after
     await _run(agent, rio)
 
     assert rio.dlq_reason == after
+
+
+def test_accepted_google_match_confirms_the_category() -> None:
+    """aceitar-place on a market under "Lojas" (Google: a store) is the steward's verdict that
+    it is an atrativo: the category gate must not park it again in categoria_revisao."""
+    from brave.domains.places.places_enrichment import categoria_nao_confirmada
+
+    market = {"category": "Lojas especializadas e de suvenir", "google_types": ["grocery_store"]}
+    assert categoria_nao_confirmada("tripadvisor:attraction:1", market) is True
+    accepted = {**market, "google_tipo_aceito": "ChIJmercado"}
+    assert categoria_nao_confirmada("tripadvisor:attraction:1", accepted) is False

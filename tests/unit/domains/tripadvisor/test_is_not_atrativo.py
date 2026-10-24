@@ -16,8 +16,9 @@ from brave.domains.tripadvisor.atrativos import _is_not_atrativo
         ("Academias de ginástica • Complexos esportivos", 1, True),
         ("Spas", 0, True),
         ("Baladas", 307, True),  # Casa de Forró Cariri: commercial leisure
-        ("Lojas especializadas e de suvenir", 465, False),  # Riomar Aracaju
-        ("Lojas especializadas e de suvenir • Passeios urbanos", 547, False),  # Feira do Turista
+        ("Lojas especializadas e de suvenir", 465, True),  # a reviewed shop with no market name
+        # Feira do Turista's categories: its name keeps it (test_agency_by_name_and_activity).
+        ("Lojas especializadas e de suvenir • Passeios urbanos", 547, True),
         ("Shopping centers", 275, True),  # Shopping Jardins: malls are never atrativos
         ("Natureza e vida selvagem • Parques aquáticos", 160, False),
         ("Igrejas e catedrais", 0, False),  # unreviewed but a real atrativo
@@ -74,3 +75,28 @@ def test_missing_fields_stay() -> None:
 )
 def test_agency_by_name_and_activity(name: str, category: str, expected: bool) -> None:
     assert _is_not_atrativo({"name": name, "category": category, "review_count": 50}) is expected
+
+
+@pytest.mark.parametrize(
+    ("name", "review_count", "expected"),
+    [
+        # Reviewed "Lojas"-only cards that reached Mar (all UFs, 10/2026): market/craft names.
+        ("Mercado de São Brás", 79, False),
+        ("Feira Central", 900, False),
+        ("Feirinha de Artesanato de Tambaú", 681, False),
+        ("Casa do Artesão", 143, False),
+        ("Associação das Paneleiras de Goiabeiras", 192, False),
+        ("Engenho & Cachaçaria", 6, False),
+        ("M'BARAYÓ - Cerâmica Marajoara", 5, False),
+        # Malls and stores TA files there, however reviewed (all left via Places before).
+        ("Riomar Aracaju", 465, True),
+        ("Nugali Chocolates - Loja Centro", 259, True),
+        ("Damasco Luxo Perfumaria", 48, True),
+        ("Malwee", 31, True),
+        # A market name with no review is still an unreviewed shop.
+        ("Mercado do Bairro", 0, True),
+    ],
+)
+def test_shop_stays_only_as_market(name: str, review_count: int, expected: bool) -> None:
+    card = {"name": name, "category": "Lojas especializadas e de suvenir", "review_count": review_count}
+    assert _is_not_atrativo(card) is expected

@@ -82,6 +82,7 @@ from brave.observability.audit import write_audit
 from brave.observability.record_events import record_event
 from brave.shared.exceptions import CostGuardError, ProviderBalanceError
 from brave.shared.ibge_distritos import resolve_distrito
+from brave.shared.market_name import is_market_name
 
 if TYPE_CHECKING:
     from brave.clients.base import LLMClientProtocol, PlacesClientProtocol
@@ -273,10 +274,13 @@ def _ta_nature_category(category: Any) -> bool:
 def categoria_nao_confirmada(canonical_key: str, normalized: dict[str, Any]) -> bool:
     """A TA card the Brave does not categorize as an atrativo: its TA category is not a place
     to visit and Google's types (once fetched) do not name one either. A steward decides
-    (categoria_revisao) before any description is paid. Other lanes carry no TA category."""
+    (categoria_revisao) before any description is paid. Other lanes carry no TA category.
+    A steward who accepted the Google match (aceitar-place: a market under "Lojas") already
+    said it is one."""
     return (
         canonical_key.startswith("tripadvisor:")
         and not normalized.get(CATEGORIA_LIBERADA_KEY)
+        and not normalized.get(GOOGLE_TIPO_ACEITO_KEY)
         and not _ta_attraction_category(normalized.get("category"))
         and not _PLACE_TYPES.intersection(normalized.get("google_types") or ())
     )
@@ -947,6 +951,9 @@ class PlacesEnrichmentAgent:
                 # is likely a same-name business: a steward decides (DLQ), no descarte. None
                 # of its data is written. Malls stay out regardless (operator rule). Closed:
                 # the same for a business match, and for a natural place, which never closes.
+                # A market TA files under "Lojas" (Mercado Público, Casa do Artesão) is a store
+                # to Google, never a place type, and hybrid types can call it a mall (Mercado
+                # Público de Florianópolis): a steward decides, no descarte.
                 category = normalized.get("category")
                 mall = _is_mall(details)
                 if closed:
@@ -956,7 +963,9 @@ class PlacesEnrichmentAgent:
                     )
                     reason = GOOGLE_FECHADO_REVISAO_REASON if review else "closed_place"
                 else:
-                    review = not mall and _ta_attraction_category(category)
+                    review = is_market_name(normalized.get("name")) or (
+                        not mall and _ta_attraction_category(category)
+                    )
                     reason = GOOGLE_TIPO_NEGOCIO_REASON if review else "nao_atrativo"
                 new_normalized["google_enriched"] = True
                 if review:
