@@ -80,6 +80,11 @@ while true; do
     if [ -n "$nd" ] && [ "$(cat "$_STATE/net" 2>/dev/null)" != "$nd" ]; then
       printf '%s' "$nd" > "$_STATE/net"; emit "internet caiu (desde $nd) — o sweep espera e retoma na mesma página"
     elif [ -z "$nd" ] && [ -f "$_STATE/net" ]; then rm -f "$_STATE/net"; emit "internet voltou — sweep retomado"; fi
+    # Set by the producer while DataDome 403s the attraction pages (the listing still answers).
+    pb=$(rds GET brave:ta:pages_blocked)
+    if [ -n "$pb" ] && [ "$(cat "$_STATE/pages" 2>/dev/null)" != "$pb" ]; then
+      printf '%s' "$pb" > "$_STATE/pages"; emit "páginas TA bloqueadas (403) desde $pb — sweep segue só com a listagem; reinjetar cURL e rodar o backfill depois"
+    elif [ -z "$pb" ] && [ -f "$_STATE/pages" ]; then rm -f "$_STATE/pages"; emit "páginas TA voltaram"; fi
   fi
 
   down=$(for svc in postgres redis api worker beat; do docker compose ps --status running -q "$svc" 2>/dev/null | grep -q . || printf '%s ' "$svc"; done)

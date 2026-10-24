@@ -1687,13 +1687,76 @@ async def test_failed_ta_page_falls_back_without_marker_or_places() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ta_page_session_error_stops_the_sweep() -> None:
+async def test_ta_page_403_degrades_the_sweep_to_the_listing() -> None:
+    """24/10 (PR): DataDome 403'd the attraction pages while the listing answered 200, and
+    the fail-fast stopped the sweep 5 min in. The sweep goes on: the card lands by name,
+    without the backfill marker, so the backfill redoes its page with a fresh session."""
     from brave.domains.tripadvisor.client import SessionExpiredError
 
+    store, quarantine, persist = await _produce_page(
+        "MG", _make_card(), records=_IBGE_RECORDS, address_error=SessionExpiredError("403"),
+        run_rio=True, process=MagicMock(canonical_key="tripadvisor:attraction:x"),
+    )
+
+    assert store.called and not quarantine.called
+    assert not persist.called  # no ta_backfilled_at: the backfill gap check catches it
+
+
+@pytest.mark.asyncio
+async def test_blocked_pages_are_not_retried_until_the_window_ends(monkeypatch) -> None:
+    """Once blocked, the next cards skip the page (no 403 storm on the cookies), and one
+    page is tried again after _PAGE_BLOCK_RETRY_SECONDS; a 200 lifts the block."""
+    import brave.domains.tripadvisor.atrativos as atrativos_mod
+    from brave.config.settings import TripAdvisorConfig
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+    from brave.domains.tripadvisor.client import SessionExpiredError
+
+    import fakeredis
+
+    now = [1000.0]
+    monkeypatch.setattr(atrativos_mod.time, "monotonic", lambda: now[0])
+    client = FakeTripAdvisorClient(address_error=SessionExpiredError("403"))
+    ingest = TripAdvisorAtrativosIngest(
+        ta_client=client, session=MagicMock(), config=_make_config(), ibge_records=[],
+        ta_config=TripAdvisorConfig(page_throttle_seconds=0),
+    )
+    redis = fakeredis.FakeRedis()
+    ingest._page_block_degrade, ingest._redis = True, redis
+
+    assert (await ingest._ta_fetch(1, page=True, reviews=False))[0] is None
+    assert (await ingest._ta_fetch(2, page=True, reviews=False))[0] is None
+    assert client.address_calls == [1]  # card 2 never asked
+    assert redis.exists(atrativos_mod.TA_PAGES_BLOCKED_KEY)
+
+    now[0] += atrativos_mod._PAGE_BLOCK_RETRY_SECONDS
+    assert (await ingest._ta_fetch(5, page=True, reviews=False))[0] is None  # retry: 403
+    assert (await ingest._ta_fetch(6, page=True, reviews=False))[0] is None  # re-armed
+    assert client.address_calls == [1, 5]
+
+    now[0] += atrativos_mod._PAGE_BLOCK_RETRY_SECONDS
+    client._address_error = None
+    client._fixture_address = {3: _MERCADO_PAGE}
+    assert (await ingest._ta_fetch(3, page=True, reviews=False))[0] == _MERCADO_PAGE
+    assert ingest._pages_blocked_at is None
+    assert not redis.exists(atrativos_mod.TA_PAGES_BLOCKED_KEY)
+    assert (await ingest._ta_fetch(4, page=True, reviews=False))[0] == {}
+    assert client.address_calls == [1, 5, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_page_403_outside_a_sweep_still_raises() -> None:
+    """The TA backfill run stops on a dead page session (its whole job is the page)."""
+    from brave.config.settings import TripAdvisorConfig
+    from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
+    from brave.domains.tripadvisor.client import SessionExpiredError
+
+    ingest = TripAdvisorAtrativosIngest(
+        ta_client=FakeTripAdvisorClient(address_error=SessionExpiredError("403")),
+        session=MagicMock(), config=_make_config(), ibge_records=[],
+        ta_config=TripAdvisorConfig(page_throttle_seconds=0),
+    )
     with pytest.raises(SessionExpiredError):
-        await _produce_page(
-            "MG", _make_card(), records=_IBGE_RECORDS, address_error=SessionExpiredError("x"),
-        )
+        await ingest._ta_fetch(1, page=True, reviews=False)
 
 
 @pytest.fixture

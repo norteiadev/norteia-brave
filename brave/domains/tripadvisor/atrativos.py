@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
@@ -60,6 +61,7 @@ from brave.core.quarantine import quarantine_poison
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import STICKY_DLQ_REASONS, process_nascente_record, route_by_score
 from brave.domains.tripadvisor import sweep_progress
+from brave.domains.tripadvisor.client import SessionExpiredError
 from brave.domains.tripadvisor.ibge import (
     IbgeMunicipio,
     haversine_km,
@@ -129,6 +131,14 @@ _PAUSE_ERRORS: tuple[type[BaseException], ...] = (
 
 # Marker of the TA-side backfill (contract C1): set once TA page + review recency ran.
 TA_BACKFILLED_KEY = "ta_backfilled_at"
+
+# DataDome can 403 the attraction pages while the listing still answers (PR, 24/10). A sweep
+# then goes on with the listing (card placed by name, no TA_BACKFILLED_KEY: the backfill
+# redoes its page with a fresh session) and asks for a page again only after this window,
+# so the blocked cookies do not take a 403 per card. TA_PAGES_BLOCKED_KEY (ISO time, TTL)
+# tells the sweep monitor.
+_PAGE_BLOCK_RETRY_SECONDS = 300.0
+TA_PAGES_BLOCKED_KEY = "brave:ta:pages_blocked"
 
 # Inside the right UF, a record whose own coords lie within this radius of TA's city seat
 # keeps its município: TA's cityName is its parent geo (the town next door), the coords'
@@ -329,6 +339,11 @@ class TripAdvisorAtrativosIngest:
         # _fetch_ta_ahead's results for the current page: (locationId, page) → _ta_fetch's
         # result, or the error its card raises.
         self._ta_ahead: dict[tuple[int, bool], Any] = {}
+        # Page-block degrade (see _PAGE_BLOCK_RETRY_SECONDS): on only inside produce(). The TA
+        # backfill run keeps raising: the page is its whole job.
+        self._page_block_degrade = False
+        self._pages_blocked_at: float | None = None
+        self._redis: Any = None
 
     async def produce(
         self,
@@ -383,6 +398,11 @@ class TripAdvisorAtrativosIngest:
         # yields (offset, cards); _ingest_one per card keeps the per-entity
         # try/quarantine so a single poison card never aborts the sweep.
         geo_id = await self._client.resolve_geo_id(uf)
+        self._page_block_degrade = True
+        self._redis = redis
+        # A fresh producer (hand-over, next UF) starts unblocked: drop a flag the previous
+        # one left; the first page 403 sets it again.
+        self._set_pages_blocked(False, log=False)
 
         # Operator test-run throttle: count attractions PROCESSED (success + poison)
         # and stop once the cap is hit. None = uncapped (full sweep).
@@ -742,7 +762,8 @@ class TripAdvisorAtrativosIngest:
         parallel (~1 s per card, not ~3 s for two paced calls in a row).
 
         Returns (page, recency, reviews_ok). page None = the page had no address block
-        (SourceRecordError), {} when not asked; reviews_ok False = the reviews call failed
+        (SourceRecordError) or pages blocked inside a sweep (a 403 arms the page-block
+        degrade, _PAGE_BLOCK_RETRY_SECONDS), {} when not asked; reviews_ok False = the reviews call failed
         (SourceRecordError) or was not asked. Both are retried later, never a verdict. Any
         other error (session, systemic) is raised once both calls settled, the page's first.
         """
@@ -756,10 +777,25 @@ class TripAdvisorAtrativosIngest:
         async def _page() -> dict[str, Any] | None:
             if not page:
                 return {}
+            blocked = self._pages_blocked_at
+            if blocked is not None:
+                if time.monotonic() - blocked < _PAGE_BLOCK_RETRY_SECONDS:
+                    return None  # pages blocked: no request until the retry window ends
+                # Window over: THIS card retries; re-arming now keeps the concurrent cards
+                # skipping, so one 403 at most per window.
+                self._pages_blocked_at = time.monotonic()
             try:
-                return await self._client.fetch_attraction_address(location_id)
+                got = await self._client.fetch_attraction_address(location_id)
             except SourceRecordError:
                 return None
+            except SessionExpiredError:
+                if not self._page_block_degrade:
+                    raise
+                self._set_pages_blocked(True)
+                return None
+            if blocked is not None:
+                self._set_pages_blocked(False)
+            return got
 
         async def _reviews() -> tuple[dict | None, bool]:
             if not reviews:
@@ -774,6 +810,31 @@ class TripAdvisorAtrativosIngest:
             if isinstance(result, BaseException):
                 raise result
         return got_page, *got_reviews
+
+    def _set_pages_blocked(self, blocked: bool, *, log: bool = True) -> None:
+        """Arm (or lift) the page block and its monitor flag. A 403 during an open window
+        (a concurrent card) re-arms it from now. Best-effort Redis; the flag's TTL only
+        bounds a producer that died blocked (a live one deletes it on a 200 or at start)."""
+        was = self._pages_blocked_at is not None
+        self._pages_blocked_at = time.monotonic() if blocked else None
+        if blocked and not was:
+            logger.warning("ta_pages_blocked", retry_seconds=_PAGE_BLOCK_RETRY_SECONDS)
+        elif not blocked and log:
+            logger.info("ta_pages_unblocked")
+        if self._redis is None:
+            return
+        try:
+            if blocked:
+                self._redis.set(
+                    TA_PAGES_BLOCKED_KEY,
+                    datetime.now(UTC).isoformat(timespec="seconds"),
+                    ex=3600,
+                    nx=True,  # keep the first "since" while it stays blocked
+                )
+            else:
+                self._redis.delete(TA_PAGES_BLOCKED_KEY)
+        except Exception:  # noqa: BLE001 — a monitor flag never breaks the sweep
+            logger.warning("ta_pages_blocked_flag_failed")
 
     async def _fetch_ta_ahead(
         self,

@@ -619,7 +619,22 @@ async def test_sweep_ahead_error_lands_on_its_own_card() -> None:
 
 @pytest.mark.asyncio
 async def test_sweep_ahead_session_error_stops_the_page_before_any_card() -> None:
-    client = _sweep_client(3, address_error=SessionExpiredError("captcha"))
+    """A dead session on the GraphQL reviews call still stops the sweep at once."""
+    client = _sweep_client(3, recent_review_error=SessionExpiredError("403"))
 
     with pytest.raises(SessionExpiredError):
         await _sweep(client)
+
+
+@pytest.mark.asyncio
+async def test_sweep_ahead_page_block_lands_every_card_by_name() -> None:
+    """Pages 403 (listing fine): the sweep does not raise, every card goes through the
+    page-failed path (here: no coords, no geocoder → a retryable ibge_unmatched, exactly as a
+    page without its block), and the blocked cookies take no 403 per card."""
+    client = _sweep_client(6, address_error=SessionExpiredError("captcha"))
+
+    _, poison = await _sweep(client)
+
+    assert poison.call_count == 6
+    assert all(c.kwargs["payload"]["resolver_version"] == 0 for c in poison.call_args_list)
+    assert len(client.address_calls) <= 4  # the in-flight batch at most, then skipped
