@@ -1711,6 +1711,8 @@ async def test_blocked_pages_are_not_retried_until_the_window_ends(monkeypatch) 
     from brave.domains.tripadvisor.atrativos import TripAdvisorAtrativosIngest
     from brave.domains.tripadvisor.client import SessionExpiredError
 
+    import fakeredis
+
     now = [1000.0]
     monkeypatch.setattr(atrativos_mod.time, "monotonic", lambda: now[0])
     client = FakeTripAdvisorClient(address_error=SessionExpiredError("403"))
@@ -1718,18 +1720,27 @@ async def test_blocked_pages_are_not_retried_until_the_window_ends(monkeypatch) 
         ta_client=client, session=MagicMock(), config=_make_config(), ibge_records=[],
         ta_config=TripAdvisorConfig(page_throttle_seconds=0),
     )
-    ingest._page_block_degrade = True
+    redis = fakeredis.FakeRedis()
+    ingest._page_block_degrade, ingest._redis = True, redis
 
     assert (await ingest._ta_fetch(1, page=True, reviews=False))[0] is None
     assert (await ingest._ta_fetch(2, page=True, reviews=False))[0] is None
     assert client.address_calls == [1]  # card 2 never asked
+    assert redis.exists(atrativos_mod.TA_PAGES_BLOCKED_KEY)
+
+    now[0] += atrativos_mod._PAGE_BLOCK_RETRY_SECONDS
+    assert (await ingest._ta_fetch(5, page=True, reviews=False))[0] is None  # retry: 403
+    assert (await ingest._ta_fetch(6, page=True, reviews=False))[0] is None  # re-armed
+    assert client.address_calls == [1, 5]
 
     now[0] += atrativos_mod._PAGE_BLOCK_RETRY_SECONDS
     client._address_error = None
     client._fixture_address = {3: _MERCADO_PAGE}
     assert (await ingest._ta_fetch(3, page=True, reviews=False))[0] == _MERCADO_PAGE
+    assert ingest._pages_blocked_at is None
+    assert not redis.exists(atrativos_mod.TA_PAGES_BLOCKED_KEY)
     assert (await ingest._ta_fetch(4, page=True, reviews=False))[0] == {}
-    assert client.address_calls == [1, 3, 4]
+    assert client.address_calls == [1, 5, 3, 4]
 
 
 @pytest.mark.asyncio

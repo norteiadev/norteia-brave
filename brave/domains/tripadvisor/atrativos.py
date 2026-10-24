@@ -400,6 +400,9 @@ class TripAdvisorAtrativosIngest:
         geo_id = await self._client.resolve_geo_id(uf)
         self._page_block_degrade = True
         self._redis = redis
+        # A fresh producer (hand-over, next UF) starts unblocked: drop a flag the previous
+        # one left; the first page 403 sets it again.
+        self._set_pages_blocked(False, log=False)
 
         # Operator test-run throttle: count attractions PROCESSED (success + poison)
         # and stop once the cap is hit. None = uncapped (full sweep).
@@ -775,8 +778,12 @@ class TripAdvisorAtrativosIngest:
             if not page:
                 return {}
             blocked = self._pages_blocked_at
-            if blocked is not None and time.monotonic() - blocked < _PAGE_BLOCK_RETRY_SECONDS:
-                return None  # pages blocked: no request until the retry window ends
+            if blocked is not None:
+                if time.monotonic() - blocked < _PAGE_BLOCK_RETRY_SECONDS:
+                    return None  # pages blocked: no request until the retry window ends
+                # Window over: THIS card retries; re-arming now keeps the concurrent cards
+                # skipping, so one 403 at most per window.
+                self._pages_blocked_at = time.monotonic()
             try:
                 got = await self._client.fetch_attraction_address(location_id)
             except SourceRecordError:
@@ -804,14 +811,15 @@ class TripAdvisorAtrativosIngest:
                 raise result
         return got_page, *got_reviews
 
-    def _set_pages_blocked(self, blocked: bool) -> None:
+    def _set_pages_blocked(self, blocked: bool, *, log: bool = True) -> None:
         """Arm (or lift) the page block and its monitor flag. A 403 during an open window
-        (a concurrent card) re-arms it from now. Best-effort Redis."""
+        (a concurrent card) re-arms it from now. Best-effort Redis; the flag's TTL only
+        bounds a producer that died blocked (a live one deletes it on a 200 or at start)."""
         was = self._pages_blocked_at is not None
         self._pages_blocked_at = time.monotonic() if blocked else None
         if blocked and not was:
             logger.warning("ta_pages_blocked", retry_seconds=_PAGE_BLOCK_RETRY_SECONDS)
-        elif not blocked:
+        elif not blocked and log:
             logger.info("ta_pages_unblocked")
         if self._redis is None:
             return
@@ -820,10 +828,9 @@ class TripAdvisorAtrativosIngest:
                 self._redis.set(
                     TA_PAGES_BLOCKED_KEY,
                     datetime.now(UTC).isoformat(timespec="seconds"),
-                    ex=int(_PAGE_BLOCK_RETRY_SECONDS * 2),
+                    ex=3600,
                     nx=True,  # keep the first "since" while it stays blocked
                 )
-                self._redis.expire(TA_PAGES_BLOCKED_KEY, int(_PAGE_BLOCK_RETRY_SECONDS * 2))
             else:
                 self._redis.delete(TA_PAGES_BLOCKED_KEY)
         except Exception:  # noqa: BLE001 — a monitor flag never breaks the sweep
