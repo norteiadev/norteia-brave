@@ -60,13 +60,15 @@ from sqlalchemy.orm.attributes import flag_modified
 
 # Pricing + the usage-counter reader come from the inline client so the batched row and the
 # inline row can never drift apart (the batch rates are literally the standard rates x 0.5).
+from brave.clients.base import DEFAULT_ANTHROPIC_MODEL
 from brave.clients.llm import (
     _CACHE_READ_MULTIPLIER,
     _CACHE_WRITE_MULTIPLIER,
-    _SONNET_4_5_INPUT_USD_PER_MTOK,
-    _SONNET_4_5_OUTPUT_USD_PER_MTOK,
     _WEB_SEARCH_USD_PER_REQUEST,
     _usage_int,
+    anthropic_prices,
+    anthropic_thinking,
+    final_text,
 )
 from brave.core.models import LLMGeneration, RioRecord
 from brave.core.rio.routing import route_by_score
@@ -165,7 +167,7 @@ def _request_was_never_billed(exc: BaseException) -> bool:
     return False
 
 
-def build_request(rio: RioRecord, model: str = "claude-sonnet-4-5") -> dict[str, Any]:
+def build_request(rio: RioRecord, model: str = DEFAULT_ANTHROPIC_MODEL) -> dict[str, Any]:
     """Build one Message Batches request line for an atrativo.
 
     ``params`` must stay byte-identical to what ``RealLLMClient.generate`` sends for the
@@ -178,7 +180,7 @@ def build_request(rio: RioRecord, model: str = "claude-sonnet-4-5") -> dict[str,
     survives in normalized. web_search therefore carries more of the load here.
     """
     normalized = rio.normalized or {}
-    return {
+    request: dict[str, Any] = {
         "custom_id": str(rio.id),
         "params": {
             "model": model,
@@ -198,6 +200,10 @@ def build_request(rio: RioRecord, model: str = "claude-sonnet-4-5") -> dict[str,
             "tools": [WEB_SEARCH_TOOL],
         },
     }
+    thinking = anthropic_thinking(model)
+    if thinking is not None:
+        request["params"]["thinking"] = thinking
+    return request
 
 
 def description_candidates_filter() -> tuple[Any, ...]:
@@ -363,12 +369,13 @@ def _record_generation(session: Session, message: Any, model: str) -> float:
     cache_read_tokens = _usage_int(usage, "cache_read_input_tokens")
     cache_write_tokens = _usage_int(usage, "cache_creation_input_tokens")
     searches = _usage_int(getattr(usage, "server_tool_use", None), "web_search_requests")
+    price_in, price_out = anthropic_prices(model)
     usd_cost = (
         (
-            prompt_tokens * _SONNET_4_5_INPUT_USD_PER_MTOK
-            + cache_write_tokens * _SONNET_4_5_INPUT_USD_PER_MTOK * _CACHE_WRITE_MULTIPLIER
-            + cache_read_tokens * _SONNET_4_5_INPUT_USD_PER_MTOK * _CACHE_READ_MULTIPLIER
-            + completion_tokens * _SONNET_4_5_OUTPUT_USD_PER_MTOK
+            prompt_tokens * price_in
+            + cache_write_tokens * price_in * _CACHE_WRITE_MULTIPLIER
+            + cache_read_tokens * price_in * _CACHE_READ_MULTIPLIER
+            + completion_tokens * price_out
         )
         * _BATCH_TOKEN_DISCOUNT
     ) / 1_000_000 + searches * _WEB_SEARCH_USD_PER_REQUEST
@@ -394,7 +401,7 @@ def apply_result(
     config: ScoreConfig,
     *,
     batch_id: str,
-    model: str = "claude-sonnet-4-5",
+    model: str = DEFAULT_ANTHROPIC_MODEL,
     redis_client: Any = None,
 ) -> bool:
     """Perform the three deferred writes for one batch result line. Returns True if applied.
@@ -439,13 +446,7 @@ def apply_result(
             # before designing anything smarter.
             logger.warning("copy_batch_pause_turn", rio_id=str(rio.id))
         else:
-            prose = _strip_dashes(
-                "".join(
-                    getattr(block, "text", "")
-                    for block in getattr(message, "content", [])
-                    if getattr(block, "type", "") == "text"
-                )
-            )
+            prose = _strip_dashes(final_text(getattr(message, "content", [])))
         if prose:
             normalized["descricao_editorial"] = prose
             normalized["completude_value"] = max(
@@ -521,7 +522,7 @@ def submit_batch(
     *,
     redis_client: Any,
     llm_config: LLMConfig,
-    model: str = "claude-sonnet-4-5",
+    model: str = DEFAULT_ANTHROPIC_MODEL,
     limit: int = DESCRIPTION_BATCH_SIZE,
 ) -> str | None:
     """Submit one description batch. Returns the batch id, or None when nothing was sent.
@@ -639,7 +640,7 @@ def collect_batches(
     config: ScoreConfig,
     *,
     redis_client: Any = None,
-    model: str = "claude-sonnet-4-5",
+    model: str = DEFAULT_ANTHROPIC_MODEL,
     now: datetime | None = None,
 ) -> int:
     """Reap stale claims, then apply every ENDED batch. Returns entries applied.

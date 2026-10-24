@@ -27,6 +27,7 @@ import respx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from brave.clients.llm import final_text
 from brave.core.models import Base, LLMGeneration
 
 
@@ -296,7 +297,7 @@ async def test_generate_prices_web_search_fee_on_top_of_tokens(
 
     await client.generate(messages=[{"role": "user", "content": "x"}])
 
-    expected = (20_000 * 3.0 + 1_000 * 15.0) / 1_000_000 + 3 * 0.01
+    expected = (20_000 * 2.0 + 1_000 * 10.0) / 1_000_000 + 3 * 0.01  # default: Sonnet 5.5
     rows = sqlite_session.query(LLMGeneration).all()
     assert len(rows) == 1
     assert float(rows[0].usd_cost) == pytest.approx(expected)
@@ -315,9 +316,60 @@ async def test_generate_without_server_tool_use_prices_tokens_only(
 
     await client.generate(messages=[{"role": "user", "content": "x"}])
 
-    expected = (1_000 * 3.0 + 500 * 15.0) / 1_000_000
+    expected = (1_000 * 2.0 + 500 * 10.0) / 1_000_000  # default: Sonnet 5.5
     rows = sqlite_session.query(LLMGeneration).all()
     assert float(rows[0].usd_cost) == pytest.approx(expected)
+
+
+async def test_generate_turns_thinking_off_only_on_5x_models(
+    monkeypatch, fake_redis, sqlite_session
+):
+    """The 5.x models think by default and thinking eats max_tokens=2048; Sonnet 4.5 never
+    took a thinking param, so it must not get one now."""
+    client = _generate_client(
+        monkeypatch, redis_client=fake_redis, session=sqlite_session, lane="test"
+    )
+    create = AsyncMock(return_value=_fake_response(input_tokens=10, output_tokens=5))
+    client._anthropic_client.messages.create = create
+
+    await client.generate(messages=[{"role": "user", "content": "x"}])
+    await client.generate(messages=[{"role": "user", "content": "x"}], model="claude-haiku-5-5")
+    await client.generate(messages=[{"role": "user", "content": "x"}], model="claude-sonnet-4-5")
+
+    sent = [c.kwargs for c in create.await_args_list]
+    assert sent[0]["model"] == "claude-sonnet-5-5"
+    assert sent[0]["thinking"] == {"type": "between_tools"}
+    assert sent[1]["thinking"] == {"type": "disabled"}
+    assert "thinking" not in sent[2]
+
+
+async def test_generate_prices_haiku_5_5_at_its_rates(monkeypatch, fake_redis, sqlite_session):
+    client = _generate_client(
+        monkeypatch, redis_client=fake_redis, session=sqlite_session, lane="test"
+    )
+    client._anthropic_client.messages.create = AsyncMock(
+        return_value=_fake_response(input_tokens=10_000, output_tokens=1_000)
+    )
+
+    await client.generate(messages=[{"role": "user", "content": "x"}], model="claude-haiku-5-5")
+
+    rows = sqlite_session.query(LLMGeneration).all()
+    assert float(rows[0].usd_cost) == pytest.approx((10_000 * 0.10 + 1_000 * 0.50) / 1_000_000)
+
+
+def test_final_text_drops_the_preamble_written_before_a_search():
+    """Measured on Sonnet 5.5 + web_search: a text block BEFORE the search ("Vou buscar
+    fontes...") then the answer split over many text blocks after the results."""
+    content = [
+        SimpleNamespace(type="text", text="Vou buscar fontes confiáveis antes de escrever."),
+        SimpleNamespace(type="server_tool_use"),
+        SimpleNamespace(type="web_search_tool_result"),
+        SimpleNamespace(type="text", text="Imagine descer até um lago azul. "),
+        SimpleNamespace(type="text", text="Vá pela manhã."),
+    ]
+    assert final_text(content) == "Imagine descer até um lago azul. Vá pela manhã."
+    no_tools = [SimpleNamespace(type="text", text="a"), SimpleNamespace(type="text", text="b")]
+    assert final_text(no_tools) == "ab"
 
 
 async def test_generate_prices_haiku_at_haiku_rates(monkeypatch, fake_redis, sqlite_session):
@@ -357,7 +409,7 @@ async def test_generate_accumulates_web_search_fee_across_pause_turns(
 
     await client.generate(messages=[{"role": "user", "content": "x"}])
 
-    expected = (14_000 * 3.0 + 500 * 15.0) / 1_000_000 + 3 * 0.01
+    expected = (14_000 * 2.0 + 500 * 10.0) / 1_000_000 + 3 * 0.01  # default: Sonnet 5.5
     rows = sqlite_session.query(LLMGeneration).all()
     assert float(rows[0].usd_cost) == pytest.approx(expected)
 

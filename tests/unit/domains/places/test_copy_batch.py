@@ -275,6 +275,12 @@ def test_params_carry_no_batch_forbidden_key() -> None:
     assert params["max_tokens"] == 2048
 
 
+def test_params_turn_thinking_off_on_5x_like_the_inline_call() -> None:
+    """Same thinking param as RealLLMClient.generate, so batch and inline stay one experiment."""
+    assert build_request(_make_rio())["params"]["thinking"] == {"type": "between_tools"}
+    assert "thinking" not in build_request(_make_rio(), model="claude-sonnet-4-5")["params"]
+
+
 @pytest.mark.asyncio
 async def test_params_are_identical_to_the_inline_copywriter_call() -> None:
     """Batch and inline must send the same prompt, or the two costs are not comparable."""
@@ -670,7 +676,8 @@ def test_cost_is_batch_rates_plus_undiscounted_search_fee() -> None:
             batch_id="msgbatch_01",
         )
     row = session.generations[0]
-    expected = (18_984 * 3.0 * 0.5 + 977 * 15.0 * 0.5) / 1_000_000 + 2 * 0.01
+    # Default model: Sonnet 5.5 at $2/$10 per MTok.
+    expected = (18_984 * 2.0 * 0.5 + 977 * 10.0 * 0.5) / 1_000_000 + 2 * 0.01
     assert row.usd_cost == pytest.approx(expected)
     assert row.prompt_tokens == 18_984
 
@@ -696,7 +703,7 @@ def test_cache_tokens_are_priced_at_batch_rates_like_the_inline_path() -> None:
             batch_id="msgbatch_01",
         )
     expected = (
-        1_000 * 3.0 + 4_000 * 3.0 * 1.25 + 100_000 * 3.0 * 0.1 + 977 * 15.0
+        1_000 * 2.0 + 4_000 * 2.0 * 1.25 + 100_000 * 2.0 * 0.1 + 977 * 10.0
     ) * 0.5 / 1_000_000 + 2 * 0.01
     assert session.generations[0].usd_cost == pytest.approx(expected)
 

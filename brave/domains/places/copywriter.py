@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from brave.clients.base import DEFAULT_ANTHROPIC_MODEL
 from brave.domains.places.grounding import (
     MIN_GROUNDEDNESS,
     groundedness_ratio,
@@ -282,7 +283,7 @@ class TourismCopywriter:
     def __init__(
         self,
         llm_client: LLMClientProtocol,
-        model: str = "claude-sonnet-4-5",
+        model: str = DEFAULT_ANTHROPIC_MODEL,
         *,
         enable_web_search: bool = True,
         search_client: Any = None,

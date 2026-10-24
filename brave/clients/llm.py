@@ -4,7 +4,7 @@ Uses instructor 1.15.x (Mode.TOOLS) wrapping AsyncOpenAI pointed at OpenRouter f
 and native AsyncAnthropic 0.109.x for generate().
 Implements LLMClientProtocol:
   - extract(prompt, schema, mode="tools") → schema instance (D-03)
-  - generate(messages, model="claude-sonnet-4-5") → str (D-05a)
+  - generate(messages, model=DEFAULT_ANTHROPIC_MODEL) → str (D-05a)
 
 Guard: raises RuntimeError if AppConfig().run_real_externals is False.
 This prevents accidental real LLM calls in CI / default test suite.
@@ -45,6 +45,7 @@ from openai import (
 )
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from brave.clients.base import DEFAULT_ANTHROPIC_MODEL
 from brave.clients.tavily import _is_retryable as _is_httpx_retryable
 from brave.clients.tavily import _wait as _httpx_wait
 from brave.config.settings import LLMConfig
@@ -70,7 +71,45 @@ _SONNET_4_5_OUTPUT_USD_PER_MTOK: float = 15.0
 _PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-5": (_SONNET_4_5_INPUT_USD_PER_MTOK, _SONNET_4_5_OUTPUT_USD_PER_MTOK),
     "claude-haiku-4-5": (1.0, 5.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    # Up to 100K-token prompts; copywriter/WhatsApp prompts stay far below that.
+    "claude-haiku-5-5": (0.10, 0.50),
 }
+
+# The 5.x models think by default, and thinking counts against max_tokens=2048 — enough to
+# cut a description short. These turn it off, matching what Sonnet 4.5 did without a
+# thinking param. Sonnet 5.5 rejects {"type": "disabled"}; between_tools is its off switch.
+_THINKING_OFF: dict[str, dict[str, str]] = {
+    "claude-sonnet-5-5": {"type": "between_tools"},
+    "claude-haiku-5-5": {"type": "disabled"},
+}
+
+
+def anthropic_prices(model: str) -> tuple[float, float]:
+    """(input, output) USD per MTok; an unknown slug is priced as Sonnet 4.5 (over-counts)."""
+    return _PRICES_USD_PER_MTOK.get(model, _PRICES_USD_PER_MTOK["claude-sonnet-4-5"])
+
+
+def final_text(content: Any) -> str:
+    """The answer's text: text blocks after the last server-tool result, concatenated.
+
+    With web_search the model often writes a preamble before searching ("Vou buscar fontes
+    confiáveis sobre o atrativo antes de escrever."), measured on Sonnet 5.5. Joining every
+    text block would put that line inside descricao_editorial.
+    """
+    blocks = list(content or [])
+    last_tool = max(
+        (i for i, b in enumerate(blocks) if getattr(b, "type", "").endswith("_tool_result")),
+        default=-1,
+    )
+    return "".join(
+        getattr(b, "text", "") for b in blocks[last_tool + 1 :] if getattr(b, "type", "") == "text"
+    )
+
+
+def anthropic_thinking(model: str) -> dict[str, str] | None:
+    """The thinking param that keeps ``model`` from thinking, or None when none is needed."""
+    return _THINKING_OFF.get(model)
 
 # Prompt-caching multipliers on the input rate. Nothing sends cache_control today, so both
 # counters are always 0 — priced anyway because a cache hit MOVES tokens out of input_tokens,
@@ -422,7 +461,7 @@ class RealLLMClient:
     async def generate(
         self,
         messages: list[dict[str, Any]],
-        model: str = "claude-sonnet-4-5",
+        model: str = DEFAULT_ANTHROPIC_MODEL,
         *,
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
@@ -438,7 +477,7 @@ class RealLLMClient:
 
         Args:
             messages: Conversation history list [{role, content}].
-            model:    Model identifier (default: claude-sonnet-4-5).
+            model:    Model identifier (default: DEFAULT_ANTHROPIC_MODEL).
             system:   Optional system prompt (copywriter persona / guards).
             tools:    Optional tool defs, e.g. the server-side web_search tool. When passed,
                       the server-side sampling loop may stop_reason=="pause_turn"; we resume
@@ -472,6 +511,9 @@ class RealLLMClient:
             create_kwargs["system"] = system
         if tools:
             create_kwargs["tools"] = tools
+        thinking = anthropic_thinking(model)
+        if thinking is not None:
+            create_kwargs["thinking"] = thinking
 
         response = await self._anthropic_create(**create_kwargs)
 
@@ -499,16 +541,11 @@ class RealLLMClient:
                 getattr(response.usage, "server_tool_use", None), "web_search_requests"
             )
 
-        # Extract text from all text-type blocks (skips server_tool_use / *_tool_result).
-        text = "".join(
-            getattr(block, "text", "") for block in response.content if block.type == "text"
-        )
+        text = final_text(response.content)
 
         # Anthropic does NOT return a cost field — compute from price table
         # (RESEARCH.md Pitfall 7).
-        price_in, price_out = _PRICES_USD_PER_MTOK.get(
-            model, _PRICES_USD_PER_MTOK["claude-sonnet-4-5"]
-        )
+        price_in, price_out = anthropic_prices(model)
         usd_cost: float = (
             prompt_tokens * price_in
             + cache_write_tokens * price_in * _CACHE_WRITE_MULTIPLIER

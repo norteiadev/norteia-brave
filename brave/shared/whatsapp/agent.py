@@ -488,7 +488,6 @@ async def _ask_followup_node(
     try:
         followup_text = await llm_client.generate(
             messages=[{"role": "user", "content": prompt}],
-            model="claude-sonnet-4-5",
         )
     except Exception as exc:
         logger.warning(
