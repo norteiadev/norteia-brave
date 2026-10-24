@@ -14,6 +14,7 @@
 | `quarentena +N (última: …ibge_unmatched…)` | Agency or shop names and cards TA places in the wrong UF: expected, a handful per UF. Dozens point to the resolver: pause and investigate. |
 | `logs: N linha(s) de erro; 1ª: …` | Read the first line. Match it in the tables below. A traceback that repeats on every card: pause and fix. |
 | `api: engine/status inacessível` | API container down or bearer wrong: `docker compose ps`, `scripts/monitors/stack.sh`. |
+| `postgres: runs_history ilegível` | Postgres (or `docker compose exec`) unreachable. The monitor keeps watching instead of ending: `docker compose ps postgres`. |
 
 The tables below match lines from the seven stage monitors, used to dig into a `FALHA`.
 
