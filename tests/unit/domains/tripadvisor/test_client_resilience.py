@@ -234,3 +234,114 @@ async def test_nominatim_slot_is_shared_across_client_instances(monkeypatch) -> 
         await worker_b.geocode("2", "B", "MT")  # fresh instance: local gate is empty
 
     assert len(sleeps) == 1 and 0 < sleeps[0] <= 1.1
+
+
+# ---------------------------------------------------------------------------
+# _send: 5xx retry, network outage wait, session probe (24/10 PR sweep)
+# ---------------------------------------------------------------------------
+
+_PAGE = "https://www.tripadvisor.com.br/Attraction_Review-g1-d7-Reviews.html"
+_LD_OK = (
+    '<html><script type="application/ld+json">'
+    + json.dumps({"@type": "LocalBusiness", "address": {"addressLocality": "Curitiba"}})
+    + "</script></html>"
+)
+
+
+def _no_sleep(monkeypatch) -> list[float]:
+    import brave.domains.tripadvisor.client as client_mod
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(client_mod.asyncio, "sleep", fake_sleep)
+    return sleeps
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+async def test_5xx_is_retried_inside_the_client(monkeypatch, status) -> None:
+    """A transient TA 5xx (503 on one PR card, 24/10) must not quarantine the card."""
+    sleeps = _no_sleep(monkeypatch)
+    with respx.mock:
+        route = respx.get(_PAGE).mock(
+            side_effect=[httpx.Response(status), httpx.Response(200, text=_LD_OK)]
+        )
+        page = await _client().fetch_attraction_address(7)
+
+    assert page["city_name"] == "Curitiba"
+    assert route.call_count == 2 and sleeps == [1.0]
+
+
+@pytest.mark.asyncio
+async def test_5xx_that_persists_still_raises(monkeypatch) -> None:
+    _no_sleep(monkeypatch)
+    with respx.mock:
+        route = respx.get(_PAGE).mock(return_value=httpx.Response(503))
+        with pytest.raises(httpx.HTTPStatusError):
+            await _client().fetch_attraction_address(7)
+
+    assert route.call_count == 3  # 1 + 2 retries
+
+
+@pytest.mark.asyncio
+async def test_outage_waits_for_the_network_and_retries_the_same_request(monkeypatch) -> None:
+    """Internet down mid-sweep: the request waits (polling) and resumes where it stopped,
+    instead of quarantining every card; the session key keeps its TTL meanwhile."""
+    import brave.domains.tripadvisor.client as client_mod
+
+    sleeps = _no_sleep(monkeypatch)
+    online = iter([False, False, True])  # down at the failure, down at one poll, then back
+    monkeypatch.setattr(client_mod, "is_online", lambda: next(online))
+    redis = fakeredis.FakeRedis()
+    redis.set(client_mod.BRAVE_TA_SESSION_KEY, "{}", ex=5)
+    seen_down: list[bool] = []
+
+    def back(request):
+        seen_down.append(redis.exists(client_mod.NETWORK_DOWN_KEY) == 1)
+        return httpx.Response(200, text=_LD_OK)
+
+    with respx.mock:
+        route = respx.get(_PAGE).mock(side_effect=[httpx.ConnectError("down"), back])
+        page = await _client(redis).fetch_attraction_address(7)
+
+    assert page["city_name"] == "Curitiba" and route.call_count == 2
+    assert len(sleeps) == 2  # two polls while offline, no retry backoff spent
+    assert seen_down == [False]  # the flag is cleared once the network is back
+    assert redis.ttl(client_mod.BRAVE_TA_SESSION_KEY) > 5  # slid while we waited
+
+
+@pytest.mark.asyncio
+async def test_transport_error_while_online_is_retried_then_raised(monkeypatch) -> None:
+    """A connection error with the internet up is this request's: backoff, then raise."""
+    import brave.domains.tripadvisor.client as client_mod
+
+    sleeps = _no_sleep(monkeypatch)
+    monkeypatch.setattr(client_mod, "is_online", lambda: True)
+    with respx.mock:
+        route = respx.get(_PAGE).mock(side_effect=httpx.ConnectError("reset"))
+        with pytest.raises(httpx.ConnectError):
+            await _client().fetch_attraction_address(7)
+
+    assert route.call_count == 3 and sleeps == [1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_probe_session_checks_listing_and_attraction_page() -> None:
+    """The listing kept answering 200 while DataDome 403'd the attraction pages (24/10):
+    the probe must fail on the page and say which surface failed."""
+    from brave.domains.tripadvisor.client import _PROBE_LOCATION_ID, SessionExpiredError
+
+    page = f"https://www.tripadvisor.com.br/Attraction_Review-g1-d{_PROBE_LOCATION_ID}-Reviews.html"
+    with respx.mock:
+        listing = respx.post(_GQL).mock(
+            return_value=httpx.Response(200, json=_page([_card(1)], totalResults=1))
+        )
+        respx.get(page).mock(return_value=httpx.Response(403))
+        with pytest.raises(SessionExpiredError) as exc_info:
+            await _client().probe_session()
+
+    assert listing.call_count == 1
+    assert "ta_probe:página" in exc_info.value.__notes__

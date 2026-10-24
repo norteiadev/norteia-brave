@@ -74,6 +74,10 @@ while true; do
     ttl=$(rds TTL brave:ta:session); nb=$(rds GET brave:ta:needs_bootstrap)
     dead=""; { [ "$ttl" = -2 ] || [ -z "$ttl" ]; } && dead="sessão TA ausente${nb:+ (needs_bootstrap=$nb)} — reinjetar cURL"
     fail_once sess "$dead" "$dead"
+    # Set by the TA client while a request waits out an outage (it resumes on its own).
+    nd=$(rds GET brave:net:down)
+    if [ -n "$nd" ]; then fail_once net "$nd" "internet caiu (desde $nd) — o sweep espera e retoma na mesma página"
+    elif [ -f "$_STATE/fail_net" ]; then rm -f "$_STATE/fail_net"; emit "internet voltou — sweep retomado"; fi
   fi
 
   down=$(for svc in postgres redis api worker beat; do docker compose ps --status running -q "$svc" 2>/dev/null | grep -q . || printf '%s ' "$svc"; done)
