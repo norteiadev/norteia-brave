@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from brave.clients.base import DEFAULT_ANTHROPIC_MODEL
+
 
 class NullLLMClient:
     """No-network LLMClient stub (structural protocol match).
@@ -47,7 +49,7 @@ class NullLLMClient:
     async def generate(
         self,
         messages: list[dict[str, Any]],
-        model: str = "claude-sonnet-4-5",
+        model: str = DEFAULT_ANTHROPIC_MODEL,
         *,
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,

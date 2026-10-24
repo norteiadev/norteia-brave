@@ -443,7 +443,7 @@ class AppConfig(BaseSettings):
 
     # atrativo_voice_model_slug: Anthropic model for the TourismCopywriter. A Sonnet slug —
     # the server-side web_search tool runs there. (Was MelhoresDestinosConfig.voice_model_slug.)
-    atrativo_voice_model_slug: str = "claude-sonnet-4-5"
+    atrativo_voice_model_slug: str = "claude-sonnet-5-5"
 
     # places_enrichment_enabled gates the Google Places enrichment lane for TA atrativos
     # (Text Search → place_id → opening hours + review-recency liveness). When False the

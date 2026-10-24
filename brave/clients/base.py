@@ -20,6 +20,10 @@ Seven protocols (CORE-11 + TA-01 + TA-14):
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
+# claude-sonnet-4-5 retires on 2026-11-30 (Anthropic deprecation), so the default moved to
+# Sonnet 5.5 (~30% more tokens for the same text, cheaper per token).
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5"
+
 
 class LLMClientProtocol(Protocol):
     """LLM client for extraction (DeepSeek/instructor) and generation (Sonnet) (D-08, D-09).
@@ -55,7 +59,7 @@ class LLMClientProtocol(Protocol):
     async def generate(
         self,
         messages: list[dict[str, Any]],
-        model: str = "claude-sonnet-4-5",
+        model: str = DEFAULT_ANTHROPIC_MODEL,
         *,
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
@@ -66,7 +70,7 @@ class LLMClientProtocol(Protocol):
 
         Args:
             messages: Conversation history list [{role, content}].
-            model:    Model identifier (default: claude-sonnet-4-5).
+            model:    Model identifier (default: DEFAULT_ANTHROPIC_MODEL).
             system:   Optional system prompt.
             tools:    Optional tool defs (e.g. server-side web_search).
 

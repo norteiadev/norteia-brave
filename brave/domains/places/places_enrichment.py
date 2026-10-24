@@ -50,6 +50,7 @@ from rapidfuzz import fuzz
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from brave.clients.base import DEFAULT_ANTHROPIC_MODEL
 from brave.clients.hybrid_places import ApifyBatchFailedError, ApifyNoResultError
 from brave.clients.null_places import NullPlacesClient
 from brave.clients.places import (
@@ -476,7 +477,7 @@ class PlacesEnrichmentAgent:
         config: ScoreConfig,
         llm_client: LLMClientProtocol | None = None,
         distritos: list[IbgeDistrito] | None = None,
-        voice_model_slug: str = "claude-sonnet-4-5",
+        voice_model_slug: str = DEFAULT_ANTHROPIC_MODEL,
         description_enabled: bool = True,
         enable_web_search: bool = True,
         now: datetime | None = None,
