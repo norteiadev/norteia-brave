@@ -399,6 +399,13 @@ class TripAdvisorAtrativosIngest:
             geo_id, start_page=start_page
         ):
             self.resume_page = _offset // 30 + 1
+            if redis is not None:
+                sweep_progress.record_uf_page(
+                    redis,
+                    uf,
+                    self.resume_page,
+                    getattr(self._client, "listing_pages", {}).get(geo_id),
+                )
             # Mid-sweep pause/off/stop: this producer was fanned out per UF and keeps
             # paginating after the orchestrator's dispatch loop broke. Poll the engine
             # BEFORE ingesting each page so a Motor Pausado/Desligado stops new inserts

@@ -1,5 +1,23 @@
 # Monitor events → action
 
+## Sweep monitor failures
+
+`scripts/monitors/sweep.sh` prints `FALHA <what>`. Pause the engine (`POST /api/v1/engine/mode {"mode":"PAUSADO"}`) before any fix that touches code, config or the session. Ask the user before resuming.
+
+| `FALHA …` | Action |
+|---|---|
+| `motor pausado: {reason: …}` | The engine paused itself: `daily_budget` / `provider_balance` rows below. A pause the user asked for needs nothing. |
+| `sessão TA ausente` | Session dead: **TA session** below (reinject the saved cURL with `scripts/ta_bootstrap.py` first; ask for a new one only if the canary fails). |
+| `produtor falhou` | Run `scripts/monitors/logs.sh` for a minute, then match its lines in the tables below. |
+| `serviço parado: …` | `docker compose up -d <svc>`. A restart you planned is benign. |
+| `norteia-api fora` | Benign for < 1 min (a DEV deploy). Longer: tell the user. Pushes wait for repush. |
+| `quarentena +N (última: …ibge_unmatched…)` | Agency or shop names and cards TA places in the wrong UF: expected, a handful per UF. Dozens point to the resolver: pause and investigate. |
+| `logs: N linha(s) de erro; 1ª: …` | Read the first line. Match it in the tables below. A traceback that repeats on every card: pause and fix. |
+| `api: engine/status inacessível` | API container down or bearer wrong: `docker compose ps`, `scripts/monitors/stack.sh`. |
+| `postgres: runs_history ilegível` | Postgres (or `docker compose exec`) unreachable. The monitor keeps watching instead of ending: `docker compose ps postgres`. |
+
+The tables below match lines from the seven stage monitors, used to dig into a `FALHA`.
+
 Read the line, find its row, act. Rows marked **benign** need no action; say so to the user in one line and keep watching.
 
 ## Benign (expected noise)
