@@ -38,8 +38,12 @@ done
 v=$(echo "$cfg" | jq -r '(.effective // .).atrativo_description_batch_enabled' 2>/dev/null); [ "$v" = false ] && ok "batch lane off" || warn "atrativo_description_batch_enabled=$v (describe run refuses)"
 
 c=$(curl -s -m 30 -H "$H" "$API/api/v1/cost")
-pu=$(echo "$c" | jq -r '.places.usd_total // 0'); pc=$(echo "$c" | jq -r '.places.total_cap_usd // 300')
-awk -v u="$pu" -v c="$pc" 'BEGIN{exit !(c-u>50)}' && ok "Places credit used US\$$pu of $pc" || warn "Places credit low: US\$$pu of $pc (~US\$0.05 per atrativo)"
+# Hybrid lane (since 21/10): ~US$0.007 Places + ~US$0.007 Apify per atrativo, so each credit covers left/0.007 atrativos.
+for p in places apify; do
+  u=$(echo "$c" | jq -r ".$p.usd_total // 0"); t=$(echo "$c" | jq -r ".$p.total_cap_usd // 0")
+  msg=$(awk -v u="$u" -v t="$t" -v p="$p" 'BEGIN{printf "%s credit used US$%.2f of %s, left US$%.2f (~%d atrativos at US$0.007)", p, u, t, t-u, (t-u)/0.007}')
+  awk -v u="$u" -v t="$t" 'BEGIN{exit !(t-u>15)}' && ok "$msg" || warn "$msg — LOW"
+done
 llm=$(rds GET "brave:cost:daily:$(date -u +%F)"); ok "LLM+search today US\$${llm:-0} (cap \$${BRAVE_LLM_USD_DAILY_BUDGET:-50})"
 
 ram=$(docker compose exec -T redis sh -c 'awk "/MemAvailable/{print int(\$2/1024)}" /proc/meminfo' 2>/dev/null)
