@@ -98,17 +98,20 @@ Report to the user from its output: run durations, atrativos collected / describ
 You are authorized to carry a fix all the way to `main` without asking:
 
 1. **Capture the exception.** A `FALHA` line, a traceback in the logs, a poison row, a failed producer. Get the full traceback (`docker compose logs --since 10m worker | grep -B5 -A30 Traceback`) and the record or card it hit.
-2. **Analyze.** Find the root cause in the code, not the symptom: reproduce it in a unit test when you can. Decide whether it **blocks** the run (the engine stopped or paused itself, the producer died, every card fails) or not (one card quarantined, the run keeps going).
+2. **Analyze.** Find the root cause in the code, not the symptom: reproduce it in a unit test when you can. Decide which case it is, step 9 depends on it: it **blocks** the run (the engine stopped or paused itself, the producer died), it **hits every card** while the run goes on, or it hits **one card** (quarantined, the run keeps going).
 3. **Fix.** On a branch from `main` (`fix/…`), with a test that fails without the fix. Run `.venv/bin/pytest` and `.venv/bin/ruff`, never `uv run` (it rewrites `uv.lock`; if it changes, `git checkout uv.lock`).
-4. **Code review by another agent.** Push the branch and hand it to a separate agent (Agent tool, `isolation: "worktree"`): it reviews the diff and reports findings. In the worktree it tests with `PYTHONPATH=$PWD <repo>/.venv/bin/pytest`, because the venv of the main checkout points at the main checkout.
+4. **Code review by another agent.** Push the branch and hand it to a separate agent (Agent tool, `isolation: "worktree"`): it reviews the diff and reports findings. In the worktree it tests with `PYTHONPATH=$PWD <repo>/.venv/bin/pytest`, because the venv of the main checkout points at the main checkout. The branch stays checked out in the main checkout, so git refuses it there: the agent resets its own worktree branch to `origin/<branch>` and pushes with `git push origin HEAD:<branch>`. Run `git pull` in the main checkout after it pushes.
 5. **Correction.** Apply the findings (the reviewer may push the fixes itself), re-run the tests. A finding nobody can fix blocks the merge: tell the user.
 6. **PR.** `gh pr create --base main`.
-7. **Merge.** `gh pr merge <n> --merge`. Remove the agent's worktree (`git worktree remove --force <path>`): it holds the branch.
+7. **Merge.** `gh pr merge <n> --merge`. Remove the agent's worktree and its branch (`git worktree remove --force <path>`, `git branch -D worktree-agent-…`).
 8. **Update local `main`.** `git checkout main && git pull`.
-9. **Restart only what needs it.** The repo is mounted, but the processes do not reload:
-   - `api` and `beat` can restart at any time; the sweep does not run in them.
-   - `worker` runs the sweep. While the run is going and the failure **does not block** it, restart the worker only after `FIM run … status=concluido`, before the describe. Records quarantined meanwhile are retried on the next pass, or by a re-sweep of that UF, which skips the synced cards.
-   - When the failure **blocks** the run (the engine stopped or paused itself), restart the worker right after the merge and resume the **same** UF with `engine/start`. The user's go-ahead for that UF covers finishing it; a new UF still needs their go-ahead.
+9. **Restart only what needs it.** The repo is mounted. The sweep runs in `worker`, never in `api` or `beat`:
+   - `api` runs `uvicorn --reload`: it reloads itself on the pull, no restart needed.
+   - `beat` does not reload: `docker compose restart beat` at any time. The schedule lives in Redis (celery-redbeat).
+   - `worker` does not reload. `docker compose restart worker` sends SIGTERM, a warm shutdown: the sweep chunk in flight runs to its time budget (up to ~1 h, `stop_grace_period: 65m`), hands its continuation over to the queue and exits, and the new worker carries on with the fix. The run is not interrupted, but the command blocks until then: run it with `run_in_background`. Never `docker compose kill worker` or `restart -t <short>` while a run is going: SIGKILL strands the in-flight message (acks_late) for the 3 h `visibility_timeout` and the run stalls.
+   - **Blocks** (the engine stopped or paused itself, the producer died): no sweep chunk is in flight, so the restart is quick. Restart the worker right after the merge and resume the **same** UF with `engine/start`. The user's go-ahead for that UF covers finishing it; a new UF still needs their go-ahead.
+   - **Every card**: restart the worker right after the merge, in the background. The cards the old code quarantines until the hand-over come back with a re-sweep of that UF after `FIM run`.
+   - **One card**: restart the worker after `FIM run … status=concluido`, before the describe (the describe runs in the worker too). A quarantined card has no Rio row, so a re-sweep of that UF retries it and skips the synced cards. An `ibge_unmatched` card is retried only when the fix bumps `IBGE_RESOLVER_VERSION`.
    - Verify that the restarted process sees the change (`docker compose exec -T worker /app/.venv/bin/python -c "import …"`). On 24/10, a stale worker ran the old Places gate behind a new endpoint.
 
 Tell the user, in one short message per fix: what failed, the cause, the PR, and when the fix went live.
