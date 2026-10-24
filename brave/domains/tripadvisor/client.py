@@ -242,9 +242,12 @@ class TripAdvisorClient:
         redis:  Sync Redis client (compatible with Celery worker thread context).
     """
 
-    def __init__(self, config: TripAdvisorConfig, redis: Any) -> None:
+    def __init__(self, config: TripAdvisorConfig, redis: Any, *, wait_offline: bool = True) -> None:
         self._config = config
         self._redis = redis
+        # A sweep waits out an internet outage (_wait_while_offline); a probe (keep-alive,
+        # injection canary, pre-flight) must answer within its own deadline instead.
+        self._wait_offline = wait_offline
         self._hc: httpx.AsyncClient | None = None
         self._review_errors_in_a_row = 0  # per-card reviews errors; a run of them is systemic
         self._page_errors_in_a_row = 0  # attraction pages without the block; same rule
@@ -309,27 +312,32 @@ class TripAdvisorClient:
         from brave.domains.tripadvisor.session import persist_rotated_cookies  # noqa: PLC0415
 
         base = max(self._config.page_throttle_seconds, 1.0)
-        attempt = 0
+        # One retry budget per failure class: a 503 must not spend a 429's backoffs.
+        tries = {"transport": 0, "429": 0, "5xx": 0}
+
+        async def backoff(kind: str, hint: float | None = None) -> bool:
+            attempt = tries[kind]
+            if attempt >= _RATE_LIMIT_RETRIES:
+                return False
+            await asyncio.sleep(
+                min(max(hint or 0.0, base * 2**attempt), _RATE_LIMIT_MAX_SLEEP_SECONDS)
+            )
+            tries[kind] += 1
+            return True
+
         while True:
             try:
                 async with self._http(cookies, proxy) as hc:
                     resp = await getattr(hc, method)(url, **kwargs)
             except httpx.TransportError:
-                if await self._wait_while_offline(what):
+                if await self._wait_while_offline(what) or await backoff("transport"):
                     continue
-                if attempt >= _RATE_LIMIT_RETRIES:
-                    raise
-                await asyncio.sleep(base * 2**attempt)
-                attempt += 1
-                continue
+                raise
             if resp.status_code == 429 and not _is_datadome_challenge(resp):
                 hint = _retry_after_seconds(resp)
-                if attempt < _RATE_LIMIT_RETRIES:
-                    await asyncio.sleep(
-                        min(max(hint or 0.0, base * 2**attempt), _RATE_LIMIT_MAX_SLEEP_SECONDS)
-                    )
-                    attempt += 1
+                if await backoff("429", hint):
                     continue
+                attempt = tries["429"]
                 # T-15-04-01: status/attempts only — never cookies/UA/session/proxy.
                 logger.warning("ta_rate_limited", what=what, attempts=attempt + 1)
                 raise SourceRateLimitError(
@@ -341,10 +349,10 @@ class TripAdvisorClient:
                     f"TripAdvisor {what} returned {resp.status_code} — "
                     "DataDome session expired or queryId rotated. Re-inject required."
                 )
-            if resp.status_code in _RETRY_STATUSES and attempt < _RATE_LIMIT_RETRIES:
+            if resp.status_code in _RETRY_STATUSES and await backoff(
+                "5xx", _retry_after_seconds(resp)
+            ):
                 logger.info("ta_server_error_retry", what=what, status=resp.status_code)
-                await asyncio.sleep(base * 2**attempt)
-                attempt += 1
                 continue
             resp.raise_for_status()
             # Best-effort (it already swallows internally): a write-back error never aborts.
@@ -361,19 +369,27 @@ class TripAdvisorClient:
         Redis: an outage wait never raises on it. A Celery time budget that runs out while
         waiting cancels this sleep and hands the sweep over at the same page, as usual.
         """
+        # ponytail: is_online probes direct egress; behind a proxy that test says nothing
+        # about TA's reachability, so a proxied client never waits (retry, then raise).
+        if not self._wait_offline or self._config.proxy_url:
+            return False
         if await asyncio.to_thread(is_online):
             return False
         logger.warning("ta_network_down", what=what)
-        with contextlib.suppress(Exception):
-            self._redis.set(NETWORK_DOWN_KEY, datetime.now(UTC).isoformat(timespec="seconds"))
-        while True:
-            await asyncio.sleep(_NETWORK_POLL_SECONDS)
+        since = datetime.now(UTC).isoformat(timespec="seconds")
+        try:
+            while True:
+                # The flag carries a TTL refreshed per poll: a wait killed outright (hard
+                # time limit) cannot leave it set past a few polls.
+                with contextlib.suppress(Exception):
+                    self._redis.set(NETWORK_DOWN_KEY, since, ex=int(_NETWORK_POLL_SECONDS * 4))
+                    self._redis.expire(BRAVE_TA_SESSION_KEY, self._config.session_ttl)
+                await asyncio.sleep(_NETWORK_POLL_SECONDS)
+                if await asyncio.to_thread(is_online):
+                    break
+        finally:  # back online, or the time budget cancelled the wait
             with contextlib.suppress(Exception):
-                self._redis.expire(BRAVE_TA_SESSION_KEY, self._config.session_ttl)
-            if await asyncio.to_thread(is_online):
-                break
-        with contextlib.suppress(Exception):
-            self._redis.delete(NETWORK_DOWN_KEY)
+                self._redis.delete(NETWORK_DOWN_KEY)
         logger.info("ta_network_back", what=what)
         return True
 
@@ -391,8 +407,16 @@ class TripAdvisorClient:
         except Exception as exc:
             exc.add_note("ta_probe:listagem")
             raise
+        await self.probe_page()
+
+    async def probe_page(self) -> None:
+        """One attraction page must answer with its address block. {} (404/410, redirect
+        off Attraction_Review) is no proof the surface works: it raises too."""
         try:
-            await self.fetch_attraction_address(_PROBE_LOCATION_ID)
+            if not await self.fetch_attraction_address(_PROBE_LOCATION_ID):
+                raise SourceSchemaError(
+                    f"TripAdvisor probe page {_PROBE_LOCATION_ID} answered no attraction"
+                )
         except Exception as exc:
             exc.add_note("ta_probe:página")
             raise

@@ -220,7 +220,7 @@ def main() -> None:
     app_config = load_effective_config(session)
     score_config = app_config.score
 
-    ta_client = TripAdvisorClient(config=TripAdvisorConfig(), redis=redis_client)
+    ta_client = TripAdvisorClient(config=TripAdvisorConfig(), redis=redis_client, wait_offline=False)
     geocoder = NominatimGeocoderClient(config=app_config.nominatim, redis=redis_client)
     ibge_csv = _REPO_ROOT / "data" / "ibge" / "ibge_municipios.csv"
     ibge_records = load_ibge_csv(ibge_csv)

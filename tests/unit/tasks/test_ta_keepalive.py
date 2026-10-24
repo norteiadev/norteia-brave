@@ -49,7 +49,7 @@ class _StubOkClient(TripAdvisorClient):
 
     calls: list[dict] = []
 
-    def __init__(self, config, redis):
+    def __init__(self, config, redis, **kwargs):
         pass
 
     async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=1):
@@ -77,7 +77,7 @@ class _StubPageBlockedClient(_StubOkClient):
 class _StubExpiredClient(TripAdvisorClient):
     """Stub TripAdvisorClient whose GraphQL ping raises SessionExpiredError."""
 
-    def __init__(self, config, redis):
+    def __init__(self, config, redis, **kwargs):
         pass
 
     async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=1):
@@ -88,7 +88,7 @@ class _StubExpiredClient(TripAdvisorClient):
 class _StubMissingClient(TripAdvisorClient):
     """Stub TripAdvisorClient whose GraphQL ping raises SessionMissingError."""
 
-    def __init__(self, config, redis):
+    def __init__(self, config, redis, **kwargs):
         pass
 
     async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=1):
@@ -99,7 +99,7 @@ class _StubMissingClient(TripAdvisorClient):
 class _StubRuntimeErrorClient(TripAdvisorClient):
     """Stub TripAdvisorClient that raises a non-session RuntimeError."""
 
-    def __init__(self, config, redis):
+    def __init__(self, config, redis, **kwargs):
         pass
 
     async def fetch_attractions_paginated_gql(self, geo_id, start_page=1, max_pages=1):

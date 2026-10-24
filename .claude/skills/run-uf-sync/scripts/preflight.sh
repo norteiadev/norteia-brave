@@ -26,11 +26,11 @@ else fail "TA session ABSENT: inject a fresh listing cURL (references/events.md 
 # Live probe of both surfaces the per-UF sweep uses: the listing (GraphQL) can answer 200
 # while DataDome 403s the attraction pages (PR, 24/10) — a TTL check alone passes that session.
 if [ "${ttl:--2}" -gt 0 ] 2>/dev/null || [ "$ttl" = -1 ]; then
-  probe=$(docker compose exec -T worker /app/.venv/bin/python - 2>/dev/null <<'PY' | tail -1
+  probe=$(timeout 90 docker compose exec -T worker /app/.venv/bin/python - 2>/dev/null <<'PY' | tail -1
 import asyncio, os, redis
 from brave.config.settings import TripAdvisorConfig
 from brave.domains.tripadvisor.client import TripAdvisorClient
-client = TripAdvisorClient(config=TripAdvisorConfig(), redis=redis.from_url(os.environ["BRAVE_DB_REDIS_URL"]))
+client = TripAdvisorClient(config=TripAdvisorConfig(), redis=redis.from_url(os.environ["BRAVE_DB_REDIS_URL"]), wait_offline=False)
 try:
     asyncio.run(client.probe_session())
     print("ok")

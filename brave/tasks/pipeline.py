@@ -3295,6 +3295,8 @@ def ta_keepalive() -> None:
       motor off (R1) — a health beat must not be what kills a healthy run. The old
       behaviour (HTML transport + set_mode(DESLIGADO)) cut the 2026-09-15 pilot at 59
       atrativos: DataDome 403s the HTML page while the GraphQL sweep keeps getting 200.
+      Since the TLS fix (post_handshake_auth) the per-UF sweep reads attraction pages
+      itself, so a page 403 now IS a session the sweep cannot use: it joins the streak.
 
     On any other exception: logs error_type at WARNING and returns. Never raises.
 
@@ -3331,7 +3333,9 @@ def ta_keepalive() -> None:
     )
 
     ta_config = TripAdvisorConfig()
-    ta_client = TripAdvisorClient(config=ta_config, redis=rc)
+    # wait_offline=False: offline, the probe fails fast (logged) instead of holding a worker
+    # slot until the hard time limit kills it.
+    ta_client = TripAdvisorClient(config=ta_config, redis=rc, wait_offline=False)
 
     try:
         import asyncio as _asyncio  # noqa: PLC0415

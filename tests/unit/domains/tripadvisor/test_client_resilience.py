@@ -345,3 +345,78 @@ async def test_probe_session_checks_listing_and_attraction_page() -> None:
 
     assert listing.call_count == 1
     assert "ta_probe:página" in exc_info.value.__notes__
+
+
+@pytest.mark.asyncio
+async def test_each_failure_class_has_its_own_retries(monkeypatch) -> None:
+    """A 503 must not spend the backoffs a following 429 is owed."""
+    sleeps = _no_sleep(monkeypatch)
+    with respx.mock:
+        respx.get(_PAGE).mock(
+            side_effect=[
+                httpx.Response(503),
+                httpx.Response(429),
+                httpx.Response(429),
+                httpx.Response(200, text=_LD_OK),
+            ]
+        )
+        page = await _client().fetch_attraction_address(7)
+
+    assert page["city_name"] == "Curitiba" and sleeps == [1.0, 1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_a_probe_client_never_waits_for_the_network(monkeypatch) -> None:
+    """Keep-alive, canary and pre-flight answer within their own deadline: offline, the
+    transport error is retried and raised, never waited out."""
+    import brave.domains.tripadvisor.client as client_mod
+    from brave.config.settings import TripAdvisorConfig
+    from brave.domains.tripadvisor.client import TripAdvisorClient
+
+    sleeps = _no_sleep(monkeypatch)
+    monkeypatch.setattr(client_mod, "is_online", lambda: False)
+    client = TripAdvisorClient(
+        config=TripAdvisorConfig(page_throttle_seconds=0.0),
+        redis=fakeredis.FakeRedis(),
+        wait_offline=False,
+    )
+    client._get_session = lambda: dict(_STUB)  # type: ignore[method-assign]
+    with respx.mock:
+        respx.get(_PAGE).mock(side_effect=httpx.ConnectError("down"))
+        with pytest.raises(httpx.ConnectError):
+            await client.fetch_attraction_address(7)
+
+    assert sleeps == [1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_outage_wait_clears_the_network_flag(monkeypatch) -> None:
+    """The time budget cancelling the wait must not leave brave:net:down set."""
+    import asyncio
+
+    import brave.domains.tripadvisor.client as client_mod
+
+    monkeypatch.setattr(client_mod, "is_online", lambda: False)
+    monkeypatch.setattr(client_mod, "_NETWORK_POLL_SECONDS", 0.01)
+    redis = fakeredis.FakeRedis()
+    with respx.mock:
+        respx.get(_PAGE).mock(side_effect=httpx.ConnectError("down"))
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(_client(redis).fetch_attraction_address(7), timeout=0.05)
+
+    assert not redis.exists(client_mod.NETWORK_DOWN_KEY)
+
+
+@pytest.mark.asyncio
+async def test_probe_page_that_answers_no_attraction_fails() -> None:
+    """A 404/redirect makes fetch_attraction_address return {}: no proof the page works."""
+    from brave.domains.tripadvisor.client import _PROBE_LOCATION_ID
+    from brave.shared.exceptions import SourceSchemaError
+
+    page = f"https://www.tripadvisor.com.br/Attraction_Review-g1-d{_PROBE_LOCATION_ID}-Reviews.html"
+    with respx.mock:
+        respx.get(page).mock(return_value=httpx.Response(404))
+        with pytest.raises(SourceSchemaError) as exc_info:
+            await _client().probe_page()
+
+    assert "ta_probe:página" in exc_info.value.__notes__
