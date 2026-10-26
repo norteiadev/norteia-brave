@@ -253,9 +253,9 @@ async def test_hybrid_recent_ta_review_asks_apify_for_no_reviews() -> None:
 async def test_prefetch_one_run_for_the_lot_then_runs_spend_nothing_on_apify() -> None:
     other = "Convento da Penha, Vila Velha - ES"
     agent, apify, _ = _agent(
-        {Q: _apify(), "place_id:P_CONV": None},
-        more_essentials={"P_CONV": _essentials(place_id="P_CONV")},
-        ids={QUERY: [PID], other: ["P_CONV"]},
+        {Q: _apify(), "place_id:ChIJconventoDaPenhaVilaVelh": None},
+        more_essentials={"ChIJconventoDaPenhaVilaVelh": _essentials(place_id="ChIJconventoDaPenhaVilaVelh")},
+        ids={QUERY: [PID], other: ["ChIJconventoDaPenhaVilaVelh"]},
     )
     by_name, by_id, missing = _rio(), _rio(place_id_cache=PID), _rio(name="Convento da Penha")
     # Own names: skipped records must stay out of the run.
@@ -264,9 +264,9 @@ async def test_prefetch_one_run_for_the_lot_then_runs_spend_nothing_on_apify() -
 
     await agent.prefetch(agent.prefetch_items([by_name, by_id, missing, done, unplaced]))
     lot, retry = apify.lookup_calls
-    assert lot["queries"] == [Q, "place_id:P_CONV"]  # by_name's pick is by_id's place
+    assert lot["queries"] == [Q, "place_id:ChIJconventoDaPenhaVilaVelh"]  # by_name's pick is by_id's place
     # A miss may be a request the crawler dropped: ONE more batched run, misses only.
-    assert retry["queries"] == ["place_id:P_CONV"]
+    assert retry["queries"] == ["place_id:ChIJconventoDaPenhaVilaVelh"]
 
     for rio in (by_name, by_id, missing):
         await _run(agent, rio)
@@ -346,7 +346,7 @@ async def test_apify_no_hit_on_a_known_id_is_conclusive() -> None:
 @pytest.mark.asyncio
 async def test_google_retired_id_is_cleared_before_any_apify_run() -> None:
     agent, apify, _ = _agent()
-    rio = _rio(place_id_cache="ChIJ-retired")
+    rio = _rio(place_id_cache="ChIJretiredPlaceIdRetiredId")
     await _run(agent, rio)
 
     assert rio.normalized["place_id_cache"] is None and rio.normalized["google_place_id"] is None

@@ -45,6 +45,11 @@ _BIAS_MIN_KM, _BIAS_MAX_KM = 5.0, 50.0
 # so 50 finish well inside the run's 900 s timeout (a TIMED-OUT run loses its paid items).
 APIFY_RUN_MAX_QUERIES = 50
 
+# The crawler takes 27-char ChIJ…/GhIJ… place ids only. Any other id (Google's address
+# or route ids, e.g. a 139-char 'EjZF…' for a road, RS 26/10) FAILS the whole run, so
+# it is never sent and reads as a conclusive no-hit.
+_APIFY_PLACE_ID = re.compile(r"(?:ChIJ|GhIJ)[\w-]{23}")
+
 # Apify writes ranges as "07:00 to 17:00"; to_hours_map splits on dashes only.
 _TO = re.compile(r"\s+to\s+", re.IGNORECASE)
 
@@ -236,6 +241,8 @@ class HybridPlacesClient:
                 place_id = (self._picked[key] or {}).get("place_id")
                 if not place_id:
                     continue
+            if not _APIFY_PLACE_ID.fullmatch(place_id):
+                continue  # _take() answers it: a no-hit, no run
             query = f"place_id:{place_id}"
             if (query, True) not in self._found and query not in queries:
                 queries.append(query)
@@ -289,7 +296,10 @@ class HybridPlacesClient:
     def _take(self, query: str, include_reviews: bool) -> tuple[bool, dict[str, Any] | None]:
         """(cached?, item) for ``query``. An entry fetched WITH reviews also serves a caller
         that skips them (to_place_details drops them); never the other way round. A query
-        whose batched run failed raises instead of paying a run of its own."""
+        whose batched run failed raises instead of paying a run of its own; an id the
+        crawler cannot take is a cached no-hit."""
+        if not _APIFY_PLACE_ID.fullmatch(query.removeprefix("place_id:")):
+            return True, None
         for key in ((query, include_reviews), (query, True)):
             if key in self._found:
                 return True, self._found[key]

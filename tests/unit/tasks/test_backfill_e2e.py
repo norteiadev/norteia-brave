@@ -167,6 +167,11 @@ class _TA(FakeTripAdvisorClient):
         return await super().fetch_attraction_address(location_id)
 
 
+def _pid(rid) -> str:
+    """A 27-char ChIJ id per Rio row (the only shape the Apify crawler takes)."""
+    return f"ChIJ{str(rid).replace('-', '')[:23]}"
+
+
 def _hybrid_lot(tx_session, *, bad=()):
     """Three bulk records in Uberlândia + a hybrid client that picks each one's own place."""
     from brave.clients.hybrid_places import HybridPlacesClient
@@ -197,7 +202,7 @@ def _hybrid_lot(tx_session, *, bad=()):
     loc = {"lat": _LAT, "lng": _LNG}
     found, essentials, picks = {}, {}, {}
     for r in rows:
-        name, pid = r.normalized["name"], f"ChIJ-{r.id}"
+        name, pid = r.normalized["name"], _pid(r.id)
         picks[f"{name}, Uberlândia - MG"] = [pid]
         found[f"place_id:{pid}"] = {
             "placeId": pid, "title": name, "location": loc, "city": "Uberlândia",
@@ -230,12 +235,12 @@ def test_hybrid_backfill_lot_is_one_apify_run(tx_session):
 
     assert state["stop"] is None
     assert len(apify.lookup_calls) == 1
-    assert sorted(apify.lookup_calls[0]["queries"]) == sorted(f"place_id:ChIJ-{r}" for r in row_ids)
+    assert sorted(apify.lookup_calls[0]["queries"]) == sorted(f"place_id:{_pid(r)}" for r in row_ids)
     assert sorted(ta.address_calls) == sorted(ids)  # the pre-pass did it; the loop did not
     tx_session.expire_all()
     for rid in row_ids:
         n = tx_session.get(RioRecord, rid).normalized
-        assert n["google_enriched"] is True and n["google_place_id"] == f"ChIJ-{rid}"
+        assert n["google_enriched"] is True and n["google_place_id"] == _pid(rid)
 
 
 def test_backfill_ta_prepass_failure_is_left_to_the_record(tx_session):
