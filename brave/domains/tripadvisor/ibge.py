@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import csv
 import math
+import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -211,6 +212,9 @@ def _uf_bucket(records: list[IbgeMunicipio], uf: str) -> tuple[list[IbgeMunicipi
 # ---------------------------------------------------------------------------
 
 
+_PAREN_TAIL = re.compile(r"\(([^()]+)\)\s*$")
+
+
 def resolve_municipio(
     name: str,
     uf: str,
@@ -273,6 +277,20 @@ def resolve_municipio(
     if result is not None:
         _matched_name, _score, index = result
         return uf_records[index]  # original accented record — fold is never written back
+
+    # Step 2b: a trailing "(Município)" names the município outright — TA lists cards
+    # like 'Cachoeira da Toca (Canela)' (RS, 26/10) — and beats the nearest seat.
+    paren = _PAREN_TAIL.search(name)
+    if paren is not None:
+        result = process.extractOne(
+            _fold_accents(paren.group(1)),
+            choices,
+            scorer=fuzz.token_sort_ratio,
+            score_cutoff=threshold,
+            processor=rfuzz_utils.default_process,
+        )
+        if result is not None:
+            return uf_records[result[2]]
 
     # Step 3: haversine fallback (only when coordinates are provided) — NEAREST seat,
     # never the first one inside the radius. First-match picked Niterói (13.4 km) over

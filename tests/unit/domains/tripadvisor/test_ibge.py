@@ -348,3 +348,28 @@ def test_resolve_municipio_cached_matches_uncached() -> None:
     assert resolve_municipio("Campinas", "SP", small) is None
     small.append(IbgeMunicipio("3509502", "Campinas", "SP", -22.9056, -47.0608))
     assert resolve_municipio("Campinas", "SP", small) is small[-1]
+
+
+# ---------------------------------------------------------------------------
+# Trailing "(Município)" in the card name (resolver v7)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_municipio_trailing_parenthesis_names_the_municipio() -> None:
+    """'Cachoeira da Toca (Canela)' (RS, 26/10) went to poison: the whole name matches no
+    seat. The parenthesis names it, and beats the nearest seat (Salvador is closer)."""
+    records = _make_records()
+    match = resolve_municipio(
+        "Cachoeira do Paraguaçu (Feira de Santana)", "BA", records,
+        candidate_lat=-12.9714, candidate_lng=-38.5014,
+    )
+    assert match is not None and match.nome == "Feira de Santana"
+
+
+def test_resolve_municipio_parenthesis_that_is_not_a_municipio_falls_through() -> None:
+    records = _make_records()
+    assert resolve_municipio("Museu de Arte (MAM)", "BA", records) is None
+    near = resolve_municipio(
+        "Museu de Arte (MAM)", "BA", records, candidate_lat=-12.97, candidate_lng=-38.50
+    )
+    assert near is not None and near.nome == "Salvador"

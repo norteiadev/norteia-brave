@@ -114,7 +114,8 @@ TA_ATRATIVO_ORIGEM_VALUE = 80.0
 # 4 = v3 stamps were also written when Places was off/failing — release them once.
 # 5 = Places município from locality / the result's coords + 2/3-majority consensus.
 # 6 = TA's own attraction page (addressLocality/addressRegion + its point) first.
-IBGE_RESOLVER_VERSION = 6
+# 7 = a trailing "(Município)" in the card name.
+IBGE_RESOLVER_VERSION = 7
 _IBGE_UNMATCHED_TASK = "brave.ta.atrativos.ibge_unmatched"
 
 # Run-level failures: not a property of the card, so they must escape the per-card
