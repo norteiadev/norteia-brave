@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import csv
 import math
+import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -211,6 +212,9 @@ def _uf_bucket(records: list[IbgeMunicipio], uf: str) -> tuple[list[IbgeMunicipi
 # ---------------------------------------------------------------------------
 
 
+_PAREN_TAIL = re.compile(r"\(([^()]+)\)\s*$")
+
+
 def resolve_municipio(
     name: str,
     uf: str,
@@ -273,6 +277,29 @@ def resolve_municipio(
     if result is not None:
         _matched_name, _score, index = result
         return uf_records[index]  # original accented record — fold is never written back
+
+    # Step 2b: a trailing "(Município)" can name the município — TA lists cards like
+    # 'Cachoeira da Toca (Canela)' (RS, 26/10) — but just as often an alias: 'Praia Cai
+    # n'Água (Milagres)' (BA) is a beach, Milagres-BA a landlocked seat. So the parenthesis
+    # needs a point that agrees with it (within max_distance_km). A coordless card falls
+    # through: Nominatim/Places find its point and resolve it again with one.
+    paren = _PAREN_TAIL.search(name) if candidate_lat is not None else None
+    if paren is not None:
+        result = process.extractOne(
+            _fold_accents(paren.group(1)),
+            choices,
+            scorer=fuzz.token_sort_ratio,
+            score_cutoff=threshold,
+            processor=rfuzz_utils.default_process,
+        )
+        if result is not None:
+            seat = uf_records[result[2]]
+            if (
+                candidate_lng is not None
+                and haversine_km(candidate_lat, candidate_lng, seat.lat, seat.lng)
+                <= max_distance_km
+            ):
+                return seat
 
     # Step 3: haversine fallback (only when coordinates are provided) — NEAREST seat,
     # never the first one inside the radius. First-match picked Niterói (13.4 km) over

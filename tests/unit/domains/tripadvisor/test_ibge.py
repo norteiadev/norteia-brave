@@ -348,3 +348,39 @@ def test_resolve_municipio_cached_matches_uncached() -> None:
     assert resolve_municipio("Campinas", "SP", small) is None
     small.append(IbgeMunicipio("3509502", "Campinas", "SP", -22.9056, -47.0608))
     assert resolve_municipio("Campinas", "SP", small) is small[-1]
+
+
+# ---------------------------------------------------------------------------
+# Trailing "(Município)" in the card name (resolver v7)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_municipio_trailing_parenthesis_names_the_municipio() -> None:
+    """'Cachoeira da Toca (Canela)' (RS, 26/10) went to poison: the whole name matches no
+    seat. The parenthesis names it when the card's point agrees (Feira seat ~4 km off). A
+    coordless card falls through to Nominatim/Places, which bring a point to check it with."""
+    records = _make_records()
+    name = "Cachoeira do Paraguaçu (Feira de Santana)"
+    match = resolve_municipio(name, "BA", records, candidate_lat=-12.30, candidate_lng=-38.95)
+    assert match is not None and match.nome == "Feira de Santana"
+    assert resolve_municipio(name, "BA", records) is None
+
+
+def test_resolve_municipio_parenthesis_far_from_the_point_is_ignored() -> None:
+    """'Praia Cai n'Água (Milagres)' (BA): the parenthesis is an alias that happens to be a
+    landlocked seat. A point ~110 km away from it keeps the nearest seat instead."""
+    records = _make_records()
+    match = resolve_municipio(
+        "Cachoeira do Paraguaçu (Feira de Santana)", "BA", records,
+        candidate_lat=-12.9714, candidate_lng=-38.5014,
+    )
+    assert match is not None and match.nome == "Salvador"
+
+
+def test_resolve_municipio_parenthesis_that_is_not_a_municipio_falls_through() -> None:
+    records = _make_records()
+    assert resolve_municipio("Museu de Arte (MAM)", "BA", records) is None
+    near = resolve_municipio(
+        "Museu de Arte (MAM)", "BA", records, candidate_lat=-12.97, candidate_lng=-38.50
+    )
+    assert near is not None and near.nome == "Salvador"
