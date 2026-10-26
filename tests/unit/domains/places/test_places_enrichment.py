@@ -256,6 +256,7 @@ async def test_google_business_type_hard_descarte() -> None:
         ("pet_care", ["tourist_attraction", "park", "pet_care"], False),  # Parque dos Falcões
         ("non_profit_organization", ["non_profit_organization"], False),  # Projeto Tamar
         ("church", ["church", "place_of_worship"], False),
+        ("winery", ["winery", "farm", "manufacturer", "food"], False),  # Vinícola Aurora
         # Google's generic "an address" type, not a business (Usina de Xingó, Farol da Ponta Verde)
         ("premise", ["premise", "establishment"], False),
         ("", ["restaurant", "museum", "park"], False),  # no primaryType → not judged

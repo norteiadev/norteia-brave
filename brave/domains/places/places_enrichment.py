@@ -215,7 +215,10 @@ _NOT_ATRATIVO_PRIMARY_TYPES = frozenset({
 })
 # A place type anywhere in ``types`` overrides the primaryType: Google files Parque dos
 # Falcões (518 TA reviews) as pet_care, yet it is also a tourist_attraction and a park.
+# Operator-approved 10/2026: a winery is enotourism, not a business — Google also files it
+# under "food", which parked 124 vinícolas (108 in RS) in google_tipo_negocio.
 _PLACE_TYPES = frozenset({
+    "winery", "vineyard",
     "tourist_attraction", "park", "national_park", "city_park", "museum", "historical_landmark",
     "historical_place", "monument", "beach", "church", "place_of_worship", "nature_preserve",
     "scenic_spot", "cultural_center", "art_gallery", "performing_arts_theater", "zoo",
