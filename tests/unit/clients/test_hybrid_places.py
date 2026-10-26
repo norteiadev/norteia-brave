@@ -344,15 +344,16 @@ def test_wall_in_pick_propagates_from_prefetch(wall):
 
 
 def test_pick_takes_the_first_candidate_in_the_uf_within_radius():
+    pol, mt = "ChIJPOLPOLPOLPOLPOLPOLPOLPx", "ChIJMTMTMTMTMTMTMTMTMTMTMTx"
     essentials = {
-        "POL": _ess("POL", types=["locality", "political"]),
-        "MT": _ess("MT", uf_short="MT"),  # a TA point fell in Juína-MT
+        pol: _ess(pol, types=["locality", "political"]),
+        mt: _ess(mt, uf_short="MT"),  # a TA point fell in Juína-MT
         PID: _ess(PID, km_north=1.0),
     }
-    hybrid, _, google = _hybrid(essentials=essentials, ids={QUERY: ["POL", "MT", PID]})
+    hybrid, _, google = _hybrid(essentials=essentials, ids={QUERY: [pol, mt, PID]})
     [hit] = _search(hybrid)
     assert hit["place_id"] == PID
-    assert [c["place_id"] for c in google.place_essentials_calls] == ["POL", "MT", PID]
+    assert [c["place_id"] for c in google.place_essentials_calls] == [pol, mt, PID]
 
 
 def test_pick_stops_at_the_first_passer():
@@ -363,9 +364,10 @@ def test_pick_stops_at_the_first_passer():
 
 
 def test_pick_looks_at_the_top_three_only():
-    far = {f"F{i}": _ess(f"F{i}", km_north=10.0) for i in range(3)}
+    far = {f"ChIJF{i}".ljust(27, "x"): _ess(f"ChIJF{i}".ljust(27, "x"), km_north=10.0)
+           for i in range(3)}
     hybrid, apify, google = _hybrid(essentials={**far, PID: _essentials()},
-                                    ids={QUERY: ["F0", "F1", "F2", PID]})
+                                    ids={QUERY: [*far, PID]})
     assert _search(hybrid) == []
     assert len(google.place_essentials_calls) == 3 and apify.lookup_calls == []
 
@@ -479,3 +481,14 @@ def test_an_id_the_crawler_cannot_take_never_reaches_a_run():
     with pytest.raises(ApifyNoResultError):
         asyncio.run(hybrid.place_details(road))
     assert len(apify.lookup_calls) == 1 and google.place_essentials_calls == []
+
+
+def test_pick_skips_an_id_the_crawler_cannot_take():
+    """A road ranked first must not end the pick as a conclusive no-match: no Essentials for
+    it, and the next candidate (the place itself) is picked."""
+    road = "EjZFc3QuIENlcnJvIGRhIENhdmFsaGFkYSAtIEJhcnJhIGRvIFJpYmVpcm8sIFJTLCBCcmF6aWwiLiosChQ"
+    hybrid, apify, google = _hybrid(
+        essentials={PID: _essentials(), road: _ess(road)}, ids={QUERY: [road, PID]}
+    )
+    assert [r["place_id"] for r in _search(hybrid)] == [PID]
+    assert [c["place_id"] for c in google.place_essentials_calls] == [PID]

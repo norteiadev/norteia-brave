@@ -190,6 +190,8 @@ class HybridPlacesClient:
         bias_km = min(max(radius_km, _BIAS_MIN_KM), _BIAS_MAX_KM)
         ids = await self._google.search_ids(query, lat=lat, lng=lng, radius_m=bias_km * 1000)
         for place_id in ids[:PICK_CANDIDATES]:
+            if not _APIFY_PLACE_ID.fullmatch(place_id):
+                continue  # a road/address id: Apify cannot name it — no Essentials, try the next
             ess = await self._google.place_essentials(place_id, uf)
             loc = ess.get("location") or {}
             uf_short = (ess.get("uf_short") or "").upper()
