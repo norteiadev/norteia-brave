@@ -142,9 +142,10 @@ _TA_ACCEPT_LANGUAGE: str = "pt-BR,pt;q=0.9,en;q=0.8"
 _RATE_LIMIT_RETRIES: int = 2
 _RATE_LIMIT_MAX_SLEEP_SECONDS: float = 60.0
 _RATE_LIMIT_DEFAULT_RETRY_AFTER: float = 60.0
-# TA 5xx is its own hiccup (a 503 on one PR card, 24/10): the same backoff and retries as a
-# plain 429, then the HTTPStatusError the caller already handles.
-_RETRY_STATUSES = frozenset({500, 502, 503, 504})
+# TA 5xx is its own hiccup (a 503 on one PR card, 24/10), and so is a 408 (one RS card's
+# graphql call, 26/10): the same backoff and retries as a plain 429, then the
+# HTTPStatusError the caller already handles.
+_RETRY_STATUSES = frozenset({408, 500, 502, 503, 504})
 
 
 def _retry_after_seconds(resp: httpx.Response) -> float | None:

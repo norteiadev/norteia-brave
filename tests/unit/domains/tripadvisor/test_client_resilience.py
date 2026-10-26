@@ -261,7 +261,7 @@ def _no_sleep(monkeypatch) -> list[float]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", [500, 502, 503, 504])
+@pytest.mark.parametrize("status", [408, 500, 502, 503, 504])
 async def test_5xx_is_retried_inside_the_client(monkeypatch, status) -> None:
     """A transient TA 5xx (503 on one PR card, 24/10) must not quarantine the card."""
     sleeps = _no_sleep(monkeypatch)
