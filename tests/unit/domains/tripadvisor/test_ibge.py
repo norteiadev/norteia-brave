@@ -357,13 +357,23 @@ def test_resolve_municipio_cached_matches_uncached() -> None:
 
 def test_resolve_municipio_trailing_parenthesis_names_the_municipio() -> None:
     """'Cachoeira da Toca (Canela)' (RS, 26/10) went to poison: the whole name matches no
-    seat. The parenthesis names it, and beats the nearest seat (Salvador is closer)."""
+    seat. The parenthesis names it — for a coordless card, or one whose point agrees."""
+    records = _make_records()
+    name = "Cachoeira do Paraguaçu (Feira de Santana)"
+    for lat, lng in ((None, None), (-12.30, -38.95)):  # Feira seat ~4 km off
+        match = resolve_municipio(name, "BA", records, candidate_lat=lat, candidate_lng=lng)
+        assert match is not None and match.nome == "Feira de Santana"
+
+
+def test_resolve_municipio_parenthesis_far_from_the_point_is_ignored() -> None:
+    """'Praia Cai n'Água (Milagres)' (BA): the parenthesis is an alias that happens to be a
+    landlocked seat. A point ~110 km away from it keeps the nearest seat instead."""
     records = _make_records()
     match = resolve_municipio(
         "Cachoeira do Paraguaçu (Feira de Santana)", "BA", records,
         candidate_lat=-12.9714, candidate_lng=-38.5014,
     )
-    assert match is not None and match.nome == "Feira de Santana"
+    assert match is not None and match.nome == "Salvador"
 
 
 def test_resolve_municipio_parenthesis_that_is_not_a_municipio_falls_through() -> None:

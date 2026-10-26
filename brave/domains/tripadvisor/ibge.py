@@ -278,8 +278,10 @@ def resolve_municipio(
         _matched_name, _score, index = result
         return uf_records[index]  # original accented record — fold is never written back
 
-    # Step 2b: a trailing "(Município)" names the município outright — TA lists cards
-    # like 'Cachoeira da Toca (Canela)' (RS, 26/10) — and beats the nearest seat.
+    # Step 2b: a trailing "(Município)" can name the município — TA lists cards like
+    # 'Cachoeira da Toca (Canela)' (RS, 26/10) — but just as often an alias: 'Praia Cai
+    # n'Água (Milagres)' (BA) is a beach, Milagres-BA a landlocked seat. With a point, the
+    # parenthesis must agree with it (within max_distance_km); without one it is taken.
     paren = _PAREN_TAIL.search(name)
     if paren is not None:
         result = process.extractOne(
@@ -290,7 +292,14 @@ def resolve_municipio(
             processor=rfuzz_utils.default_process,
         )
         if result is not None:
-            return uf_records[result[2]]
+            seat = uf_records[result[2]]
+            if (
+                candidate_lat is None
+                or candidate_lng is None
+                or haversine_km(candidate_lat, candidate_lng, seat.lat, seat.lng)
+                <= max_distance_km
+            ):
+                return seat
 
     # Step 3: haversine fallback (only when coordinates are provided) — NEAREST seat,
     # never the first one inside the radius. First-match picked Niterói (13.4 km) over
