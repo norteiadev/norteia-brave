@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -30,27 +31,45 @@ _HEALTH_PATH = "/api/v1/health"  # norteia-api: 200 when its DB + Redis answer, 
 # An empty ingest POST proves what /health cannot: the route is deployed and the
 # Sanctum token is still valid (it expires). 422 = reached validation, nothing written.
 _INGEST_PROBE_PATH = "/api/internal/territorial/attractions"
+_PROBE_ATTEMPTS = 2
+_PROBE_RETRY_S = 0.5
 # ponytail: one tick re-dispatches at most this many; a bigger backlog drains over
 # the next ticks (or further "Reenviar" clicks). Raise if backlogs outgrow it.
 PENDING_DISPATCH_LIMIT = 500
 
 
 def _probe(base_url: str) -> str:
-    """Return "ok", or why a push would fail: unreachable | unhealthy:<st> | ingest:<st>."""
+    """Return "ok", or why a push would fail: unreachable | unhealthy:<st> | ingest:<st>.
+
+    A transport error retries the whole sequence once (a client-side blip must not
+    cache "down" for 30s); an HTTP status is the API's answer and is not retried.
+    """
     token = os.environ.get("BRAVE_NORTEIA_API_SERVICE_TOKEN", "")
-    try:
-        health = httpx.get(f"{base_url}{_HEALTH_PATH}", timeout=3.0).status_code
-        if health != 200:
-            return f"unhealthy:{health}"
-        ingest = httpx.post(
-            f"{base_url}{_INGEST_PROBE_PATH}",
-            json={},
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            timeout=3.0,
-        ).status_code
-    except httpx.HTTPError:
-        return "unreachable"
-    return "ok" if ingest == 422 else f"ingest:{ingest}"
+    for attempt in range(1, _PROBE_ATTEMPTS + 1):
+        try:
+            with httpx.Client(timeout=3.0) as client:
+                health = client.get(f"{base_url}{_HEALTH_PATH}").status_code
+                # 429 = /health is under the per-IP 'api' throttle: the API answered,
+                # so the (unthrottled) internal ingest route decides.
+                if health not in (200, 429):
+                    return f"unhealthy:{health}"
+                ingest = client.post(
+                    f"{base_url}{_INGEST_PROBE_PATH}",
+                    json={},
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                ).status_code
+            return "ok" if ingest == 422 else f"ingest:{ingest}"
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "norteia_api_probe_error",
+                url=base_url,
+                attempt=attempt,
+                error=type(exc).__name__,
+                detail=str(exc)[:200],
+            )
+            if attempt < _PROBE_ATTEMPTS:
+                time.sleep(_PROBE_RETRY_S)
+    return "unreachable"
 
 
 def norteia_api_health(redis: Any | None = None) -> str | None:
