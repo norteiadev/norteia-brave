@@ -11,6 +11,7 @@ import fakeredis
 import httpx
 import pytest
 import respx
+from structlog.testing import capture_logs
 
 from brave.core.mar import sync
 
@@ -60,26 +61,58 @@ def test_up_needs_health_200_and_ingest_422_and_is_cached(real, redis, monkeypat
     [(401, "ingest:401"), (403, "ingest:403"), (404, "ingest:404"), (500, "ingest:500")],
 )
 def test_expired_token_or_missing_route_counts_as_down(real, redis, ingest_status, reason):
-    respx.get(HEALTH).mock(return_value=httpx.Response(200))
-    respx.post(INGEST).mock(return_value=httpx.Response(ingest_status))
+    health = respx.get(HEALTH).mock(return_value=httpx.Response(200))
+    ingest = respx.post(INGEST).mock(return_value=httpx.Response(ingest_status))
     assert sync.norteia_api_health(redis) == reason
     assert sync.norteia_api_up(redis) is False
+    assert health.call_count == 1 and ingest.call_count == 1  # a status is not retried
 
 
 @respx.mock
 def test_unhealthy_api_skips_the_ingest_probe(real, redis):
-    respx.get(HEALTH).mock(return_value=httpx.Response(503))
+    health = respx.get(HEALTH).mock(return_value=httpx.Response(503))
     ingest = respx.post(INGEST).mock(return_value=httpx.Response(422))
     assert sync.norteia_api_health(redis) == "unhealthy:503"
+    assert health.call_count == 1
     assert not ingest.called
 
 
 @respx.mock
+def test_throttled_health_defers_to_the_ingest_probe(real, redis):
+    health = respx.get(HEALTH).mock(return_value=httpx.Response(429))
+    ingest = respx.post(INGEST).mock(return_value=httpx.Response(422))
+    assert sync.norteia_api_health(redis) == "ok"
+    assert health.call_count == 1 and ingest.call_count == 1
+
+
+@pytest.fixture
+def sleeps(monkeypatch):
+    calls: list[float] = []
+    monkeypatch.setattr(sync.time, "sleep", calls.append)
+    return calls
+
+
+@respx.mock
 @pytest.mark.parametrize("exc", [httpx.ConnectError("refused"), httpx.ReadTimeout("slow")])
-def test_transport_error_is_unreachable(real, redis, exc):
-    respx.get(HEALTH).mock(side_effect=exc)
-    assert sync.norteia_api_health(redis) == "unreachable"
+def test_transport_error_is_unreachable(real, redis, sleeps, exc):
+    health = respx.get(HEALTH).mock(side_effect=exc)
+    with capture_logs() as logs:
+        assert sync.norteia_api_health(redis) == "unreachable"
     assert redis.get("brave:norteia_api:health") == b"unreachable"
+    assert health.call_count == 2 and sleeps == [sync._PROBE_RETRY_S]
+    errors = [e for e in logs if e["event"] == "norteia_api_probe_error"]
+    assert [e["error"] for e in errors] == [type(exc).__name__] * 2
+    assert errors[-1]["detail"] == str(exc)
+
+
+@respx.mock
+def test_transient_transport_blip_is_retried(real, redis, sleeps):
+    health = respx.get(HEALTH).mock(
+        side_effect=[httpx.RemoteProtocolError("dropped"), httpx.Response(200)]
+    )
+    respx.post(INGEST).mock(return_value=httpx.Response(422))
+    assert sync.norteia_api_health(redis) == "ok"
+    assert health.call_count == 2 and sleeps == [sync._PROBE_RETRY_S]
 
 
 @respx.mock
