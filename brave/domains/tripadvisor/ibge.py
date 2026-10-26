@@ -280,9 +280,10 @@ def resolve_municipio(
 
     # Step 2b: a trailing "(Município)" can name the município — TA lists cards like
     # 'Cachoeira da Toca (Canela)' (RS, 26/10) — but just as often an alias: 'Praia Cai
-    # n'Água (Milagres)' (BA) is a beach, Milagres-BA a landlocked seat. With a point, the
-    # parenthesis must agree with it (within max_distance_km); without one it is taken.
-    paren = _PAREN_TAIL.search(name)
+    # n'Água (Milagres)' (BA) is a beach, Milagres-BA a landlocked seat. So the parenthesis
+    # needs a point that agrees with it (within max_distance_km). A coordless card falls
+    # through: Nominatim/Places find its point and resolve it again with one.
+    paren = _PAREN_TAIL.search(name) if candidate_lat is not None else None
     if paren is not None:
         result = process.extractOne(
             _fold_accents(paren.group(1)),
@@ -294,9 +295,8 @@ def resolve_municipio(
         if result is not None:
             seat = uf_records[result[2]]
             if (
-                candidate_lat is None
-                or candidate_lng is None
-                or haversine_km(candidate_lat, candidate_lng, seat.lat, seat.lng)
+                candidate_lng is not None
+                and haversine_km(candidate_lat, candidate_lng, seat.lat, seat.lng)
                 <= max_distance_km
             ):
                 return seat

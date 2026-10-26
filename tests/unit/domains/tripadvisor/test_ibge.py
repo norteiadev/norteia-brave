@@ -357,12 +357,13 @@ def test_resolve_municipio_cached_matches_uncached() -> None:
 
 def test_resolve_municipio_trailing_parenthesis_names_the_municipio() -> None:
     """'Cachoeira da Toca (Canela)' (RS, 26/10) went to poison: the whole name matches no
-    seat. The parenthesis names it — for a coordless card, or one whose point agrees."""
+    seat. The parenthesis names it when the card's point agrees (Feira seat ~4 km off). A
+    coordless card falls through to Nominatim/Places, which bring a point to check it with."""
     records = _make_records()
     name = "Cachoeira do Paraguaçu (Feira de Santana)"
-    for lat, lng in ((None, None), (-12.30, -38.95)):  # Feira seat ~4 km off
-        match = resolve_municipio(name, "BA", records, candidate_lat=lat, candidate_lng=lng)
-        assert match is not None and match.nome == "Feira de Santana"
+    match = resolve_municipio(name, "BA", records, candidate_lat=-12.30, candidate_lng=-38.95)
+    assert match is not None and match.nome == "Feira de Santana"
+    assert resolve_municipio(name, "BA", records) is None
 
 
 def test_resolve_municipio_parenthesis_far_from_the_point_is_ignored() -> None:
