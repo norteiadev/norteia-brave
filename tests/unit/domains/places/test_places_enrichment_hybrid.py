@@ -147,6 +147,9 @@ async def test_hybrid_pet_care_park_is_kept() -> None:
         ("Adegas e vinícolas", ["store", "point_of_interest"], False),
         # A liquor store on a beach card is a same-name business
         ("Praias", ["liquor_store", "store"], False),
+        # TA also files it as a shop/bar: a wine shop (Loja Jolimont, Adega Nacional)
+        ("Adegas e vinícolas • Lojas especializadas e de suvenir", ["liquor_store"], False),
+        ("Adegas e vinícolas • Bares de vinho", ["bar", "food"], False),
     ],
 )
 @pytest.mark.asyncio

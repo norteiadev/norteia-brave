@@ -281,9 +281,11 @@ def _ta_nature_category(category: Any) -> bool:
 
 # Operator-approved 10/2026: an alambique, distillery or adega TA files under "Adegas e
 # vinícolas" / "Destilarias" is drinks tourism, though Google calls it a liquor store or bar
-# (57 parked in google_tipo_negocio after the winery fix). A plain "store" still goes to a
-# steward: an adega can also be just a wine shop.
+# (40 parked in google_tipo_negocio after the winery fix). An adega can also be just a wine
+# shop: a plain "store", or a card TA also files under "Lojas…"/"Bares…" (Loja Jolimont,
+# Adega Nacional), still goes to a steward.
 _TA_DRINKS_CATEGORY_TERMS: tuple[str, ...] = ("adegas e vinicolas", "destilarias")
+_TA_SHOP_CATEGORY_TERMS: tuple[str, ...] = ("lojas", "bares")
 _DRINKS_TYPES = frozenset({"liquor_store", "bar", "brewery", "winery"})
 # Agencies are forbidden in Norteia. An agency match on a place-to-visit card stays with a
 # steward (google_tipo_negocio): of the 139 parked 10/2026, ~115 cards ARE the agency (TA
@@ -296,6 +298,7 @@ def _drinks_tourism(category: Any, details: dict[str, Any]) -> bool:
     types = set(details.get("types") or ())
     return (
         _ta_category_starts(category, _TA_DRINKS_CATEGORY_TERMS)
+        and not _ta_category_starts(category, _TA_SHOP_CATEGORY_TERMS)
         and bool(_DRINKS_TYPES & types)
         and not _AGENCY_TYPES & types
         and not _is_mall(details)
