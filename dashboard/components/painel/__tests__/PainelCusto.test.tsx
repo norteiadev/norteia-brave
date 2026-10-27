@@ -1,9 +1,17 @@
-import { fireEvent, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { PainelCusto } from "@/components/painel/PainelCusto";
+import { CurrencyProvider, CurrencySwitch } from "@/components/painel/currency";
 import type { CostData } from "@/lib/cost-api";
-import { costEmpty, costSuccess } from "@/mocks/handlers/cost";
+import {
+  costEmpty,
+  costSuccess,
+  sampleApifyCost,
+  sampleCostByLane,
+  sampleCostByModel,
+  samplePlacesCost,
+} from "@/mocks/handlers/cost";
 import { server } from "@/mocks/server";
 
 import { renderWithClient } from "@/components/cms/__tests__/test-utils";
@@ -12,6 +20,7 @@ const requests: { method: string; url: string }[] = [];
 
 beforeEach(() => {
   requests.length = 0;
+  window.localStorage.clear();
   server.events.on("request:start", ({ request }) => {
     requests.push({ method: request.method, url: request.url });
   });
@@ -25,7 +34,7 @@ describe("PainelCusto", () => {
   it("renders formatted summary totals and one bar per row, sorted desc by usd", async () => {
     // Deliberately unordered so we exercise the desc sort in the component.
     const unordered: CostData = {
-      group_by: "lane",
+      ...sampleCostByLane,
       rows: [
         { key: "small", usd_cost: 0.5, tokens: 100, count: 5 },
         { key: "big", usd_cost: 9.0, tokens: 9000, count: 90 },
@@ -108,5 +117,66 @@ describe("PainelCusto", () => {
     expect(getByTestId("cost-total-usd")).toHaveTextContent("US$ 0,0000");
     expect(getByTestId("cost-total-tokens")).toHaveTextContent("0");
     expect(getByTestId("cost-total-calls")).toHaveTextContent("0");
+  });
+
+  it("renders the Places and Apify cost-guard caps as meters, with the UTC and budget notes", async () => {
+    // Places today at 85% of its daily cap (warn); Apify total at its cap (bad).
+    server.use(
+      costSuccess(
+        {
+          ...sampleCostByLane,
+          places: { ...samplePlacesCost, usd_today: 255, daily_cap_usd: 300 },
+          apify: { ...sampleApifyCost, usd_total: 5, total_cap_usd: 5 },
+        },
+        sampleCostByModel,
+      ),
+    );
+
+    renderWithClient(<PainelCusto />);
+
+    const caps = await screen.findByRole("region", { name: "Tetos do cost guard" });
+    await waitFor(() => expect(within(caps).getByText("a1b2c3d4e5f6")).toBeInTheDocument());
+
+    const placesToday = within(caps).getByTestId("cap-places-today");
+    expect(placesToday).toHaveTextContent("US$ 255,00");
+    expect(placesToday).toHaveTextContent("US$ 300,00");
+    expect(within(placesToday).getByRole("meter")).toHaveAttribute("data-level", "warn");
+
+    const placesTotal = within(caps).getByTestId("cap-places-total");
+    expect(placesTotal).toHaveTextContent("US$ 112,40");
+    expect(within(placesTotal).getByRole("meter")).toHaveAttribute("data-level", "ok");
+
+    const apifyToday = within(caps).getByTestId("cap-apify-today");
+    expect(apifyToday).toHaveTextContent("US$ 0,40");
+    expect(apifyToday).toHaveTextContent("US$ 2,00");
+
+    const apifyTotal = within(caps).getByTestId("cap-apify-total");
+    expect(within(apifyTotal).getByRole("meter")).toHaveAttribute("data-level", "bad");
+
+    // Honest semantics: "hoje" is the UTC day; usd_daily_budget caps LLM + search only.
+    expect(caps).toHaveTextContent(/dia UTC/);
+    expect(caps).toHaveTextContent(/usd_daily_budget/);
+  });
+
+  it("re-renders every money value on the screen when switching USD <-> BRL", async () => {
+    server.use(costSuccess());
+
+    const { findAllByTestId } = renderWithClient(
+      <CurrencyProvider>
+        <CurrencySwitch />
+        <div data-testid="custo"><PainelCusto /></div>
+      </CurrencyProvider>,
+    );
+    await findAllByTestId("cost-bar");
+    await screen.findByTestId("cap-places-today");
+    const custo = screen.getByTestId("custo");
+    expect(custo).toHaveTextContent("US$");
+
+    fireEvent.click(screen.getByRole("button", { name: "Real" }));
+
+    // 12.5 USD x 5.42 = R$ 67,75 ; LLM total 7.6577 x 5.42 = R$ 41,5047.
+    await waitFor(() => expect(custo).not.toHaveTextContent("US$"));
+    expect(screen.getByTestId("cap-places-today")).toHaveTextContent("R$ 67,75");
+    expect(screen.getByTestId("cost-total-usd")).toHaveTextContent("R$ 41,5047");
   });
 });
