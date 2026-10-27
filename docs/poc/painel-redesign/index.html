@@ -1,0 +1,1930 @@
+<meta charset="utf-8">
+<title>Painel Brave Redesenho</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: app shell (sidebar + topbar) com duas visões: Operação (painel de controle) e Registros (triagem em lista agrupada + painel de detalhe, substitui o kanban).
+   Tokens herdam a identidade do Painel atual: creme, navy #15315e, verde Mar, âmbar DLQ, vermelho Falha. */
+:root {
+  --bg: #f8f6f1; --surface: #ffffff; --surface-2: #f2f0eb; --surface-3: #faf9f6;
+  --line: #e6e4e0; --line-2: #efede8;
+  --ink: #18181b; --ink-2: #44474f; --ink-3: #636871; --ink-4: #a3a6ad;
+  --navy: #15315e; --navy-soft: #e8edf6; --primary: #15315e; --on-primary: #ffffff;
+  --mar: #2e8a4f; --mar-ink: #1d6a3a; --mar-soft: #e2f1e7;
+  --dlq: #d39a2a; --dlq-ink: #7f5300; --dlq-soft: #faf0d9;
+  --falha: #c7362f; --falha-ink: #a2261f; --falha-soft: #fae4e2;
+  --rio: #3d5f9a; --descarte: #b5b1aa;
+  --focus: #2a5bd7; --shadow: 0 1px 2px rgb(24 24 27 / 6%), 0 8px 24px rgb(24 24 27 / 6%);
+  --font: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121315; --surface: #1a1c1f; --surface-2: #24272b; --surface-3: #1e2023;
+  --line: #2f3337; --line-2: #26292d;
+  --ink: #edebe7; --ink-2: #c9c6c0; --ink-3: #a19e97; --ink-4: #6d6b66;
+  --navy: #a9c1ee; --navy-soft: #1f2a3d; --primary: #a9c1ee; --on-primary: #0e1a30;
+  --mar: #2f9e78; --mar-ink: #6dd3ab; --mar-soft: #16302a;
+  --dlq: #b0822a; --dlq-ink: #e8b863; --dlq-soft: #33291a;
+  --falha: #e0607e; --falha-ink: #f193a8; --falha-soft: #3a1e27;
+  --rio: #5f84d6; --descarte: #5d5b57;
+  --focus: #8fb0ff; --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 30%);
+  color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #121315; --surface: #1a1c1f; --surface-2: #24272b; --surface-3: #1e2023;
+  --line: #2f3337; --line-2: #26292d;
+  --ink: #edebe7; --ink-2: #c9c6c0; --ink-3: #a19e97; --ink-4: #6d6b66;
+  --navy: #a9c1ee; --navy-soft: #1f2a3d; --primary: #a9c1ee; --on-primary: #0e1a30;
+  --mar: #2f9e78; --mar-ink: #6dd3ab; --mar-soft: #16302a;
+  --dlq: #b0822a; --dlq-ink: #e8b863; --dlq-soft: #33291a;
+  --falha: #e0607e; --falha-ink: #f193a8; --falha-soft: #3a1e27;
+  --rio: #5f84d6; --descarte: #5d5b57;
+  --focus: #8fb0ff; --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 30%);
+  color-scheme: dark;
+}
+
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 var(--font); -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+.num, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.pad { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ── shell ───────────────────────────── */
+.app { --side-w: 224px; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); height: 100%; transition: grid-template-columns .25s cubic-bezier(.2,.8,.2,1); }
+.side { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 18px; padding-block: 18px; overflow-y: auto; overflow-x: hidden; }
+.brand-symbol { display: none; width: 34px; height: 34px; margin-inline: auto; background: var(--ink); -webkit-mask: url(norteia-marca.svg) center / contain no-repeat; mask: url(norteia-marca.svg) center / contain no-repeat; }
+.side-toggle { display: flex; align-items: center; gap: 9px; width: 100%; border: 0; background: none; padding: 7px 8px; border-radius: 7px; color: var(--ink-3); font-size: 12.5px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.side-toggle:hover { background: var(--surface-3); color: var(--ink); }
+.side-toggle svg { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; }
+.side-toggle .chev { transition: transform .25s; transform-origin: 14px 12px; }
+/* recolhido (só desktop): só o símbolo da Norteia e os ícones; rótulos viram tooltip */
+@media (min-width: 861px) {
+  .app.collapsed { --side-w: 72px; }
+  .app.collapsed .brand-logo, .app.collapsed .brand span, .app.collapsed .nav-label,
+  .app.collapsed .nav .t, .app.collapsed .nav .count,
+  .app.collapsed .poc-note, .app.collapsed .side-toggle .t { display: none; }
+  .app.collapsed .brand-symbol { display: block; }
+  .app.collapsed .nav a, .app.collapsed .side-toggle { justify-content: center; padding-inline: 0; position: relative; }
+  .app.collapsed .side-toggle .chev { transform: scaleX(-1); }
+}
+.brand { display: flex; flex-direction: column; gap: 6px; }
+/* logo da Norteia como máscara: herda a cor do token, funciona no claro e no escuro */
+.brand-logo { width: 138px; height: 35px; background: var(--ink); -webkit-mask: url(norteia-logo.svg) left center / contain no-repeat; mask: url(norteia-logo.svg) left center / contain no-repeat; }
+.brand span { font-size: 11.5px; color: var(--ink-3); letter-spacing: 0.2px; }
+.mark { display: inline-block; flex: none; width: 26px; height: 26px; background: var(--navy); -webkit-mask: url(norteia-marca.svg) center / contain no-repeat; mask: url(norteia-marca.svg) center / contain no-repeat; }
+.mark.spin { animation: spin 16s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* tempo real */
+.live-chip .dot { background: var(--mar); }
+.live-chip.off .dot { background: var(--dlq); animation: none; }
+.progress > i { transition: width .9s cubic-bezier(.2,.8,.2,1); }
+.progress.live > i { background-image: repeating-linear-gradient(115deg, transparent 0 10px, color-mix(in oklab, var(--surface) 22%, transparent) 10px 20px); background-size: 40px 100%; animation: stripes 1.2s linear infinite; }
+@keyframes stripes { to { background-position: 40px 0; } }
+.pop { position: absolute; right: 14px; bottom: 40px; font: 600 12px var(--mono); pointer-events: none; animation: pop 1.8s ease-out forwards; }
+@keyframes pop { 0% { opacity: 0; transform: translateY(6px); } 15% { opacity: 1; transform: none; } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
+.bump { animation: bump .5s ease-out; }
+@keyframes bump { 40% { color: var(--navy); } }
+.feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.feed li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 12.5px; padding: 6px 8px; border-radius: 8px; }
+.feed li .dot { width: 7px; height: 7px; }
+.feed li b { font-weight: 600; }
+.feed li .s { display: block; color: var(--ink-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed li time { font: 11px var(--mono); color: var(--ink-3); }
+.feed li.new { animation: feedIn .5s cubic-bezier(.2,.8,.2,1), flash 2.6s ease-out; }
+@keyframes feedIn { from { opacity: 0; transform: translateY(-10px); } }
+@keyframes flash { from { background: var(--navy-soft); } to { background: transparent; } }
+.newbar { position: sticky; top: 0; z-index: 4; display: flex; justify-content: center; margin-bottom: 8px; }
+.newbar button { border: 0; border-radius: 999px; padding: 6px 14px; background: var(--primary); color: var(--on-primary); font-size: 12.5px; font-weight: 600; cursor: pointer; box-shadow: var(--shadow); animation: feedIn .4s cubic-bezier(.2,.8,.2,1); }
+.toast { animation: feedIn .35s cubic-bezier(.2,.8,.2,1); }
+.nav-group { display: flex; flex-direction: column; gap: 2px; }
+.nav-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-3); padding: 0 8px 4px; }
+.nav a { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 7px; color: var(--ink-2); text-decoration: none; font-weight: 500; font-size: 13px; }
+.nav a svg { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; }
+.nav a:hover { background: var(--surface-3); }
+.nav a[aria-current="page"] { background: var(--surface-2); color: var(--ink); font-weight: 600; }
+.nav a .count { margin-left: auto; font: 600 11px var(--mono); color: var(--ink-3); }
+.side-foot { margin-top: auto; font-size: 11.5px; color: var(--ink-3); display: flex; flex-direction: column; gap: 10px; }
+.nav a { white-space: nowrap; }
+
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-block: 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.top h1 { font-size: 17px; letter-spacing: -0.3px; }
+.top .sub { font-size: 12px; color: var(--ink-3); }
+.top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-size: 12px; font-weight: 500; color: var(--ink-2); white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-4); flex: none; }
+.dot.ok { background: var(--mar); } .dot.warn { background: var(--dlq); } .dot.bad { background: var(--falha); }
+.dot.pulse { box-shadow: 0 0 0 0 color-mix(in oklab, var(--mar) 60%, transparent); animation: pulse 2s infinite; }
+@keyframes pulse { 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+/* barra de status: serviço, custo, moeda e motor num bloco só */
+.statusbar { display: flex; align-items: center; gap: 2px; height: 38px; padding: 0 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.sb-item { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; color: var(--ink-2); white-space: nowrap; }
+.sb-item .k { color: var(--ink-3); }
+.sb-sep { flex: none; width: 1px; height: 18px; margin: 0 2px; background: var(--line); }
+.mini { width: 34px; height: 4px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.mini i { display: block; height: 100%; border-radius: 999px; background: var(--rio); transition: width .6s cubic-bezier(.2,.8,.2,1); }
+.mini.warn i { background: var(--dlq); } .mini.bad i { background: var(--falha); }
+.cur { display: inline-flex; gap: 2px; padding: 2px; border-radius: 7px; background: var(--surface-2); }
+.cur button { height: 24px; min-width: 32px; padding: 0 6px; border: 0; border-radius: 5px; background: none; font: 600 11px var(--mono); color: var(--ink-3); cursor: pointer; }
+.cur button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.motor-wrap { position: relative; }
+.motor-btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 7px; border: 0; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.motor-btn[data-m="LIGADO"] { background: var(--mar-soft); color: var(--mar-ink); }
+.motor-btn[data-m="PAUSADO"] { background: var(--dlq-soft); color: var(--dlq-ink); }
+.motor-btn[data-m="DESLIGADO"] { background: var(--surface-2); color: var(--ink-2); }
+.motor-btn .ico { width: 12px; height: 12px; fill: currentColor; }
+.motor-btn .car { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; opacity: .7; transition: transform .2s; }
+.motor-btn[aria-expanded="true"] .car { transform: rotate(180deg); }
+.motor-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: 260px; display: flex; flex-direction: column; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); transform-origin: top right; animation: menuIn .16s cubic-bezier(.2,.8,.2,1); }
+.motor-menu[hidden] { display: none; }
+@keyframes menuIn { from { opacity: 0; transform: scale(.96) translateY(-4px); } }
+.motor-menu .m-head { padding: 6px 8px 4px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--ink-3); }
+.motor-menu button { display: grid; grid-template-columns: 14px minmax(0, 1fr) 14px; gap: 2px 10px; align-items: center; padding: 8px; border: 0; border-radius: 7px; background: none; text-align: left; cursor: pointer; }
+.motor-menu button:hover, .motor-menu button:focus-visible { background: var(--surface-3); }
+.motor-menu b { font-size: 12.5px; }
+.motor-menu small { grid-column: 2; font-size: 11.5px; line-height: 1.35; color: var(--ink-3); }
+.motor-menu .ico { width: 12px; height: 12px; }
+.motor-menu .chk { width: 14px; height: 14px; fill: none; stroke: var(--navy); stroke-width: 2.4; visibility: hidden; }
+.motor-menu [aria-checked="true"] .chk { visibility: visible; }
+.icon-btn { border: 1px solid var(--line); background: var(--surface); width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; cursor: pointer; color: var(--ink-2); }
+.icon-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+
+.view { flex: 1; overflow-y: auto; min-height: 0; }
+.view[hidden] { display: none !important; }
+
+/* ── buttons ─────────────────────────── */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: 12.5px; font-weight: 600; cursor: pointer; color: var(--ink); white-space: nowrap; }
+.btn:hover:not(:disabled) { background: var(--surface-3); }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.btn.primary:hover:not(:disabled) { background: color-mix(in oklab, var(--primary) 88%, var(--ink)); }
+.btn.danger { color: var(--falha-ink); }
+.btn.sm { min-height: 26px; padding: 0 9px; font-size: 12px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; }
+.link { background: none; border: 0; padding: 0; color: var(--navy); font-weight: 600; cursor: pointer; font-size: inherit; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: color-mix(in oklab, var(--navy) 35%, transparent); }
+
+/* ── Operação ───────────────────────── */
+.ops { display: flex; flex-direction: column; gap: 16px; padding-block: 18px 28px; }
+.run { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
+.panel-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.panel-h h2 { font-size: 13.5px; font-weight: 600; letter-spacing: -0.1px; }
+.panel-h .hint { font-size: 12px; color: var(--ink-3); }
+.panel-h .right { margin-left: auto; }
+.run-main { display: flex; flex-direction: column; gap: 12px; }
+.run-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.run-title strong { font-size: 15px; letter-spacing: -0.2px; }
+.uf-badge { font: 600 11px var(--mono); padding: 2px 6px; border-radius: 5px; background: var(--surface-2); color: var(--ink-2); }
+.progress { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.progress > i { display: block; height: 100%; border-radius: 999px; background: var(--navy); }
+.run-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.stat-s .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-3); }
+.stat-s .v { font: 600 15px var(--mono); }
+.steps { display: flex; gap: 4px; flex-wrap: wrap; }
+.step { font-size: 11.5px; padding: 3px 8px; border-radius: 6px; background: var(--surface-2); color: var(--ink-3); display: inline-flex; gap: 5px; align-items: center; }
+.step.done { background: var(--mar-soft); color: var(--mar-ink); }
+.step.now { background: var(--navy-soft); color: var(--navy); font-weight: 600; }
+
+.alerts { display: flex; flex-direction: column; gap: 8px; }
+.alert { display: grid; grid-template-columns: 4px minmax(0, 1fr) auto; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px 9px 0; background: var(--surface-3); overflow: hidden; }
+.alert .bar { align-self: stretch; border-radius: 0 3px 3px 0; }
+.alert.crit .bar { background: var(--falha); } .alert.warn .bar { background: var(--dlq); } .alert.info .bar { background: var(--rio); }
+.alert b { font-size: 12.5px; display: block; }
+.alert span { font-size: 12px; color: var(--ink-3); }
+.sev { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 6px; }
+.alert.crit .sev { color: var(--falha-ink); } .alert.warn .sev { color: var(--dlq-ink); } .alert.info .sev { color: var(--rio); }
+
+.flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 20px; }
+/* setas entre as etapas; andam enquanto o motor está ligado */
+.flow .tile:not(:last-child)::after { content: ""; position: absolute; right: -15px; top: 50%; width: 8px; height: 8px; border-top: 2px solid var(--ink-4); border-right: 2px solid var(--ink-4); transform: translateY(-50%) rotate(45deg); }
+.flow.live .tile:not(:last-child)::after { animation: nudge 1.4s ease-in-out infinite; border-color: var(--navy); }
+@keyframes nudge { 0%, 100% { transform: translate(-3px, -50%) rotate(45deg); opacity: .4; } 50% { transform: translate(2px, -50%) rotate(45deg); opacity: 1; } }
+.tile { position: relative; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tile:hover { border-color: color-mix(in oklab, var(--ink) 22%, var(--line)); }
+.tile[disabled] { cursor: default; }
+.tile .lbl { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.tile .lbl i { width: 9px; height: 9px; border-radius: 3px; }
+.tile .big { font: 600 26px/1.1 var(--mono); letter-spacing: -1px; }
+.tile .meta { font-size: 12px; color: var(--ink-3); }
+.tile .meta b { color: var(--ink); font-weight: 600; }
+.tile .delta { font: 500 11.5px var(--mono); }
+.tile.attn { border-color: color-mix(in oklab, var(--dlq) 55%, var(--line)); }
+.tile.crit { border-color: color-mix(in oklab, var(--falha) 55%, var(--line)); }
+.tile .go { position: absolute; top: 12px; right: 12px; color: var(--ink-4); }
+.tile .go svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; }
+
+.grid-2 { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .gl { stroke: var(--line-2); stroke-width: 1; }
+.chart .axis { fill: var(--ink-3); font: 10.5px var(--mono); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.hbar { display: flex; flex-direction: column; gap: 9px; }
+.hbar-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+.hbar-row .t { font-size: 12.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hbar-row .n { font: 600 12px var(--mono); }
+.hbar-row .track { grid-column: 1 / -1; height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.hbar-row .track > i { display: block; height: 100%; border-radius: 999px; background: var(--dlq); }
+.hbar-row:hover .t { text-decoration: underline; }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-3); font-weight: 600; padding: 0 10px 8px; white-space: nowrap; }
+td { padding: 8px 10px; border-top: 1px solid var(--line-2); white-space: nowrap; vertical-align: middle; }
+td.r, th.r { text-align: right; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: var(--surface-3); }
+.dist { display: flex; gap: 2px; height: 10px; width: 150px; min-width: 110px; }
+.dist i { display: block; height: 100%; border-radius: 2px; min-width: 2px; }
+.pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+.pill.ok { background: var(--mar-soft); color: var(--mar-ink); }
+.pill.run { background: var(--navy-soft); color: var(--navy); }
+.pill.warn { background: var(--dlq-soft); color: var(--dlq-ink); }
+.pill.bad { background: var(--falha-soft); color: var(--falha-ink); }
+.pill svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 2.4; }
+
+.cost { display: flex; flex-direction: column; gap: 12px; }
+.cost-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
+.cost-row .t { font-size: 12.5px; font-weight: 500; }
+.cost-row .t small { color: var(--ink-3); font-weight: 400; margin-left: 4px; }
+.cost-row .n { font: 600 12px var(--mono); }
+.meter { grid-column: 1 / -1; height: 6px; border-radius: 999px; background: var(--surface-2); position: relative; overflow: hidden; }
+.meter > i { display: block; height: 100%; border-radius: 999px; background: var(--rio); }
+.meter.warn > i { background: var(--dlq); } .meter.bad > i { background: var(--falha); }
+
+/* ── Registros ──────────────────────── */
+.reg { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: 100%; min-height: 0; }
+.stage-tabs { display: flex; gap: 6px; padding-block: 12px 0; flex-wrap: wrap; }
+.stab { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 8px 12px; cursor: pointer; font-weight: 600; font-size: 13px; color: var(--ink-2); min-height: 40px; }
+.stab i { width: 9px; height: 9px; border-radius: 3px; }
+.stab .num { font-size: 12px; color: var(--ink-3); }
+.stab[aria-selected="true"] { color: var(--ink); border-color: color-mix(in oklab, var(--ink) 40%, var(--line)); box-shadow: var(--shadow); }
+.stab small { font-weight: 500; font-size: 11.5px; color: var(--ink-3); }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-block: 10px; border-bottom: 1px solid var(--line); }
+.field { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12.5px; }
+.field label { color: var(--ink-3); font-size: 12px; }
+.field input, .field select { border: 0; background: transparent; outline: none; font-size: 12.5px; min-width: 0; }
+.field.search { flex: 1 1 220px; max-width: 340px; }
+.field.search input { width: 100%; }
+.field svg { width: 14px; height: 14px; stroke: var(--ink-3); fill: none; stroke-width: 2; flex: none; }
+.toggle { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12.5px; cursor: pointer; color: var(--ink-2); font-weight: 500; }
+.toggle[aria-pressed="true"] { background: var(--navy-soft); border-color: color-mix(in oklab, var(--navy) 40%, var(--line)); color: var(--navy); }
+.toolbar .spacer { flex: 1; }
+.kbd-hint { font-size: 11.5px; color: var(--ink-3); }
+kbd { font: 600 10.5px var(--mono); padding: 1px 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--surface); color: var(--ink-2); }
+
+.reg-body { display: grid; grid-template-columns: minmax(0, 1fr) 420px; min-height: 0; }
+.list { overflow-y: auto; min-height: 0; padding-block: 10px 80px; }
+.lock { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid color-mix(in oklab, var(--dlq) 50%, var(--line)); background: var(--dlq-soft); color: var(--dlq-ink); border-radius: 10px; padding: 8px 12px; font-size: 12.5px; margin-bottom: 10px; }
+.lock b { color: var(--ink); }
+.lock .btn { margin-left: auto; }
+.group { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin-bottom: 10px; overflow: hidden; }
+.group-h { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface-3); flex-wrap: wrap; }
+.group-h .caret { border: 0; background: none; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; padding: 0; font-weight: 600; font-size: 13px; color: var(--ink); text-align: left; }
+.group-h .caret svg { width: 14px; height: 14px; stroke: var(--ink-3); fill: none; stroke-width: 2; transition: transform .15s; }
+.group[data-open="false"] .caret svg { transform: rotate(-90deg); }
+.group[data-open="false"] .rows, .group[data-open="false"] .more { display: none; }
+.group-h .cnt { font: 600 12px var(--mono); color: var(--ink-3); }
+.group-h .why { font-size: 12px; color: var(--ink-3); flex-basis: 100%; padding-left: 22px; }
+.group-h .acts { margin-left: auto; display: flex; gap: 6px; }
+.rows { display: flex; flex-direction: column; }
+.row { display: grid; grid-template-columns: 28px minmax(0, 2.4fr) 44px 150px minmax(0, 1.3fr) 70px; gap: 10px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line-2); cursor: pointer; min-height: 48px; }
+.row:hover { background: var(--surface-3); }
+.row[aria-selected="true"] { background: var(--navy-soft); box-shadow: inset 3px 0 0 var(--navy); }
+.row.kfocus { outline: 2px solid var(--focus); outline-offset: -2px; }
+.row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--navy); cursor: pointer; margin: 0; }
+.row .nm { min-width: 0; }
+.row .nm b { display: block; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .nm span { font-size: 11.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.row .flags { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
+.row .age { font: 12px var(--mono); color: var(--ink-3); text-align: right; }
+.flag { font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 5px; white-space: nowrap; background: var(--surface-2); color: var(--ink-2); }
+.flag.warn { background: var(--dlq-soft); color: var(--dlq-ink); }
+.flag.bad { background: var(--falha-soft); color: var(--falha-ink); }
+.flag.ok { background: var(--mar-soft); color: var(--mar-ink); }
+.flag.run { background: var(--navy-soft); color: var(--navy); }
+.more { padding: 8px 12px; border-top: 1px solid var(--line-2); font-size: 12px; color: var(--ink-3); display: flex; gap: 10px; align-items: center; }
+.empty { padding: 40px 16px; text-align: center; color: var(--ink-3); }
+
+.score { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 8px; align-items: center; }
+.score .v { font: 600 12.5px var(--mono); }
+.sbar { position: relative; height: 8px; border-radius: 999px; background: var(--surface-2); }
+.sbar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: var(--ink-3); }
+.sbar .ghost { position: absolute; top: 0; bottom: 0; border-radius: 0 999px 999px 0; background: repeating-linear-gradient(135deg, color-mix(in oklab, var(--mar) 55%, transparent) 0 2px, transparent 2px 4px); }
+.sbar .tick { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); border-radius: 1px; }
+.sbar.pass .fill { background: var(--mar); }
+.sbar.near .fill { background: var(--dlq); }
+.sbar.low .fill { background: var(--falha); }
+
+.bulk { position: sticky; bottom: 12px; margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--ink); color: var(--bg); border-radius: 12px; padding: 8px 10px 8px 14px; box-shadow: var(--shadow); font-size: 13px; z-index: 5; }
+.bulk[hidden] { display: none; }
+.bulk .btn { background: transparent; color: var(--bg); border-color: color-mix(in oklab, var(--bg) 30%, transparent); }
+.bulk .btn.primary { background: var(--bg); color: var(--ink); border-color: var(--bg); }
+.bulk .btn:hover:not(:disabled) { background: color-mix(in oklab, var(--bg) 14%, transparent); }
+.bulk .btn.primary:hover:not(:disabled) { background: color-mix(in oklab, var(--bg) 85%, var(--ink)); }
+.bulk .gap { flex: 1; }
+
+.detail { border-left: 1px solid var(--line); background: var(--surface); overflow-y: auto; min-height: 0; display: flex; flex-direction: column; }
+.detail-in { padding: 18px; display: flex; flex-direction: column; gap: 18px; }
+.detail-empty { margin: auto; padding: 40px 24px; text-align: center; color: var(--ink-3); font-size: 13px; max-width: 300px; }
+.detail-empty svg { width: 36px; height: 36px; stroke: var(--ink-4); fill: none; stroke-width: 1.5; margin-bottom: 8px; }
+.d-head { display: flex; flex-direction: column; gap: 6px; }
+.d-head .top-line { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.d-head h2 { font-size: 18px; letter-spacing: -0.3px; line-height: 1.25; }
+.d-head .where { font-size: 12.5px; color: var(--ink-3); }
+.d-close { display: none; margin-left: auto; }
+.d-sec h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-3); font-weight: 600; margin-bottom: 8px; }
+.reason { border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.reason.warn { background: var(--dlq-soft); }
+.reason.bad { background: var(--falha-soft); }
+.reason.ok { background: var(--mar-soft); }
+.reason b { font-size: 13px; }
+.reason .rec { display: flex; gap: 6px; align-items: baseline; color: var(--ink-2); }
+.reason code { font: 11.5px var(--mono); word-break: break-word; }
+.bd { display: flex; flex-direction: column; gap: 8px; }
+.bd-row { display: grid; grid-template-columns: 120px minmax(0, 1fr) 54px; gap: 10px; align-items: center; font-size: 12.5px; }
+.bd-row .w { color: var(--ink-3); font-size: 11px; }
+.bd-track { height: 6px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+.bd-track i { display: block; height: 100%; background: var(--navy); border-radius: 999px; }
+.bd-row .pts { font: 600 12px var(--mono); text-align: right; }
+.bd-total { display: flex; justify-content: space-between; align-items: baseline; border-top: 1px solid var(--line-2); padding-top: 8px; font-size: 12.5px; }
+.bd-total b { font: 600 15px var(--mono); }
+.kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 6px 12px; font-size: 12.5px; }
+.kv dt { color: var(--ink-3); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.kv dd.miss { color: var(--falha-ink); }
+.tl { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tl li { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 10px; font-size: 12.5px; padding-bottom: 10px; position: relative; }
+.tl li::before { content: ""; position: absolute; left: 6px; top: 14px; bottom: 0; width: 2px; background: var(--line); }
+.tl li:last-child::before { display: none; }
+.tl .b { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--mar); background: var(--surface); margin-top: 2px; position: relative; z-index: 1; }
+.tl .b.bad { border-color: var(--falha); background: var(--falha); }
+.tl .b.warn { border-color: var(--dlq); }
+.tl small { display: block; color: var(--ink-3); font-size: 11.5px; }
+.tl time { font: 11.5px var(--mono); color: var(--ink-3); }
+.d-actions { position: sticky; bottom: 0; margin-top: auto; background: var(--surface); border-top: 1px solid var(--line); padding: 12px 18px; display: flex; gap: 8px; flex-wrap: wrap; }
+.d-actions .lockmsg { flex-basis: 100%; font-size: 11.5px; color: var(--dlq-ink); }
+
+/* ── páginas: Duplicados, Varreduras, Custo, Configuração ── */
+:root { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; } }
+:root[data-theme="dark"] { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; }
+.seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--surface-2); }
+.seg button { height: 28px; padding: 0 10px; border: 0; border-radius: 6px; background: none; font-size: 12.5px; font-weight: 600; color: var(--ink-3); cursor: pointer; white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.bar-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.kpi { display: flex; flex-direction: column; gap: 4px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); min-width: 0; }
+.kpi .k { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.kpi .v { font: 600 22px/1.15 var(--mono); letter-spacing: -.8px; }
+.kpi .s { font-size: 12px; color: var(--ink-3); }
+.switch { position: relative; flex: none; width: 38px; height: 22px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); cursor: pointer; transition: background .2s, border-color .2s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--ink-3); transition: transform .2s cubic-bezier(.2,.8,.2,1), background .2s; }
+.switch[aria-checked="true"] { background: var(--mar); border-color: var(--mar); }
+.switch[aria-checked="true"]::after { transform: translateX(16px); background: var(--surface); }
+.set-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 16px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line-2); }
+.set-row:first-child { border-top: 0; padding-top: 0; }
+.set-row b { font-size: 13px; font-weight: 600; }
+.set-row p { grid-column: 1; margin: 0; font-size: 12px; color: var(--ink-3); }
+.set-key { font: 11px var(--mono); color: var(--ink-3); }
+.ro { font: 600 13px var(--mono); color: var(--ink-2); padding: 4px 8px; border-radius: 6px; background: var(--surface-2); }
+.wrow { display: grid; grid-template-columns: 150px minmax(0, 1fr) 70px; gap: 12px; align-items: center; padding: 6px 0; }
+.wrow label { font-size: 13px; font-weight: 500; }
+.wrow input[type="range"] { width: 100%; accent-color: var(--navy); }
+.numin { width: 70px; height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); text-align: right; font: 13px var(--mono); }
+.numin.dirty, .wrow.dirty label { color: var(--navy); font-weight: 700; }
+.impact { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.impact div { padding: 10px 12px; border-radius: 10px; background: var(--surface-3); border: 1px solid var(--line-2); font-size: 12px; color: var(--ink-3); }
+.impact b { display: block; font: 600 18px var(--mono); color: var(--ink); }
+.ufchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ufchip { position: relative; min-width: 46px; height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font: 600 12px var(--mono); color: var(--ink-2); cursor: pointer; }
+.ufchip[aria-pressed="true"] { background: var(--navy-soft); border-color: var(--navy); color: var(--navy); }
+.ufchip .st { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; }
+.est { display: flex; gap: 18px; flex-wrap: wrap; padding: 12px; border-radius: 10px; background: var(--surface-3); border: 1px solid var(--line-2); }
+.est div { font-size: 12px; color: var(--ink-3); }
+.est b { display: block; font: 600 15px var(--mono); color: var(--ink); }
+dialog.modal { width: min(580px, calc(100% - 32px)); padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+dialog.modal[open] { display: flex; flex-direction: column; gap: 14px; animation: menuIn .2s cubic-bezier(.2,.8,.2,1); }
+dialog.modal::backdrop { background: rgb(10 12 16 / 55%); }
+dialog.modal h2 { font-size: 16px; }
+dialog.modal p { margin: 0; font-size: 12.5px; color: var(--ink-3); }
+textarea.curl { width: 100%; min-height: 150px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-3); color: var(--ink); font: 12px/1.5 var(--mono); resize: vertical; }
+.checks { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.checks span { display: flex; gap: 8px; align-items: center; }
+.checks .ok { color: var(--mar-ink); } .checks .no { color: var(--ink-3); }
+.cmp td { white-space: normal; vertical-align: top; overflow-wrap: anywhere; }
+.cmp td:first-child { color: var(--ink-3); width: 110px; white-space: nowrap; }
+.cmp .fill { background: var(--mar-soft); border-radius: 4px; padding: 0 4px; }
+.cmp-head { display: grid; grid-template-columns: 110px repeat(3, minmax(0, 1fr)); gap: 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--ink-3); font-weight: 600; }
+.dup-names { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: center; }
+.dup-names > div { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); min-width: 0; }
+.dup-names small { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--ink-3); margin-bottom: 2px; }
+.dup-names b { font-size: 14px; }
+.sim { display: inline-flex; flex-direction: column; align-items: center; font: 600 15px var(--mono); }
+.sim small { font: 500 10.5px var(--font); color: var(--ink-3); }
+.reg-body.wide { grid-template-columns: minmax(280px, .8fr) minmax(0, 1.2fr); }
+.reg-body.wide .detail { border-left: 1px solid var(--line); }
+.drow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line-2); cursor: pointer; }
+.drow:hover { background: var(--surface-3); }
+.drow[aria-selected="true"] { background: var(--navy-soft); box-shadow: inset 3px 0 0 var(--navy); }
+.drow b { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drow span { font-size: 11.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drow .sv { grid-row: 1 / 3; grid-column: 2; font: 600 13px var(--mono); text-align: right; }
+@media (max-width: 1240px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1020px) { .reg-body.wide { grid-template-columns: minmax(0, 1fr); } .reg-body.wide .detail { width: min(640px, 100%); } }
+@media (max-width: 640px) { .wrow { grid-template-columns: minmax(0, 1fr) 70px; } .wrow input[type="range"] { grid-column: 1 / -1; grid-row: 2; } .impact { grid-template-columns: minmax(0, 1fr); } }
+
+/* tooltip + toast */
+.tip { position: fixed; z-index: 50; pointer-events: none; background: var(--ink); color: var(--bg); font-size: 12px; padding: 6px 9px; border-radius: 7px; max-width: 260px; box-shadow: var(--shadow); white-space: pre-line; }
+.toasts { position: fixed; z-index: 60; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+.toast { background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 10px; padding: 10px 12px; font-size: 13px; display: flex; gap: 12px; align-items: center; max-width: min(420px, calc(100vw - 32px)); }
+.toast .link { white-space: nowrap; }
+
+.poc-note { font-size: 11.5px; color: var(--ink-3); display: inline-flex; gap: 6px; align-items: center; }
+.poc-note b { font-size: 10px; letter-spacing: 0.6px; padding: 1px 6px; border-radius: 4px; background: var(--dlq-soft); color: var(--dlq-ink); }
+
+/* ── responsivo ─────────────────────── */
+@media (max-width: 1240px) {
+  .flow { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .flow .tile::after { display: none; }
+  .reg-body { grid-template-columns: minmax(0, 1fr) 360px; }
+  .row { grid-template-columns: 28px minmax(0, 2fr) 40px 130px minmax(0, 1fr); }
+  .row .age { display: none; }
+}
+@media (max-width: 1020px) {
+  .run, .grid-2 { grid-template-columns: minmax(0, 1fr); }
+  .reg-body { grid-template-columns: minmax(0, 1fr); }
+  .detail { position: fixed; inset: 0 0 0 auto; width: min(460px, 100%); z-index: 40; box-shadow: var(--shadow); padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .detail[data-empty="true"] { display: none; }
+  .d-close { display: inline-grid; }
+}
+@media (max-width: 860px) {
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .side { flex-direction: row; align-items: center; gap: 12px; padding-block: 8px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+  .brand-logo { width: 96px; height: 24px; }
+  .brand span, .nav-label, .side-foot, .brand-symbol { display: none; }
+  .kpis { grid-template-columns: minmax(0, 1fr); }
+  .nav-group { flex-direction: row; }
+  .nav a { white-space: nowrap; }
+  .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .run-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .row { grid-template-columns: 28px minmax(0, 1fr) 110px; }
+  .statusbar { flex-wrap: wrap; height: auto; padding: 4px; }
+  .sb-sep { display: none; }
+  .row .ufc, .row .flags { display: none; }
+  .kbd-hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="app">
+  <aside class="side pad" id="side" aria-label="Navegação">
+    <div class="brand">
+      <div class="brand-logo" role="img" aria-label="Norteia"></div>
+      <div class="brand-symbol" role="img" aria-label="Norteia"></div>
+      <span>Brave · CMS territorial</span>
+    </div>
+    <nav class="nav nav-group" aria-label="Principal">
+      <div class="nav-label">Operação</div>
+      <a href="#operacao" data-nav="operacao"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="t">Visão geral</span></a>
+      <a href="#revisao" data-nav="revisao"><svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/></svg><span class="t">Revisão</span><span class="count" data-count="revisao"></span></a>
+      <a href="#mar" data-nav="mar"><svg viewBox="0 0 24 24"><path d="M2 12c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/><path d="M2 17c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/><path d="M12 3v4"/></svg><span class="t">Mar</span><span class="count" data-count="mar"></span></a>
+      <a href="#falha" data-nav="falha"><svg viewBox="0 0 24 24"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span class="t">Falha</span><span class="count" data-count="falha"></span></a>
+    </nav>
+    <nav class="nav nav-group" aria-label="Ferramentas">
+      <div class="nav-label">Ferramentas</div>
+      <a href="#duplicados" data-nav="duplicados"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16V5a2 2 0 0 1 2-2h11"/></svg><span class="t">Duplicados</span><span class="count" id="dup-count"></span></a>
+      <a href="#varreduras" data-nav="varreduras"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><span class="t">Varreduras</span></a>
+      <a href="#custo" data-nav="custo"><svg viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="t">Custo &amp; LLM</span></a>
+      </nav><nav class="nav nav-group" aria-label="Sistema"><div class="nav-label">Sistema</div><a href="#config" data-nav="config"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span class="t">Configuração</span></a>
+    </nav>
+    <div class="side-foot">
+      <span class="poc-note"><b>POC</b> dados simulados</span>
+      <button class="side-toggle" type="button" id="side-toggle" aria-controls="side" aria-expanded="true" aria-keyshortcuts="["><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/><path class="chev" d="M15 10l-2 2 2 2"/></svg><span class="t">Recolher menu</span></button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="top pad">
+      <div>
+        <h1 id="page-title">Visão geral</h1>
+        <div class="sub" id="page-sub">Estado do pipeline Nascente → Rio → Mar agora</div>
+      </div>
+      <div class="top-right">
+        <div class="statusbar" role="group" aria-label="Status do serviço">
+          <span class="sb-item live-chip" id="live-chip"><span class="dot pulse"></span><span id="live-txt">Ao vivo</span></span>
+          <span class="sb-sep" aria-hidden="true"></span>
+          <span class="sb-item" data-tip="Sessão TripAdvisor (cookies DataDome). TTL deslizante de 30 min: renova a cada requisição."><span class="dot ok"></span><span class="k">TA</span><span class="num" id="ta-ttl">29:58</span></span>
+          <span class="sb-item" data-tip="norteia-api: GET /api/v1/health + POST {} em /internal/territorial (422 = viva)."><span class="dot ok"></span><span class="k">API</span><span class="num" id="api-ms">312 ms</span></span>
+          <span class="sb-sep" aria-hidden="true"></span>
+          <span class="sb-item" id="cost-chip" tabindex="0"><span class="k">Hoje</span><span class="num" id="cost-today">US$ 29,44</span><span class="mini" id="cost-mini" aria-hidden="true"><i></i></span></span>
+          <div class="cur" role="group" aria-label="Moeda">
+            <button type="button" data-cur="USD" aria-pressed="true" aria-label="Dólar">US$</button>
+            <button type="button" data-cur="BRL" aria-pressed="false" aria-label="Real">R$</button>
+          </div>
+          <span class="sb-sep" aria-hidden="true"></span>
+          <div class="motor-wrap">
+            <button type="button" class="motor-btn" id="motor-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="motor-menu"></button>
+            <div class="motor-menu" id="motor-menu" role="menu" aria-label="Modo do motor" hidden></div>
+          </div>
+        </div>
+        <button class="icon-btn" type="button" id="theme-btn" aria-label="Alternar tema claro/escuro"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+      </div>
+    </header>
+
+    <!-- ═══════════ OPERAÇÃO ═══════════ -->
+    <section class="view" id="view-operacao" aria-labelledby="page-title">
+      <div class="ops pad">
+        <div class="run">
+          <div class="panel run-main">
+            <div class="panel-h"><h2>Run em andamento</h2><span class="hint">sweep TripAdvisor · iniciado 18:51</span><span class="right pill run" id="run-pill"><span class="dot ok pulse"></span>Ligado</span></div>
+            <div class="run-title"><span class="mark spin" id="run-mark" aria-hidden="true"></span><span class="uf-badge">RS</span><strong>Rio Grande do Sul</strong><span class="hint" style="color:var(--ink-3);font-size:12px">run 51929794</span></div>
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--ink-3);margin-bottom:6px"><span>Página <b class="num" style="color:var(--ink)" id="run-page">178</b> de <span class="num">199</span></span><span class="num" id="run-eta">89% · ETA ~38 min</span></div>
+              <div class="progress live" id="run-bar" role="progressbar" aria-label="Páginas do sweep" aria-valuemin="0" aria-valuemax="199" aria-valuenow="178"><i style="width:89%"></i></div>
+            </div>
+            <div class="run-stats">
+              <div class="stat-s"><div class="k">Atrativos lidos</div><div class="v" id="rs-lidos">3.379</div></div>
+              <div class="stat-s"><div class="k">Ritmo</div><div class="v" id="run-rate">5,3 s/card</div></div>
+              <div class="stat-s"><div class="k">Bloqueios de página</div><div class="v">2</div></div>
+              <div class="stat-s"><div class="k">Gasto do run</div><div class="v" id="run-cost">US$ 21,40</div></div>
+            </div>
+            <div class="steps" id="run-steps" aria-label="Etapas da sync da UF"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-h"><h2>Precisa de atenção</h2><span class="hint" id="alert-count"></span></div>
+            <div class="alerts" id="alerts"></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="panel-h"><h2>Pipeline</h2><span class="hint">clique numa etapa para abrir os registros</span></div>
+          <div class="flow" id="flow"></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-h"><h2>Saída do Rio por hora</h2><span class="hint">últimas 24 h · a barra da hora atual cresce ao vivo</span>
+              <div class="legend right" id="tp-legend"></div></div>
+            <div class="chart" id="tp-chart" role="img" aria-label=""></div>
+          </div>
+          <div class="panel">
+            <div class="panel-h"><h2>Acontecendo agora</h2><span class="hint" id="feed-hint">eventos do pipeline</span></div>
+            <ol class="feed" id="feed" aria-label="Eventos recentes"></ol>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-h"><h2>Cobertura por UF</h2><span class="hint">Mar · Revisão · Falha · Descarte</span><div class="legend right" id="uf-legend"></div></div>
+            <div class="table-wrap"><table id="uf-table"></table></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+            <div class="panel">
+              <div class="panel-h"><h2>Por que estão em Revisão</h2><span class="hint">abre a fila filtrada</span></div>
+              <div class="hbar" id="motivos"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-h"><h2>Custo</h2><span class="hint" id="cost-hint">hoje, teto diário US$ 50</span></div>
+              <div class="cost" id="cost"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ REGISTROS ═══════════ -->
+    <section class="view" id="view-registros" hidden aria-labelledby="page-title" style="overflow:hidden">
+      <div class="reg">
+        <div class="stage-tabs pad" role="tablist" aria-label="Etapa" id="stage-tabs"></div>
+        <div class="toolbar pad">
+          <div class="field search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><label class="sr" for="f-q">Buscar</label><input id="f-q" type="search" placeholder="Buscar nome ou município" autocomplete="off"></div>
+          <div class="field"><label for="f-uf">UF</label><select id="f-uf"></select></div>
+          <div class="field"><label for="f-grp">Agrupar</label><select id="f-grp"></select></div>
+          <div class="field"><label for="f-sort">Ordenar</label><select id="f-sort"><option value="score">Score ↓</option><option value="score-asc">Score ↑</option><option value="age">Mais antigos</option><option value="name">Nome</option></select></div>
+          <button class="toggle" type="button" id="f-nodesc" aria-pressed="false">Sem descrição</button>
+          <span class="spacer"></span>
+          <span class="kbd-hint"><kbd>[</kbd> menu · <kbd>J</kbd> <kbd>K</kbd> navegar · <kbd>X</kbd> marcar · <kbd>P</kbd> promover · <kbd>D</kbd> descartar</span>
+        </div>
+        <div class="reg-body">
+          <div class="list pad" id="list" aria-label="Registros"></div>
+          <aside class="detail" id="detail" data-empty="true" aria-label="Detalhe do registro"></aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ DUPLICADOS ═══════════ -->
+    <section class="view" id="view-duplicados" hidden style="overflow:hidden">
+      <div class="reg" style="grid-template-rows:auto minmax(0,1fr)">
+        <div class="toolbar pad">
+          <div class="field"><label for="d-uf">UF</label><select id="d-uf"></select></div>
+          <div class="seg" role="group" aria-label="Similaridade mínima" id="d-sim">
+            <button type="button" data-v="0.9">Similaridade ≥ 0,90</button><button type="button" data-v="0.75">≥ 0,75</button><button type="button" data-v="0">Todos</button>
+          </div>
+          <span class="spacer"></span>
+          <span class="kbd-hint"><kbd>J</kbd> <kbd>K</kbd> navegar · <kbd>M</kbd> mesclar · <kbd>A</kbd> manter ambos · <kbd>D</kbd> descartar</span>
+        </div>
+        <div class="reg-body wide">
+          <div class="list pad" id="d-list" aria-label="Pares suspeitos"></div>
+          <aside class="detail" id="d-detail" data-empty="true" aria-label="Comparação do par"></aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ VARREDURAS ═══════════ -->
+    <section class="view" id="view-varreduras" hidden>
+      <div class="ops pad">
+        <div class="run">
+          <div class="panel" id="v-new"></div>
+          <div class="panel" id="v-session"></div>
+        </div>
+        <div class="kpis" id="v-kpis"></div>
+        <div class="panel">
+          <div class="panel-h"><h2>Histórico de varreduras</h2><span class="hint">runs do motor, mais recentes primeiro</span>
+            <div class="right seg" role="group" aria-label="Filtrar por status" id="v-filter">
+              <button type="button" data-v="">Todos</button><button type="button" data-v="running">Em andamento</button><button type="button" data-v="concluido">Concluídos</button><button type="button" data-v="parcial">Parciais</button>
+            </div></div>
+          <div class="table-wrap"><table id="v-runs"></table></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ CUSTO & LLM ═══════════ -->
+    <section class="view" id="view-custo" hidden>
+      <div class="ops pad">
+        <div class="bar-row">
+          <div class="seg" role="group" aria-label="Período" id="c-win"><button type="button" data-v="1">Hoje</button><button type="button" data-v="7">7 dias</button><button type="button" data-v="30">30 dias</button></div>
+          <span style="font-size:12px;color:var(--ink-3)" id="c-note"></span>
+        </div>
+        <div class="kpis" id="c-kpis"></div>
+        <div class="panel">
+          <div class="panel-h"><h2>Gasto por dia</h2><span class="hint">por provedor · últimos 30 dias</span><div class="legend right" id="c-legend"></div></div>
+          <div class="chart" id="c-chart" role="img"></div>
+        </div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-h"><h2>Detalhamento</h2><span class="hint" id="c-tnote"></span>
+              <div class="right seg" role="group" aria-label="Agrupar por" id="c-group"><button type="button" data-v="prov">Provedor</button><button type="button" data-v="lane">Lane</button><button type="button" data-v="model">Modelo</button></div></div>
+            <div class="table-wrap"><table id="c-table"></table></div>
+          </div>
+          <div class="panel">
+            <div class="panel-h"><h2>Tetos de gasto</h2><span class="hint">o cost guard pausa o motor ao estourar</span></div>
+            <div class="cost" id="c-caps"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ CONFIGURAÇÃO ═══════════ -->
+    <section class="view" id="view-config" hidden>
+      <div class="ops pad" style="max-width:1000px">
+        <div class="panel" id="cfg-score"></div>
+        <div class="panel" id="cfg-lanes"></div>
+        <div class="panel" id="cfg-env"></div>
+        <div class="bulk" id="cfg-save" hidden></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<dialog class="modal" id="curl-dialog" aria-labelledby="curl-title">
+  <h2 id="curl-title">Atualizar sessão do TripAdvisor</h2>
+  <p>Abra uma página de atrativo no TripAdvisor. No DevTools, aba Network, clique com o botão direito numa requisição <span class="mono">/data/graphql</span> e escolha <b>Copy as cURL</b>. Cole aqui.</p>
+  <label class="sr" for="curl-in">Comando cURL</label>
+  <textarea class="curl" id="curl-in" spellcheck="false" autocomplete="off" placeholder="curl 'https://www.tripadvisor.com.br/data/graphql/ids' -H 'cookie: …' -H 'user-agent: …'"></textarea>
+  <div class="checks" id="curl-checks" aria-live="polite"></div>
+  <p id="curl-err" role="alert" style="color:var(--falha-ink)" hidden></p>
+  <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+    <button class="btn" type="button" id="curl-cancel">Cancelar</button>
+    <button class="btn primary" type="button" id="curl-go" disabled>Validar e injetar</button>
+  </div>
+  <p style="font-size:11.5px">POC: o texto colado não sai deste navegador.</p>
+</dialog>
+<div class="tip" id="tip" hidden></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script>
+(() => {
+// ───────────── dados simulados (seed fixo → sempre os mesmos registros) ─────────────
+function rng(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const R = rng(20261026);
+const pick = a => a[Math.floor(R() * a.length)];
+const between = (a, b) => a + R() * (b - a);
+const wpick = pairs => { let t = R() * pairs.reduce((s, p) => s + p[1], 0); for (const [v, w] of pairs) if ((t -= w) <= 0) return v; return pairs[pairs.length - 1][0]; };
+
+let THRESHOLD = 70; // overlay score.threshold_mar no DEV desde 19/10 (editável em Configuração)
+const W = { origem: 30, completude: 20, corroboracao: 20, atualidade: 15, validacao: 15 };
+const W_LABEL = { origem: "Origem", completude: "Completude", corroboracao: "Corroboração", atualidade: "Atualidade", validacao: "Validação humana" };
+
+const UF_NAMES = { AC:"Acre",AL:"Alagoas",AP:"Amapá",AM:"Amazonas",BA:"Bahia",CE:"Ceará",DF:"Distrito Federal",ES:"Espírito Santo",GO:"Goiás",MA:"Maranhão",MT:"Mato Grosso",MS:"Mato Grosso do Sul",MG:"Minas Gerais",PA:"Pará",PB:"Paraíba",PR:"Paraná",PE:"Pernambuco",PI:"Piauí",RJ:"Rio de Janeiro",RN:"Rio Grande do Norte",RS:"Rio Grande do Sul",RO:"Rondônia",RR:"Roraima",SC:"Santa Catarina",SP:"São Paulo",SE:"Sergipe",TO:"Tocantins" };
+const MUN = {
+  RS: ["Gramado","Canela","Bento Gonçalves","Porto Alegre","Torres","Cambará do Sul","Nova Petrópolis","São Miguel das Missões","Pelotas","Garibaldi"],
+  SC: ["Florianópolis","Balneário Camboriú","Urubici","Blumenau","Bombinhas","Garopaba","Pomerode","São Joaquim"],
+  PR: ["Curitiba","Foz do Iguaçu","Morretes","Ponta Grossa","Antonina","Guaratuba","Prudentópolis"],
+  SE: ["Aracaju","Canindé de São Francisco","São Cristóvão","Laranjeiras","Estância"],
+  DF: ["Brasília"], GO: ["Pirenópolis","Alto Paraíso de Goiás","Caldas Novas","Goiás","Cavalcante"],
+  ES: ["Vitória","Vila Velha","Guarapari","Domingos Martins","Conceição da Barra"],
+  RR: ["Boa Vista","Pacaraima"], AP: ["Macapá","Oiapoque"], AC: ["Rio Branco","Xapuri"],
+};
+const DDD = { RS:"54", SC:"48", PR:"41", SE:"79", DF:"61", GO:"62", ES:"27", RR:"95", AP:"96", AC:"68" };
+const KINDS = [
+  ["Cachoeira", ["do Salto","dos Venâncios","do Pinheirinho","da Usina","Véu de Noiva","do Tigre Preto","das Andorinhas"], "Atração natural"],
+  ["Praia", ["do Rosa","da Guarda","Brava","do Santinho","Grande","da Ferrugem","do Forte"], "Praia"],
+  ["Igreja Matriz", ["Nossa Senhora da Conceição","São Pedro","Santo Antônio","São José","Nossa Senhora do Rosário"], "Patrimônio religioso"],
+  ["Mirante", ["do Morro da Cruz","da Serra","do Vale","do Cânion","do Pôr do Sol"], "Mirante"],
+  ["Parque Estadual", ["do Turvo","da Serra do Tabuleiro","de Itapuã","do Caracol","dos Pireneus"], "Parque"],
+  ["Museu", ["Histórico Municipal","do Imigrante","de Arte Sacra","Ferroviário","do Colono"], "Museu"],
+  ["Cânion", ["Itaimbezinho","Fortaleza","Malacara","do Funil"], "Atração natural"],
+  ["Lagoa", ["Negra","dos Patos","Azul","do Peri"], "Atração natural"],
+  ["Trilha", ["do Pico","das Bromélias","da Mata Atlântica","do Sertão"], "Trilha"],
+  ["Centro Cultural", ["Casa de Pedra","da Estação","Municipal"], "Centro cultural"],
+  ["Mercado Público", ["Central","Municipal"], "Mercado"],
+  ["Gruta", ["da Lagoinha","do Bacaetava","dos Ecos"], "Atração natural"],
+  ["Praça", ["da Matriz","dos Imigrantes","XV de Novembro"], "Praça"],
+];
+const UF_LOAD = { RS: 2350, SC: 1480, PR: 1310, SE: 288, DF: 410, GO: 620, ES: 530, RR: 95, AP: 72, AC: 88 };
+const UF_DONE = { SC: "24/10 09:12", PR: "24/10 14:10", SE: "19/10 17:40", DF: "20/10 11:02", GO: "20/10 15:31", ES: "20/10 19:48", RR: "21/10 10:15", AP: "21/10 10:58", AC: "21/10 11:40" };
+
+const MOTIVOS = {
+  awaiting_promotion: { label: "Pronto para promover", why: "O score passa do limiar só com a validação humana (+15). Nenhum outro bloqueio.", rec: "Conferir e promover. Dá para promover o grupo inteiro." },
+  descricao_nao_fundamentada: { label: "Descrição sem fundamento", why: "Groundedness abaixo de 0,75: o texto afirma coisas que a busca não confirma.", rec: "Reescrever a descrição ou rodar a cascata de novo." },
+  municipio_nao_confirmado: { label: "Município não confirmado", why: "O gate de menção não achou o município no contexto de busca.", rec: "Confirmar o município no mapa e editar." },
+  no_recent_reviews: { label: "Sem review recente", why: "Última review há mais de 90 dias (ou 365 com menos de 20 reviews). A promoção devolveria 409.", rec: "Aguardar nova review ou descartar." },
+  score_baixo: { label: "Score abaixo do corte", why: "Mesmo com a validação humana o score não chega ao limiar. Falta completude ou corroboração.", rec: "Completar horário, endereço ou site e reprocessar." },
+  possivel_duplicado: { label: "Possível duplicado", why: "Nome muito parecido (Jaccard) com outro registro do mesmo município.", rec: "Comparar os dois e descartar um." },
+  closed_temporarily: { label: "Fechado temporariamente", why: "O Google Places marca CLOSED_TEMPORARILY. Pode ir ao Mar com o selo.", rec: "Promover com o selo ou aguardar reabertura." },
+};
+const FALHAS = {
+  ta_session: { label: "Sessão TripAdvisor expirada", stage: "ingested", msg: "SessionExpiredError: página do atrativo devolveu 403 (DataDome)", rec: "Injetar novo cURL do TA e reprocessar." },
+  places_balance: { label: "Places sem saldo (403)", stage: "places_enriched", msg: "ProviderBalanceError: Places API 403 PERMISSION_DENIED", rec: "Conferir faturamento do Google e reprocessar." },
+  apify_402: { label: "Apify 402 · limite mensal", stage: "places_enriched", msg: "402 Payment Required: limite mensal da conta Apify", rec: "Trocar de conta ou subir o limite e reprocessar." },
+  gemini_quota: { label: "Gemini 429 na descrição", stage: "described", msg: "gemini_rate_limited quota_id=GenerateContentPaidTierInputTokensPerModelPerMinute", rec: "Reprocessar fora do pico (não gasta tentativa)." },
+  validation: { label: "Payload inválido", stage: "scored", msg: "ValidationError: coordenadas ausentes depois do geocode", rec: "Editar endereço e reprocessar." },
+};
+const PUSH = {
+  publicado: { label: "Publicado na API", cls: "ok" },
+  pendente: { label: "Pendente (outbox)", cls: "run" },
+  rejeitado: { label: "Rejeitado pela API", cls: "bad" },
+};
+const REJ = ["422 · price_level fora do enum", "422 · municipio_ibge não encontrado", "422 · category sem mapeamento para type"];
+const STAGE = {
+  revisao: { label: "Revisão", sub: "DLQ · validação humana", color: "var(--dlq)" },
+  mar: { label: "Mar", sub: "canônico · vai para a API", color: "var(--mar)" },
+  falha: { label: "Falha", sub: "quarentena", color: "var(--falha)" },
+};
+
+function scoreOf(c, w = W) { return Math.round(Object.keys(w).reduce((s, k) => s + c[k] * w[k] / 100, 0) * 10) / 10; }
+
+const recs = [];
+let seq = 0;
+// stage forçado = "rio" para registros recém-coletados pela simulação ao vivo
+function makeRec(uf, forced) {
+    const [kind, sufs, cat] = pick(KINDS);
+    const mun = pick(MUN[uf]);
+    const name = `${kind} ${pick(sufs)}`;
+    const hasPlaces = R() < 0.86;
+    const semDesc = R() < 0.2;
+    const lastReview = R() < 0.72 ? Math.round(between(2, 60)) : Math.round(between(61, 420));
+    const reviews = Math.round(R() < 0.7 ? between(20, 1900) : between(1, 19));
+    const comp = {
+      origem: 80,
+      completude: Math.round(semDesc ? between(55, 75) : between(75, 96)),
+      corroboracao: Math.round(hasPlaces ? between(55, 100) : between(0, 40)),
+      atualidade: lastReview <= 60 ? 100 : Math.max(0, Math.round(100 - (lastReview - 60) / 3)),
+      validacao: 0,
+    };
+    const stage = forced || wpick([["revisao", 56], ["mar", uf === "RS" ? 9 : 30], ["falha", 1.5], ["descarte", 7], ["rio", uf === "RS" ? 7 : 0]]);
+    const r = {
+      id: `rio_${(++seq).toString(36).padStart(5, "0")}`, name, uf, mun, cat, kind, hasPlaces, semDesc, lastReview, reviews,
+      rating: Math.round(between(3.7, 4.95) * 10) / 10, comp, stage,
+      fechado: hasPlaces && R() < 0.02, dup: R() < 0.035,
+      ageH: uf === "RS" ? between(0.1, 26) : between(40, 24 * 9),
+      page: Math.ceil(between(1, uf === "RS" ? 178 : 130)),
+      horario: hasPlaces && R() < 0.8 ? pick(["Ter–Dom 9h–17h", "Todos os dias 8h–18h", "Seg–Sex 10h–16h", "Aberto 24 horas"]) : null,
+      site: R() < 0.55 ? `${name.toLowerCase().normalize("NFD").replace(/[^a-z ]/g, "").trim().split(" ").slice(-2).join("")}.com.br` : null,
+      phone: hasPlaces && R() < 0.6 ? `(${DDD[uf]}) 9****-**${Math.floor(between(10, 99))}` : null,
+    };
+    if (forced) r.ageH = 0;
+    route_(r, stage);
+    recs.push(r);
+    byId.set(r.id, r);
+    return r;
+}
+// roteia o registro para a etapa e preenche motivo / erro / status do push
+function route_(r, stage) {
+    const { uf, lastReview, reviews } = r;
+    if (stage === "mar") { r.comp.validacao = 100; if (scoreOf(r.comp) < THRESHOLD) stage = "revisao"; r.comp.validacao = stage === "mar" ? 100 : 0; }
+    r.stage = stage;
+    r.score = scoreOf(r.comp);
+    if (stage === "revisao") {
+      const potencial = r.score + W.validacao;
+      if (r.fechado) r.motivo = "closed_temporarily";
+      else if (r.dup) r.motivo = "possivel_duplicado";
+      else if (lastReview > 90 && (lastReview > 365 || reviews < 20)) r.motivo = "no_recent_reviews";
+      else if (potencial < THRESHOLD) r.motivo = "score_baixo";
+      else r.motivo = wpick([["awaiting_promotion", 70], ["descricao_nao_fundamentada", 13], ["municipio_nao_confirmado", 10]]);
+    }
+    if (stage === "falha") {
+      r.falha = uf === "RS" ? wpick([["ta_session", 4], ["apify_402", 5], ["places_balance", 1], ["validation", 1]]) : wpick([["gemini_quota", 4], ["validation", 2], ["places_balance", 2], ["ta_session", 1]]);
+      r.attempts = Math.ceil(between(1, 3));
+    }
+    if (stage === "mar") {
+      r.push = wpick([["publicado", 86], ["pendente", uf === "RS" ? 30 : 4], ["rejeitado", 3]]);
+      if (r.push === "rejeitado") r.rej = pick(REJ);
+    }
+}
+const byId = new Map();
+for (const [uf, n] of Object.entries(UF_LOAD)) for (let i = 0; i < n; i++) makeRec(uf);
+
+// ───────────── helpers ─────────────
+const fmt = n => n.toLocaleString("pt-BR");
+const fmt1 = n => n.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const ago = h => h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : h < 48 ? `${Math.round(h)} h` : `${Math.round(h / 24)} d`;
+const $ = (s, r = document) => r.querySelector(s);
+const count = (pred) => recs.reduce((n, r) => n + (pred(r) ? 1 : 0), 0);
+const ICON = {
+  arrow: '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+  caret: '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
+  close: '<svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>',
+  inbox: '<svg viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/></svg>',
+};
+
+let motor = "LIGADO";
+const locked = () => motor === "LIGADO";
+
+// ───────────── tooltip ─────────────
+const tip = $("#tip");
+function showTip(el, x, y) {
+  tip.textContent = el.dataset.tip; tip.hidden = false;
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  if (el.dataset.tipSide === "right") { const b = el.getBoundingClientRect(); tip.style.left = b.right + 10 + "px"; tip.style.top = b.top + b.height / 2 - h / 2 + "px"; return; }
+  tip.style.left = Math.min(innerWidth - w - 8, Math.max(8, x - w / 2)) + "px"; tip.style.top = Math.max(8, y - h - 12) + "px";
+}
+document.addEventListener("pointermove", e => { const el = e.target.closest?.("[data-tip]"); if (el) showTip(el, e.clientX, e.clientY); else tip.hidden = true; });
+document.addEventListener("focusin", e => { const el = e.target.closest?.("[data-tip]"); if (el) { const b = el.getBoundingClientRect(); showTip(el, b.left + b.width / 2, b.top); } });
+document.addEventListener("focusout", () => { tip.hidden = true; });
+
+// ───────────── toast com desfazer ─────────────
+function toast(msg, undo) {
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.innerHTML = `<span>${esc(msg)}</span>`;
+  if (undo) { const b = document.createElement("button"); b.className = "link"; b.textContent = "Desfazer"; b.onclick = () => { undo(); t.remove(); }; t.append(b); }
+  $("#toasts").append(t);
+  setTimeout(() => t.remove(), undo ? 6000 : 3500);
+}
+
+// ───────────── ações ─────────────
+function snapshot(ids) { return ids.map(id => { const r = byId.get(id); return { r, s: { stage: r.stage, comp: { ...r.comp }, score: r.score, push: r.push, motivo: r.motivo, falha: r.falha } }; }); }
+function restore(snap) { for (const { r, s } of snap) Object.assign(r, s); renderAll(); }
+
+function promote(ids) {
+  ids = ids.filter(id => byId.get(id).stage === "revisao");
+  if (!ids.length) return;
+  const snap = snapshot(ids); let ok = 0, held = 0;
+  for (const id of ids) {
+    const r = byId.get(id);
+    const c = { ...r.comp, validacao: 100 }, s = scoreOf(c);
+    if (s < THRESHOLD || r.motivo === "no_recent_reviews") { held++; continue; }
+    Object.assign(r, { comp: c, score: s, stage: "mar", push: "pendente" }); ok++;
+  }
+  sel.clear(); renderAll();
+  toast(`${fmt(ok)} promovido${ok === 1 ? "" : "s"} ao Mar${held ? ` · ${fmt(held)} retido${held === 1 ? "" : "s"} (abaixo do limiar ou sem review recente)` : ""}. Push na fila.`, () => restore(snap));
+}
+function descartar(ids) {
+  ids = ids.filter(id => ["revisao", "falha"].includes(byId.get(id).stage));
+  if (!ids.length) return;
+  const snap = snapshot(ids);
+  ids.forEach(id => { byId.get(id).stage = "descarte"; });
+  sel.clear(); renderAll();
+  toast(`${fmt(ids.length)} descartado${ids.length === 1 ? "" : "s"}.`, () => restore(snap));
+}
+function reprocessar(ids) {
+  ids = ids.filter(id => byId.get(id).stage === "falha");
+  if (!ids.length) return;
+  const snap = snapshot(ids);
+  ids.forEach(id => { byId.get(id).stage = "rio"; });
+  sel.clear(); renderAll();
+  toast(`${fmt(ids.length)} reenfileirado${ids.length === 1 ? "" : "s"} para reprocessar.`, () => restore(snap));
+}
+function reenviar(ids) {
+  ids = ids.filter(id => { const r = byId.get(id); return r.stage === "mar" && r.push !== "publicado"; });
+  if (!ids.length) return;
+  const snap = snapshot(ids);
+  ids.forEach(id => { byId.get(id).push = "pendente"; });
+  sel.clear(); renderAll();
+  toast(`${fmt(ids.length)} reenviado${ids.length === 1 ? "" : "s"} ao outbox.`, () => restore(snap));
+}
+
+// ═════════════ DUPLICADOS ═════════════
+const R3 = rng(11), b3 = (a, b) => a + R3() * (b - a);
+const UF_CENTER = { RS: [-29.4, -51.5], SC: [-27.5, -49.6], PR: [-25.3, -50.2], SE: [-10.7, -37.3], DF: [-15.8, -47.9], GO: [-15.9, -49.5], ES: [-20.3, -40.6], RR: [2.8, -60.7], AP: [0.9, -51.2], AC: [-9.6, -68.6] };
+const tokens = s => new Set(s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(/[^a-z0-9]+/).filter(t => t.length > 2));
+function jaccard(a, b) { const A = tokens(a), B = tokens(b), inter = [...A].filter(t => B.has(t)).length; return inter / ((A.size + B.size - inter) || 1); }
+const NAME_VARIANTS = [n => n.replace("Igreja Matriz", "Igreja"), n => n.replace(/ (do|da|dos|das|de) /, " "), n => n.replace("Parque Estadual", "Parque"), n => n.replace("Cachoeira", "Cascata"), n => n.replace("Praça", "Largo"), n => n.replace("Museu", "Memorial")];
+const addrOf = r => `${r.kind === "Praia" ? "Orla" : "Estrada"} ${r.name.split(" ").slice(-1)[0]}, s/n`;
+const marPool = recs.filter(r => r.stage === "mar");
+const dupPairs = Array.from({ length: 42 }, (_, i) => {
+  const m = marPool[Math.floor(R3() * marPool.length)];
+  // tenta variações em ordem aleatória; ~15% ficam com o nome idêntico (duplicata exata)
+  let cn = m.name;
+  if (R3() > .15) { const start = Math.floor(R3() * NAME_VARIANTS.length); for (let j = 0; j < NAME_VARIANTS.length && cn === m.name; j++) cn = NAME_VARIANTS[(start + j) % NAME_VARIANTS.length](m.name); }
+  if (cn === m.name && R3() > .3) cn = `${m.name} ${["Municipal", "Velha", "(antiga)", "Turística"][Math.floor(R3() * 4)]}`;
+  const [la, lo] = UF_CENTER[m.uf], lat = la + (R3() - .5) * 2, lng = lo + (R3() - .5) * 2;
+  const dist = Math.round(R3() < .8 ? b3(5, 140) : b3(300, 2400));
+  const fill = (mv, gen) => mv == null ? (R3() < .55 ? gen : null) : (R3() < .7 ? mv : null);
+  const fields = [
+    ["Nome", cn, m.name], ["Município", m.mun, m.mun],
+    ["Endereço", R3() < .65 ? addrOf(m) : addrOf(m).replace("s/n", `km ${Math.ceil(b3(1, 30))}`), addrOf(m)],
+    ["Coordenadas", `${(lat + dist / 111000).toFixed(5)}, ${lng.toFixed(5)}`, `${lat.toFixed(5)}, ${lng.toFixed(5)}`],
+    ["Telefone", fill(m.phone, `(${DDD[m.uf]}) 9****-**${Math.floor(b3(10, 99))}`), m.phone],
+    ["Site", fill(m.site, `instagram.com/${m.name.toLowerCase().normalize("NFD").replace(/[^a-z]/g, "").slice(-14)}`), m.site],
+    ["Horário", m.horario == null ? (R3() < .55 ? "Ter–Dom 9h–17h" : null) : (R3() < .6 ? m.horario : "Ter–Dom 8h–16h"), m.horario],
+    ["Categoria", m.cat, m.cat],
+  ].map(([label, a, b]) => {
+    let st = a == null && b == null ? "vazio" : a == null ? "so_mar" : b == null ? "so_cand" : a === b ? "coincide" : "diverge";
+    if (label === "Coordenadas") st = dist < 150 ? "coincide" : "diverge";
+    return { label, a, b, st };
+  });
+  const comparable = fields.filter(f => f.st === "coincide" || f.st === "diverge");
+  const sim = Math.round((.6 * jaccard(cn, m.name) + .4 * (comparable.filter(f => f.st === "coincide").length / (comparable.length || 1))) * 100) / 100;
+  return { id: `dup_${i}`, m, cand: { id: `rio_c${1000 + i}`, name: cn, score: Math.round(b3(55, 78) * 10) / 10 }, uf: m.uf, fields, dist, sim, status: "pendente" };
+}).sort((a, b) => b.sim - a.sim);
+const DUP_ST = { coincide: ["ok", "coincide"], diverge: ["warn", "diverge"], so_cand: ["run", "só no candidato"], so_mar: ["", "só no Mar"], vazio: ["", "vazio"] };
+const dupState = { uf: "", min: 0.75, active: null };
+const pendingDups = () => dupPairs.filter(p => p.status === "pendente" && (!dupState.uf || p.uf === dupState.uf) && p.sim >= dupState.min);
+const fmtDist = m => m < 1000 ? `${m} m` : `${(m / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} km`;
+const fmtSim = s => s.toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+
+function renderDup() {
+  $("#dup-count").textContent = fmt(dupPairs.filter(p => p.status === "pendente").length);
+  const ufs = [...new Set(dupPairs.map(p => p.uf))].sort();
+  $("#d-uf").innerHTML = `<option value="">Todas</option>` + ufs.map(u => `<option ${u === dupState.uf ? "selected" : ""}>${u}</option>`).join("");
+  document.querySelectorAll("#d-sim [data-v]").forEach(b => b.setAttribute("aria-pressed", +b.dataset.v === dupState.min));
+  const list = pendingDups();
+  if (!list.some(p => p.id === dupState.active)) dupState.active = list[0]?.id || null;
+  $("#d-list").innerHTML = !list.length ? `<div class="empty">Nenhum par pendente com esses filtros.</div>` : `<section class="group">
+    <div class="group-h"><span style="font-weight:600;font-size:13px">Pares para revisar</span><span class="cnt">${fmt(list.length)}</span>
+      <span class="why" style="padding-left:0">Similaridade = 60% nome (tokens) + 40% campos que coincidem. O embedding ainda é stub.</span></div>
+    <div role="listbox" aria-label="Pares suspeitos">${list.map(p => `<div class="drow" role="option" data-id="${p.id}" aria-selected="${p.id === dupState.active}">
+      <b>${esc(p.cand.name)}</b><span class="sv" style="color:${p.sim >= .9 ? "var(--falha-ink)" : p.sim >= .75 ? "var(--dlq-ink)" : "var(--ink-3)"}">${fmtSim(p.sim)}</span>
+      <span>≈ ${esc(p.m.name)} · ${esc(p.m.mun)} · ${p.uf}</span></div>`).join("")}</div></section>`;
+  renderDupDetail();
+}
+function renderDupDetail() {
+  const d = $("#d-detail"), p = dupPairs.find(x => x.id === dupState.active);
+  if (!p) { d.dataset.empty = "true"; d.innerHTML = `<div class="detail-empty">${ICON.inbox}<div>Nenhum par selecionado.</div></div>`; return; }
+  d.dataset.empty = "false";
+  const fills = p.fields.filter(f => f.st === "so_cand").length;
+  const cell = v => v == null ? '<span style="color:var(--ink-4)">—</span>' : esc(v);
+  d.innerHTML = `<div class="detail-in">
+    <div class="d-head"><div class="top-line"><span class="pill ${p.sim >= .9 ? "bad" : "warn"}">Similaridade ${fmtSim(p.sim)}</span><span class="uf-badge">${p.uf}</span><span style="font-size:12px;color:var(--ink-3)">a ${fmtDist(p.dist)} um do outro</span>
+      <button class="icon-btn d-close" type="button" aria-label="Fechar comparação" data-close>${ICON.close}</button></div></div>
+    <div class="dup-names">
+      <div><small>Candidato · Rio</small><b>${esc(p.cand.name)}</b><div class="mono" style="font-size:11.5px;color:var(--ink-3)">${p.cand.id} · score ${fmt1(p.cand.score)}</div></div>
+      <span class="sim" aria-hidden="true">≈</span>
+      <div><small>Já no Mar</small><b>${esc(p.m.name)}</b><div class="mono" style="font-size:11.5px;color:var(--ink-3)">${p.m.id} · ${PUSH[p.m.push].label.toLowerCase()}</div></div>
+    </div>
+    <div class="d-sec"><h3>Campo a campo</h3><div class="table-wrap"><table class="cmp">
+      <thead><tr><th>Campo</th><th>Candidato</th><th>Mar</th><th>Se mesclar</th></tr></thead>
+      <tbody>${p.fields.map(f => `<tr><td>${f.label} <span class="flag ${DUP_ST[f.st][0]}" style="margin-left:4px">${DUP_ST[f.st][1]}</span></td><td>${cell(f.a)}</td><td>${cell(f.b)}</td><td>${f.st === "so_cand" ? `<span class="fill">${esc(f.a)}</span>` : cell(f.b)}</td></tr>`).join("")}</tbody>
+    </table></div></div>
+    <div class="reason ${fills ? "ok" : ""}" style="${fills ? "" : "background:var(--surface-3)"}"><b>${fills ? `Mesclar preenche ${fills} campo${fills === 1 ? "" : "s"} vazio${fills === 1 ? "" : "s"} do Mar` : "Mesclar não acrescenta nada ao Mar"}</b><span>O registro do Mar mantém os próprios valores. O candidato sai do Rio e o Mar é republicado na API.</span></div>
+  </div>
+  <div class="d-actions"><button class="btn primary" type="button" data-dup="merge">Mesclar no Mar</button><button class="btn" type="button" data-dup="keep">Manter ambos</button><button class="btn danger" type="button" data-dup="discard">Descartar candidato</button></div>`;
+}
+function resolveDup(action) {
+  const list = pendingDups(), i = list.findIndex(p => p.id === dupState.active); if (i < 0) return;
+  const p = list[i];
+  p.status = action; dupState.active = list[i + 1]?.id || list[i - 1]?.id || null;
+  renderDup();
+  toast({ merge: "Mesclado no registro do Mar.", keep: "Par mantido: os dois registros continuam.", discard: "Candidato descartado." }[action], () => { p.status = "pendente"; dupState.active = p.id; renderDup(); });
+}
+$("#d-list").addEventListener("click", e => { const r = e.target.closest(".drow"); if (r) { dupState.active = r.dataset.id; renderDup(); } });
+$("#d-detail").addEventListener("click", e => {
+  if (e.target.closest("[data-close]")) { dupState.active = null; $("#d-detail").dataset.empty = "true"; return; }
+  const b = e.target.closest("[data-dup]"); if (b) resolveDup(b.dataset.dup);
+});
+$("#d-uf").addEventListener("change", e => { dupState.uf = e.target.value; renderDup(); });
+$("#d-sim").addEventListener("click", e => { const b = e.target.closest("[data-v]"); if (b) { dupState.min = +b.dataset.v; renderDup(); } });
+document.addEventListener("keydown", e => {
+  if (view !== "duplicados" || e.metaKey || e.ctrlKey || e.altKey || e.target.matches("input, select, textarea")) return;
+  const k = e.key.toLowerCase(), list = pendingDups(), i = list.findIndex(p => p.id === dupState.active);
+  if (k === "j" || e.key === "ArrowDown") { e.preventDefault(); dupState.active = list[Math.min(list.length - 1, i + 1)]?.id; renderDup(); }
+  else if (k === "k" || e.key === "ArrowUp") { e.preventDefault(); dupState.active = list[Math.max(0, i - 1)]?.id; renderDup(); }
+  else if (k === "m") resolveDup("merge"); else if (k === "a") resolveDup("keep"); else if (k === "d") resolveDup("discard");
+  document.querySelector(`.drow[data-id="${dupState.active}"]`)?.scrollIntoView({ block: "nearest" });
+});
+
+// ═════════════ VARREDURAS ═════════════
+const DEPTH = { nascente: "Nascente", nascente_rio: "Nascente → Rio", nascente_rio_mar: "Nascente → Rio → Mar", descricao: "Descrição" };
+const RUN_ST = { running: ["run", "Em andamento"], concluido: ["ok", "Concluído"], parcial: ["warn", "Parcial"], fila: ["", "Na fila"] };
+const RUNS = [
+  { id: "51929794", day: 26, start: "26/10 18:51", ufs: ["RS"], src: "TripAdvisor", depth: "nascente_rio", status: "running" },
+  { id: "c715a169", day: 26, start: "26/10 14:13", ufs: ["RS"], src: "TripAdvisor", depth: "nascente_rio", total: 1189, sync: 1102, fail: 12, dur: "1 h 33 min", cost: 18.9, status: "parcial", note: "Pausou sozinho: Apify 402 (limite mensal) na página 45 de 199" },
+  { id: "43903aba", day: 24, start: "24/10 14:12", ufs: ["PR"], src: "Cascata", depth: "descricao", total: 1310, sync: 982, fail: 0, dur: "10 min", cost: 1.42, status: "concluido" },
+  { id: "75011431", day: 24, start: "24/10 12:58", ufs: ["PR"], src: "TripAdvisor", depth: "nascente_rio", total: 1310, sync: 1310, fail: 0, dur: "1 h 12 min", cost: 24.1, status: "concluido" },
+  { id: "9be1f20c", day: 24, start: "24/10 07:40", ufs: ["SC"], src: "TripAdvisor", depth: "nascente_rio", total: 1480, sync: 1471, fail: 9, dur: "1 h 31 min", cost: 26.8, status: "concluido" },
+  { id: "3f7d0a91", day: 21, start: "21/10 09:02", ufs: ["RR", "AP", "AC"], src: "TripAdvisor", depth: "nascente_rio_mar", total: 255, sync: 255, fail: 0, dur: "38 min", cost: 4.6, status: "concluido" },
+  { id: "a41c6e27", day: 20, start: "20/10 08:15", ufs: ["DF", "GO", "ES"], src: "TripAdvisor", depth: "nascente_rio_mar", total: 1560, sync: 1487, fail: 73, dur: "3 h 10 min", cost: 31.2, status: "parcial", note: "73 descrições bateram na cota do Gemini (429)" },
+  { id: "e0b5c3d4", day: 19, start: "19/10 15:20", ufs: ["SE"], src: "TripAdvisor", depth: "nascente_rio_mar", total: 288, sync: 288, fail: 0, dur: "26 min", cost: 5.3, status: "concluido" },
+];
+const UF_EST = { SP: 4200, MG: 3900, RJ: 2700, BA: 2600, PE: 1500, CE: 1400, AM: 900, PA: 1100, MA: 800, PB: 700, RN: 900, AL: 700, PI: 500, MT: 900, MS: 800, TO: 450, RO: 400, RS: 2400 };
+const varState = { ufs: new Set(), depth: "nascente_rio", filter: "" };
+const ufRunState = uf => RUNS.some(r => r.status === "running" && r.ufs.includes(uf)) ? "running" : RUNS.some(r => r.status === "fila" && r.ufs.includes(uf)) ? "fila" : UF_DONE[uf] ? "done" : "";
+function liveRun(r) {
+  if (r.status !== "running") return r;
+  const rs = recs.filter(x => x.uf === "RS" && (x.born || x.ageH < 26));
+  return { ...r, total: rs.length, sync: rs.filter(x => x.stage !== "rio").length, fail: rs.filter(x => x.stage === "falha").length, dur: `pág ${sim.page}/199`, cost: sim.cost };
+}
+function renderVar() {
+  const n = varState.ufs.size, sel = [...varState.ufs];
+  const est = sel.reduce((s, u) => s + (UF_LOAD[u] || UF_EST[u] || 600), 0);
+  const running = RUNS.some(r => r.status === "running");
+  const redo = sel.filter(u => UF_DONE[u]);
+  const apifyLeft = 35 - apifyUsd();
+  $("#v-new").innerHTML = `<div class="panel-h"><h2>Nova varredura</h2><span class="hint">TripAdvisor por UF</span></div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div><div style="font-size:12px;color:var(--ink-3);margin-bottom:8px">UFs <span style="margin-left:8px"><span class="dot ok" style="display:inline-block;vertical-align:1px"></span> já varrida · <span class="dot" style="display:inline-block;vertical-align:1px;background:var(--rio)"></span> em andamento</span></div>
+        <div class="ufchips" role="group" aria-label="UFs">${Object.keys(UF_NAMES).sort().map(u => { const st = ufRunState(u); return `<button type="button" class="ufchip" data-uf="${u}" aria-pressed="${varState.ufs.has(u)}" data-tip="${UF_NAMES[u]}${UF_DONE[u] ? ` · varrida ${UF_DONE[u]}` : st === "running" ? " · em andamento" : st === "fila" ? " · na fila" : " · nunca varrida"}" ${st === "running" ? "disabled" : ""}>${u}${st ? `<span class="st" style="background:${st === "done" ? "var(--mar)" : st === "running" ? "var(--rio)" : "var(--dlq)"}"></span>` : ""}</button>`; }).join("")}</div></div>
+      <div class="bar-row"><span style="font-size:12px;color:var(--ink-3)">Até onde vai</span>
+        <div class="seg" role="group" aria-label="Profundidade" id="v-depth">${["nascente", "nascente_rio", "nascente_rio_mar"].map(k => `<button type="button" data-v="${k}" aria-pressed="${varState.depth === k}">${DEPTH[k]}</button>`).join("")}</div></div>
+      ${n ? `<div class="est"><div>Atrativos (estimativa)<b>~${fmt(Math.round(est / 100) * 100)}</b></div><div>Custo<b>~${money(est * 0.0145, 0)}</b></div><div>Duração<b>~${fmt1(est * 5.3 / 3600)} h</b></div><div>Páginas TA<b>~${fmt(Math.ceil(est / 12))}</b></div></div>
+        ${redo.length ? `<div class="lock" style="margin:0;background:var(--surface-3);color:var(--ink-2);border-color:var(--line)">${redo.join(", ")} já ${redo.length === 1 ? "foi varrida" : "foram varridas"}. A varredura atualiza os registros existentes.</div>` : ""}
+        ${est * 0.0145 * 0.5 > apifyLeft ? `<div class="lock" style="margin:0">Atenção: restam ${money(apifyLeft)} no Apify este mês. A varredura deve parar no meio (402).</div>` : ""}` : `<div class="est"><div>Escolha uma ou mais UFs para ver a estimativa de atrativos, custo e duração.</div></div>`}
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn primary" type="button" id="v-start" ${n ? "" : "disabled"}>${running ? `Enfileirar ${n || ""} UF${n === 1 ? "" : "s"}` : "Iniciar varredura"}</button>
+        ${running ? '<span style="font-size:12px;color:var(--ink-3)">RS está rodando. As novas UFs entram na fila.</span>' : ""}</div>
+    </div>`;
+  renderVarSession();
+  renderRuns();
+}
+function renderVarSession() {
+  const t = sim.ttl, warn = t <= 300;
+  setHTML($("#v-session"), `<div class="panel-h"><h2>Sessão TripAdvisor</h2><span class="right pill ${t === 0 ? "bad" : warn ? "warn" : "ok"}">${t === 0 ? "Expirada" : warn ? "Expirando" : "Ativa"}</span></div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:baseline;gap:8px"><span class="num" style="font-size:26px;font-weight:600;letter-spacing:-1px">${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}</span><span style="font-size:12px;color:var(--ink-3)">até expirar · renova a cada requisição</span></div>
+      <dl class="kv"><dt>Cookies</dt><dd>DataDome + TASession · 14 cookies</dd><dt>Canário</dt><dd>OK: listagem e página respondem</dd><dt>Injetada</dt><dd>26/10 18:49 por cURL</dd></dl>
+      <div><button class="btn" type="button" id="v-curl">Atualizar sessão (cURL)</button></div>
+      <p style="margin:0;font-size:12px;color:var(--ink-3)">Sem sessão válida, as páginas do TA voltam 403 e o sweep segue degradado: o card entra pelo nome, sem endereço da página.</p>
+    </div>`);
+}
+function renderRuns() {
+  const rows = RUNS.map(liveRun);
+  const week = rows.filter(r => r.status !== "fila");
+  const sum = k => week.reduce((s, r) => s + (r[k] || 0), 0);
+  setHTML($("#v-kpis"), [
+    ["Varreduras (7 dias)", fmt(week.length), `${week.filter(r => r.status === "parcial").length} parciais`],
+    ["Atrativos processados", fmt(sum("total")), `${fmt(sum("sync"))} sincronizados`],
+    ["Falhas", fmt(sum("fail")), "reprocessáveis por run"],
+    ["Gasto das varreduras", money(sum("cost")), "Places + Apify + LLM"],
+  ].map(([k, v, s]) => `<div class="kpi"><span class="k">${k}</span><span class="v">${v}</span><span class="s">${s}</span></div>`).join(""));
+  document.querySelectorAll("#v-filter [data-v]").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === varState.filter));
+  const shown = rows.filter(r => !varState.filter || r.status === varState.filter);
+  setHTML($("#v-runs"), `<thead><tr><th>Run</th><th>Início</th><th>UFs</th><th>Tipo</th><th class="r">Total</th><th class="r">Sincr.</th><th class="r">Falhas</th><th>Duração</th><th class="r">Custo</th><th>Status</th><th></th></tr></thead><tbody>${shown.map(r => `<tr>
+    <td class="mono" style="font-size:12px">${r.id}</td><td class="num" style="color:var(--ink-3)">${r.start}</td>
+    <td>${r.ufs.map(u => `<span class="uf-badge">${u}</span>`).join(" ")}</td>
+    <td>${DEPTH[r.depth]}<div style="font-size:11.5px;color:var(--ink-3)">${r.src}</div></td>
+    <td class="r num">${r.total == null ? "—" : fmt(r.total)}</td><td class="r num">${r.sync == null ? "—" : fmt(r.sync)}</td>
+    <td class="r num" style="${r.fail ? "color:var(--falha-ink);font-weight:600" : ""}">${r.fail == null ? "—" : fmt(r.fail)}</td>
+    <td class="num">${r.status === "running" ? `<div style="display:flex;gap:8px;align-items:center"><div class="progress live" style="width:70px"><i style="width:${Math.round(sim.page / 199 * 100)}%"></i></div>${r.dur}</div>` : r.dur || "—"}</td>
+    <td class="r num">${r.cost == null ? "—" : money(r.cost)}</td>
+    <td><span class="pill ${RUN_ST[r.status][0]}" ${r.note ? `data-tip="${esc(r.note)}" tabindex="0"` : ""}>${r.status === "running" ? '<span class="dot ok pulse"></span>' : ""}${RUN_ST[r.status][1]}${r.note ? " ⓘ" : ""}</span></td>
+    <td>${r.status === "running" ? '<a class="link" href="#operacao">Acompanhar</a>' : r.fail && !r.requeued ? `<button class="btn sm" type="button" data-requeue="${r.id}">Reprocessar ${fmt(r.fail)}</button>` : r.requeued ? '<span style="font-size:12px;color:var(--ink-3)">Reenfileirado</span>' : ""}</td></tr>`).join("")}</tbody>`);
+}
+$("#view-varreduras").addEventListener("click", e => {
+  const chip = e.target.closest(".ufchip");
+  if (chip) { const u = chip.dataset.uf; varState.ufs.has(u) ? varState.ufs.delete(u) : varState.ufs.add(u); return renderVar(); }
+  const dp = e.target.closest("#v-depth [data-v]"); if (dp) { varState.depth = dp.dataset.v; return renderVar(); }
+  const fl = e.target.closest("#v-filter [data-v]"); if (fl) { varState.filter = fl.dataset.v; return renderRuns(); }
+  if (e.target.closest("#v-curl")) return openCurl();
+  if (e.target.closest("#v-start")) {
+    const ufs = [...varState.ufs], running = RUNS.some(r => r.status === "running");
+    RUNS.splice(1, 0, { id: Math.floor(R() * 0xffffffff).toString(16).padStart(8, "0"), start: running ? "na fila" : "agora", ufs, src: "TripAdvisor", depth: varState.depth, status: "fila" });
+    varState.ufs.clear(); renderVar();
+    toast(running ? `${ufs.join(", ")} na fila depois de RS.` : `Varredura de ${ufs.join(", ")} criada.`);
+    return;
+  }
+  const rq = e.target.closest("[data-requeue]");
+  if (rq) { const r = RUNS.find(x => x.id === rq.dataset.requeue); r.requeued = true; renderRuns(); toast(`${fmt(r.fail)} falhas do run ${r.id} reenfileiradas.`); }
+});
+
+// sessão TA: modal com o cURL (dialog nativo: foco preso e Esc de graça)
+const curlDlg = $("#curl-dialog");
+function parseCurl(s) {
+  const ck = (s.match(/-H\s+['"]cookie:\s*([^'"]+)['"]/i) || s.match(/(?:-b|--cookie)\s+['"]([^'"]+)['"]/) || [])[1] || "";
+  return { cookies: ck.split(";").filter(c => c.includes("=")).length, datadome: /datadome=/i.test(ck), tasession: /TASession=/i.test(ck), ua: /-H\s+['"]user-agent:/i.test(s), graphql: /graphql/i.test(s) };
+}
+function curlChecks() {
+  const p = parseCurl($("#curl-in").value), has = $("#curl-in").value.trim().length > 0;
+  const row = (ok, t) => `<span class="${ok ? "ok" : "no"}">${ok ? "✓" : "○"} ${t}</span>`;
+  $("#curl-checks").innerHTML = has ? [row(p.cookies > 0, `Cookies (${p.cookies})`), row(p.datadome, "Cookie DataDome"), row(p.tasession, "Cookie TASession"), row(p.ua, "User-Agent"), row(p.graphql, "Endpoint GraphQL")].join("") : "";
+  $("#curl-go").disabled = !(p.datadome && p.ua);
+  $("#curl-err").hidden = true;
+}
+function openCurl() { $("#curl-in").value = ""; curlChecks(); curlDlg.showModal(); }
+$("#curl-in").addEventListener("input", curlChecks);
+$("#curl-cancel").addEventListener("click", () => curlDlg.close());
+$("#curl-go").addEventListener("click", () => {
+  const b = $("#curl-go"), p = parseCurl($("#curl-in").value);
+  b.disabled = true; b.textContent = "Rodando canário…";
+  setTimeout(() => {
+    b.textContent = "Validar e injetar";
+    if (!p.tasession) { b.disabled = false; const er = $("#curl-err"); er.textContent = "O canário recusou a sessão (422 invalid_session): falta o cookie TASession. Recarregue a página do atrativo e copie o cURL de novo."; er.hidden = false; return; }
+    curlDlg.close(); sim.ttl = 1800; $("#curl-in").value = "";
+    addEvent("motor", "Sessão TA renovada", "cURL injetado pelo operador · canário OK");
+    toast("Sessão injetada. O canário confirmou listagem e página.");
+    if (view === "varreduras") renderVarSession();
+  }, 1200);
+});
+
+// ═════════════ CUSTO & LLM ═════════════
+const PROV = [["places", "Google Places", "var(--s1)"], ["apify", "Apify", "var(--s2)"], ["gemini", "Gemini", "var(--s3)"], ["parallel", "Parallel", "var(--s4)"]];
+const R4 = rng(29);
+const SPEND = Array.from({ length: 30 }, (_, i) => {
+  const d = new Date(2026, 9, 26 - 29 + i), key = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const fixed = { "17/10": [38, 0, .3, 0], "18/10": [22, 0, .2, 0], "19/10": [9.4, 0, 1.6, 3.1], "20/10": [21.5, 0, 3.4, 6.3], "21/10": [3.9, 0, .9, 1.4], "22/10": [1.1, 0, .1, 0], "23/10": [.6, 0, 0, 0], "24/10": [36.7, 14.2, 1.42, 2.4], "25/10": [0, .4, 0, 0] }[key];
+  const [places, apify, gemini, parallel] = fixed || [R4() < .4 ? R4() * 3 : 0, 0, R4() < .5 ? R4() * .3 : 0, 0];
+  return { key, places, apify, gemini, parallel, today: i === 29 };
+});
+function spendDay(d) { return d.today ? { ...d, places: sim.cost * .45, apify: sim.cost * .55, gemini: 1.84, parallel: 6.2 } : d; }
+const custoState = { win: 7, group: "prov" };
+function renderCusto() {
+  const days = SPEND.map(spendDay), win = days.slice(-custoState.win);
+  const tot = k => win.reduce((s, d) => s + d[k], 0);
+  const total = PROV.reduce((s, [k]) => s + tot(k), 0);
+  const llmCalls = Math.round(tot("gemini") / 0.0011), searches = Math.round(tot("parallel") / 0.005);
+  const runsIn = RUNS.map(liveRun).filter(r => r.status !== "fila" && r.depth !== "descricao" && r.day > 26 - custoState.win);
+  const collected = runsIn.reduce((s, r) => s + (r.total || 0), 0);
+  document.querySelectorAll("#c-win [data-v]").forEach(b => b.setAttribute("aria-pressed", +b.dataset.v === custoState.win));
+  document.querySelectorAll("#c-group [data-v]").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === custoState.group));
+  setHTML($("#c-note"), cur === "BRL" ? `Valores em reais pelo câmbio fixo da POC (R$ ${FX.toLocaleString("pt-BR")})` : "");
+  setHTML($("#c-kpis"), [
+    ["Gasto no período", money(total), custoState.win === 1 ? `${Math.round(costToday() / DAILY_CAP * 100)}% do teto diário` : `média ${money(total / custoState.win)}/dia`],
+    ["Custo por atrativo coletado", collected ? money(total / collected, 3) : "—", collected ? `${fmt(collected)} atrativos no período` : "nenhuma varredura no período"],
+    ["Chamadas LLM", fmt(llmCalls), `gemini-2.5-flash · ${fmt(searches)} buscas Parallel`],
+    ["Tokens", `${fmt1(llmCalls * 6300 / 1e6)} M`, `entrada · ${fmt1(llmCalls * 178 / 1e6)} M saída`],
+  ].map(([k, v, s]) => `<div class="kpi"><span class="k">${k}</span><span class="v">${v}</span><span class="s">${s}</span></div>`).join(""));
+
+  // gráfico: barras empilhadas por provedor, 30 dias, janela ativa destacada
+  $("#c-legend").innerHTML = PROV.map(p => `<span><i style="background:${p[2]}"></i>${p[1]}</span>`).join("");
+  const Wd = 1100, H = 240, L = 64, B = 22, T = 8, max = Math.max(...days.map(d => PROV.reduce((s, [k]) => s + d[k], 0)));
+  const top = Math.ceil((cur === "BRL" ? max * FX : max) / 50) * 50, conv = v => cur === "BRL" ? v * FX : v;
+  const y = v => T + (H - T - B) * (1 - conv(v) / top), bw = (Wd - L) / days.length;
+  let svg = `<svg viewBox="0 0 ${Wd} ${H}" aria-hidden="true">`;
+  for (let v = 0; v <= top; v += top / 4) { const yy = T + (H - T - B) * (1 - v / top); svg += `<line class="gl" x1="${L}" x2="${Wd}" y1="${yy}" y2="${yy}"/><text class="axis" x="${L - 6}" y="${yy + 3.5}" text-anchor="end">${new Intl.NumberFormat("pt-BR", { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(v)}</text>`; }
+  days.forEach((d, i) => {
+    const x = L + i * bw + 2, w = bw - 4, inWin = i >= days.length - custoState.win; let acc = 0;
+    PROV.forEach(([k, , c]) => { if (d[k] <= 0) return; const y0 = y(acc), y1 = y(acc + d[k]); acc += d[k]; svg += `<rect x="${x}" y="${y1 + 1}" width="${w}" height="${Math.max(0, y0 - y1 - 1)}" rx="2" fill="${c}" opacity="${inWin ? 1 : .35}"/>`; });
+    if (i % 5 === 4 || d.today) svg += `<text class="axis" x="${x + w / 2}" y="${H - 6}" text-anchor="middle">${d.today ? "hoje" : d.key}</text>`;
+    svg += `<rect x="${L + i * bw}" y="${T}" width="${bw}" height="${H - T - B}" fill="transparent" data-tip="${d.key}${d.today ? " (hoje, ao vivo)" : ""}\n${PROV.map(([k, l]) => `${l}: ${money(d[k])}`).join("\n")}\nTotal: ${money(PROV.reduce((s, [k]) => s + d[k], 0))}"/>`;
+  });
+  $("#c-chart").innerHTML = svg + "</svg>";
+  $("#c-chart").setAttribute("aria-label", `Gasto diário dos últimos 30 dias por provedor. Total no período selecionado: ${money(total)}. Picos em 17/10 e 24/10 (Places) e hoje (varredura de RS).`);
+
+  // detalhamento
+  const G = {
+    prov: PROV.map(([k, l, c]) => ({ n: l, c, usd: tot(k), calls: k === "gemini" ? fmt(llmCalls) : k === "parallel" ? fmt(searches) : "—", tok: k === "gemini" ? `${fmt1(llmCalls * 6.3 / 1000)} M / ${fmt1(llmCalls * .178 / 1000)} M` : "—" })),
+    lane: [
+      { n: "Enriquecimento Places (sweep)", usd: tot("places") + tot("apify"), calls: "—", tok: "—" },
+      { n: "Descrição · cascata", usd: tot("gemini") + tot("parallel"), calls: fmt(llmCalls + searches), tok: `${fmt1(llmCalls * 6.3 / 1000)} M / ${fmt1(llmCalls * .178 / 1000)} M` },
+      { n: "Descrição · lote (Batch API)", usd: 0, calls: "0", tok: "—", off: "desligada" },
+      { n: "WhatsApp", usd: 0, calls: "0", tok: "—", off: "desligada" },
+    ],
+    model: [
+      { n: "gemini-2.5-flash", usd: tot("gemini"), calls: fmt(llmCalls), tok: `${fmt1(llmCalls * 6.3 / 1000)} M / ${fmt1(llmCalls * .178 / 1000)} M` },
+      { n: "parallel · search", usd: tot("parallel"), calls: fmt(searches), tok: "—" },
+      { n: "claude-sonnet-5-5", usd: 0, calls: "0", tok: "—", off: "rota desligada" },
+      { n: "deepseek/deepseek-chat (OpenRouter)", usd: 0, calls: "0", tok: "—", off: "rota desligada" },
+    ],
+  }[custoState.group];
+  const gmax = Math.max(...G.map(g => g.usd), 0.01);
+  setHTML($("#c-tnote"), custoState.win === 1 ? "hoje" : `últimos ${custoState.win} dias`);
+  setHTML($("#c-table"), `<thead><tr><th>${{ prov: "Provedor", lane: "Lane", model: "Modelo" }[custoState.group]}</th><th class="r">Chamadas</th><th class="r">Tokens in / out</th><th class="r">Custo</th><th>Participação</th></tr></thead><tbody>${G.sort((a, b) => b.usd - a.usd).map(g => `<tr>
+    <td>${g.c ? `<i style="display:inline-block;width:9px;height:9px;border-radius:3px;background:${g.c};margin-right:7px"></i>` : ""}<span class="${custoState.group === "model" ? "mono" : ""}" style="font-size:12.5px">${esc(g.n)}</span>${g.off ? ` <span class="flag">${g.off}</span>` : ""}</td>
+    <td class="r num">${g.calls}</td><td class="r num">${g.tok}</td><td class="r num">${money(g.usd)}</td>
+    <td><div class="meter" style="width:120px"><i style="width:${(g.usd / gmax * 100).toFixed(1)}%;background:${g.c || "var(--navy)"}"></i></div> <span class="num" style="font-size:11.5px;color:var(--ink-3)">${total ? Math.round(g.usd / total * 100) : 0}%</span></td></tr>`).join("")}</tbody>`);
+
+  // tetos (cost guard)
+  const placesAll = days.reduce((s, d) => s + d.places, 0), today = spendDay(days[29]);
+  const caps = [
+    ["Orçamento LLM diário", "usd_daily_budget · Gemini + Parallel hoje", today.gemini + today.parallel, DAILY_CAP],
+    ["Crédito do Google Places", "places_total_usd_cap · nunca zera", placesAll, 300],
+    ["Places por dia", "places_daily_usd_cap · zera 00:00 UTC", today.places, 300],
+    ["Conta Apify (mensal)", "limite da conta · estoura com 402", apifyUsd(), 35],
+  ];
+  setHTML($("#c-caps"), caps.map(([t, s, v, cap]) => { const p = v / cap; return `<div class="cost-row"><span class="t">${t}<small>${s}</small></span><span class="n">${money(v)} <span style="color:var(--ink-3);font-weight:400">/ ${money(cap, 0)}</span></span><div class="meter ${p > .9 ? "bad" : p > .7 ? "warn" : ""}" data-tip="${Math.round(p * 100)}% do teto"><i style="width:${Math.min(100, p * 100).toFixed(1)}%"></i></div></div>`; }).join("")
+    + `<p style="margin:0;font-size:12px;color:var(--ink-3)">Tetos vêm do .env (ver Configuração). Estourou, o motor pausa e o Painel mostra o banner com "Continuar".</p>`);
+}
+$("#c-win").addEventListener("click", e => { const b = e.target.closest("[data-v]"); if (b) { custoState.win = +b.dataset.v; renderCusto(); } });
+$("#c-group").addEventListener("click", e => { const b = e.target.closest("[data-v]"); if (b) { custoState.group = b.dataset.v; renderCusto(); } });
+
+// ═════════════ CONFIGURAÇÃO ═════════════
+const LANES = [
+  ["tripadvisor", "Coleta TripAdvisor", "Lane de coleta: sweep por UF no GraphQL do TA.", "source.tripadvisor.enabled"],
+  ["places", "Enriquecimento Google Places", "Horário, endereço e reviews. Gasta Places e Apify.", "places_enrichment_enabled"],
+  ["desc", "Descrição editorial", "Escreve a descricao_editorial na voz Norteia (sobe a completude de 75 para 90).", "description_enrichment_enabled"],
+  ["cascade", "Cascata de descrição", "Fontes abertas → Parallel → gate de menção → Gemini → groundedness.", "atrativo_description_cascade_enabled"],
+  ["batch", "Descrição em lote (Batch API)", "Rota Claude em lote, 50% mais barata e assíncrona.", "atrativo_description_batch_enabled"],
+];
+let cfgSaved = { weights: { ...W }, threshold: THRESHOLD, lanes: { tripadvisor: true, places: true, desc: true, cascade: true, batch: false } };
+let draft = structuredClone(cfgSaved);
+const wsum = w => Object.values(w).reduce((s, v) => s + v, 0);
+function cfgDiff() {
+  const d = [];
+  if (draft.threshold !== cfgSaved.threshold) d.push(`Limiar ${cfgSaved.threshold} → ${draft.threshold}`);
+  for (const k in W) if (draft.weights[k] !== cfgSaved.weights[k]) d.push(`${W_LABEL[k]} ${cfgSaved.weights[k]} → ${draft.weights[k]}`);
+  for (const [k, l] of LANES) if (draft.lanes[k] !== cfgSaved.lanes[k]) d.push(`${l} ${draft.lanes[k] ? "ligada" : "desligada"}`);
+  return d;
+}
+function renderConfig() {
+  $("#cfg-score").innerHTML = `<div class="panel-h"><h2>Score de confiabilidade</h2><span class="hint">os pesos somam 100 · o limiar decide quem pode ir ao Mar</span><span class="right pill" id="cfg-sum"></span></div>
+    ${Object.keys(W).map(k => `<div class="wrow" data-w="${k}"><label for="w-${k}">${W_LABEL[k]}</label><input type="range" id="w-${k}" min="0" max="50" step="1" value="${draft.weights[k]}" aria-describedby="cfg-sum"><input class="numin" type="number" min="0" max="50" step="1" value="${draft.weights[k]}" aria-label="${W_LABEL[k]} (número)" data-num="${k}"></div>`).join("")}
+    <div class="wrow" data-w="threshold" style="margin-top:8px;padding-top:12px;border-top:1px solid var(--line-2)"><label for="w-threshold">Limiar do Mar</label><input type="range" id="w-threshold" min="50" max="95" step="1" value="${draft.threshold}"><input class="numin" type="number" min="50" max="95" value="${draft.threshold}" aria-label="Limiar do Mar (número)" data-num="threshold"></div>
+    <div style="margin-top:14px"><div style="font-size:12px;color:var(--ink-3);margin-bottom:8px">Efeito na base atual (antes de salvar)</div><div class="impact" id="cfg-impact"></div></div>`;
+  $("#cfg-lanes").innerHTML = `<div class="panel-h"><h2>Lanes e enriquecimento</h2><span class="hint">liga e desliga sem reiniciar o worker</span></div>
+    ${LANES.map(([k, l, d, key]) => `<div class="set-row"><div><b id="lane-${k}">${l}</b> <span class="set-key">${key}</span></div><button type="button" class="switch" role="switch" aria-checked="${draft.lanes[k]}" aria-labelledby="lane-${k}" data-lane="${k}"></button><p>${d}</p></div>`).join("")}`;
+  $("#cfg-env").innerHTML = `<div class="panel-h"><h2>Limites de gasto</h2><span class="hint">somente leitura: vêm do .env</span></div>
+    ${[["Orçamento LLM diário", "usd_daily_budget", money(DAILY_CAP, 0)], ["Crédito do Google Places", "places_total_usd_cap", money(300, 0)], ["Places por dia", "places_daily_usd_cap", money(300, 0)], ["Apify por dia", "apify_daily_usd_cap", money(2)], ["Apify total", "apify_total_usd_cap", money(5)]].map(([l, k, v]) => `<div class="set-row"><div><b>${l}</b> <span class="set-key">${k}</span></div><span class="ro">${v}</span></div>`).join("")}
+    <p style="margin:12px 0 0;font-size:12px;color:var(--ink-3)">Para mudar, edite o .env e rode <span class="mono">docker compose restart worker api</span>.</p>`;
+  cfgRefresh();
+}
+function cfgRefresh() {
+  const s = wsum(draft.weights), ok = s === 100;
+  const sum = $("#cfg-sum"); sum.className = `right pill ${ok ? "ok" : "bad"}`; sum.textContent = ok ? "Soma 100 ✓" : `Soma ${s}: precisa ser 100`;
+  document.querySelectorAll("#cfg-score .wrow").forEach(r => { const k = r.dataset.w, dirty = k === "threshold" ? draft.threshold !== cfgSaved.threshold : draft.weights[k] !== cfgSaved.weights[k]; r.classList.toggle("dirty", dirty); $(".numin", r).classList.toggle("dirty", dirty); });
+  // impacto: recalcula com o rascunho sem tocar nos registros
+  const elig = recs.filter(r => r.stage === "revisao" && (r.motivo === "awaiting_promotion" || r.motivo === "score_baixo"));
+  const pronto = (w, t) => elig.filter(r => scoreOf({ ...r.comp, validacao: 100 }, w) >= t).length;
+  const marBaixo = (w, t) => recs.filter(r => r.stage === "mar" && scoreOf(r.comp, w) < t).length;
+  const a1 = pronto(draft.weights, draft.threshold), a0 = pronto(cfgSaved.weights, cfgSaved.threshold);
+  const c1 = marBaixo(draft.weights, draft.threshold), c0 = marBaixo(cfgSaved.weights, cfgSaved.threshold);
+  const dl = (n, o) => n === o ? "sem mudança" : `${n > o ? "+" : "−"}${fmt(Math.abs(n - o))} vs agora`;
+  $("#cfg-impact").innerHTML = `<div><b>${fmt(a1)}</b>prontos para promover · ${dl(a1, a0)}</div><div><b>${fmt(elig.length - a1)}</b>abaixo do corte mesmo validados · ${dl(elig.length - a1, elig.length - a0)}</div><div><b>${fmt(c1)}</b>no Mar abaixo do limiar · ${dl(c1, c0)}</div>`;
+  const diff = cfgDiff(), bar = $("#cfg-save");
+  bar.hidden = !diff.length;
+  if (diff.length) bar.innerHTML = `<span><b class="num">${diff.length}</b> alteraç${diff.length === 1 ? "ão" : "ões"}: ${esc(diff.slice(0, 3).join(" · "))}${diff.length > 3 ? " …" : ""}</span><span class="gap"></span><button class="btn" type="button" data-cfg="discard">Descartar</button><button class="btn primary" type="button" data-cfg="save" ${ok ? "" : 'disabled title="Os pesos precisam somar 100"'}>Salvar</button>`;
+}
+function applyConfig(c) {
+  Object.assign(W, c.weights); THRESHOLD = c.threshold;
+  recs.forEach(r => {
+    r.score = scoreOf(r.comp);
+    if (r.stage === "revisao" && (r.motivo === "awaiting_promotion" || r.motivo === "score_baixo")) r.motivo = scoreOf({ ...r.comp, validacao: 100 }) >= THRESHOLD ? "awaiting_promotion" : "score_baixo";
+  });
+}
+$("#view-config").addEventListener("input", e => {
+  const row = e.target.closest(".wrow"); if (!row) return;
+  const k = row.dataset.w, v = Math.round(+e.target.value) || 0;
+  if (k === "threshold") draft.threshold = v; else draft.weights[k] = v;
+  row.querySelectorAll("input").forEach(i => { if (i !== e.target) i.value = v; });
+  cfgRefresh();
+});
+$("#view-config").addEventListener("click", e => {
+  const sw = e.target.closest("[data-lane]");
+  if (sw) { const k = sw.dataset.lane; draft.lanes[k] = !draft.lanes[k]; sw.setAttribute("aria-checked", draft.lanes[k]); return cfgRefresh(); }
+  const b = e.target.closest("[data-cfg]"); if (!b) return;
+  if (b.dataset.cfg === "discard") { draft = structuredClone(cfgSaved); return renderConfig(); }
+  const prev = cfgSaved, n = cfgDiff().length;
+  cfgSaved = structuredClone(draft); applyConfig(cfgSaved); renderConfig();
+  toast(`${n} chave${n === 1 ? "" : "s"} salva${n === 1 ? "" : "s"} em config_settings. Scores recalculados.`, () => { cfgSaved = structuredClone(prev); draft = structuredClone(prev); applyConfig(prev); renderConfig(); });
+});
+
+const PAGES = {
+  duplicados: { title: "Duplicados", sub: "Pares que podem ser o mesmo lugar: compare campo a campo e decida", render: renderDup },
+  varreduras: { title: "Varreduras", sub: "Iniciar sweeps por UF, sessão do TripAdvisor e histórico de runs", render: renderVar },
+  custo: { title: "Custo & LLM", sub: "Quanto o Brave gastou, com quem, e quanto falta para cada teto", render: renderCusto },
+  config: { title: "Configuração", sub: "Score de confiabilidade, lanes e limites (overlay config_settings)", render: renderConfig },
+};
+
+// ───────────── navegação (hash) ─────────────
+const STAGES = ["revisao", "mar", "falha"];
+const VIEWS = ["operacao", ...STAGES, "duplicados", "varreduras", "custo", "config"];
+let stage = "revisao", view = "operacao";
+function route() {
+  const h = location.hash.slice(1);
+  const v = VIEWS.includes(h) ? h : "operacao";
+  view = v;
+  document.querySelectorAll("[data-nav]").forEach(a => { if (a.dataset.nav === v) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+  document.querySelectorAll("section.view").forEach(s => { s.hidden = true; });
+  if (v === "operacao") { $("#view-operacao").hidden = false; $("#page-title").textContent = "Visão geral"; $("#page-sub").textContent = "Estado do pipeline Nascente → Rio → Mar agora"; renderOps(); renderFeed(); }
+  else if (!STAGES.includes(v)) {
+    const p = PAGES[v];
+    $(`#view-${v}`).hidden = false;
+    $("#page-title").textContent = p.title; $("#page-sub").textContent = p.sub;
+    p.render();
+  }
+  else {
+    $("#view-registros").hidden = false;
+    listStamp = Date.now();
+    if (stage !== v) { stage = v; filt.motivo = ""; filt.grp = defaultGroup(v); sel.clear(); active = null; }
+    $("#page-title").textContent = "Registros";
+    $("#page-sub").textContent = "Triagem de atrativos por etapa, agrupados pelo que falta para avançar";
+    renderReg();
+  }
+}
+addEventListener("hashchange", route);
+
+// ───────────── OPERAÇÃO ─────────────
+function renderOps() {
+  const n = {
+    total: recs.length, rio: count(r => r.stage === "rio"), rev: count(r => r.stage === "revisao"),
+    pronto: count(r => r.stage === "revisao" && r.motivo === "awaiting_promotion"),
+    mar: count(r => r.stage === "mar"), pend: count(r => r.stage === "mar" && r.push === "pendente"),
+    rej: count(r => r.stage === "mar" && r.push === "rejeitado"), falha: count(r => r.stage === "falha"),
+    falha24: count(r => r.stage === "falha" && r.ageH < 24), desc: count(r => r.stage === "descarte"),
+    semDesc: count(r => r.stage === "revisao" && r.semDesc),
+  };
+  const tiles = [
+    { id: "total", k: "Nascente", c: "var(--descarte)", ink: "var(--ink-3)", big: n.total, meta: `<b>${fmt(n.desc)}</b> descartados (não-atrativo)`, go: null },
+    { id: "rio", k: "Rio · processando", c: "var(--rio)", ink: "var(--rio)", big: n.rio, meta: `enriquecimento Places e score`, go: null },
+    { id: "rev", k: "Revisão", c: "var(--dlq)", ink: "var(--dlq-ink)", big: n.rev, meta: `<b>${fmt(n.pronto)}</b> prontos para promover`, go: "revisao", cls: "attn" },
+    { id: "mar", k: "Mar", c: "var(--mar)", ink: "var(--mar-ink)", big: n.mar, meta: `<b>${fmt(n.pend)}</b> pendentes · <b>${fmt(n.rej)}</b> rejeitados`, go: "mar" },
+    { id: "falha", k: "Falha", c: "var(--falha)", ink: "var(--falha-ink)", big: n.falha, meta: `<span class="delta" style="color:var(--falha-ink)">+${fmt(n.falha24)}</span> nas últimas 24 h`, go: "falha", cls: n.falha24 ? "crit" : "" },
+  ];
+  if (!$("#flow").children.length) {
+    $("#flow").innerHTML = tiles.map(t => `<button type="button" class="tile ${t.cls || ""}" data-t="${t.id}" ${t.go ? `data-go="${t.go}"` : "disabled"}>
+      <span class="lbl"><i style="background:${t.c}"></i>${t.k}</span>
+      <span class="big">0</span><span class="meta"></span>
+      ${t.go ? `<span class="go" aria-hidden="true">${ICON.arrow}</span>` : ""}</button>`).join("");
+    $("#flow").onclick = e => { const b = e.target.closest("[data-go]"); if (b) location.hash = b.dataset.go; };
+  }
+  for (const t of tiles) {
+    const el = $(`[data-t="${t.id}"]`), big = $(".big", el), prev = big.dataset.v;
+    if (prev !== undefined && +prev !== t.big) pop(el, t.big - prev, t.ink);
+    tween(big, t.big);
+    setHTML($(".meta", el), t.meta);
+  }
+
+  // alertas, do mais grave para o menos grave
+  const alerts = [
+    { sev: "crit", sevL: "Crítico", t: `${fmt(n.rej)} pushes rejeitados pela API`, d: "A norteia-api devolveu 422. Corrigir o payload e reenviar.", go: () => openReg("mar", { grp: "push" }), b: "Ver rejeitados" },
+    { sev: "warn", sevL: "Atenção", t: `Apify em ${Math.round(apifyUsd() / 35 * 100)}% do limite mensal`, d: `${money(apifyUsd())} de ${money(35, 0)}. No ritmo atual acaba antes do fim do sweep de RS.`, b: null },
+    { sev: "warn", sevL: "Atenção", t: `${fmt(n.pronto)} registros esperando promoção`, d: "Score já passa do limiar com a validação. Promover em lote.", go: () => openReg("revisao", { motivo: "awaiting_promotion" }), b: "Abrir fila" },
+    { sev: "info", sevL: "Info", t: "Beat redispatch_stalled_chain falhou 1×", d: "TimeoutError às 19:30. A próxima execução já passou.", b: null },
+  ];
+  $("#alert-count").textContent = `${alerts.length} itens`;
+  setHTML($("#alerts"), alerts.map((a, i) => `<div class="alert ${a.sev}"><span class="bar"></span><div><b><span class="sev">${a.sevL}</span>${esc(a.t)}</b><span>${esc(a.d)}</span></div>${a.b ? `<button class="btn sm" type="button" data-a="${i}">${a.b}</button>` : "<span></span>"}</div>`).join(""));
+  $("#alerts").onclick = e => { const b = e.target.closest("[data-a]"); if (b) alerts[b.dataset.a].go(); };
+
+  renderThroughput();
+
+  // motivos
+  const mc = {};
+  recs.forEach(r => { if (r.stage === "revisao") mc[r.motivo] = (mc[r.motivo] || 0) + 1; });
+  const mlist = Object.entries(mc).sort((a, b) => b[1] - a[1]);
+  const mmax = Math.max(1, ...mlist.map(m => m[1]));
+  setHTML($("#motivos"), mlist.map(([k, v]) => `<button type="button" class="hbar-row" data-m="${k}"><span class="t">${MOTIVOS[k].label}</span><span class="n">${fmt(v)}</span><span class="track"><i style="width:${(v / mmax * 100).toFixed(1)}%;${k === "awaiting_promotion" ? "background:var(--mar)" : ""}"></i></span></button>`).join("")
+    + `<button type="button" class="hbar-row" data-nodesc="1"><span class="t">Sem descrição editorial (qualquer motivo)</span><span class="n">${fmt(n.semDesc)}</span><span class="track"><i style="width:${(n.semDesc / mmax * 100).toFixed(1)}%;background:var(--ink-4)"></i></span></button>`);
+  $("#motivos").onclick = e => { const b = e.target.closest(".hbar-row"); if (!b) return; if (b.dataset.nodesc) openReg("revisao", { nodesc: true }); else openReg("revisao", { motivo: b.dataset.m }); };
+
+  // UF
+  const SEGS = [["mar", "var(--mar)", "Mar"], ["revisao", "var(--dlq)", "Revisão"], ["falha", "var(--falha)", "Falha"], ["descarte", "var(--descarte)", "Descarte"]];
+  $("#uf-legend").innerHTML = SEGS.map(s => `<span><i style="background:${s[1]}"></i>${s[2]}</span>`).join("");
+  const rows = Object.keys(UF_NAMES).map(uf => {
+    const rs = recs.filter(r => r.uf === uf);
+    const c = { mar: 0, revisao: 0, falha: 0, descarte: 0, rio: 0 }; rs.forEach(r => c[r.stage]++);
+    const status = uf === "RS" ? ["run", "Em andamento", 1] : UF_DONE[uf] ? ["ok", "Concluída", 2] : ["", "Na fila", 3];
+    return { uf, rs, c, status, pct: rs.length ? c.mar / rs.length : 0 };
+  }).sort((a, b) => a.status[2] - b.status[2] || b.rs.length - a.rs.length);
+  setHTML($("#uf-table"), `<thead><tr><th>UF</th><th>Status</th><th class="r">Atrativos</th><th>Distribuição</th><th class="r">% Mar</th><th class="r">Revisão</th></tr></thead><tbody>${rows.map(u => {
+    const tot = u.rs.length || 1;
+    return `<tr class="${u.rs.length ? "clickable" : ""}" ${u.rs.length ? `data-uf="${u.uf}" tabindex="0"` : ""}>
+      <td><span class="uf-badge">${u.uf}</span> <span style="color:var(--ink-3)">${UF_NAMES[u.uf]}</span></td>
+      <td><span class="pill ${u.status[0]}" data-tip="Última sync: ${u.uf === "RS" ? "agora" : UF_DONE[u.uf] || "nunca"}">${u.status[0] === "run" ? '<span class="dot ok pulse"></span>' : u.status[0] === "ok" ? ICON.check : ""}${u.status[1]}</span></td>
+      <td class="r num">${u.rs.length ? fmt(u.rs.length) : "—"}</td>
+      <td>${u.rs.length ? `<div class="dist">${SEGS.map(s => u.c[s[0]] ? `<i style="flex:${u.c[s[0]]};background:${s[1]}" data-tip="${s[2]}: ${fmt(u.c[s[0]])} (${Math.round(u.c[s[0]] / tot * 100)}%)"></i>` : "").join("")}</div>` : '<span style="color:var(--ink-4)">—</span>'}</td>
+      <td class="r num">${u.rs.length ? Math.round(u.pct * 100) + "%" : "—"}</td>
+      <td class="r num">${u.rs.length ? fmt(u.c.revisao) : "—"}</td></tr>`;
+  }).join("")}</tbody>`);
+  const ufOpen = e => { const tr = e.target.closest("tr[data-uf]"); if (tr) openReg("revisao", { uf: tr.dataset.uf }); };
+  $("#uf-table").onclick = ufOpen;
+  $("#uf-table").onkeydown = e => { if (e.key === "Enter") ufOpen(e); };
+
+  // custo
+  const costs = [
+    { t: "Apify", s: "Google Maps scraper · mensal", v: apifyUsd(), cap: 35 },
+    { t: "Google Places", s: "Essentials · teto do run", v: 112.4, cap: 300 },
+    { t: "Gemini 2.5 Flash", s: "copywriter · hoje", v: 1.84, cap: 50 },
+    { t: "Parallel", s: "busca da cascata · hoje", v: 6.2, cap: 50 },
+  ];
+  const today = costToday();
+  setHTML($("#cost-hint"), `hoje · teto diário ${money(DAILY_CAP, 0)}${cur === "BRL" ? ` · câmbio R$ ${FX.toLocaleString("pt-BR")}` : ""}`);
+  setHTML($("#cost"), `<div style="display:flex;align-items:baseline;gap:8px"><span class="num" style="font-size:24px;font-weight:600;letter-spacing:-1px">${money(today)}</span><span style="color:var(--ink-3);font-size:12px">gasto hoje · ${Math.round(today / 50 * 100)}% do teto diário</span></div>`
+    + costs.map(c => { const p = c.v / c.cap; return `<div class="cost-row"><span class="t">${c.t}<small>${c.s}</small></span><span class="n">${money(c.v)} <span style="color:var(--ink-3);font-weight:400">/ ${money(c.cap, 0)}</span></span><div class="meter ${p > 0.8 ? "warn" : ""}" data-tip="${Math.round(p * 100)}% do limite"><i style="width:${Math.min(100, p * 100).toFixed(1)}%"></i></div></div>`; }).join(""));
+  renderRun();
+}
+
+// série das últimas 24 h; a última barra (hora atual) cresce com a simulação
+const R2 = rng(7);
+const hours = Array.from({ length: 24 }, (_, i) => {
+  const h = (19 - 23 + i + 24) % 24;
+  const active = i >= 23 - 7; // sweep RS (re-sweep) + janela da manhã
+  const morning = i >= 4 && i <= 9;
+  const base = active ? 140 : morning ? 95 : 6;
+  const rev = Math.round(base * (0.75 + R2() * 0.4) * (i === 23 ? 0.35 : 1));
+  const mar = Math.round((i === 14 ? 529 : i === 15 ? 180 : base * 0.12) * (0.8 + R2() * 0.4)); // pico = promote-bulk
+  const fal = Math.round((active ? 6 : 1) * R2() * (i === 21 ? 5 : 1));
+  return { h, rev, mar, fal };
+});
+
+// ───────────── tempo real (simulado) ─────────────
+const RM = matchMedia("(prefers-reduced-motion: reduce)");
+function setHTML(el, html) { if (el._h !== html) { el.innerHTML = html; el._h = html; } }
+function tween(el, to) {
+  const from = el.dataset.v === undefined ? 0 : +el.dataset.v;
+  el.dataset.v = to;
+  if (from === to) return; // valor igual: deixa uma animação em curso terminar
+  const d = from === 0 ? 900 : 550;
+  cancelAnimationFrame(el._raf); clearTimeout(el._to);
+  el._to = setTimeout(() => { el.textContent = fmt(to); }, d + 80); // garante o valor final mesmo sem rAF (aba em segundo plano)
+  if (RM.matches) { el.textContent = fmt(to); return; }
+  const t0 = performance.now();
+  const step = t => { const p = Math.min(1, Math.max(0, (t - t0) / d)), e = 1 - Math.pow(1 - p, 3); el.textContent = fmt(Math.round(from + (to - from) * e)); if (p < 1) el._raf = requestAnimationFrame(step); };
+  el._raf = requestAnimationFrame(step);
+  if (from !== 0) { el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump"); }
+}
+function pop(tile, delta, color) {
+  if (RM.matches || !delta) return;
+  const s = document.createElement("span");
+  s.className = "pop"; s.style.color = color; s.textContent = (delta > 0 ? "+" : "−") + fmt(Math.abs(delta));
+  tile.append(s); setTimeout(() => s.remove(), 1900);
+}
+
+const sim = { page: 178, cost: 21.4, ttl: 1798, api: 312, lastEvt: Date.now() };
+let listStamp = Date.now(); // registros que chegam depois disso ficam atrás do aviso "novos"
+const STEPS = ["Pré-flight", "Sweep TA", "Backfill", "Descrição", "Promoção", "Push API"];
+function renderRun() {
+  const done = sim.page >= 199, on = motor === "LIGADO";
+  $("#run-page").textContent = sim.page;
+  const pct = Math.round(sim.page / 199 * 100);
+  $("#run-eta").textContent = done ? "100% · sweep concluído" : `${pct}% · ETA ~${Math.round((199 - sim.page) * 1.8)} min`;
+  $("#run-bar").firstElementChild.style.width = pct + "%";
+  $("#run-bar").setAttribute("aria-valuenow", sim.page);
+  tween($("#rs-lidos"), count(r => r.uf === "RS"));
+  $("#run-cost").textContent = money(sim.cost);
+  const now = done ? 2 : 1;
+  setHTML($("#run-steps"), STEPS.map((s, i) => `<span class="step ${i < now ? "done" : i === now ? "now" : ""}">${i < now ? "✓ " : ""}${s}${i === now && on ? " …" : ""}</span>`).join(""));
+}
+
+const feed = [];
+const FEED_DOT = { coleta: "var(--descarte)", revisao: "var(--dlq)", mar: "var(--mar)", falha: "var(--falha)", push: "var(--rio)", descarte: "var(--ink-4)", motor: "var(--navy)" };
+function addEvent(kind, title, sub, ageS = 0) {
+  feed.unshift({ kind, title, sub, ts: Date.now() - ageS * 1000, fresh: ageS === 0 });
+  feed.length = Math.min(feed.length, 9);
+  sim.lastEvt = Date.now();
+  renderFeed();
+}
+const since = ts => { const s = Math.round((Date.now() - ts) / 1000); return s < 5 ? "agora" : s < 60 ? `${s} s` : `${Math.floor(s / 60)} min`; };
+function renderFeed() {
+  const ol = $("#feed");
+  if (!ol || $("#view-operacao").hidden) return;
+  ol.innerHTML = feed.map(e => `<li class="${e.fresh ? "new" : ""}"><span class="dot" style="background:${FEED_DOT[e.kind]}"></span><div style="min-width:0"><b>${esc(e.title)}</b><span class="s">${esc(e.sub)}</span></div><time>${since(e.ts)}</time></li>`).join("");
+  feed.forEach(e => { e.fresh = false; });
+}
+
+function simTick() {
+  if (motor !== "LIGADO") return;
+  // 1. coleta de páginas do TripAdvisor (novos registros entram no Rio)
+  if (sim.page < 199) {
+    const r = makeRec("RS", "rio");
+    r.born = Date.now(); r.page = sim.page;
+    sim.ttl = 1800; sim.cost += 0.014;
+    addEvent("coleta", `Coletado · ${r.name}`, `${r.mun} · página ${sim.page}`);
+    if (R() < 0.2) sim.page++;
+  }
+  // 2. o Rio roteia um registro já enriquecido
+  const rio = recs.filter(r => r.stage === "rio" && r.uf === "RS");
+  if (rio.length > 3 && R() < 0.8) {
+    const r = rio[Math.floor(R() * Math.min(rio.length, 40))];
+    const to = wpick([["revisao", 82], ["falha", 4], ["descarte", 9]]);
+    route_(r, to); r.ageH = 0; r.born = Date.now();
+    if (to === "revisao") { hours[23].rev++; addEvent("revisao", `Para Revisão · ${r.name}`, `${MOTIVOS[r.motivo].label} · score ${fmt1(r.score)}`); }
+    if (to === "falha") { hours[23].fal++; addEvent("falha", `Falha · ${r.name}`, FALHAS[r.falha].label); }
+    if (to === "descarte") addEvent("descarte", `Descartado · ${r.name}`, "não-atrativo (categoria do TA)");
+  }
+  // 3. o outbox publica um pendente
+  if (R() < 0.35) {
+    const p = recs.find(r => r.stage === "mar" && r.push === "pendente");
+    if (p) { p.push = "publicado"; addEvent("push", `Publicado na API · ${p.name}`, `POST /internal/territorial/attractions · 201`); }
+  }
+  updateLive();
+}
+
+// ───────────── menu lateral recolhível ─────────────
+const app = $(".app");
+let collapsed = false;
+try { collapsed = localStorage.getItem("brave-side") === "collapsed"; } catch {}
+function navTips() {
+  document.querySelectorAll(".nav a, #side-toggle").forEach(a => {
+    if (!collapsed) { delete a.dataset.tip; delete a.dataset.tipSide; a.removeAttribute("aria-label"); return; }
+    const label = a.id === "side-toggle" ? "Expandir menu" : $(".t", a).textContent;
+    const c = $(".count", a)?.textContent;
+    a.dataset.tip = `${label}${c ? ` · ${c}` : ""}${a.classList.contains("later") ? " (painel atual)" : ""}${a.id === "side-toggle" ? "  [" : ""}`;
+    a.dataset.tipSide = "right";
+    a.setAttribute("aria-label", label);
+  });
+}
+function setCollapsed(v) {
+  collapsed = v;
+  app.classList.toggle("collapsed", v);
+  $("#side-toggle").setAttribute("aria-expanded", !v);
+  $("#side-toggle .t").textContent = v ? "Expandir menu" : "Recolher menu";
+  try { localStorage.setItem("brave-side", v ? "collapsed" : "open"); } catch {}
+  tip.hidden = true;
+  navTips();
+}
+$("#side-toggle").addEventListener("click", () => setCollapsed(!collapsed));
+document.addEventListener("keydown", e => { if (e.key === "[" && !e.target.matches("input, select, textarea")) setCollapsed(!collapsed); });
+setCollapsed(collapsed);
+
+function updateLive() {
+  document.querySelectorAll("[data-count]").forEach(el => { el.textContent = fmt(count(r => r.stage === el.dataset.count)); });
+  if (collapsed) navTips();
+  if (view === "operacao") { renderOps(); return; }
+  if (view === "varreduras") { renderRuns(); return; }
+  if (view === "custo") { renderCusto(); return; }
+  if (!STAGES.includes(view)) return;
+  document.querySelectorAll(".stab[data-s]").forEach(b => { $(".num", b).textContent = fmt(count(r => r.stage === b.dataset.s)); });
+  const nb = $("#newbar");
+  if (nb) {
+    const k = count(r => r.stage === stage && r.born > listStamp);
+    nb.hidden = !k;
+    if (k) $("button", nb).textContent = `↑ ${fmt(k)} novo${k === 1 ? "" : "s"} em ${STAGE[stage].label} · mostrar`;
+  }
+}
+
+function clockTick() {
+  sim.ttl = Math.max(0, sim.ttl - 1);
+  const ttl = $("#ta-ttl");
+  ttl.textContent = `${Math.floor(sim.ttl / 60)}:${String(sim.ttl % 60).padStart(2, "0")}`;
+  $(".dot", ttl.parentElement).className = `dot ${sim.ttl > 300 ? "ok" : sim.ttl > 0 ? "warn" : "bad"}`;
+  if (Date.now() % 5000 < 1000) { sim.api = Math.round(between(268, 360)); $("#api-ms").textContent = `${sim.api} ms`; }
+  const live = motor === "LIGADO";
+  $("#live-chip").classList.toggle("off", !live);
+  $("#live-txt").textContent = live ? "Ao vivo" : "Sem coleta";
+  $("#live-chip").dataset.tip = live ? `Último evento: ${since(sim.lastEvt)}` : "Ligue o motor para retomar a coleta.";
+  costChip();
+  if (view === "varreduras") renderVarSession();
+  document.querySelectorAll("#feed time").forEach((t, i) => { if (feed[i]) t.textContent = since(feed[i].ts); });
+}
+
+function motorUI() {
+  const on = motor === "LIGADO";
+  $("#run-mark").classList.toggle("spin", on);
+  $("#run-bar").classList.toggle("live", on);
+  $("#flow").classList.toggle("live", on);
+  const pill = $("#run-pill");
+  pill.className = `right pill ${on ? "run" : motor === "PAUSADO" ? "warn" : ""}`;
+  pill.innerHTML = on ? '<span class="dot ok pulse"></span>Ligado' : motor === "PAUSADO" ? "Pausado" : "Desligado";
+}
+
+// ───────────── custo diário + moeda ─────────────
+const FX = 5.42; // ponytail: câmbio fixo na POC; em produção vem da cotação do dia
+const DAILY_CAP = 50; // usd_daily_budget
+let cur = "USD";
+try { cur = localStorage.getItem("brave-cur") === "BRL" ? "BRL" : "USD"; } catch {}
+const money = (usd, d = 2) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: cur, minimumFractionDigits: d, maximumFractionDigits: d }).format(cur === "BRL" ? usd * FX : usd);
+const costToday = () => 1.84 + 6.2 + sim.cost; // Gemini + Parallel + run
+const apifyUsd = () => 28.7 + (sim.cost - 21.4) * 0.5;
+function costChip() {
+  const t = costToday(), p = t / DAILY_CAP;
+  $("#cost-today").textContent = money(t);
+  $("#cost-mini").className = `mini ${p > 0.9 ? "bad" : p > 0.7 ? "warn" : ""}`;
+  $("#cost-mini i").style.width = Math.min(100, p * 100).toFixed(1) + "%";
+  $("#cost-chip").dataset.tip = `Gasto hoje: ${money(t)} de ${money(DAILY_CAP, 0)} (${Math.round(p * 100)}%)\nRun RS ${money(sim.cost)} · Parallel ${money(6.2)} · Gemini ${money(1.84)}${cur === "BRL" ? `\nCâmbio fixo: R$ ${FX.toLocaleString("pt-BR")}` : ""}`;
+  $("#cost-chip").setAttribute("aria-label", `Custo de hoje ${money(t)}, ${Math.round(p * 100)}% do teto diário`);
+}
+function setCur(c) {
+  cur = c;
+  document.querySelectorAll(".cur [data-cur]").forEach(b => b.setAttribute("aria-pressed", b.dataset.cur === c));
+  try { localStorage.setItem("brave-cur", c); } catch {}
+  costChip();
+  renderAll();
+}
+document.querySelector(".cur").addEventListener("click", e => { const b = e.target.closest("[data-cur]"); if (b && b.dataset.cur !== cur) setCur(b.dataset.cur); });
+document.querySelectorAll(".cur [data-cur]").forEach(b => b.setAttribute("aria-pressed", b.dataset.cur === cur));
+
+// ───────────── motor: botão compacto + menu ─────────────
+const MOTOR_META = {
+  LIGADO: { l: "Ligado", d: "Coleta 24/7. Editar registros fica travado.", c: "var(--mar-ink)", i: '<path d="M4 2.5v11l10-5.5z"/>' },
+  PAUSADO: { l: "Pausado", d: "Para após a tarefa atual. O run retoma de onde parou.", c: "var(--dlq-ink)", i: '<rect x="3" y="2.5" width="3.5" height="11" rx="1"/><rect x="9.5" y="2.5" width="3.5" height="11" rx="1"/>' },
+  DESLIGADO: { l: "Desligado", d: "Encerra o run. Nada roda até ligar de novo.", c: "var(--ink-3)", i: '<rect x="3" y="3" width="10" height="10" rx="1.5"/>' },
+};
+const mBtn = $("#motor-btn"), mMenu = $("#motor-menu");
+mMenu.innerHTML = `<div class="m-head">Modo do motor</div>` + Object.entries(MOTOR_META).map(([k, m]) => `<button type="button" role="menuitemradio" data-m="${k}" aria-checked="false"><svg class="ico" viewBox="0 0 16 16" style="fill:${m.c}" aria-hidden="true">${m.i}</svg><b>${m.l}</b><svg class="chk" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg><small>${m.d}</small></button>`).join("");
+function motorBtnUI() {
+  const m = MOTOR_META[motor];
+  mBtn.dataset.m = motor;
+  mBtn.innerHTML = `<svg class="ico" viewBox="0 0 16 16" aria-hidden="true">${m.i}</svg><span>${m.l}</span><svg class="car" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>`;
+  mBtn.setAttribute("aria-label", `Motor ${m.l}. Trocar modo`);
+  mMenu.querySelectorAll("[data-m]").forEach(b => b.setAttribute("aria-checked", b.dataset.m === motor));
+}
+function openMotorMenu(open) {
+  mMenu.hidden = !open;
+  mBtn.setAttribute("aria-expanded", open);
+  tip.hidden = true;
+  if (open) mMenu.querySelector(`[data-m="${motor}"]`).focus();
+}
+mBtn.addEventListener("click", () => openMotorMenu(mMenu.hidden));
+mMenu.addEventListener("click", e => {
+  const b = e.target.closest("[data-m]"); if (!b) return;
+  openMotorMenu(false); mBtn.focus();
+  if (b.dataset.m !== motor) setMotor(b.dataset.m);
+});
+mMenu.addEventListener("keydown", e => {
+  e.stopPropagation(); // não deixa J/K/setas chegarem à lista de registros
+  const items = [...mMenu.querySelectorAll("[data-m]")], i = items.indexOf(document.activeElement);
+  if (e.key === "ArrowDown") { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); items[(i + items.length - 1) % items.length].focus(); }
+  else if (e.key === "Escape") { openMotorMenu(false); mBtn.focus(); }
+  else if (e.key === "Tab") openMotorMenu(false);
+});
+document.addEventListener("click", e => { if (!mMenu.hidden && !e.target.closest(".motor-wrap")) openMotorMenu(false); });
+
+function renderThroughput() {
+  const SER = [["mar", "var(--mar)", "Para o Mar"], ["rev", "var(--dlq)", "Para Revisão"], ["fal", "var(--falha)", "Para Falha"]];
+  $("#tp-legend").innerHTML = SER.map(s => `<span><i style="background:${s[1]}"></i>${s[2]}</span>`).join("");
+  const Wd = 640, H = 210, L = 34, B = 22, T = 8, max = Math.max(...hours.map(h => h.rev + h.mar + h.fal));
+  const top = Math.ceil(max / 200) * 200, y = v => T + (H - T - B) * (1 - v / top), bw = (Wd - L) / 24;
+  let svg = `<svg viewBox="0 0 ${Wd} ${H}" aria-hidden="true">`;
+  for (let v = 0; v <= top; v += top / 4) svg += `<line class="gl" x1="${L}" x2="${Wd}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${L - 6}" y="${y(v) + 3.5}" text-anchor="end">${fmt(v)}</text>`;
+  hours.forEach((d, i) => {
+    const x = L + i * bw + 2, w = bw - 4; let acc = 0;
+    SER.forEach(([k, c]) => { const v = d[k]; if (!v) return; const y0 = y(acc), y1 = y(acc + v); acc += v; svg += `<rect x="${x}" y="${y1 + 1}" width="${w}" height="${Math.max(0, y0 - y1 - 1)}" rx="2" fill="${c}"/>`; });
+    if (i % 3 === 2 || i === 23) svg += `<text class="axis" x="${x + w / 2}" y="${H - 6}" text-anchor="middle">${String(d.h).padStart(2, "0")}h</text>`;
+    svg += `<rect x="${L + i * bw}" y="${T}" width="${bw}" height="${H - T - B}" fill="transparent" data-tip="${String(d.h).padStart(2, "0")}h\nMar: ${fmt(d.mar)}\nRevisão: ${fmt(d.rev)}\nFalha: ${fmt(d.fal)}"/>`;
+  });
+  svg += "</svg>";
+  $("#tp-chart").innerHTML = svg;
+  const sum = k => hours.reduce((s, h) => s + h[k], 0);
+  $("#tp-chart").setAttribute("aria-label", `Últimas 24 horas: ${fmt(sum("mar"))} para o Mar, ${fmt(sum("rev"))} para Revisão, ${fmt(sum("fal"))} para Falha. Pico do Mar às 10h (promoção em lote).`);
+}
+
+// ───────────── REGISTROS ─────────────
+const filt = { q: "", uf: "", grp: "motivo", sort: "score", motivo: "", nodesc: false };
+const sel = new Set();
+let active = null, kIdx = -1;
+const shown = {}; // limite de linhas por grupo
+const closed = new Set();
+
+function defaultGroup(s) { return s === "revisao" ? "motivo" : s === "falha" ? "erro" : "push"; }
+function groupOptions(s) {
+  const base = [["uf", "UF"], ["none", "Sem agrupar"]];
+  if (s === "revisao") return [["motivo", "Motivo"], ...base];
+  if (s === "falha") return [["erro", "Erro"], ...base];
+  return [["push", "Status do push"], ...base];
+}
+function openReg(s, opts = {}) {
+  stage = s; sel.clear(); active = null;
+  Object.assign(filt, { q: "", uf: "", motivo: "", nodesc: false, grp: defaultGroup(s) }, opts);
+  if (opts.motivo) filt.grp = "motivo";
+  if (location.hash.slice(1) === s) route(); else location.hash = s;
+}
+
+function filtered() {
+  const q = filt.q.trim().toLowerCase();
+  let rs = recs.filter(r => r.stage === stage && !(r.born > listStamp) && (!filt.uf || r.uf === filt.uf) && (!filt.motivo || r.motivo === filt.motivo) && (!filt.nodesc || r.semDesc) && (!q || r.name.toLowerCase().includes(q) || r.mun.toLowerCase().includes(q)));
+  const S = { score: (a, b) => b.score - a.score, "score-asc": (a, b) => a.score - b.score, age: (a, b) => b.ageH - a.ageH, name: (a, b) => a.name.localeCompare(b.name, "pt-BR") };
+  return rs.sort(S[filt.sort]);
+}
+function groupsOf(rs) {
+  const key = { motivo: r => r.motivo, erro: r => r.falha, push: r => r.push, uf: r => r.uf, none: () => "all" }[filt.grp];
+  const m = new Map();
+  rs.forEach(r => { const k = key(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); });
+  const ORDER = { motivo: Object.keys(MOTIVOS), erro: Object.keys(FALHAS), push: ["rejeitado", "pendente", "publicado"] }[filt.grp];
+  const arr = [...m.entries()];
+  if (ORDER) arr.sort((a, b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0])); else arr.sort((a, b) => b[1].length - a[1].length);
+  return arr.map(([k, items]) => {
+    let title, why = "", tone = "", acts = [];
+    if (filt.grp === "motivo") { title = MOTIVOS[k].label; why = MOTIVOS[k].why; if (k === "awaiting_promotion") acts.push(["promote", `Promover ${fmt(items.length)}`, true]); if (k === "possivel_duplicado" || k === "no_recent_reviews") acts.push(["descartar", "Descartar grupo"]); }
+    else if (filt.grp === "erro") { title = FALHAS[k].label; why = `${FALHAS[k].msg} · etapa ${FALHAS[k].stage}`; acts.push(["reprocessar", `Reprocessar ${fmt(items.length)}`, true]); }
+    else if (filt.grp === "push") { title = PUSH[k].label; why = k === "rejeitado" ? "A API recusou o payload. Corrigir e reenviar." : k === "pendente" ? "Na fila do outbox; o beat de 15 min envia." : "Já está na norteia-api."; if (k !== "publicado") acts.push(["reenviar", "Reenviar grupo"]); }
+    else if (filt.grp === "uf") title = `${k} · ${UF_NAMES[k]}`;
+    else title = "Todos";
+    return { k, title, why, items, acts };
+  });
+}
+
+function scoreCell(r) {
+  const s = r.score, pot = r.stage === "revisao" ? Math.min(100, s + W.validacao) : s;
+  const cls = s >= THRESHOLD ? "pass" : pot >= THRESHOLD ? "near" : "low";
+  const tipT = r.stage === "revisao" ? `Score ${fmt1(s)} · com validação ${fmt1(pot)} · limiar ${THRESHOLD}` : `Score ${fmt1(s)} · limiar ${THRESHOLD}`;
+  return `<div class="score" data-tip="${tipT}"><span class="v">${Math.round(s)}</span><div class="sbar ${cls}"><span class="fill" style="width:${s}%"></span>${pot > s ? `<span class="ghost" style="left:${s}%;width:${pot - s}%"></span>` : ""}<span class="tick" style="left:${THRESHOLD}%"></span></div></div>`;
+}
+function flagsOf(r) {
+  const f = [];
+  if (r.stage === "revisao" && filt.grp !== "motivo") f.push(`<span class="flag warn">${MOTIVOS[r.motivo].label}</span>`);
+  if (r.stage === "falha" && filt.grp !== "erro") f.push(`<span class="flag bad">${FALHAS[r.falha].label}</span>`);
+  if (r.stage === "falha") f.push(`<span class="flag">${r.attempts}/3 tentativas</span>`);
+  if (r.stage === "mar" && filt.grp !== "push") f.push(`<span class="flag ${PUSH[r.push].cls}">${PUSH[r.push].label}</span>`);
+  if (r.stage === "mar" && r.push === "rejeitado") f.push(`<span class="flag bad">${esc(r.rej)}</span>`);
+  if (r.semDesc) f.push('<span class="flag">Sem descrição</span>');
+  if (r.fechado && r.motivo !== "closed_temporarily") f.push('<span class="flag bad">Fechado temp.</span>');
+  if (!r.hasPlaces) f.push('<span class="flag">Sem Places</span>');
+  return f.join("");
+}
+
+let flat = [];
+function renderReg() {
+  // abas
+  const tabs = Object.entries(STAGE).map(([k, s]) => `<button type="button" role="tab" class="stab" aria-selected="${k === stage}" data-s="${k}"><i style="background:${s.color}"></i>${s.label}<span class="num">${fmt(count(r => r.stage === k))}</span><small>${s.sub}</small></button>`).join("");
+  $("#stage-tabs").innerHTML = tabs;
+  // filtros
+  const ufs = [...new Set(recs.filter(r => r.stage === stage).map(r => r.uf))].sort();
+  $("#f-uf").innerHTML = `<option value="">Todas</option>` + ufs.map(u => `<option ${u === filt.uf ? "selected" : ""}>${u}</option>`).join("");
+  $("#f-grp").innerHTML = groupOptions(stage).map(([v, l]) => `<option value="${v}" ${v === filt.grp ? "selected" : ""}>${l}</option>`).join("");
+  $("#f-sort").value = filt.sort; $("#f-q").value = filt.q;
+  $("#f-nodesc").setAttribute("aria-pressed", filt.nodesc);
+  renderList();
+  renderDetail();
+}
+
+function renderList() {
+  const rs = filtered(), groups = groupsOf(rs);
+  flat = [];
+  let html = `<div class="newbar" id="newbar" hidden><button type="button" data-refresh></button></div>`;
+  if (locked() && stage !== "mar") html += `<div class="lock" role="status"><span><b>Motor ligado.</b> Promover, descartar e editar ficam travados enquanto o sweep roda (a API responde 423).</span><button class="btn sm" type="button" data-pause>Pausar motor</button></div>`;
+  if (filt.motivo) html += `<div class="lock" style="background:var(--surface-3);color:var(--ink-2);border-color:var(--line)"><span>Filtrando por motivo: <b>${MOTIVOS[filt.motivo].label}</b></span><button class="btn sm" type="button" data-clear-motivo>Limpar filtro</button></div>`;
+  if (!rs.length) html += `<div class="empty">Nenhum registro com esses filtros.</div>`;
+  for (const g of groups) {
+    const gid = `${stage}:${filt.grp}:${g.k}`;
+    const lim = shown[gid] || 25;
+    const open = !closed.has(gid);
+    const allSel = g.items.every(r => sel.has(r.id));
+    html += `<section class="group" data-open="${open}" data-g="${esc(gid)}">
+      <div class="group-h">
+        <button class="caret" type="button" aria-expanded="${open}" data-toggle="${esc(gid)}">${ICON.caret}${esc(g.title)}</button>
+        <span class="cnt">${fmt(g.items.length)}</span>
+        <span class="acts">
+          <button class="btn sm" type="button" data-selgroup="${esc(gid)}">${allSel ? "Desmarcar" : "Marcar"} grupo</button>
+          ${g.acts.map(([a, l, prim]) => `<button class="btn sm ${prim ? "primary" : ""} ${a === "descartar" ? "danger" : ""}" type="button" data-gact="${a}" data-gid="${esc(gid)}" ${a !== "reenviar" && a !== "reprocessar" && locked() ? 'disabled title="Pause o motor para usar"' : ""}>${l}</button>`).join("")}
+        </span>
+        ${g.why ? `<span class="why">${esc(g.why)}</span>` : ""}
+      </div>
+      <div class="rows" role="listbox" aria-multiselectable="true" aria-label="${esc(g.title)}">
+        ${g.items.slice(0, lim).map(r => { if (open) flat.push(r.id); return `<div class="row" role="option" data-id="${r.id}" aria-selected="${active === r.id}">
+          <input type="checkbox" aria-label="Marcar ${esc(r.name)}" ${sel.has(r.id) ? "checked" : ""} data-chk="${r.id}">
+          <div class="nm"><b>${esc(r.name)}</b><span>${esc(r.mun)} · ${r.cat}</span></div>
+          <span class="uf-badge ufc">${r.uf}</span>
+          ${scoreCell(r)}
+          <div class="flags">${flagsOf(r)}</div>
+          <span class="age" data-tip="Na etapa há ${ago(r.ageH)}">${ago(r.ageH)}</span>
+        </div>`; }).join("")}
+      </div>
+      ${g.items.length > lim ? `<div class="more"><span>Mostrando ${fmt(lim)} de ${fmt(g.items.length)}</span><button class="link" type="button" data-more="${esc(gid)}">Mostrar mais 50</button></div>` : ""}
+    </section>`;
+  }
+  html += `<div class="bulk" id="bulk" ${sel.size ? "" : "hidden"}><span><b class="num">${fmt(sel.size)}</b> marcado${sel.size === 1 ? "" : "s"}</span><span class="gap"></span>
+    ${stage === "revisao" ? `<button class="btn primary" type="button" data-bulk="promote" ${locked() ? "disabled" : ""}>Promover ao Mar</button><button class="btn" type="button" data-bulk="descartar" ${locked() ? "disabled" : ""}>Descartar</button>` : ""}
+    ${stage === "falha" ? `<button class="btn primary" type="button" data-bulk="reprocessar">Reprocessar</button><button class="btn" type="button" data-bulk="descartar" ${locked() ? "disabled" : ""}>Descartar</button>` : ""}
+    ${stage === "mar" ? `<button class="btn primary" type="button" data-bulk="reenviar">Reenviar</button>` : ""}
+    <button class="btn" type="button" data-bulk="clear">Limpar</button></div>`;
+  $("#list").innerHTML = html;
+  updateLive();
+  kIdx = flat.indexOf(active);
+  document.querySelectorAll("[data-count]").forEach(el => { el.textContent = fmt(count(r => r.stage === el.dataset.count)); });
+}
+
+const ACT = { promote, descartar, reprocessar, reenviar };
+$("#list").addEventListener("click", e => {
+  const t = e.target;
+  if (t.closest("[data-pause]")) return setMotor("PAUSADO");
+  if (t.closest("[data-refresh]")) { listStamp = Date.now(); $("#list").scrollTop = 0; return renderList(); }
+  if (t.closest("[data-clear-motivo]")) { filt.motivo = ""; return renderList(); }
+  const tg = t.closest("[data-toggle]"); if (tg) { const g = tg.dataset.toggle; closed.has(g) ? closed.delete(g) : closed.add(g); return renderList(); }
+  const mo = t.closest("[data-more]"); if (mo) { shown[mo.dataset.more] = (shown[mo.dataset.more] || 25) + 50; return renderList(); }
+  const sg = t.closest("[data-selgroup]"); if (sg) { const g = groupsOf(filtered()).find(g => `${stage}:${filt.grp}:${g.k}` === sg.dataset.selgroup); const all = g.items.every(r => sel.has(r.id)); g.items.forEach(r => all ? sel.delete(r.id) : sel.add(r.id)); return renderList(); }
+  const ga = t.closest("[data-gact]"); if (ga) { const g = groupsOf(filtered()).find(g => `${stage}:${filt.grp}:${g.k}` === ga.dataset.gid); return ACT[ga.dataset.gact](g.items.map(r => r.id)); }
+  const bk = t.closest("[data-bulk]"); if (bk) { if (bk.dataset.bulk === "clear") { sel.clear(); return renderList(); } return ACT[bk.dataset.bulk]([...sel]); }
+  const ck = t.closest("[data-chk]"); if (ck) { ck.checked ? sel.add(ck.dataset.chk) : sel.delete(ck.dataset.chk); return renderList(); }
+  const row = t.closest(".row"); if (row) { active = row.dataset.id; renderList(); renderDetail(); }
+});
+$("#stage-tabs").addEventListener("click", e => { const b = e.target.closest("[data-s]"); if (b) location.hash = b.dataset.s; });
+$("#f-q").addEventListener("input", e => { filt.q = e.target.value; listStamp = Date.now(); renderList(); });
+$("#f-uf").addEventListener("change", e => { filt.uf = e.target.value; listStamp = Date.now(); renderList(); });
+$("#f-grp").addEventListener("change", e => { filt.grp = e.target.value; listStamp = Date.now(); renderList(); });
+$("#f-sort").addEventListener("change", e => { filt.sort = e.target.value; listStamp = Date.now(); renderList(); });
+$("#f-nodesc").addEventListener("click", () => { filt.nodesc = !filt.nodesc; $("#f-nodesc").setAttribute("aria-pressed", filt.nodesc); listStamp = Date.now(); renderList(); });
+
+function renderDetail() {
+  const d = $("#detail");
+  const r = active && byId.get(active);
+  if (!r || r.stage !== stage) {
+    d.dataset.empty = "true";
+    d.innerHTML = `<div class="detail-empty">${ICON.inbox}<div>Escolha um registro para ver o score, o motivo e a linha do tempo.</div><div style="margin-top:8px"><kbd>J</kbd> / <kbd>K</kbd> percorre a lista</div></div>`;
+    return;
+  }
+  d.dataset.empty = "false";
+  let reason = "";
+  if (r.stage === "revisao") { const m = MOTIVOS[r.motivo]; reason = `<div class="reason ${r.motivo === "awaiting_promotion" ? "ok" : "warn"}"><b>${m.label}</b><span>${m.why}</span><span class="rec"><b style="font-size:12px">Próximo passo:</b> ${m.rec}</span><code>dlq_reason = ${r.motivo}</code></div>`; }
+  if (r.stage === "falha") { const f = FALHAS[r.falha]; reason = `<div class="reason bad"><b>${f.label}</b><code>${esc(f.msg)}</code><span class="rec"><b style="font-size:12px">Próximo passo:</b> ${f.rec}</span><span style="color:var(--ink-3);font-size:12px">Etapa ${f.stage} · ${r.attempts}/3 tentativas · em quarentena há ${ago(r.ageH)}</span></div>`; }
+  if (r.stage === "mar") { const p = PUSH[r.push]; reason = `<div class="reason ${r.push === "rejeitado" ? "bad" : "ok"}"><b>${p.label}</b>${r.push === "rejeitado" ? `<code>POST /api/internal/territorial/attractions → ${esc(r.rej)}</code><span class="rec"><b style="font-size:12px">Próximo passo:</b> corrigir o campo e reenviar.</span>` : r.push === "pendente" ? "<span>pushed_at vazio. O beat de 15 min envia.</span>" : `<span>push_hash igual ao último envio · enviado há ${ago(Math.max(0.2, r.ageH - 1))}</span>`}</div>`; }
+
+  const pot = r.stage === "revisao" ? scoreOf({ ...r.comp, validacao: 100 }) : r.score;
+  const gap = THRESHOLD - pot;
+  const bd = Object.keys(W).map(k => `<div class="bd-row"><span>${W_LABEL[k]} <span class="w">peso ${W[k]}</span></span><span class="bd-track"><i style="width:${r.comp[k]}%"></i></span><span class="pts">${fmt1(r.comp[k] * W[k] / 100)}</span></div>`).join("");
+
+  const ev = [
+    ["Coletado do TripAdvisor", `página ${r.page} · ${fmt(r.reviews)} reviews · nota ${fmt1(r.rating)}`, r.ageH + 0.4, ""],
+    ["Deduplicado", r.dup ? "nome parecido com outro registro (Jaccard 0,81)" : "nenhum candidato acima de 0,95", r.ageH + 0.35, r.dup ? "warn" : ""],
+    r.hasPlaces ? ["Enriquecido pelo Places", r.horario ? "horário, endereço e reviews" : "endereço e reviews; sem horário", r.ageH + 0.3, ""] : ["Places sem correspondência", "nenhum lugar no raio de busca", r.ageH + 0.3, "warn"],
+    r.semDesc ? ["Descrição pendente", "describe_uf ainda não rodou", r.ageH + 0.2, "warn"] : ["Descrição escrita", "cascata Parallel → Gemini · groundedness 0,86", r.ageH + 0.2, ""],
+    ["Pontuado", `score ${fmt1(r.stage === "mar" ? r.score - W.validacao : r.score)}`, r.ageH + 0.1, ""],
+  ];
+  if (r.stage === "revisao") ev.push(["Roteado para Revisão", MOTIVOS[r.motivo].label, r.ageH, "warn"]);
+  if (r.stage === "falha") { ev.splice({ ingested: 1, places_enriched: 3, described: 4, scored: 5 }[FALHAS[r.falha].stage]); ev.push(["Quarentena", FALHAS[r.falha].label, r.ageH, "bad"]); }
+  if (r.stage === "mar") { ev.push(["Promovido ao Mar", "validação humana +15", r.ageH, ""]); ev.push([r.push === "rejeitado" ? "Push rejeitado" : r.push === "pendente" ? "Aguardando push" : "Publicado na API", r.rej || "", Math.max(0.1, r.ageH - 0.1), r.push === "rejeitado" ? "bad" : r.push === "pendente" ? "warn" : ""]); }
+
+  const L = locked();
+  let actions = "";
+  if (r.stage === "revisao") actions = `<button class="btn primary" type="button" data-d="promote" ${L ? "disabled" : ""}>Promover ao Mar</button><button class="btn" type="button" ${L ? "disabled" : ""}>Editar</button><button class="btn danger" type="button" data-d="descartar" ${L ? "disabled" : ""}>Descartar</button>`;
+  if (r.stage === "falha") actions = `<button class="btn primary" type="button" data-d="reprocessar">Reprocessar</button><button class="btn" type="button">Ver log</button><button class="btn danger" type="button" data-d="descartar" ${L ? "disabled" : ""}>Descartar</button>`;
+  if (r.stage === "mar") actions = r.push === "publicado" ? `<button class="btn" type="button">Ver na API</button><button class="btn danger" type="button">Despublicar</button>` : `<button class="btn primary" type="button" data-d="reenviar">Reenviar</button><button class="btn" type="button" ${L ? "disabled" : ""}>Editar</button>`;
+  if (L && r.stage !== "mar") actions += `<span class="lockmsg">Motor ligado: pause para promover, editar ou descartar.</span>`;
+
+  d.innerHTML = `<div class="detail-in">
+    <div class="d-head">
+      <div class="top-line"><span class="pill ${r.stage === "mar" ? "ok" : r.stage === "falha" ? "bad" : "warn"}">${STAGE[r.stage].label}</span><span class="uf-badge">${r.uf}</span><span class="mono" style="font-size:11.5px;color:var(--ink-3)">${r.id}</span>
+        <button class="icon-btn d-close" type="button" aria-label="Fechar detalhe" data-close>${ICON.close}</button></div>
+      <h2>${esc(r.name)}</h2>
+      <div class="where">${esc(r.mun)}, ${UF_NAMES[r.uf]} · ${r.cat} · ${r.hasPlaces ? "TripAdvisor + Google Places" : "TripAdvisor"}</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap">${r.fechado ? '<span class="flag bad">Fechado temporariamente</span>' : ""}${r.semDesc ? '<span class="flag">Sem descrição</span>' : ""}</div>
+    </div>
+    ${reason}
+    <div class="d-sec"><h3>Score de confiabilidade</h3><div class="bd">${bd}
+      <div class="bd-total"><span>${r.stage === "revisao" ? `Com validação humana: <b class="num" style="font-size:13px">${fmt1(pot)}</b> · ${gap > 0 ? `<span style="color:var(--falha-ink)">faltam ${fmt1(gap)}</span>` : `<span style="color:var(--mar-ink)">passa do limiar ${THRESHOLD}</span>`}` : `Limiar do Mar: ${THRESHOLD}`}</span><b>${fmt1(r.score)}</b></div></div></div>
+    <div class="d-sec"><h3>Campos</h3><dl class="kv">
+      <dt>Endereço</dt><dd${r.falha === "validation" ? ' class="miss"' : ""}>${r.falha === "validation" ? "ausente" : `${r.kind === "Praia" ? "Orla" : "Estrada"} ${esc(r.name.split(" ").slice(-1)[0])}, s/n · ${esc(r.mun)}`}</dd>
+      <dt>Horário</dt><dd${r.horario ? "" : ' class="miss"'}>${r.horario || "ausente"}</dd>
+      <dt>Site</dt><dd${r.site ? "" : ' class="miss"'}>${r.site || "ausente"}</dd>
+      <dt>Telefone</dt><dd${r.phone ? "" : ' class="miss"'}>${r.phone ? `<span class="mono">${r.phone}</span>` : "ausente"}</dd>
+      <dt>Última review</dt><dd>há ${r.lastReview} dias · ${fmt(r.reviews)} reviews</dd>
+      <dt>Descrição</dt><dd${r.semDesc ? ' class="miss"' : ""}>${r.semDesc ? "pendente" : `Um dos cartões-postais de ${esc(r.mun)}, ${esc(r.name)} reúne…`}</dd>
+    </dl></div>
+    <div class="d-sec"><h3>Linha do tempo</h3><ol class="tl">${ev.map(([t, s, h, c]) => `<li><span class="b ${c}"></span><div>${t}<small>${esc(s)}</small></div><time>há ${ago(h)}</time></li>`).join("")}</ol></div>
+  </div>
+  <div class="d-actions">${actions}</div>`;
+}
+$("#detail").addEventListener("click", e => {
+  if (e.target.closest("[data-close]")) { active = null; renderList(); renderDetail(); return; }
+  const b = e.target.closest("[data-d]"); if (b && active) ACT[b.dataset.d]([active]);
+});
+
+// teclado: J/K navega, X marca, P promove, D descarta, R reprocessa, Esc fecha
+document.addEventListener("keydown", e => {
+  if ($("#view-registros").hidden || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.target.matches("input[type=search], select")) { if (e.key === "Escape") e.target.blur(); return; }
+  const k = e.key.toLowerCase();
+  if ((k === "p" || k === "d") && locked() && stage !== "mar") { toast("Motor ligado: pause para promover ou descartar."); return; }
+  const move = dlt => { if (!flat.length) return; kIdx = Math.max(0, Math.min(flat.length - 1, kIdx + dlt)); active = flat[kIdx]; renderList(); renderDetail(); document.querySelector(`.row[data-id="${active}"]`)?.scrollIntoView({ block: "nearest" }); };
+  if (k === "j" || e.key === "ArrowDown") { e.preventDefault(); move(1); }
+  else if (k === "k" || e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+  else if (k === "x" && active) { sel.has(active) ? sel.delete(active) : sel.add(active); renderList(); }
+  else if (k === "p" && stage === "revisao" && !locked()) { const ids = sel.size ? [...sel] : active ? [active] : []; const nx = flat[kIdx + 1]; promote(ids); active = nx || null; renderList(); renderDetail(); }
+  else if (k === "d" && stage !== "mar" && !locked()) { const ids = sel.size ? [...sel] : active ? [active] : []; const nx = flat[kIdx + 1]; descartar(ids); active = nx || null; renderList(); renderDetail(); }
+  else if (k === "r" && stage === "falha") { const ids = sel.size ? [...sel] : active ? [active] : []; reprocessar(ids); }
+  else if (e.key === "Escape") { if (sel.size) sel.clear(); else active = null; renderList(); renderDetail(); }
+});
+
+// ───────────── motor + tema ─────────────
+function setMotor(m) {
+  motor = m;
+  motorBtnUI();
+  toast(m === "LIGADO" ? "Motor ligado. Edição travada." : m === "PAUSADO" ? "Motor pausado. Ações liberadas." : "Motor desligado.");
+  addEvent("motor", m === "LIGADO" ? "Motor ligado" : m === "PAUSADO" ? "Motor pausado" : "Motor desligado", m === "LIGADO" ? "sweep RS retoma da página " + sim.page : "operador · coleta parada");
+  motorUI();
+  clockTick();
+  renderAll();
+}
+motorBtnUI();
+$("#theme-btn").addEventListener("click", () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+});
+
+function renderAll() { if (view === "operacao") renderOps(); else if (STAGES.includes(view)) renderReg(); else PAGES[view].render(); document.querySelectorAll("[data-count]").forEach(el => { el.textContent = fmt(count(r => r.stage === el.dataset.count)); }); }
+
+// eventos recentes para o feed não abrir vazio
+[["push", "Publicado na API · Praia do Rosa", "POST /internal/territorial/attractions · 201", 42],
+ ["revisao", "Para Revisão · Mirante da Serra", "Pronto para promover · score 77,6", 31],
+ ["coleta", "Coletado · Cânion Fortaleza", "Cambará do Sul · página 178", 24],
+ ["falha", "Falha · Gruta dos Ecos", "Apify 402 · limite mensal", 17],
+ ["revisao", "Para Revisão · Museu do Colono", "Sem review recente · score 61,2", 9],
+ ["coleta", "Coletado · Igreja Matriz São Pedro", "Garibaldi · página 178", 4]].forEach(([k, t, s, a]) => addEvent(k, t, s, a));
+motorUI();
+$("#dup-count").textContent = fmt(dupPairs.filter(p => p.status === "pendente").length);
+route();
+renderAll();
+setInterval(simTick, 1800);
+setInterval(clockTick, 1000);
+})();
+</script>
