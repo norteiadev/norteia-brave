@@ -12,6 +12,10 @@
  * The cost view drives two modes off the same endpoint: spend-per-lane
  * (group_by=lane) and spend-per-model (group_by=model), optionally windowed by a
  * `since` ISO timestamp on created_at.
+ *
+ * The same response also carries the Places and Apify cost-guard counters
+ * (`places`, `apify`): today (UTC day) and since first use, with their caps.
+ * They come from Redis, not llm_generations, so `since` never applies to them.
  */
 
 import { apiFetch } from "@/lib/api-client";
@@ -31,10 +35,32 @@ export interface CostRow {
   count: number;
 }
 
+/**
+ * The CURRENT Places API key's spend vs its two caps (dashboard.py _places_cost).
+ * `key_id` is a short non-reversible hash of the key ("nokey" when unset).
+ */
+export interface PlacesCost {
+  key_id: string;
+  usd_today: number;
+  daily_cap_usd: number;
+  usd_total: number;
+  total_cap_usd: number;
+}
+
+/** Apify spend vs its two caps (dashboard.py _apify_cost). */
+export interface ApifyCost {
+  usd_today: number;
+  daily_cap_usd: number;
+  usd_total: number;
+  total_cap_usd: number;
+}
+
 /** The full GET /api/v1/cost response. */
 export interface CostData {
   group_by: CostGroupBy;
   rows: CostRow[];
+  places: PlacesCost;
+  apify: ApifyCost;
 }
 
 /**
@@ -85,12 +111,4 @@ export function totalTokens(rows: CostRow[]): number {
 /** Total LLM calls across all rows. */
 export function totalCalls(rows: CostRow[]): number {
   return rows.reduce((sum, r) => sum + r.count, 0);
-}
-
-/** Format a USD figure with 4 decimals (LLM costs are sub-cent), pt-BR style. */
-export function formatUsd(value: number): string {
-  return `US$ ${value.toLocaleString("pt-BR", {
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
-  })}`;
 }

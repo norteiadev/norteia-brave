@@ -1,5 +1,6 @@
-import { fireEvent, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { Toaster } from "sonner";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PainelConfig } from "@/components/painel/PainelConfig";
 import {
@@ -11,159 +12,217 @@ import { server } from "@/mocks/server";
 
 import { renderWithClient } from "@/components/cms/__tests__/test-utils";
 
-const requests: { method: string; url: string }[] = [];
+/** Every PATCH body that reached the API. */
+let patches: Record<string, unknown>[] = [];
+
+function renderConfig() {
+  return renderWithClient(
+    <>
+      <Toaster />
+      <PainelConfig />
+    </>,
+  );
+}
+
+async function loaded() {
+  await waitFor(() =>
+    expect(screen.getByTestId("config-weight-sum")).toHaveAttribute(
+      "data-valid",
+      "true",
+    ),
+  );
+}
+
+// fireEvent (not userEvent): userEvent's internal delays fight fake timers.
+async function advance(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
+function fakeTimers() {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+}
 
 beforeEach(() => {
-  requests.length = 0;
-  server.events.on("request:start", ({ request }) => {
-    requests.push({ method: request.method, url: request.url });
-  });
+  patches = [];
+  server.use(
+    configGetSuccess(),
+    configPatchSuccess(undefined, (body) => patches.push(body)),
+  );
 });
 
 afterEach(() => {
-  server.events.removeAllListeners();
+  vi.useRealTimers();
 });
 
 describe("PainelConfig", () => {
-  it("seeds the form from the snapshot: weights sum 100, sources + active mode", async () => {
-    server.use(configGetSuccess(), configPatchSuccess());
+  it("seeds weights, threshold and lane switches from the snapshot, with no pending bar", async () => {
+    renderConfig();
+    await loaded();
 
-    const { getByTestId, getByText, queryByTestId } = renderWithClient(
-      <PainelConfig />,
-    );
-
-    await waitFor(() =>
-      expect(getByTestId("config-weight-sum")).toHaveTextContent("100"),
-    );
-    expect(getByTestId("config-weight-sum").getAttribute("data-valid")).toBe(
-      "true",
-    );
-    // engine.mode = LIGADO in the sample snapshot
-    expect(getByTestId("config-mode-LIGADO").getAttribute("data-active")).toBe(
-      "true",
-    );
-    // Only the surfaced source (TripAdvisor) renders, with its friendly label.
-    // The dormant "default"/Places lane is in the snapshot but filtered out here.
-    getByTestId("config-source-tripadvisor");
-    getByText("TripAdvisor");
-    expect(queryByTestId("config-source-default")).toBeNull();
-    // save enabled while the weights are valid
-    expect(getByTestId("config-save-pesos")).not.toBeDisabled();
+    expect(screen.getByTestId("config-weight-sum")).toHaveTextContent("Soma 100");
+    expect(screen.getByTestId("config-threshold-mar")).toHaveValue(85);
+    expect(screen.getByRole("switch", { name: "Coleta TripAdvisor" })).toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "Enriquecimento Google Places" }),
+    ).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Descrição editorial" })).toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "Descrição em lote (Batch API)" }),
+    ).not.toBeChecked();
+    // The dormant Places collection source is not a lane on this screen.
+    expect(screen.queryByText(/source\.default/)).toBeNull();
+    expect(screen.queryByTestId("config-save-bar")).toBeNull();
   });
 
-  it("blocks save when the five weights do not sum to 100 (client guard)", async () => {
-    server.use(configGetSuccess(), configPatchSuccess());
+  it("shows the env spend limits read-only, formatted as money", async () => {
+    renderConfig();
+    await loaded();
 
-    const { getByTestId } = renderWithClient(<PainelConfig />);
+    const env = screen.getByTestId("config-env-limits");
+    expect(env).toHaveTextContent("Orçamento LLM diário");
+    expect(env).toHaveTextContent("US$ 50,00");
+    expect(env).toHaveTextContent("Crédito do Google Places");
+    expect(env).toHaveTextContent("US$ 300,00");
+    expect(env).toHaveTextContent("APIFY_TOTAL_USD_CAP");
+    expect(env.querySelector("input")).toBeNull();
+    // env_file is read on container create: restart would keep the old cap.
+    expect(env).toHaveTextContent("docker compose up -d worker api");
+  });
 
-    await waitFor(() =>
-      expect(getByTestId("config-weight-sum")).toHaveTextContent("100"),
-    );
+  it("blocks Salvar with a clear message while the weights do not sum to 100", async () => {
+    renderConfig();
+    await loaded();
 
-    // Bump origem 20 → 30 ⇒ sum 110 ⇒ invalid.
-    fireEvent.change(getByTestId("config-weight-weight_origem"), {
+    fireEvent.change(screen.getByTestId("config-weight-weight_origem"), {
       target: { value: "30" },
     });
 
-    await waitFor(() =>
-      expect(getByTestId("config-weight-sum")).toHaveTextContent("110"),
+    expect(screen.getByTestId("config-weight-sum")).toHaveAttribute("data-valid", "false");
+    expect(screen.getByTestId("config-weight-sum")).toHaveTextContent("Soma 110");
+    expect(screen.getByTestId("config-weight-warning")).toHaveTextContent(
+      "Os pesos precisam somar 100",
     );
-    expect(getByTestId("config-weight-sum").getAttribute("data-valid")).toBe(
-      "false",
-    );
-    getByTestId("config-weight-warning");
-    expect(getByTestId("config-save-pesos")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Salvar" })).toBeDisabled();
   });
 
-  it("saving valid pesos PATCHes /config", async () => {
-    server.use(configGetSuccess(), configPatchSuccess());
+  it("slider and number move together", async () => {
+    renderConfig();
+    await loaded();
 
-    const { getByTestId } = renderWithClient(<PainelConfig />);
-
-    await waitFor(() =>
-      expect(getByTestId("config-weight-sum")).toHaveTextContent("100"),
-    );
-
-    fireEvent.click(getByTestId("config-save-pesos"));
-
-    await waitFor(() =>
-      expect(
-        requests.some(
-          (r) =>
-            r.method === "PATCH" && r.url.includes("/api/api/v1/config"),
-        ),
-      ).toBe(true),
-    );
+    fireEvent.change(screen.getByRole("slider", { name: "Origem" }), {
+      target: { value: "25" },
+    });
+    expect(screen.getByTestId("config-weight-weight_origem")).toHaveValue(25);
   });
 
-  it("changing the engine mode PATCHes /config", async () => {
-    server.use(configGetSuccess(), configPatchSuccess());
+  it("Descartar drops the draft and sends nothing", async () => {
+    renderConfig();
+    await loaded();
 
-    const { getByTestId } = renderWithClient(<PainelConfig />);
+    fireEvent.click(screen.getByRole("switch", { name: "Coleta TripAdvisor" }));
+    expect(screen.getByTestId("config-save-bar")).toHaveTextContent("1 alteração");
 
-    await waitFor(() =>
-      expect(getByTestId("config-mode-LIGADO").getAttribute("data-active")).toBe(
-        "true",
-      ),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Descartar" }));
 
-    fireEvent.click(getByTestId("config-mode-PAUSADO"));
-
-    await waitFor(() =>
-      expect(
-        requests.some(
-          (r) =>
-            r.method === "PATCH" && r.url.includes("/api/api/v1/config"),
-        ),
-      ).toBe(true),
-    );
+    expect(screen.queryByTestId("config-save-bar")).toBeNull();
+    expect(screen.getByRole("switch", { name: "Coleta TripAdvisor" })).toBeChecked();
+    expect(patches).toHaveLength(0);
   });
 
-  it("renders the description-enrichment toggle from the snapshot (on by default)", async () => {
-    server.use(configGetSuccess(), configPatchSuccess());
+  it("Salvar waits for the undo window, then sends exactly one PATCH with only the changed keys", async () => {
+    renderConfig();
+    await loaded();
 
-    const { getByTestId } = renderWithClient(<PainelConfig />);
+    fireEvent.change(screen.getByTestId("config-threshold-mar"), {
+      target: { value: "80" },
+    });
+    fireEvent.click(screen.getByRole("switch", { name: "Coleta TripAdvisor" }));
+    expect(screen.getByTestId("config-save-bar")).toHaveTextContent("2 alterações");
 
-    await waitFor(() => getByTestId("config-enrichment-toggle"));
-    expect(getByTestId("config-enrichment-toggle")).toBeChecked();
+    fakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await advance(3_000);
+    expect(patches).toHaveLength(0);
+
+    await advance(3_500);
+    await vi.waitFor(() => expect(patches).toHaveLength(1));
+    expect(patches[0]).toEqual({
+      "score.threshold_mar": 80,
+      "source.tripadvisor.enabled": false,
+    });
+
+    await advance(30_000);
+    expect(patches).toHaveLength(1);
   });
 
-  it("toggling description enrichment off PATCHes /config", async () => {
-    server.use(configGetSuccess(), configPatchSuccess());
+  it("a weight edit sends the five weights and never an env limit", async () => {
+    renderConfig();
+    await loaded();
 
-    const { getByTestId } = renderWithClient(<PainelConfig />);
+    fireEvent.change(screen.getByTestId("config-weight-weight_origem"), {
+      target: { value: "25" },
+    });
+    fireEvent.change(screen.getByTestId("config-weight-weight_atualidade"), {
+      target: { value: "15" },
+    });
 
-    await waitFor(() => getByTestId("config-enrichment-toggle"));
-    fireEvent.click(getByTestId("config-enrichment-toggle"));
+    fakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await advance(6_500);
+    await vi.waitFor(() => expect(patches).toHaveLength(1));
 
-    await waitFor(() =>
-      expect(
-        requests.some(
-          (r) => r.method === "PATCH" && r.url.includes("/api/api/v1/config"),
-        ),
-      ).toBe(true),
-    );
+    expect(patches[0]).toEqual({
+      "score.weight_origem": 25,
+      "score.weight_completude": 20,
+      "score.weight_corroboracao": 20,
+      "score.weight_atualidade": 15,
+      "score.weight_validacao_humana": 20,
+    });
+    const keys = Object.keys(patches[0]).join(" ");
+    expect(keys).not.toMatch(/usd|cap|budget/);
   });
 
-  it("surfaces the server 422 (weight-sum backstop) without crashing", async () => {
-    // GET valid, but PATCH is rejected 422 — the view must not crash on the
-    // authoritative server guard (client already blocks the obvious case).
-    server.use(configGetSuccess(), configPatchError());
+  it("Desfazer after Salvar sends nothing and restores the previous values", async () => {
+    renderConfig();
+    await loaded();
 
-    const { getByTestId } = renderWithClient(<PainelConfig />);
+    fireEvent.click(screen.getByRole("switch", { name: "Coleta TripAdvisor" }));
+    fakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await advance(100);
+    // Saved optimistically: the switch keeps the new value, the bar is gone.
+    expect(screen.getByRole("switch", { name: "Coleta TripAdvisor" })).not.toBeChecked();
+    expect(screen.queryByTestId("config-save-bar")).toBeNull();
 
-    await waitFor(() =>
-      expect(getByTestId("config-weight-sum")).toHaveTextContent("100"),
+    fireEvent.click(screen.getByRole("button", { name: "Desfazer" }));
+    await advance(100);
+    // Restored on the click, not at the end of the window.
+    expect(screen.getByRole("switch", { name: "Coleta TripAdvisor" })).toBeChecked();
+    await advance(10_000);
+
+    expect(patches).toHaveLength(0);
+    expect(screen.getByRole("switch", { name: "Coleta TripAdvisor" })).toBeChecked();
+    expect(screen.queryByTestId("config-save-bar")).toBeNull();
+  });
+
+  it("surfaces the server 422 and keeps the draft pending", async () => {
+    server.use(configPatchError());
+    renderConfig();
+    await loaded();
+
+    fireEvent.change(screen.getByTestId("config-threshold-mar"), {
+      target: { value: "80" },
+    });
+    fakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await advance(6_500);
+
+    await vi.waitFor(() =>
+      expect(screen.getByText(/must sum to 100/)).toBeInTheDocument(),
     );
-
-    fireEvent.click(getByTestId("config-save-pesos"));
-
-    // The PATCH is attempted; the 422 is handled (toast) and the form survives.
-    await waitFor(() =>
-      expect(
-        requests.some((r) => r.method === "PATCH"),
-      ).toBe(true),
-    );
-    expect(getByTestId("config-weight-sum")).toHaveTextContent("100");
+    expect(screen.getByTestId("config-save-bar")).toHaveTextContent("1 alteração");
+    expect(screen.getByTestId("config-threshold-mar")).toHaveValue(80);
   });
 });

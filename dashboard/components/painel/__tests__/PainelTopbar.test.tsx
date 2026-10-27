@@ -1,14 +1,16 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PainelTopbar } from "@/components/painel/PainelTopbar";
+import { ENGINE_REFETCH_INTERVAL_MS } from "@/lib/engine-api";
 import { server } from "@/mocks/server";
 import {
   engineStartSuccess,
   engineStatus,
+  engineStatusFixture,
   taSessionStatus,
 } from "@/mocks/handlers/engine";
 
@@ -22,8 +24,22 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+/** The compact motor button shows the current mode once /status resolved. */
+async function waitForMode(label: string) {
+  await waitFor(() =>
+    expect(screen.getByTestId("painel-motor-state")).toHaveTextContent(label),
+  );
+}
+
+/** Open the motor menu and pick one mode item. */
+async function pickMode(user: ReturnType<typeof userEvent.setup>, testid: string) {
+  await user.click(await screen.findByTestId("painel-motor-btn"));
+  await user.click(await screen.findByTestId(testid));
+}
 
 describe("PainelTopbar", () => {
   it("renders the page title and subtitle", async () => {
@@ -51,15 +67,10 @@ describe("PainelTopbar", () => {
     );
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
-    const pausar = await screen.findByTestId("painel-motor-pausar");
-    await waitFor(() => expect(pausar).toHaveAttribute("aria-pressed", "true"));
-    expect(screen.getByTestId("painel-motor-ligar")).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-    expect(screen.getByTestId("painel-motor-state")).toHaveTextContent(
-      "Pausado",
-    );
+    await waitForMode("Pausado");
+    await userEvent.setup().click(screen.getByTestId("painel-motor-btn"));
+    expect(screen.getByTestId("painel-motor-pausar")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("painel-motor-ligar")).toHaveAttribute("aria-checked", "false");
   });
 
   it("Pausar POSTs engine mode PAUSADO", async () => {
@@ -75,9 +86,8 @@ describe("PainelTopbar", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await waitFor(() => expect(ligar).toHaveAttribute("aria-pressed", "true"));
-    await user.click(screen.getByTestId("painel-motor-pausar"));
+    await waitForMode("Ligado");
+    await pickMode(user, "painel-motor-pausar");
     await waitFor(() => expect(modeBody).toMatchObject({ mode: "PAUSADO" }));
   });
 
@@ -94,8 +104,8 @@ describe("PainelTopbar", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
-    await screen.findByTestId("painel-motor-desligar");
-    await user.click(screen.getByTestId("painel-motor-desligar"));
+    await waitForMode("Ligado");
+    await pickMode(user, "painel-motor-desligar");
     await waitFor(() => expect(modeBody).toMatchObject({ mode: "DESLIGADO" }));
   });
 
@@ -112,9 +122,8 @@ describe("PainelTopbar", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="P" subtitle="s" />);
 
-    const pausar = await screen.findByTestId("painel-motor-pausar");
-    await waitFor(() => expect(pausar).toHaveAttribute("aria-pressed", "true"));
-    await user.click(screen.getByTestId("painel-motor-ligar"));
+    await waitForMode("Pausado");
+    await pickMode(user, "painel-motor-ligar");
     await waitFor(() => expect(modeBody).toMatchObject({ mode: "LIGADO" }));
     // A warm resume never opens the depth picker.
     expect(screen.queryByTestId("painel-depth-menu")).toBeNull();
@@ -136,8 +145,7 @@ describe("PainelTopbar", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await user.click(ligar);
+    await pickMode(user, "painel-motor-ligar");
     // Recovery path: the depth picker opens (was a no-op before the guard fix).
     await screen.findByTestId("painel-depth-menu");
     await user.click(screen.getByTestId("painel-depth-nascente"));
@@ -153,9 +161,8 @@ describe("PainelTopbar", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await waitFor(() => expect(ligar).toHaveAttribute("aria-pressed", "true"));
-    await user.click(ligar);
+    await waitForMode("Ligado");
+    await pickMode(user, "painel-motor-ligar");
     // A truly-on engine: Ligar must do nothing (no picker, no restart).
     expect(screen.queryByTestId("painel-depth-menu")).toBeNull();
   });
@@ -176,10 +183,9 @@ describe("PainelTopbar", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await waitFor(() => expect(ligar).toHaveAttribute("aria-pressed", "false"));
+    await waitForMode("Desligado");
     // Cold Ligar opens the depth menu — it must NOT start without a depth.
-    await user.click(ligar);
+    await pickMode(user, "painel-motor-ligar");
     await screen.findByTestId("painel-depth-menu");
 
     await user.click(screen.getByTestId("painel-depth-nascente_rio"));
@@ -203,8 +209,7 @@ describe("PainelTopbar", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await user.click(ligar);
+    await pickMode(user, "painel-motor-ligar");
     await screen.findByTestId("painel-depth-menu");
     // Abrangência defaults to "" (Todo o Brasil) → ufs omitted (backend uses 27).
     expect(screen.getByTestId("painel-uf-select")).toHaveValue("");
@@ -229,8 +234,7 @@ describe("PainelTopbar", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await user.click(ligar);
+    await pickMode(user, "painel-motor-ligar");
     await screen.findByTestId("painel-depth-menu");
     await user.selectOptions(screen.getByTestId("painel-uf-select"), "SP");
     await user.click(screen.getByTestId("painel-depth-nascente_rio"));
@@ -254,8 +258,7 @@ describe("PainelTopbar", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await user.click(ligar);
+    await pickMode(user, "painel-motor-ligar");
     await screen.findByTestId("painel-depth-menu");
     await user.type(screen.getByTestId("painel-max-per-uf"), "5");
     await user.click(screen.getByTestId("painel-depth-nascente"));
@@ -279,8 +282,7 @@ describe("PainelTopbar", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await user.click(ligar);
+    await pickMode(user, "painel-motor-ligar");
     await screen.findByTestId("painel-depth-menu");
     // Leave the cap input empty → full sweep, field must not be sent.
     await user.click(screen.getByTestId("painel-depth-nascente"));
@@ -297,8 +299,7 @@ describe("PainelTopbar", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="P" subtitle="s" />);
 
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await user.click(ligar);
+    await pickMode(user, "painel-motor-ligar");
     await screen.findByTestId("painel-depth-menu");
 
     // Click somewhere outside the motor wrapper (the page title) → menu closes.
@@ -306,6 +307,26 @@ describe("PainelTopbar", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("painel-depth-menu")).toBeNull(),
     );
+  });
+
+  it("re-opening the motor menu closes the start popover, and picking Ligado again keeps it open", async () => {
+    server.use(
+      engineStatus({ source: "tripadvisor", enabled: false, state: "idle", mode: "DESLIGADO" }),
+      taSessionStatus({ present: true, expires_in: 1200 }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+
+    await pickMode(user, "painel-motor-ligar");
+    await screen.findByTestId("painel-depth-menu");
+
+    // The mode menu opens at the same anchor: never stacked over the popover.
+    await user.click(screen.getByTestId("painel-motor-btn"));
+    expect(screen.getByRole("menu", { name: "Modo do motor" })).toBeInTheDocument();
+    expect(screen.queryByTestId("painel-depth-menu")).toBeNull();
+
+    await user.click(screen.getByTestId("painel-motor-ligar"));
+    expect(await screen.findByTestId("painel-depth-menu")).toBeInTheDocument();
   });
 
   it("opening the depth menu without picking does NOT fire POST /start", async () => {
@@ -321,8 +342,7 @@ describe("PainelTopbar", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await user.click(ligar);
+    await pickMode(user, "painel-motor-ligar");
     await screen.findByTestId("painel-depth-menu");
     await new Promise((r) => setTimeout(r, 50));
     expect(startCalled).toBe(false);
@@ -332,36 +352,179 @@ describe("PainelTopbar", () => {
   // TA session pill / source (unchanged by the tri-state)
   // ---------------------------------------------------------------------------
 
-  it("TA pill warns from the real expires_in (inside the 5-min band)", async () => {
-    server.use(
-      engineStatus(),
-      taSessionStatus({ present: true, reason: null, expires_in: 120 }),
-    );
-    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+  describe("TA session", () => {
+    it("ok: shows the remaining TTL as m:ss", async () => {
+      server.use(engineStatus(), taSessionStatus({ present: true, reason: null, expires_in: 1200 }));
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
 
-    const pill = await screen.findByTestId("painel-ta-pill");
-    await waitFor(() => expect(pill).toHaveTextContent("Expira em"));
+      const item = await screen.findByTestId("painel-ta-pill");
+      await waitFor(() => expect(item).toHaveAttribute("data-state", "ok"));
+      expect(item).toHaveTextContent("20:00");
+    });
+
+    it("expiring: inside the 5-min band from the real expires_in", async () => {
+      server.use(engineStatus(), taSessionStatus({ present: true, reason: null, expires_in: 120 }));
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      const item = await screen.findByTestId("painel-ta-pill");
+      await waitFor(() => expect(item).toHaveAttribute("data-state", "expiring"));
+      expect(item).toHaveTextContent("2:00");
+    });
+
+    it("expired: no session and no bootstrap reason", async () => {
+      server.use(engineStatus(), taSessionStatus({ present: false, reason: null, expires_in: 0 }));
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      const item = await screen.findByTestId("painel-ta-pill");
+      await waitFor(() => expect(item).toHaveAttribute("data-state", "expired"));
+      expect(item).toHaveTextContent("Expirada");
+    });
+
+    it("needs_bootstrap: asks for a bootstrap", async () => {
+      server.use(engineStatus(), taSessionStatus({ present: false, reason: "needs_bootstrap" }));
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      const item = await screen.findByTestId("painel-ta-pill");
+      await waitFor(() => expect(item).toHaveAttribute("data-state", "needs_bootstrap"));
+      expect(item).toHaveTextContent("Precisa bootstrap");
+    });
+
+    it("counts down locally between polls and turns amber at 5 min", async () => {
+      // Only the interval + clock are faked: MSW and React Query keep their real timeouts.
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+      server.use(engineStatus(), taSessionStatus({ present: true, reason: null, expires_in: 302 }));
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      const item = await screen.findByTestId("painel-ta-pill");
+      await waitFor(() => expect(item).toHaveTextContent("5:02"));
+      expect(item).toHaveAttribute("data-state", "ok");
+
+      act(() => vi.advanceTimersByTime(3_000));
+      expect(item).toHaveTextContent("4:59");
+      expect(item).toHaveAttribute("data-state", "expiring");
+    });
+
+    it("clamps the countdown at zero and shows the session as expired", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+      server.use(engineStatus(), taSessionStatus({ present: true, reason: null, expires_in: 2 }));
+      renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+
+      const item = await screen.findByTestId("painel-ta-pill");
+      await waitFor(() => expect(item).toHaveTextContent("0:02"));
+
+      act(() => vi.advanceTimersByTime(5_000));
+      expect(item).toHaveAttribute("data-state", "expired");
+      expect(item).toHaveTextContent("Expirada");
+    });
   });
 
-  it("TA pill renders 'Pronta' when the session is present", async () => {
-    server.use(engineStatus(), taSessionStatus({ present: true, reason: null }));
-    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+  describe("norteia-api health", () => {
+    it("up: shows the API as online", async () => {
+      server.use(
+        engineStatus({ norteia_api: { up: true, reason: null, pending: 0, rejected: 0 } }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
 
-    expect(await screen.findByTestId("painel-ta-pill")).toHaveTextContent(
-      "Pronta",
-    );
+      const item = await screen.findByTestId("painel-api-status");
+      expect(item).toHaveAttribute("data-state", "up");
+      expect(item).toHaveTextContent("no ar");
+      expect(item).not.toHaveTextContent("pendente");
+    });
+
+    it("unreachable: shows the probe reason", async () => {
+      server.use(
+        engineStatus({ norteia_api: { up: false, reason: "unreachable", pending: 0 } }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+
+      const item = await screen.findByTestId("painel-api-status");
+      expect(item).toHaveAttribute("data-state", "down");
+      expect(item).toHaveTextContent("inacessível");
+      expect(item).toHaveAttribute("title", expect.stringContaining("unreachable"));
+    });
+
+    it("an ingest refusal names the status and explains it", async () => {
+      server.use(
+        engineStatus({ norteia_api: { up: false, reason: "ingest:401", pending: 4 } }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+
+      const item = await screen.findByTestId("painel-api-status");
+      expect(item).toHaveTextContent("ingest 401");
+      expect(item).toHaveAttribute("title", expect.stringContaining("token de ingestão"));
+      expect(item).toHaveTextContent("4 pendentes");
+    });
+
+    it("disabled: externals off (up null) is its own state", async () => {
+      server.use(
+        engineStatus({ norteia_api: { up: null, reason: null, pending: 0 } }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+
+      const item = await screen.findByTestId("painel-api-status");
+      expect(item).toHaveAttribute("data-state", "disabled");
+      expect(item).toHaveTextContent("desligada");
+    });
+
+    it("shows pending and rejected counts only when > 0", async () => {
+      server.use(
+        engineStatus({ norteia_api: { up: true, reason: null, pending: 1, rejected: 3 } }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+
+      const item = await screen.findByTestId("painel-api-status");
+      expect(item).toHaveTextContent("1 pendente");
+      expect(item).toHaveTextContent("3 rejeitados");
+    });
+
+    it("hides the item when the server does not report norteia_api", async () => {
+      server.use(engineStatus(), taSessionStatus());
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+
+      await screen.findByTestId("painel-ta-pill");
+      expect(screen.queryByTestId("painel-api-status")).toBeNull();
+    });
   });
 
-  it("TA pill renders 'Precisa bootstrap' when needs_bootstrap", async () => {
-    server.use(
-      engineStatus(),
-      taSessionStatus({ present: false, reason: "needs_bootstrap" }),
-    );
-    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+  it("status bar carries the currency switch and no simulated spend chip", async () => {
+    server.use(engineStatus(), taSessionStatus());
+    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
 
-    expect(await screen.findByTestId("painel-ta-pill")).toHaveTextContent(
-      "Precisa bootstrap",
+    const bar = await screen.findByRole("group", { name: "Status do serviço" });
+    const moeda = screen.getByRole("group", { name: "Moeda" });
+    expect(bar).toContainElement(moeda);
+    // "Hoje" needs the Phase 1 /cost today block — never a made-up number.
+    expect(bar).not.toHaveTextContent("Hoje");
+  });
+
+  it("polls engine + TA status on the existing interval", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    let statusHits = 0;
+    let sessionHits = 0;
+    server.use(
+      http.get("http://localhost:3000/api/api/v1/engine/status", () => {
+        statusHits += 1;
+        return HttpResponse.json(engineStatusFixture());
+      }),
+      http.get("http://localhost:3000/api/api/v1/tripadvisor/session/status", () => {
+        sessionHits += 1;
+        return HttpResponse.json({ present: true, expires_in: 1200, reason: null });
+      }),
     );
+    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+    await waitFor(() => expect(statusHits).toBe(1));
+    await waitFor(() => expect(sessionHits).toBe(1));
+
+    act(() => vi.advanceTimersByTime(ENGINE_REFETCH_INTERVAL_MS - 1_000));
+    expect(statusHits).toBe(1);
+    act(() => vi.advanceTimersByTime(1_000));
+    await waitFor(() => expect(statusHits).toBe(2));
+    await waitFor(() => expect(sessionHits).toBe(2));
   });
 
   it("source label renders 'TripAdvisor' by default", async () => {
@@ -392,8 +555,7 @@ describe("PainelTopbar", () => {
     );
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await user.click(ligar);
+    await pickMode(user, "painel-motor-ligar");
     // taBlocked only gates the sweep: the popover opens, depth buttons disabled,
     // Gerar descrições stays enabled (it needs no TA session).
     await screen.findByTestId("painel-depth-menu");
@@ -419,7 +581,7 @@ describe("PainelTopbar", () => {
     );
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-    await user.click(await screen.findByTestId("painel-motor-ligar"));
+    await pickMode(user, "painel-motor-ligar");
     await screen.findByTestId("painel-depth-menu");
     await user.selectOptions(screen.getByTestId("painel-uf-select"), "SP");
     await user.type(screen.getByTestId("painel-max-per-uf"), "3");
@@ -443,8 +605,7 @@ describe("PainelTopbar", () => {
     );
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await user.click(ligar);
+    await pickMode(user, "painel-motor-ligar");
     await screen.findByTestId("painel-depth-menu");
   });
 
@@ -463,8 +624,7 @@ describe("PainelTopbar", () => {
     );
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await user.click(ligar);
+    await pickMode(user, "painel-motor-ligar");
     await screen.findByTestId("painel-depth-menu");
     await user.click(screen.getByTestId("painel-depth-nascente_rio"));
     await waitFor(() => expect(startBody).not.toBeNull());
@@ -485,8 +645,7 @@ describe("PainelTopbar", () => {
     );
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-    const ligar = await screen.findByTestId("painel-motor-ligar");
-    await user.click(ligar);
+    await pickMode(user, "painel-motor-ligar");
     await screen.findByTestId("painel-depth-menu");
     await user.click(screen.getByTestId("painel-depth-nascente"));
     await waitFor(() =>
@@ -508,8 +667,8 @@ describe("PainelTopbar", () => {
     );
     const user = userEvent.setup();
     renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-    await screen.findByTestId("painel-motor-pausar");
-    await user.click(screen.getByTestId("painel-motor-pausar"));
+    await waitForMode("Ligado");
+    await pickMode(user, "painel-motor-pausar");
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith(expect.stringContaining("mode must be")),
     );
@@ -534,63 +693,11 @@ describe("PainelTopbar", () => {
     await screen.findByTestId("painel-logs-panel");
   });
 
-  describe("sync indicator", () => {
-    it("shows Sincronizando + source + UF progress when motor is running", async () => {
+  describe("live indicator", () => {
+    it("motor LIGADO + syncing → 'Ao vivo' with the UF progress", async () => {
       server.use(
         engineStatus({
-          enabled: true,
-          state: "running",
-          source: "tripadvisor",
-          ufs_done: 3,
-          ufs_total: 27,
-          current_uf: "SP",
-        }),
-        taSessionStatus(),
-      );
-      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-      const ind = await screen.findByTestId("sync-indicator");
-      await waitFor(() => {
-        expect(ind).toHaveTextContent("Sincronizando");
-        expect(ind).toHaveTextContent("TripAdvisor");
-        expect(ind).toHaveTextContent("3/27");
-      });
-    });
-
-    it("shows 'Execução parada' when the runtime is idle", async () => {
-      server.use(
-        engineStatus({ enabled: false, state: "idle" }),
-        taSessionStatus(),
-      );
-      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-      const ind = await screen.findByTestId("sync-indicator");
-      await waitFor(() => expect(ind).toHaveTextContent("Execução parada"));
-    });
-
-    // -------------------------------------------------------------------------
-    // Tri-state sync_phase (idle · syncing · synced), driven by /engine/status.
-    // Asserted via the sync-indicator-label span + its data-phase attribute.
-    // -------------------------------------------------------------------------
-
-    it("sync_phase='idle' → gray 'Execução parada' label with data-phase=idle", async () => {
-      server.use(
-        engineStatus({ sync_phase: "idle", enabled: false, state: "idle" }),
-        taSessionStatus(),
-      );
-      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-      // Re-query INSIDE waitFor: each phase is a separate JSX branch, so when the
-      // status query resolves React unmounts the pre-resolution span and mounts a
-      // new one — a reference captured before resolution goes stale.
-      await waitFor(() => {
-        const label = screen.getByTestId("sync-indicator-label");
-        expect(label).toHaveAttribute("data-phase", "idle");
-        expect(label).toHaveTextContent("Execução parada");
-        expect(label).toHaveStyle({ color: "var(--painel-muted)" });
-      });
-    });
-
-    it("sync_phase='syncing' → yellow 'Sincronizando' label with data-phase=syncing", async () => {
-      server.use(
-        engineStatus({
+          mode: "LIGADO",
           sync_phase: "syncing",
           enabled: true,
           state: "running",
@@ -602,16 +709,38 @@ describe("PainelTopbar", () => {
         taSessionStatus(),
       );
       renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      const ind = await screen.findByTestId("sync-indicator");
       await waitFor(() => {
-        const label = screen.getByTestId("sync-indicator-label");
-        expect(label).toHaveAttribute("data-phase", "syncing");
-        expect(label).toHaveTextContent("Sincronizando");
-        expect(label).toHaveTextContent("3/27");
-        expect(label).toHaveStyle({ color: "var(--status-dlq)" });
+        expect(ind).toHaveTextContent("Ao vivo");
+        expect(ind).toHaveTextContent("3/27");
+        expect(ind).toHaveTextContent("SP");
+        expect(ind).toHaveAttribute("title", expect.stringContaining("TripAdvisor"));
       });
+      expect(screen.getByTestId("sync-indicator-label")).toHaveAttribute("data-phase", "syncing");
     });
 
-    it("sync_phase='synced' → green 'Sincronizado' label with data-phase=synced", async () => {
+    it("falls back to enabled when the server omits sync_phase", async () => {
+      server.use(
+        engineStatus({ mode: "LIGADO", enabled: true, state: "running", ufs_done: 1, ufs_total: 2 }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      const ind = await screen.findByTestId("sync-indicator");
+      await waitFor(() => expect(ind).toHaveTextContent("Ao vivo"));
+    });
+
+    it("syncing while PAUSADO → paused, not live", async () => {
+      server.use(
+        engineStatus({ mode: "PAUSADO", sync_phase: "syncing", enabled: true, state: "running", ufs_done: 3, ufs_total: 27 }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      const ind = await screen.findByTestId("sync-indicator");
+      await waitFor(() => expect(ind).toHaveTextContent("Coleta pausada"));
+      expect(ind).not.toHaveTextContent("Ao vivo");
+    });
+
+    it("sync_phase='synced' → 'Sincronizado'", async () => {
       server.use(
         engineStatus({ sync_phase: "synced", enabled: false, state: "idle" }),
         taSessionStatus(),
@@ -621,10 +750,133 @@ describe("PainelTopbar", () => {
         const label = screen.getByTestId("sync-indicator-label");
         expect(label).toHaveAttribute("data-phase", "synced");
         expect(label).toHaveTextContent("Sincronizado");
-        expect(label).toHaveStyle({ color: "var(--status-mar)" });
+      });
+    });
+
+    it("idle runtime → 'Sem coleta'", async () => {
+      server.use(
+        engineStatus({ sync_phase: "idle", enabled: false, state: "idle" }),
+        taSessionStatus(),
+      );
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      await waitFor(() => {
+        const label = screen.getByTestId("sync-indicator-label");
+        expect(label).toHaveAttribute("data-phase", "idle");
+        expect(label).toHaveTextContent("Sem coleta");
       });
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Compact motor button + menu (keyboard, outside click)
+  // ---------------------------------------------------------------------------
+
+  describe("motor menu", () => {
+    it("lists the three modes with what each does, checked on the current one", async () => {
+      server.use(engineStatus({ mode: "LIGADO", enabled: true, state: "running" }), taSessionStatus());
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      await waitForMode("Ligado");
+
+      const btn = screen.getByTestId("painel-motor-btn");
+      expect(btn).toHaveAttribute("aria-haspopup", "menu");
+      expect(btn).toHaveAttribute("aria-expanded", "false");
+      await user.click(btn);
+      expect(btn).toHaveAttribute("aria-expanded", "true");
+
+      const menu = screen.getByRole("menu", { name: "Modo do motor" });
+      expect(screen.getAllByRole("menuitemradio")).toHaveLength(3);
+      expect(menu).toHaveTextContent("Pausado");
+      expect(menu).toHaveTextContent("Desligado");
+      const ligado = screen.getByRole("menuitemradio", { name: /^Ligado/ });
+      expect(ligado).toHaveAccessibleName(expect.stringContaining("travad"));
+      expect(ligado).toHaveAttribute("aria-checked", "true");
+      // Opening focuses the current mode.
+      expect(ligado).toHaveFocus();
+    });
+
+    it("ArrowDown/ArrowUp move (wrapping) and Enter selects", async () => {
+      let modeBody: { mode?: string } | null = null;
+      server.use(
+        engineStatus({ mode: "LIGADO", enabled: true, state: "running" }),
+        taSessionStatus(),
+        http.post(MODE_URL, async ({ request }) => {
+          modeBody = (await request.json()) as { mode?: string };
+          return HttpResponse.json({ mode: "DESLIGADO", editing_unlocked: true });
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      await waitForMode("Ligado");
+
+      await user.click(screen.getByTestId("painel-motor-btn"));
+      await user.keyboard("{ArrowDown}");
+      expect(screen.getByTestId("painel-motor-pausar")).toHaveFocus();
+      await user.keyboard("{ArrowDown}{ArrowDown}");
+      expect(screen.getByTestId("painel-motor-ligar")).toHaveFocus();
+      await user.keyboard("{ArrowUp}");
+      expect(screen.getByTestId("painel-motor-desligar")).toHaveFocus();
+      await user.keyboard("{Enter}");
+
+      await waitFor(() => expect(modeBody).toMatchObject({ mode: "DESLIGADO" }));
+      expect(screen.queryByRole("menu", { name: "Modo do motor" })).toBeNull();
+    });
+
+    it("Space selects the focused mode", async () => {
+      let modeBody: { mode?: string } | null = null;
+      server.use(
+        engineStatus({ mode: "LIGADO", enabled: true, state: "running" }),
+        taSessionStatus(),
+        http.post(MODE_URL, async ({ request }) => {
+          modeBody = (await request.json()) as { mode?: string };
+          return HttpResponse.json({ mode: "PAUSADO", editing_unlocked: true });
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      await waitForMode("Ligado");
+
+      await user.click(screen.getByTestId("painel-motor-btn"));
+      await user.keyboard("{ArrowDown}[Space]");
+      await waitFor(() => expect(modeBody).toMatchObject({ mode: "PAUSADO" }));
+    });
+
+    it("Escape closes the menu, returns focus to the button and sends nothing", async () => {
+      const modeSpy = vi.fn();
+      server.use(
+        engineStatus({ mode: "LIGADO", enabled: true, state: "running" }),
+        taSessionStatus(),
+        http.post(MODE_URL, () => {
+          modeSpy();
+          return HttpResponse.json({ mode: "PAUSADO", editing_unlocked: true });
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+      await waitForMode("Ligado");
+
+      const btn = screen.getByTestId("painel-motor-btn");
+      await user.click(btn);
+      await user.keyboard("{ArrowDown}{Escape}");
+      expect(screen.queryByRole("menu", { name: "Modo do motor" })).toBeNull();
+      expect(btn).toHaveFocus();
+      expect(btn).toHaveAttribute("aria-expanded", "false");
+      expect(modeSpy).not.toHaveBeenCalled();
+    });
+
+    it("an outside click closes the menu", async () => {
+      server.use(engineStatus({ mode: "LIGADO", enabled: true, state: "running" }), taSessionStatus());
+      const user = userEvent.setup();
+      renderWithClient(<PainelTopbar title="Painel" subtitle="s" />);
+      await waitForMode("Ligado");
+
+      await user.click(screen.getByTestId("painel-motor-btn"));
+      expect(screen.getByRole("menu", { name: "Modo do motor" })).toBeInTheDocument();
+      await user.click(screen.getByText("Painel"));
+      expect(screen.queryByRole("menu", { name: "Modo do motor" })).toBeNull();
+    });
+  });
+
   describe("auto-off toast", () => {
     const SESSION_TOAST =
       "Motor TripAdvisor desligado — sessão expirada. Injete um cURL para reiniciar.";
@@ -640,14 +892,11 @@ describe("PainelTopbar", () => {
       );
       const user = userEvent.setup();
       renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
-      const ligar = await screen.findByTestId("painel-motor-ligar");
-      await waitFor(() => expect(ligar).toHaveAttribute("aria-pressed", "true"));
+      await waitForMode("Ligado");
       // The run ends: the next status refetch reports the motor off.
       server.use(engineStatus({ mode: "DESLIGADO", editing_unlocked: true, enabled: false }));
-      await user.click(screen.getByTestId("painel-motor-desligar"));
-      await waitFor(() =>
-        expect(screen.getByTestId("painel-motor-ligar")).toHaveAttribute("aria-pressed", "false"),
-      );
+      await pickMode(user, "painel-motor-desligar");
+      await waitForMode("Desligado");
       return warn;
     }
 

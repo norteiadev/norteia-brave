@@ -82,9 +82,18 @@ function qs(params: Record<string, string | number | undefined>): string {
   return s ? `?${s}` : "";
 }
 
-/** List candidate↔Mar dedup pairs, optionally scoped to a single UF. */
+/** GET /dedup/pairs caps `limit` at 500 (its default is 50). */
+export const DEDUP_SCAN_LIMIT = 500;
+
+/**
+ * List candidate↔Mar dedup pairs, optionally scoped to a single UF. The server
+ * pages the pending Rio candidates BEFORE pairing, so only pairs among the
+ * first `limit` candidates come back; `total` counts candidates, not pairs.
+ */
 export function fetchDedupPairs(uf?: string): Promise<DedupPairsResponse> {
-  return apiFetch<DedupPairsResponse>(`api/v1/dedup/pairs${qs({ uf })}`);
+  return apiFetch<DedupPairsResponse>(
+    `api/v1/dedup/pairs${qs({ uf, limit: DEDUP_SCAN_LIMIT })}`,
+  );
 }
 
 /**

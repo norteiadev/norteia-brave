@@ -22,9 +22,8 @@ import {
  * LGPD (R3, T-04-28): only the masked phone the backend emits is ever shown —
  * this view never holds nor reconstructs a raw E.164 number.
  *
- * Tokens: scoped `.painel-light` CSS vars; design literals (WhatsApp green
- * oklch(0.55 0.13 156), navy #15315e, body #fbfaf8, extraction green) kept inline
- * and localized where the design uses an untokenized accent.
+ * Tokens: scoped `.painel-light` CSS vars (follow the light/dark theme). Only
+ * the WhatsApp brand green stays a literal: outgoing bubbles keep it in both themes.
  */
 
 const WA_GREEN = "oklch(0.55 0.13 156)";
@@ -133,7 +132,7 @@ function DetailPane({ rioId }: { rioId: string }) {
   });
 
   if (!data) {
-    return <div className="flex-1" style={{ background: "#fbfaf8" }} />;
+    return <div className="flex-1" style={{ background: "var(--surface-2)" }} />;
   }
 
   return (
@@ -170,7 +169,7 @@ function DetailPane({ rioId }: { rioId: string }) {
 
       <div
         className="flex flex-1 flex-col gap-3 overflow-y-auto px-6 py-5"
-        style={{ background: "#fbfaf8" }}
+        style={{ background: "var(--surface-2)" }}
       >
         {data.messages.map((m) => {
           const out = m.direction === "outbound";
@@ -199,10 +198,10 @@ function DetailPane({ rioId }: { rioId: string }) {
                   className="m-0 max-w-[78%] overflow-x-auto rounded-[7px] px-[10px] py-[7px] font-mono text-[10.5px] leading-[1.5]"
                   style={{
                     background:
-                      "color-mix(in oklch, oklch(0.6 0.15 156) 10%, white)",
+                      "var(--mar-soft)",
                     border:
-                      "1px solid color-mix(in oklch, oklch(0.6 0.15 156) 26%, white)",
-                    color: "#3a5a3f",
+                      "1px solid var(--mar)",
+                    color: "var(--mar-ink)",
                   }}
                 >
                   {JSON.stringify(m.extracted, null, 2)}

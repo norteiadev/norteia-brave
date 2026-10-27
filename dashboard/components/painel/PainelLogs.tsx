@@ -7,8 +7,7 @@
  * Polls GET /api/v1/logs every 2 s while open; stops polling when closed.
  * Lines are appended incrementally (cursor-based) and capped at 500 rendered.
  *
- * Structure mirrors PainelDrawer: position:fixed slide-over + overlay.
- * Width 480px (vs Drawer's 440px).
+ * Structure: position:fixed slide-over + overlay, 480px wide.
  *
  * Security: the log buffer never contains cookies/tokens/PII (enforced by
  * log_buffer._BLOCKED_FIELDS server-side). This component renders the safe

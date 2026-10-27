@@ -153,6 +153,19 @@ export const atrativoKeys = {
   detail: (id: string) => ["atrativos", "detail", id] as const,
 };
 
+/**
+ * Envelope total of the atrativos in one routing (limit 1). One key for the
+ * sidebar badge, the Registros tab and the Visão geral tile, so all three show
+ * the same number from one request.
+ */
+export function atrativoCountQuery(routing: "dlq" | "mar", uf?: string) {
+  return {
+    queryKey: atrativoKeys.list(uf ? { count: routing, uf } : { count: routing }),
+    queryFn: () => fetchAtrativoList({ routing, limit: 1, uf: uf || undefined }),
+    select: (r: { total: number }) => r.total,
+  };
+}
+
 function qs(params: Record<string, string | number | undefined>): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -189,10 +202,14 @@ export function fetchAtrativoDetail(id: string): Promise<AtrativoDetail> {
 /**
  * Load the Falha-column cards from the RecordEvent fail-timeline
  * (GET /api/v1/failures/cards). Returns a bare JSON list (not an envelope).
- * These feed the Painel Falha lane with real name/uf identity.
+ * The endpoint mixes every entity type; the Painel covers the atrativos lane
+ * (Revisão/Mar count atrativos only), so destino quarantines are dropped here.
+ * A null entity_type is the legacy poison fallback, which is an attraction.
  */
 export function fetchFailureCards(): Promise<FailureCard[]> {
-  return apiFetch<FailureCard[]>("api/v1/failures/cards");
+  return apiFetch<FailureCard[]>("api/v1/failures/cards").then((cards) =>
+    cards.filter((c) => c.entity_type == null || c.entity_type === "attraction"),
+  );
 }
 
 /**

@@ -58,14 +58,21 @@ export const sampleDedupPairs: DedupPairItem[] = [
   },
 ];
 
-/** Success handler: returns the given pairs in the paginated envelope. */
-export function dedupPairsSuccess(items: DedupPairItem[] = sampleDedupPairs) {
-  return http.get(PAIRS, () =>
+/**
+ * Success handler: returns the given pairs in the paginated envelope. Like the
+ * backend, `total` counts pending Rio candidates (not pairs), so it is passed
+ * on its own; it defaults to items.length.
+ */
+export function dedupPairsSuccess(
+  items: DedupPairItem[] = sampleDedupPairs,
+  total: number = items.length,
+) {
+  return http.get(PAIRS, ({ request }) =>
     HttpResponse.json({
       items,
-      total: items.length,
+      total,
       offset: 0,
-      limit: 50,
+      limit: Number(new URL(request.url).searchParams.get("limit") ?? 50),
     } satisfies DedupPairsResponse),
   );
 }
@@ -89,9 +96,12 @@ export function dedupPairsError(status = 500) {
 }
 
 /** Resolve handler: echoes the posted action (mirrors resolve_pair return). */
-export function dedupResolveSuccess() {
-  return http.patch(RESOLVE, async ({ request }) => {
+export function dedupResolveSuccess(
+  onResolve?: (candidateRioId: string, body: unknown) => void,
+) {
+  return http.patch(RESOLVE, async ({ request, params }) => {
     const body = (await request.json()) as { action: DedupResolveResult["action"] };
+    onResolve?.(String(params.candidateRioId), body);
     return HttpResponse.json({
       status: "ok",
       action: body.action,

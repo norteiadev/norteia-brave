@@ -11,23 +11,23 @@ import { PainelLogsView } from "@/components/painel/PainelLogsView";
 import { PainelMapeamento } from "@/components/painel/PainelMapeamento";
 import { PainelMonitor } from "@/components/painel/PainelMonitor";
 import { PainelRevisao } from "@/components/painel/PainelRevisao";
+import { PainelRegistros } from "@/components/painel/PainelRegistros";
 import { PainelShell } from "@/components/painel/PainelShell";
 import { PainelTopbar } from "@/components/painel/PainelTopbar";
 import { PainelVarreduras } from "@/components/painel/PainelVarreduras";
-import { PainelView } from "@/components/painel/PainelView";
-import { type PainelViewKey } from "@/components/painel/nav";
+import { PainelVisaoGeral } from "@/components/painel/PainelVisaoGeral";
+import { CurrencyProvider } from "@/components/painel/currency";
+import { type PainelViewKey, type RegistrosTab } from "@/components/painel/nav";
 import { getOperatorToken } from "@/lib/api-client";
 
 /**
  * /painel — the Painel Brave single-shell (phase 17.1, slice 2).
  *
- * A NEW route ALONGSIDE the existing 10 dark routes (non-breaking). The whole
- * subtree is wrapped in `.painel-light` to apply the scoped light surface
- * WITHOUT flipping the global dark theme. View switching is local state (SPA
- * style), not nested Next routes. All six views are now real: the Painel Kanban
- * (with the record-edit Drawer reachable from a card), Duplicados, Mapeamento,
- * Varreduras, Conversas and Custo. The Origem modal + depth-required Motor toggle
- * live in the topbar.
+ * View switching is local state (SPA style), not nested Next routes. The shell
+ * root is the scoped `.painel-light` wrapper (light/dark per operator) so the
+ * global dark theme is untouched. The redesign (#83) opens on Visão geral;
+ * Revisão / Mar / Falha open the Registros view on their tab. The old kanban is
+ * no longer reachable. Money renders through CurrencyProvider (USD/BRL).
  */
 
 /** Static title/subtitle per active view (design NAV copy, lines 502-509). */
@@ -35,21 +35,25 @@ const VIEW_HEADERS: Record<
   PainelViewKey,
   { title: string; subtitle: string }
 > = {
-  painel: {
-    title: "Painel de Processamento",
-    subtitle: "Fluxo Nascente → Rio → Mar em quadro Kanban",
+  visao: {
+    title: "Visão geral",
+    subtitle: "Estado do pipeline Nascente → Rio → Mar agora",
+  },
+  registros: {
+    title: "Registros",
+    subtitle: "Revisão, Mar e Falha: lista por etapa, filtrável por UF",
   },
   duplicados: {
-    title: "Revisão de Duplicados",
-    subtitle: "Camada de validação · candidatos vs. registros no Mar",
+    title: "Duplicados",
+    subtitle: "Pares que podem ser o mesmo lugar: compare campo a campo e decida",
   },
   mapeamento: {
     title: "Mapeamento da Origem",
     subtitle: "Camada data-mapper · campo bruto → estrutura canônica",
   },
   varreduras: {
-    title: "Histórico de Varreduras",
-    subtitle: "Runs do motor por UF, fonte e profundidade",
+    title: "Varreduras",
+    subtitle: "Iniciar sweeps por UF, sessão do TripAdvisor e histórico de runs",
   },
   conversas: {
     title: "Conversas WhatsApp",
@@ -58,7 +62,7 @@ const VIEW_HEADERS: Record<
   },
   custo: {
     title: "Custo & LLM",
-    subtitle: "Gasto agregado por lane e por modelo",
+    subtitle: "Quanto o Brave gastou, com quem, e quanto falta para cada teto",
   },
   revisao: {
     title: "Revisão · DLQ & Gate",
@@ -74,7 +78,7 @@ const VIEW_HEADERS: Record<
   },
   config: {
     title: "Configuração",
-    subtitle: "Fontes, pesos de confiabilidade, limiar do Mar e modo do motor",
+    subtitle: "Score de confiabilidade, lanes e limites (overlay config_settings)",
   },
 };
 
@@ -82,11 +86,24 @@ function viewHeader(view: PainelViewKey): { title: string; subtitle: string } {
   return VIEW_HEADERS[view];
 }
 
-/** Render the active view body — all six are real (no "Em breve" placeholder). */
-function PainelBody({ view }: { view: PainelViewKey }) {
+interface PainelBodyProps {
+  view: PainelViewKey;
+  tab: RegistrosTab;
+  onNavigate: (view: PainelViewKey, tab?: RegistrosTab) => void;
+}
+
+/** Render the active view body. */
+function PainelBody({ view, tab, onNavigate }: PainelBodyProps) {
   switch (view) {
-    case "painel":
-      return <PainelView />;
+    case "visao":
+      return (
+        <PainelVisaoGeral
+          onOpenRegistros={(t) => onNavigate("registros", t)}
+          onOpenView={(v) => onNavigate(v)}
+        />
+      );
+    case "registros":
+      return <PainelRegistros tab={tab} onTabChange={(t) => onNavigate("registros", t)} />;
     case "duplicados":
       return <PainelDuplicados />;
     case "mapeamento":
@@ -110,7 +127,8 @@ function PainelBody({ view }: { view: PainelViewKey }) {
 
 export default function PainelPage() {
   const router = useRouter();
-  const [view, setView] = useState<PainelViewKey>("painel");
+  const [view, setView] = useState<PainelViewKey>("visao");
+  const [tab, setTab] = useState<RegistrosTab>("revisao");
   const [authed, setAuthed] = useState<boolean | null>(null);
   const { title, subtitle } = viewHeader(view);
 
@@ -135,15 +153,21 @@ export default function PainelPage() {
     );
   }
 
+  const navigate = (next: PainelViewKey, nextTab?: RegistrosTab) => {
+    setView(next);
+    if (nextTab) setTab(nextTab);
+  };
+
   return (
-    <div className="painel-light h-screen">
+    <CurrencyProvider>
       <PainelShell
         active={view}
-        onSelect={setView}
+        registrosTab={tab}
+        onSelect={navigate}
         topbar={<PainelTopbar title={title} subtitle={subtitle} />}
       >
-        <PainelBody view={view} />
+        <PainelBody view={view} tab={tab} onNavigate={navigate} />
       </PainelShell>
-    </div>
+    </CurrencyProvider>
   );
 }

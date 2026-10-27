@@ -1,18 +1,17 @@
 /**
- * Painel Brave — navigation config (phase 17 shell; all six views wired in 17.1).
+ * Painel Brave — navigation config.
  *
  * The single-shell `/painel` route is an SPA-style view-switcher driven by local
- * state (NOT nested Next routes), mirroring the design contract's `setView`.
- *
- * Phase H (route consolidation) folded the standalone dark routes into the
- * painel: four new views join the original six — Revisão (DLQ + WhatsApp gate),
- * Monitor & Funis, Logs and Configuração — under two new groups (Observabilidade,
- * Sistema). The original six (painel/duplicados/mapeamento/varreduras/conversas/
- * custo) and their locked 17-CONTEXT.md labels/groups are unchanged.
+ * state (NOT nested Next routes). The redesign (#83) replaces the kanban
+ * ("painel") with Visão geral + Registros; Revisão / Mar / Falha are three nav
+ * entries into the one Registros view, each opening its tab. The older views
+ * stay reachable under Ferramentas / Observabilidade / Sistema. Conversas keeps
+ * its view key but stays out of the nav (retired earlier).
  */
 
 export type PainelViewKey =
-  | "painel"
+  | "visao"
+  | "registros"
   | "duplicados"
   | "mapeamento"
   | "varreduras"
@@ -23,50 +22,50 @@ export type PainelViewKey =
   | "logs"
   | "config";
 
-export type PainelNavGroup =
-  | "Processamento"
-  | "Operação"
-  | "Observabilidade"
-  | "Sistema";
+/** Registros tabs, one per routing the steward works on. */
+export type RegistrosTab = "revisao" | "mar" | "falha";
+
+export type PainelNavGroup = "Operação" | "Ferramentas" | "Observabilidade" | "Sistema";
 
 export interface PainelNavItem {
+  /** Unique per item (testid `painel-nav-item-${id}`); Registros items carry the tab. */
+  id: string;
   key: PainelViewKey;
+  tab?: RegistrosTab;
   label: string;
   group: PainelNavGroup;
 }
 
-/** Nav items grouped exactly as in the design contract (order matters). */
+/** Nav items grouped as in the POC (order matters). */
 export const NAV_GROUPS: { group: PainelNavGroup; items: PainelNavItem[] }[] = [
-  {
-    group: "Processamento",
-    items: [
-      { key: "painel", label: "Painel de Processamento", group: "Processamento" },
-      { key: "duplicados", label: "Duplicados", group: "Processamento" },
-      { key: "mapeamento", label: "Mapeamento", group: "Processamento" },
-      { key: "varreduras", label: "Varreduras", group: "Processamento" },
-    ],
-  },
   {
     group: "Operação",
     items: [
-      { key: "revisao", label: "Rio / Revisão", group: "Operação" },
-      { key: "custo", label: "Custo & LLM", group: "Operação" },
+      { id: "visao", key: "visao", label: "Visão geral", group: "Operação" },
+      { id: "registros-revisao", key: "registros", tab: "revisao", label: "Revisão", group: "Operação" },
+      { id: "registros-mar", key: "registros", tab: "mar", label: "Mar", group: "Operação" },
+      { id: "registros-falha", key: "registros", tab: "falha", label: "Falha", group: "Operação" },
+    ],
+  },
+  {
+    group: "Ferramentas",
+    items: [
+      { id: "duplicados", key: "duplicados", label: "Duplicados", group: "Ferramentas" },
+      { id: "varreduras", key: "varreduras", label: "Varreduras", group: "Ferramentas" },
+      { id: "custo", key: "custo", label: "Custo & LLM", group: "Ferramentas" },
+      { id: "mapeamento", key: "mapeamento", label: "Mapeamento", group: "Ferramentas" },
+      { id: "revisao", key: "revisao", label: "DLQ & Gate", group: "Ferramentas" },
     ],
   },
   {
     group: "Observabilidade",
     items: [
-      { key: "monitor", label: "Monitor & Funis", group: "Observabilidade" },
-      { key: "logs", label: "Logs", group: "Observabilidade" },
+      { id: "monitor", key: "monitor", label: "Monitor & Funis", group: "Observabilidade" },
+      { id: "logs", key: "logs", label: "Logs", group: "Observabilidade" },
     ],
   },
   {
     group: "Sistema",
-    items: [{ key: "config", label: "Configuração", group: "Sistema" }],
+    items: [{ id: "config", key: "config", label: "Configuração", group: "Sistema" }],
   },
 ];
-
-/** Flat lookup of every nav item by view key. */
-export const NAV_ITEMS: Record<PainelViewKey, PainelNavItem> = Object.fromEntries(
-  NAV_GROUPS.flatMap((g) => g.items).map((it) => [it.key, it]),
-) as Record<PainelViewKey, PainelNavItem>;

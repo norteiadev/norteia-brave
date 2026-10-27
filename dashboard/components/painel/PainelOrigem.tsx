@@ -225,17 +225,17 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
     /tripadvisor|cookie|graphql/i.test(curlText) &&
     curlText.length > 40;
   const badge = !curlText
-    ? { label: "Aguardando cURL", color: "#9ca3af", bg: "#f0eee9" }
+    ? { label: "Aguardando cURL", color: "var(--ink-3)", bg: "var(--surface-2)" }
     : curlValid
       ? {
           label: "✓ Sessão reconhecida",
-          color: "oklch(0.5 0.13 150)",
-          bg: "color-mix(in oklch, oklch(0.62 0.17 150) 16%, white)",
+          color: "var(--mar-ink)",
+          bg: "var(--mar-soft)",
         }
       : {
           label: "Verifique o formato",
-          color: "oklch(0.6 0.14 75)",
-          bg: "color-mix(in oklch, oklch(0.72 0.15 75) 18%, white)",
+          color: "var(--dlq-ink)",
+          bg: "var(--dlq-soft)",
         };
 
   const onSave = () => {
@@ -276,7 +276,7 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
         data-testid="painel-origem"
         onClick={(e) => e.stopPropagation()}
         className="w-[480px] max-w-full rounded-[15px] bg-[var(--card)] p-[22px]"
-        style={{ boxShadow: "0 24px 60px rgba(15,23,42,.28)" }}
+        style={{ boxShadow: "var(--shadow)" }}
       >
         <div className="mb-1 text-[16px] font-bold tracking-[-0.2px] text-[var(--painel-text)]">
           Origem dos dados
@@ -316,10 +316,10 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
                 <span
                   className="h-[16px] w-[16px] flex-shrink-0 rounded-full border-2"
                   style={{
-                    borderColor: selected ? "var(--painel-navy)" : "#cbd5e1",
+                    borderColor: selected ? "var(--painel-navy)" : "var(--ink-4)",
                     background: selected
-                      ? "radial-gradient(circle, var(--painel-navy) 0 4px, #fff 5px 16px)"
-                      : "#fff",
+                      ? "radial-gradient(circle, var(--painel-navy) 0 4px, var(--surface) 5px 16px)"
+                      : "var(--surface)",
                   }}
                   aria-hidden
                 />
@@ -394,8 +394,8 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
                     color:
                       sessionStatus.expires_in != null &&
                       sessionStatus.expires_in <= TA_WARN_SECONDS
-                        ? "oklch(0.58 0.14 75)"
-                        : "oklch(0.5 0.13 150)",
+                        ? "var(--dlq-ink)"
+                        : "var(--mar-ink)",
                     background: "var(--painel-chip)",
                   }}
                 >
@@ -410,9 +410,9 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
                 data-testid="origem-error-422"
                 className="m-0 mt-[10px] rounded-[8px] px-[11px] py-[8px] text-[11.5px] font-medium"
                 style={{
-                  color: "oklch(0.5 0.18 27)",
+                  color: "var(--falha-ink)",
                   background:
-                    "color-mix(in oklch, oklch(0.55 0.20 27) 10%, white)",
+                    "var(--falha-soft)",
                 }}
               >
                 Sessão inválida — o cURL está expirado ou malformado. Capture e
@@ -424,9 +424,9 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
                 data-testid="origem-error-503"
                 className="m-0 mt-[10px] rounded-[8px] px-[11px] py-[8px] text-[11.5px] font-medium"
                 style={{
-                  color: "oklch(0.55 0.13 75)",
+                  color: "var(--dlq-ink)",
                   background:
-                    "color-mix(in oklch, oklch(0.72 0.15 75) 14%, white)",
+                    "var(--dlq-soft)",
                 }}
               >
                 Verificação indisponível — a sessão não pôde ser confirmada agora
@@ -452,7 +452,7 @@ export function PainelOrigem({ open, onClose, initialSource }: PainelOrigemProps
             data-testid="origem-submit"
             disabled={inject.isPending}
             onClick={onSave}
-            className="h-[36px] rounded-[8px] border-none bg-[var(--painel-navy)] px-[17px] text-[12.5px] font-semibold text-white disabled:opacity-50"
+            className="h-[36px] rounded-[8px] border-none bg-[var(--painel-navy)] px-[17px] text-[12.5px] font-semibold text-[var(--on-primary)] disabled:opacity-50"
           >
             Salvar origem
           </button>
