@@ -1767,6 +1767,27 @@ class TestFetchAttractionAddress:
         )
 
     @pytest.mark.asyncio
+    async def test_block_without_locality_takes_the_city_from_the_canonical_url(
+        self, monkeypatch
+    ):
+        """'Cachoeira da Toca (Canela)' (RS, 26/10): no addressLocality in the JSON-LD, but
+        the g1 shortcut redirects to "...-Canela_State_of_Rio_Grande_do_Sul.html"."""
+        client = self._client(monkeypatch)
+        canonical = (
+            "https://www.tripadvisor.com.br/Attraction_Review-g775227-d34078832-Reviews-"
+            "Cachoeira_da_Toca_Canela-Canela_State_of_Rio_Grande_do_Sul.html"
+        )
+        with respx.mock:
+            respx.get(_PAGE_URL).mock(
+                return_value=httpx.Response(301, headers={"Location": canonical})
+            )
+            respx.get(canonical).mock(return_value=httpx.Response(
+                200, text=_ld_page({"@type": "LocalBusiness", "address": {"streetAddress": ""}})
+            ))
+            result = await client.fetch_attraction_address(1534420)
+        assert (result["city_name"], result["state_name"]) == ("Canela", "Rio Grande do Sul")
+
+    @pytest.mark.asyncio
     async def test_page_without_block_is_a_record_error_then_systemic(self, monkeypatch):
         from brave.shared.exceptions import SourceRecordError, SourceSchemaError
 

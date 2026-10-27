@@ -1775,8 +1775,8 @@ def tx_session(db_engine):
 
 
 @pytest.mark.integration
-def test_resolver_version_releases_the_v6_quarantines(tx_session) -> None:
-    """v7 (trailing "(Município)"): a card quarantined as ibge_unmatched under v6 is
+def test_resolver_version_releases_the_v7_quarantines(tx_session) -> None:
+    """v8 (TA page's canonical URL city): a card quarantined as ibge_unmatched under v7 is
     retried; one stamped with the CURRENT version is skipped (it would fail the same)."""
     from brave.core.models import PoisonQuarantine
     from brave.domains.tripadvisor.atrativos import (
@@ -1785,8 +1785,8 @@ def test_resolver_version_releases_the_v6_quarantines(tx_session) -> None:
         TripAdvisorAtrativosIngest,
     )
 
-    assert IBGE_RESOLVER_VERSION == 7
-    for location_id, version in (("990001", 6), ("990002", IBGE_RESOLVER_VERSION)):
+    assert IBGE_RESOLVER_VERSION == 8
+    for location_id, version in (("990001", 7), ("990002", IBGE_RESOLVER_VERSION)):
         tx_session.add(PoisonQuarantine(
             task_name=_IBGE_UNMATCHED_TASK,
             error_message="ibge_unmatched",

@@ -89,6 +89,10 @@ _TA_ATTRACTION_URL: str = (
     "https://www.tripadvisor.com.br/Attraction_Review-g1-d{location_id}-Reviews.html"
 )
 _JSON_LD = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
+# The g1 shortcut redirects to the canonical "...-<City>_State_of_<State>.html". A page whose
+# JSON-LD has no addressLocality still names its city there: 'Cachoeira da Toca (Canela)'
+# (RS, 26/10) went to ibge_unmatched with "-Canela_State_of_Rio_Grande_do_Sul.html".
+_URL_CITY = re.compile(r"-([A-Za-z0-9_]+?)_State_of_([A-Za-z_]+)\.html$")
 # Pages in a row without the LocalBusiness block → systemic (TA dropped it), not per-card.
 _PAGE_ERRORS_SYSTEMIC = 5
 # The attraction page probe_session fetches: Museu Paranaense (Curitiba), a stable listing.
@@ -1074,9 +1078,14 @@ class TripAdvisorClient:
                 website = same_as
             elif same_as.startswith("www."):
                 website = f"https://{same_as}"
+        city, state = addr.get("addressLocality"), addr.get("addressRegion")
+        slug = _URL_CITY.search(resp.url.path) if not city else None
+        if slug is not None:
+            city = slug.group(1).replace("_", " ")
+            state = state or slug.group(2).replace("_", " ")
         return {
-            "city_name": addr.get("addressLocality"),
-            "state_name": addr.get("addressRegion"),
+            "city_name": city,
+            "state_name": state,
             "lat": _num(geo.get("latitude")),
             "lng": _num(geo.get("longitude")),
             "address": address,
