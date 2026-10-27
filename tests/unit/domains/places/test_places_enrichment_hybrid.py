@@ -137,6 +137,47 @@ async def test_hybrid_pet_care_park_is_kept() -> None:
     assert rio.normalized["google_place_id"] == PID and rio.routing == "dlq"
 
 
+@pytest.mark.parametrize(
+    ("category", "types", "kept"),
+    [
+        # Alambique / destilaria (operator 10/2026): drinks tourism, not a business
+        ("Destilarias", ["liquor_store", "manufacturer", "food", "store"], True),
+        ("Adegas e vinícolas", ["bar", "food", "point_of_interest"], True),
+        # A plain store under Adegas can be just a wine shop: a steward decides
+        ("Adegas e vinícolas", ["store", "point_of_interest"], False),
+        # A liquor store on a beach card is a same-name business
+        ("Praias", ["liquor_store", "store"], False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_drinks_tourism_card_passes_the_business_gate(category, types, kept) -> None:
+    name = "Alambique Cachaça Artesanal"
+    agent, _, _ = _agent({Q: _apify(title=name)}, _essentials(types=types),
+                         ids={f"{name}, Vila Velha - ES": [PID]})
+    rio = _rio(name=name, category=category)
+    await _run(agent, rio)
+    if kept:
+        assert rio.normalized["google_place_id"] == PID and rio.dlq_reason != "google_tipo_negocio"
+    else:
+        assert (rio.routing, rio.dlq_reason) == ("dlq", "google_tipo_negocio")
+
+
+@pytest.mark.asyncio
+async def test_agency_match_on_a_place_card_is_dropped_not_reviewed() -> None:
+    """'Cachoeira X Ecoturismo' is a tour operator named after the waterfall: never the place.
+    The match is dropped (no id, no Google data), the TA floor stays and the score routes it."""
+    name = "Cachoeira do Tabuleiro"
+    agent, _, _ = _agent({Q: _apify(title=name)},
+                         _essentials(types=["tour_agency", "travel_agency", "point_of_interest"]),
+                         ids={f"{name}, Vila Velha - ES": [PID]})
+    rio = _rio(name=name, category="Cachoeiras")
+    await _run(agent, rio)
+    n = rio.normalized
+    assert rio.dlq_reason != "google_tipo_negocio"
+    assert n.get("google_place_id") is None and n.get("place_id_cache") is None
+    assert n["google_enriched"] is True  # consulted: no re-search on the next pass
+
+
 # -- run() flow ------------------------------------------------------------------------
 
 
