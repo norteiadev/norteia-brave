@@ -1,167 +1,233 @@
 "use client";
 
-import { NAV_GROUPS, type PainelNavGroup, type PainelViewKey } from "./nav";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Activity,
+  ArrowRightLeft,
+  Copy,
+  DollarSign,
+  Inbox,
+  LayoutDashboard,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  Settings,
+  SquareCheckBig,
+  Terminal,
+  TriangleAlert,
+  Waves,
+  type LucideIcon,
+} from "lucide-react";
+
+import { atrativoKeys, fetchAtrativoList, fetchFailureCards } from "@/lib/atrativos-api";
+import { dedupKeys, fetchDedupPairs } from "@/lib/dedup-api";
+import { engineKeys } from "@/lib/engine-api";
+
+import { NAV_GROUPS, type PainelNavItem, type PainelViewKey, type RegistrosTab } from "./nav";
+import { useStoredState } from "./useStoredState";
 
 /**
- * PainelSidebar — 232px white left column for the Painel Brave shell.
+ * PainelSidebar — the POC shell's left column (#83).
  *
- * Logo header · two nav groups (Processamento / Operação) of view buttons ·
- * operator footer (navy "OP" avatar / Operador Brave / CMS Territorial).
- * Colors come exclusively from the scoped `.painel-light` CSS vars — no
- * hardcoded hex in classNames. pt-BR copy matches the design contract.
+ * Expanded: Norteia lockup + grouped nav with work-waiting counts. Collapsed
+ * (remembered in localStorage "brave.sidebarCollapsed"): only the Norteia symbol
+ * and icons; every link keeps its name via aria-label and a title tooltip.
+ * Footer: theme toggle + collapse toggle. Colors only from CSS vars.
  */
+
+export type PainelTheme = "light" | "dark";
 
 interface PainelSidebarProps {
   active: PainelViewKey;
-  onSelect: (key: PainelViewKey) => void;
+  registrosTab?: RegistrosTab;
+  onSelect: (key: PainelViewKey, tab?: RegistrosTab) => void;
+  theme: PainelTheme;
+  onToggleTheme: () => void;
 }
 
-/** Stable per-group test ids (also pins the literal group labels here). */
-const GROUP_TESTID: Record<PainelNavGroup, string> = {
-  "Processamento": "painel-nav-group-processamento",
-  "Operação": "painel-nav-group-operacao",
-  "Observabilidade": "painel-nav-group-observabilidade",
-  "Sistema": "painel-nav-group-sistema",
+const NAV_ICONS: Record<string, LucideIcon> = {
+  visao: LayoutDashboard,
+  "registros-revisao": SquareCheckBig,
+  "registros-mar": Waves,
+  "registros-falha": TriangleAlert,
+  duplicados: Copy,
+  varreduras: Search,
+  custo: DollarSign,
+  mapeamento: ArrowRightLeft,
+  revisao: Inbox,
+  monitor: Activity,
+  logs: Terminal,
+  config: Settings,
 };
 
-/** Inline glyphs per view (reuse the design contract's 16px outline SVGs). */
-const NAV_ICONS: Record<PainelViewKey, React.ReactNode> = {
-  painel: (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-      <rect x="9" y="1.5" width="5.5" height="5.5" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-      <rect x="1.5" y="9" width="5.5" height="5.5" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-      <rect x="9" y="9" width="5.5" height="5.5" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-    </svg>
-  ),
-  duplicados: (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <circle cx="6" cy="8" r="4.2" stroke="currentColor" strokeWidth="1.4" />
-      <circle cx="10" cy="8" r="4.2" stroke="currentColor" strokeWidth="1.4" />
-    </svg>
-  ),
-  mapeamento: (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <circle cx="3" cy="8" r="1.7" fill="currentColor" />
-      <path d="M5 8 H11" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M9 5.5 L11.5 8 L9 10.5" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  ),
-  varreduras: (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M8 4.3 V8 L10.6 9.6" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" />
-    </svg>
-  ),
-  conversas: (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M2 4.5C2 3.4 2.9 2.5 4 2.5H12C13.1 2.5 14 3.4 14 4.5V9.5C14 10.6 13.1 11.5 12 11.5H6L3 14V11.5C2.4 11.5 2 11 2 10.5V4.5Z" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinejoin="round" />
-    </svg>
-  ),
-  custo: (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M2 13 V3 M2 13 H14" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <rect x="4.5" y="7" width="2.2" height="4" fill="currentColor" />
-      <rect x="8" y="4.5" width="2.2" height="6.5" fill="currentColor" />
-      <rect x="11.5" y="8.5" width="2.2" height="2.5" fill="currentColor" />
-    </svg>
-  ),
-  revisao: (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M3 2.5H10L13 5.5V13.5H3Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" fill="none" />
-      <path d="M5.5 9L7 10.5L10 7" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  ),
-  monitor: (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M2 8.5H4.5L6 4L8.5 12L10.5 7.5L11.8 8.5H14" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  ),
-  logs: (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M4.3 6L6 7.6L4.3 9.2" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M7.4 9.6H10.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  ),
-  config: (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M8 1.6V3.4M8 12.6V14.4M14.4 8H12.6M3.4 8H1.6M12.5 3.5L11.3 4.7M4.7 11.3L3.5 12.5M12.5 12.5L11.3 11.3M4.7 4.7L3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
-  ),
-};
+const COUNT_REFETCH_MS = 60_000;
 
-export function PainelSidebar({ active, onSelect }: PainelSidebarProps) {
+/**
+ * Work-waiting counts from data the API already returns: list-envelope totals
+ * (limit 1), the failure-card list length and the dedup pair total. Keys match
+ * the existing queries so mutations that invalidate them refresh the badges.
+ * A count stays hidden while unknown (loading or error).
+ */
+function useNavCounts(): Partial<Record<string, number>> {
+  const opts = { refetchInterval: COUNT_REFETCH_MS };
+  const revisao = useQuery({
+    ...opts,
+    queryKey: atrativoKeys.list({ count: "dlq" }),
+    queryFn: () => fetchAtrativoList({ routing: "dlq", limit: 1 }),
+    select: (r) => r.total,
+  });
+  const mar = useQuery({
+    ...opts,
+    queryKey: atrativoKeys.list({ count: "mar" }),
+    queryFn: () => fetchAtrativoList({ routing: "mar", limit: 1 }),
+    select: (r) => r.total,
+  });
+  const falha = useQuery({
+    ...opts,
+    queryKey: engineKeys.failures,
+    queryFn: () => fetchFailureCards(),
+    select: (cards) => cards.length,
+  });
+  const duplicados = useQuery({
+    ...opts,
+    queryKey: dedupKeys.pairs(),
+    queryFn: () => fetchDedupPairs(),
+    select: (r) => r.total,
+  });
+  return {
+    "registros-revisao": revisao.data,
+    "registros-mar": mar.data,
+    "registros-falha": falha.data,
+    duplicados: duplicados.data,
+  };
+}
+
+function isActive(item: PainelNavItem, active: PainelViewKey, tab?: RegistrosTab) {
+  return item.key === active && (item.tab === undefined || item.tab === tab);
+}
+
+const footBtn =
+  "flex w-full items-center gap-[9px] rounded-[7px] px-[8px] py-[7px] text-[12.5px] font-medium text-[var(--ink-3)] hover:bg-[var(--surface-3)] hover:text-[var(--ink)]";
+
+export function PainelSidebar({
+  active,
+  registrosTab,
+  onSelect,
+  theme,
+  onToggleTheme,
+}: PainelSidebarProps) {
+  const [collapsedPref, setCollapsedPref] = useStoredState("brave.sidebarCollapsed", [
+    "false",
+    "true",
+  ] as const);
+  const collapsed = collapsedPref === "true";
+  const counts = useNavCounts();
+  const center = collapsed ? "justify-center px-0" : "";
+
   return (
     <div
-      className="flex h-full w-[232px] flex-shrink-0 flex-col border-r bg-[var(--card)]"
-      style={{ borderColor: "var(--painel-border-outer)" }}
+      className={`flex h-full flex-shrink-0 flex-col gap-[18px] overflow-y-auto overflow-x-hidden border-r border-[var(--line)] bg-[var(--surface)] px-[12px] py-[18px] transition-[width] ${
+        collapsed ? "w-[72px]" : "w-[224px]"
+      }`}
     >
-      {/* Logo header */}
-      <div
-        className="border-b px-[18px] pb-[14px] pt-[18px]"
-        style={{ borderColor: "var(--painel-border-inner)" }}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/logo-norteia-brave.svg"
-          alt="Norteia Brave"
-          className="block h-[30px] w-auto"
-        />
+      <div className="flex flex-col gap-[6px] px-[6px]">
+        {collapsed ? (
+          <div
+            role="img"
+            aria-label="Norteia"
+            data-testid="painel-brand-symbol"
+            className="painel-brand-symbol"
+          />
+        ) : (
+          <>
+            <div
+              role="img"
+              aria-label="Norteia"
+              data-testid="painel-brand-logo"
+              className="painel-brand-logo"
+            />
+            <span className="text-[11.5px] tracking-[0.2px] text-[var(--ink-3)]">
+              Brave · CMS territorial
+            </span>
+          </>
+        )}
       </div>
 
-      {/* Nav groups */}
-      <nav className="flex flex-1 flex-col gap-[3px] p-[14px_12px]">
-        {NAV_GROUPS.map(({ group, items }) => (
-          <div
-            key={group}
-            data-testid={GROUP_TESTID[group]}
-            className="flex flex-col gap-[3px]"
-          >
-            <div className="px-[10px] pb-[8px] pt-[4px] text-[10px] font-semibold uppercase tracking-[0.5px] text-[var(--painel-muted-2)]">
+      {NAV_GROUPS.map(({ group, items }) => (
+        <nav key={group} aria-label={group} className="flex flex-col gap-[2px]">
+          {!collapsed && (
+            <div className="px-[8px] pb-[4px] text-[10.5px] uppercase tracking-[0.6px] text-[var(--ink-3)]">
               {group}
             </div>
-            {items.map((item) => {
-              const isActive = item.key === active;
-              return (
-                <button
-                  key={item.key}
-                  type="button"
-                  data-view={item.key}
-                  data-testid={`painel-nav-item-${item.key}`}
-                  data-active={isActive ? "true" : undefined}
-                  aria-current={isActive ? "page" : undefined}
-                  onClick={() => onSelect(item.key)}
-                  className={`flex items-center gap-[10px] rounded-[8px] px-[10px] py-[8px] text-left text-[13px] font-medium transition-colors ${
-                    isActive
-                      ? "bg-[var(--painel-chip)] text-[var(--painel-navy)]"
-                      : "text-[var(--painel-text)] hover:bg-[var(--painel-chip-hover)]"
-                  }`}
-                >
-                  <span className="flex-shrink-0">{NAV_ICONS[item.key]}</span>
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
-        ))}
-      </nav>
+          )}
+          {items.map((item) => {
+            const Icon = NAV_ICONS[item.id];
+            const current = isActive(item, active, registrosTab);
+            const count = counts[item.id];
+            const countText = count === undefined ? undefined : count.toLocaleString("pt-BR");
+            return (
+              <button
+                key={item.id}
+                type="button"
+                data-testid={`painel-nav-item-${item.id}`}
+                aria-current={current ? "page" : undefined}
+                aria-label={collapsed ? item.label : undefined}
+                title={collapsed ? (countText ? `${item.label} · ${countText}` : item.label) : undefined}
+                onClick={() => onSelect(item.key, item.tab)}
+                className={`flex items-center gap-[9px] whitespace-nowrap rounded-[7px] px-[8px] py-[7px] text-left text-[13px] ${center} ${
+                  current
+                    ? "bg-[var(--surface-2)] font-semibold text-[var(--ink)]"
+                    : "font-medium text-[var(--ink-2)] hover:bg-[var(--surface-3)]"
+                }`}
+              >
+                <Icon className="size-4 flex-none" strokeWidth={1.8} aria-hidden />
+                {!collapsed && (
+                  <>
+                    <span>{item.label}</span>
+                    {countText !== undefined && (
+                      <span
+                        data-testid={`painel-nav-count-${item.id}`}
+                        className="ml-auto font-mono text-[11px] font-semibold text-[var(--ink-3)]"
+                      >
+                        {countText}
+                      </span>
+                    )}
+                  </>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      ))}
 
-      {/* Operator footer */}
-      <div
-        className="flex items-center gap-[9px] border-t px-[18px] py-[14px]"
-        style={{ borderColor: "var(--painel-border-inner)" }}
-      >
-        <span className="grid h-[26px] w-[26px] place-items-center rounded-full bg-[var(--painel-navy)] text-[11px] font-bold text-white">
-          OP
-        </span>
-        <div className="flex min-w-0 flex-col leading-[1.25]">
-          <span className="text-[12px] font-semibold">Operador Brave</span>
-          <span className="text-[10.5px] text-[var(--painel-muted-2)]">
-            CMS Territorial
-          </span>
-        </div>
+      <div className="mt-auto flex flex-col gap-[2px]">
+        <button
+          type="button"
+          aria-pressed={theme === "dark"}
+          aria-label="Tema escuro"
+          title={collapsed ? "Tema escuro" : undefined}
+          onClick={onToggleTheme}
+          className={`${footBtn} ${center}`}
+        >
+          <Moon className="size-4 flex-none" strokeWidth={1.8} aria-hidden />
+          {!collapsed && <span>Tema escuro</span>}
+        </button>
+        <button
+          type="button"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
+          title={collapsed ? "Expandir menu" : undefined}
+          onClick={() => setCollapsedPref(collapsed ? "false" : "true")}
+          className={`${footBtn} ${center}`}
+        >
+          {collapsed ? (
+            <PanelLeftOpen className="size-4 flex-none" strokeWidth={1.8} aria-hidden />
+          ) : (
+            <PanelLeftClose className="size-4 flex-none" strokeWidth={1.8} aria-hidden />
+          )}
+          {!collapsed && <span>Recolher menu</span>}
+        </button>
       </div>
     </div>
   );

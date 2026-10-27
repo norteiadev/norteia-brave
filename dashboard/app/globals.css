@@ -145,38 +145,119 @@
    hardcoded hex). Token values are LOCKED by 17-CONTEXT.md.
    ─────────────────────────────────────────────────────────────────────────── */
 .painel-light {
-  /* shadcn base vars consumed by reused components (StageBadge, Badge) */
-  --background: oklch(0.98 0.01 90);
-  --foreground: #18181b;
-  --card: #fff;
-  --card-foreground: #18181b;
-  --popover: #fff;
-  --popover-foreground: #18181b;
-  --border: #e6e4e0;
-  --input: #e6e4e0;
-  --muted: #f0eee9;
-  --muted-foreground: #6b7280;
-  --primary: #15315e;
-  --primary-foreground: #fff;
-  --ring: #15315e;
-  --status-mar: oklch(0.55 0.15 150);
-  --status-dlq: oklch(0.72 0.15 75);
-  --status-descarte: oklch(0.55 0.20 27);
+  /* POC redesign tokens (docs/poc/painel-redesign, #83). Light values here; the
+     dark variant below redefines the same names. Values come from the POC, which
+     was tuned for AA contrast (pinned by app/__tests__/globals-tokens.test.ts). */
+  --bg: #f8f6f1;
+  --surface: #ffffff;
+  --surface-2: #f2f0eb;
+  --surface-3: #faf9f6;
+  --line: #e6e4e0;
+  --line-2: #efede8;
+  --ink: #18181b;
+  --ink-2: #44474f;
+  --ink-3: #636871;
+  --ink-4: #a3a6ad;
+  --navy: #15315e;
+  --navy-soft: #e8edf6;
+  --on-primary: #ffffff;
+  --mar: #2e8a4f;
+  --mar-ink: #1d6a3a;
+  --mar-soft: #e2f1e7;
+  --dlq: #d39a2a;
+  --dlq-ink: #7f5300;
+  --dlq-soft: #faf0d9;
+  --falha: #c7362f;
+  --falha-ink: #a2261f;
+  --falha-soft: #fae4e2;
+  --rio: #3d5f9a;
+  --descarte: #b5b1aa;
+  --focus: #2a5bd7;
+  --shadow: 0 1px 2px rgb(24 24 27 / 6%), 0 8px 24px rgb(24 24 27 / 6%);
 
-  /* painel-only literal tokens (from 17-CONTEXT decisions) */
-  --painel-navy: #15315e;
-  --painel-cream: oklch(0.98 0.01 90);
-  --painel-border-outer: #e6e4e0;
-  --painel-border-inner: #f0eee9;
-  --painel-chip: #f0eee9;
+  /* shadcn base vars consumed by reused components (StageBadge, Badge),
+     remapped onto the POC tokens so they follow the theme */
+  --background: var(--bg);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --border: var(--line);
+  --input: var(--line);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--ink-3);
+  --primary: var(--navy);
+  --primary-foreground: var(--on-primary);
+  --ring: var(--focus);
+  --status-mar: var(--mar);
+  --status-dlq: var(--dlq);
+  --status-descarte: var(--falha);
+
+  /* legacy painel tokens (17-CONTEXT), remapped so existing screens follow the
+     theme. Muted-2 now maps to ink-3 because the old #9ca3af failed AA. */
+  --painel-navy: var(--navy);
+  --painel-cream: var(--bg);
+  --painel-border-outer: var(--line);
+  --painel-border-inner: var(--line-2);
+  --painel-chip: var(--surface-2);
   /* Distinct, lighter hover so a parked pointer over an inactive nav item
      never reads as the active state (which uses --painel-chip). QA F6. */
-  --painel-chip-hover: #f6f5f2;
-  --painel-text: #18181b;
-  --painel-muted: #6b7280;
-  --painel-muted-2: #9ca3af;
-  --painel-hint: #94a3b8;
+  --painel-chip-hover: var(--surface-3);
+  --painel-text: var(--ink);
+  --painel-muted: var(--ink-3);
+  --painel-muted-2: var(--ink-3);
+  --painel-hint: var(--ink-4);
 
   color: var(--painel-text);
   background: var(--painel-cream);
+}
+
+/* Dark theme of the Painel: toggled per operator on the wrapper
+   (data-painel-theme, persisted in localStorage "brave.painelTheme"). */
+.painel-light[data-painel-theme="dark"] {
+  --bg: #121315;
+  --surface: #1a1c1f;
+  --surface-2: #24272b;
+  --surface-3: #1e2023;
+  --line: #2f3337;
+  --line-2: #26292d;
+  --ink: #edebe7;
+  --ink-2: #c9c6c0;
+  --ink-3: #a19e97;
+  --ink-4: #6d6b66;
+  --navy: #a9c1ee;
+  --navy-soft: #1f2a3d;
+  --on-primary: #0e1a30;
+  --mar: #2f9e78;
+  --mar-ink: #6dd3ab;
+  --mar-soft: #16302a;
+  --dlq: #b0822a;
+  --dlq-ink: #e8b863;
+  --dlq-soft: #33291a;
+  --falha: #e0607e;
+  --falha-ink: #f193a8;
+  --falha-soft: #3a1e27;
+  --rio: #5f84d6;
+  --descarte: #5d5b57;
+  --focus: #8fb0ff;
+  --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 30%);
+  color-scheme: dark;
+}
+
+/* Norteia lockup + symbol as CSS masks: they take --ink, so both themes work. */
+.painel-brand-logo {
+  width: 138px;
+  height: 35px;
+  background: var(--ink);
+  -webkit-mask: url(/norteia-logo.svg) left center / contain no-repeat;
+  mask: url(/norteia-logo.svg) left center / contain no-repeat;
+}
+.painel-brand-symbol {
+  width: 34px;
+  height: 34px;
+  margin-inline: auto;
+  background: var(--ink);
+  -webkit-mask: url(/norteia-marca.svg) center / contain no-repeat;
+  mask: url(/norteia-marca.svg) center / contain no-repeat;
 }

@@ -202,6 +202,17 @@ export function atrativosListSuccess(items: AtrativoListItem[] = sampleAtrativos
   });
 }
 
+/**
+ * GET list — envelope totals keyed by `?routing=` (the `limit=1` count queries
+ * behind the sidebar badges). A routing absent from `totals` counts 0.
+ */
+export function atrativosCountByRouting(totals: Record<string, number>) {
+  return http.get(BASE, ({ request }) => {
+    const routing = new URL(request.url).searchParams.get("routing") ?? "";
+    return HttpResponse.json({ items: [], total: totals[routing] ?? 0, offset: 0, limit: 1 });
+  });
+}
+
 /** GET list — empty (zero items, valid envelope). */
 export function atrativosListEmpty() {
   return http.get(BASE, () =>

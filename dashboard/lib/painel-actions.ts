@@ -132,7 +132,7 @@ export function runAction(a: DropAction): Promise<unknown> {
 }
 
 /** Map an error to operator-facing PT-BR copy. */
-function explainError(err: unknown): string {
+export function explainError(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 401) return "Sessão expirada ou token inválido.";
     if (err.status === 409) return "Ação não disponível neste estágio.";
