@@ -195,6 +195,9 @@ describe("PainelConfig", () => {
     expect(screen.queryByTestId("config-save-bar")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Desfazer" }));
+    await advance(100);
+    // Restored on the click, not at the end of the window.
+    expect(screen.getByRole("switch", { name: "Coleta TripAdvisor" })).toBeChecked();
     await advance(10_000);
 
     expect(patches).toHaveLength(0);

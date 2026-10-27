@@ -153,8 +153,16 @@ export function TaSessionItem({ session, updatedAt }: { session: TASessionStatus
 // norteia-api health
 // ---------------------------------------------------------------------------
 
+/** PT-BR pause-reason banner text (quick-260918-ohm) — reason + which provider tripped it. */
+export function pauseReasonLabel(reason: { reason: string; provider: string | null }): string {
+  if (reason.reason === "daily_budget") return "Motor pausado: orçamento diário atingido";
+  if (reason.reason === "manual") return "Motor pausado: backfill interrompido";
+  if (reason.provider) return `Motor pausado: sem saldo (${reason.provider})`;
+  return "Motor pausado: sem saldo";
+}
+
 /** Long copy for the probe's failure reason (brave/core/mar/sync.py::_probe). */
-function apiDownLabel(reason?: string | null): string {
+export function apiDownLabel(reason?: string | null): string {
   if (reason === "ingest:401" || reason === "ingest:403") return "recusou o token de ingestão (expirado?)";
   if (reason === "ingest:404") return "sem a rota de ingestão (branch errada?)";
   if (reason?.startsWith("unhealthy")) return "com dependência fora (health 503)";

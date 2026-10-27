@@ -34,6 +34,7 @@ import {
   TA_WARN_SECONDS,
   TaSessionItem,
   fmtMMSS,
+  pauseReasonLabel,
 } from "@/components/painel/PainelStatusBar";
 
 /**
@@ -89,14 +90,6 @@ function continuarConfirmText(reason: { reason: string; provider: string | null 
   if (reason.provider === "apify")
     return "Saldo Apify recarregado? Suba APIFY_TOTAL_USD_CAP (ou troque BRAVE_APIFY_API_KEY) no .env e recrie worker e api antes (docker compose up -d worker api) — restart não relê o .env.";
   return "Saldo recarregado?";
-}
-
-/** PT-BR pause-reason banner text (quick-260918-ohm) — reason + which provider tripped it. */
-function pauseReasonLabel(reason: { reason: string; provider: string | null }): string {
-  if (reason.reason === "daily_budget") return "Motor pausado: orçamento diário atingido";
-  if (reason.reason === "manual") return "Motor pausado: backfill interrompido";
-  if (reason.provider) return `Motor pausado: sem saldo (${reason.provider})`;
-  return "Motor pausado: sem saldo";
 }
 
 export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
@@ -227,7 +220,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   }, [data?.enabled, taBlocked]);
 
   // Close the depth menu on any click outside its wrapper (Ligar included, so the
-  // Ligar toggle keeps working) or on Escape. Mirrors PainelFilters' popover pattern.
+  // Ligar toggle keeps working) or on Escape.
   const motorRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!depthMenuOpen) return;

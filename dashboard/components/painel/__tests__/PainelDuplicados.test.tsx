@@ -144,6 +144,9 @@ describe("PainelDuplicados", () => {
     expect(screen.getAllByTestId("dedup-pair")).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Desfazer" }));
+    await advance(100);
+    // Restored on the click, not at the end of the window.
+    expect(screen.getAllByTestId("dedup-pair")).toHaveLength(2);
     await advance(10_000);
 
     expect(resolves).toHaveLength(0);

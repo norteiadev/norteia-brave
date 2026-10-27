@@ -96,7 +96,12 @@ interface PainelBodyProps {
 function PainelBody({ view, tab, onNavigate }: PainelBodyProps) {
   switch (view) {
     case "visao":
-      return <PainelVisaoGeral onOpenRegistros={(t) => onNavigate("registros", t)} />;
+      return (
+        <PainelVisaoGeral
+          onOpenRegistros={(t) => onNavigate("registros", t)}
+          onOpenView={(v) => onNavigate(v)}
+        />
+      );
     case "registros":
       return <PainelRegistros tab={tab} onTabChange={(t) => onNavigate("registros", t)} />;
     case "duplicados":

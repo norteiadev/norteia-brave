@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { PainelOrigem } from "@/components/painel/PainelOrigem";
+import { TA_WARN_SECONDS, fmtMMSS } from "@/components/painel/PainelStatusBar";
 import {
   Btn,
   Kpi,
@@ -89,8 +90,6 @@ const STATUS: Record<string, { tone: Tone; label: string }> = {
   running: { tone: "run", label: "Em andamento" },
 };
 
-/** TTL warn band (seconds), same as the status bar. */
-const TA_WARN_SECONDS = 5 * 60;
 
 function explainError(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
@@ -115,11 +114,6 @@ function fmtDuration(run: RunItem): string {
   if (min < 60) return `${min} min`;
   const h = Math.floor(min / 60);
   return min % 60 ? `${h} h ${min % 60} min` : `${h} h`;
-}
-
-function fmtMMSS(seconds: number): string {
-  const t = Math.max(0, Math.floor(seconds));
-  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
 }
 
 export function PainelVarreduras() {

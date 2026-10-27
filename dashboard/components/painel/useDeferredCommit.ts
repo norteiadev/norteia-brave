@@ -20,9 +20,11 @@ export interface DeferredCommit {
   delayMs?: number;
   /** Called after run() resolves (e.g. invalidate queries). */
   onDone?: () => void;
+  /** Called when the operator clicks "Desfazer" (restore optimistic UI). */
+  onUndo?: () => void;
 }
 
-function commit({ message, run, delayMs = 6000, onDone }: DeferredCommit): void {
+function commit({ message, run, delayMs = 6000, onDone, onUndo }: DeferredCommit): void {
   const timer = setTimeout(() => {
     // Sonner pauses its own timer on hover: drop the toast so "Desfazer" can
     // never be clicked after the request went out.
@@ -40,6 +42,7 @@ function commit({ message, run, delayMs = 6000, onDone }: DeferredCommit): void 
       label: "Desfazer",
       onClick: () => {
         clearTimeout(timer);
+        onUndo?.();
         toast("Ação desfeita.");
       },
     },

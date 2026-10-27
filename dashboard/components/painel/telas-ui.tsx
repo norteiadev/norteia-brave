@@ -222,31 +222,13 @@ export function UfBadge({ uf }: { uf: string }) {
  */
 export function useUndoableCommit() {
   const commit = useDeferredCommit();
-  return ({
-    run,
-    onUndo,
-    onError,
-    delayMs = 6000,
-    ...rest
-  }: DeferredCommit & { onUndo: () => void; onError?: () => void }) => {
-    let ran = false;
+  return ({ run, onError, ...rest }: DeferredCommit & { onUndo: () => void; onError?: () => void }) =>
     commit({
       ...rest,
-      delayMs,
-      run: () => {
-        ran = true;
-        return run().catch((err: unknown) => {
+      run: () =>
+        run().catch((err: unknown) => {
           onError?.();
           throw err; // the shared hook turns it into the explained toast
-        });
-      },
+        }),
     });
-    // ponytail: useDeferredCommit has no undo callback, so undo is inferred:
-    // its timer was scheduled first with the same delay, so if run() has not
-    // started when ours fires, the operator undid it. The restore lands at the
-    // end of the window, not on the click; swap for an onUndo option there.
-    setTimeout(() => {
-      if (!ran) onUndo();
-    }, delayMs);
-  };
 }

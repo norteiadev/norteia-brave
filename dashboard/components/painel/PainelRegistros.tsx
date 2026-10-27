@@ -10,6 +10,7 @@ import {
   FalhaDetailPanel,
   Flag,
 } from "@/components/painel/RegistroDetail";
+import { apiDownLabel } from "@/components/painel/PainelStatusBar";
 import type { RegistrosTab } from "@/components/painel/nav";
 import {
   AlertDialog,
@@ -74,14 +75,6 @@ function countQuery(routing: "dlq" | "mar", uf: string) {
     select: (r: { total: number }) => r.total,
     refetchInterval: LIST_REFETCH_MS,
   };
-}
-
-/** Human copy for the norteia-api probe's failure reason (brave/core/mar/sync.py::_probe). */
-function apiDownLabel(reason?: string | null): string {
-  if (reason === "ingest:401" || reason === "ingest:403") return "recusou o token de ingestão (expirado?)";
-  if (reason === "ingest:404") return "sem a rota de ingestão (branch errada?)";
-  if (reason?.startsWith("unhealthy")) return "com dependência fora (health 503)";
-  return "fora do ar";
 }
 
 function ScoreBar({ score, potential, threshold }: { score: number; potential: number; threshold?: number }) {

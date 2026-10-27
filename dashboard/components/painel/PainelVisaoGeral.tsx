@@ -20,6 +20,7 @@ import {
 } from "@/lib/engine-api";
 
 import { CostMeter } from "./CostMeter";
+import { TA_WARN_SECONDS, apiDownLabel, fmtMMSS, pauseReasonLabel } from "./PainelStatusBar";
 import { useCurrency } from "./currency";
 import type { PainelViewKey, RegistrosTab } from "./nav";
 
@@ -33,8 +34,6 @@ import type { PainelViewKey, RegistrosTab } from "./nav";
 
 const AGGREGATE_REFETCH_MS = 60_000;
 const TA_REFETCH_MS = 30_000;
-/** TA session expiry warn band (seconds), same 5 min as the status bar. */
-const TA_WARN_SECONDS = 5 * 60;
 const LLM_WINDOW_HOURS = 24;
 
 const MODE_PILL: Record<EngineMode, { label: string; bg: string; fg: string }> = {
@@ -53,27 +52,6 @@ const nf = (n: number) => n.toLocaleString("pt-BR");
 
 function hhmm(iso: string): string {
   return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-}
-
-function mmss(seconds: number): string {
-  const t = Math.max(0, Math.floor(seconds));
-  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
-}
-
-// Same wording as the board's API-sync strip.
-function apiDownLabel(reason?: string | null): string {
-  if (reason === "ingest:401" || reason === "ingest:403") return "recusou o token de ingestão (expirado?)";
-  if (reason === "ingest:404") return "sem a rota de ingestão (branch errada?)";
-  if (reason?.startsWith("unhealthy")) return "com dependência fora (health 503)";
-  return "fora do ar";
-}
-
-// Same wording as the status bar's pause banner.
-function pauseLabel(r: { reason: string; provider: string | null }): string {
-  if (r.reason === "daily_budget") return "Motor pausado: orçamento diário atingido";
-  if (r.reason === "manual") return "Motor pausado: backfill interrompido";
-  if (r.provider) return `Motor pausado: sem saldo (${r.provider})`;
-  return "Motor pausado: sem saldo";
 }
 
 type Severity = "crit" | "warn" | "info";
@@ -132,7 +110,7 @@ function buildAttention(
     items.push({
       id: "pause",
       sev: "warn",
-      title: pauseLabel(s.pause_reason),
+      title: pauseReasonLabel(s.pause_reason),
       detail: `Desde ${hhmm(s.pause_reason.at)}. Retome em “Continuar”, na barra de status.`,
       action: s.pause_reason.reason === "manual" ? undefined : view("Ver tetos", "custo"),
     });
@@ -144,7 +122,7 @@ function buildAttention(
         ? "Sessão TripAdvisor precisa de bootstrap"
         : "Sessão TripAdvisor expirada"
       : expiring
-        ? `Sessão TripAdvisor expira em ${mmss(ta.expires_in as number)}`
+        ? `Sessão TripAdvisor expira em ${fmtMMSS(ta.expires_in as number)}`
         : null;
     if (title)
       items.push({

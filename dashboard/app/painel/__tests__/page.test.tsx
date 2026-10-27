@@ -1,8 +1,9 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { atrativosCountByRouting, failureCardsSuccess } from "@/mocks/handlers/atrativos";
+import { configGetSuccess } from "@/mocks/handlers/config";
 import { costSuccess } from "@/mocks/handlers/cost";
 import { dedupPairsEmpty } from "@/mocks/handlers/dedup";
 import { engineStatus, taSessionStatus } from "@/mocks/handlers/engine";
@@ -25,6 +26,7 @@ beforeEach(() => {
     failureCardsSuccess(),
     dedupPairsEmpty(),
     costSuccess(),
+    configGetSuccess(),
   );
 });
 
@@ -49,5 +51,23 @@ describe("/painel page", () => {
 
     // The old kanban is not reachable.
     expect(screen.queryByTestId("painel-view")).not.toBeInTheDocument();
+  });
+  it("Visão geral tiles open the Registros tab and attention actions open their view", async () => {
+    server.use(
+      engineStatus({
+        mode: "PAUSADO",
+        pause_reason: { reason: "provider_balance", provider: "google_places", action: "sweep", at: "2026-10-26T18:00:00Z" },
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelPage />);
+
+    await user.click(await screen.findByTestId("tile-mar"));
+    expect(screen.getByTestId("painel-registros")).toHaveAttribute("data-tab", "mar");
+
+    await user.click(screen.getByTestId("painel-nav-item-visao"));
+    const pause = await screen.findByTestId("attention-pause");
+    await user.click(within(pause).getByRole("button"));
+    expect(screen.getByTestId("painel-topbar")).toHaveTextContent("Custo & LLM");
   });
 });
