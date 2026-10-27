@@ -41,7 +41,7 @@ const VIEW_HEADERS: Record<
   },
   registros: {
     title: "Registros",
-    subtitle: "Revisão, Mar e Falha agrupados pelo que falta para avançar",
+    subtitle: "Revisão, Mar e Falha: lista por etapa, filtrável por UF",
   },
   duplicados: {
     title: "Duplicados",

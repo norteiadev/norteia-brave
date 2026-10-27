@@ -3,9 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PainelVisaoGeral } from "@/components/painel/PainelVisaoGeral";
+import { CurrencyProvider, CurrencySwitch } from "@/components/painel/currency";
 import type { EngineStatus } from "@/lib/engine-api";
-import { failureCardsSuccess, sampleFailureCards } from "@/mocks/handlers/atrativos";
-import { costSuccess } from "@/mocks/handlers/cost";
+import {
+  atrativosCountByRouting,
+  failureCardsSuccess,
+  sampleFailureCards,
+} from "@/mocks/handlers/atrativos";
+import { costError, costSuccess } from "@/mocks/handlers/cost";
 import { engineStatus, taSessionStatus } from "@/mocks/handlers/engine";
 import { server } from "@/mocks/server";
 
@@ -26,17 +31,27 @@ const calm: Partial<EngineStatus> = {
   pause_reason: null,
 };
 
-function setup(status: Partial<EngineStatus> = calm, ta = {}) {
+/** `atrativos`: the GET /atrativos?routing= totals (atrativos only, no destinos). */
+function setup(
+  status: Partial<EngineStatus> = calm,
+  ta = {},
+  atrativos = { dlq: 0, mar: 412 },
+  cost = costSuccess(),
+) {
   server.use(
     engineStatus(status),
     taSessionStatus(ta),
     failureCardsSuccess(),
-    costSuccess(),
+    cost,
+    atrativosCountByRouting(atrativos),
   );
   const onOpenRegistros = vi.fn();
   const onOpenView = vi.fn();
   renderWithClient(
-    <PainelVisaoGeral onOpenRegistros={onOpenRegistros} onOpenView={onOpenView} />,
+    <CurrencyProvider>
+      <CurrencySwitch />
+      <PainelVisaoGeral onOpenRegistros={onOpenRegistros} onOpenView={onOpenView} />
+    </CurrencyProvider>,
   );
   return { onOpenRegistros, onOpenView };
 }
@@ -46,8 +61,9 @@ const attention = () => screen.getByRole("region", { name: "Precisa de atenção
 beforeEach(() => window.localStorage.clear());
 
 describe("PainelVisaoGeral", () => {
-  it("renders the pipeline tiles from engine status and the failure cards", async () => {
-    setup({ ...calm, counts: { ...counts, rio: { ...counts.rio, dlq: 2859 } } });
+  it("renders the pipeline tiles; Revisão and Mar count the atrativos their tab lists", async () => {
+    // engine/status counts every entity type (destinos included).
+    setup({ ...calm, counts: { ...counts, rio: { ...counts.rio, dlq: 3100 }, mar: 980 } }, {}, { dlq: 2859, mar: 412 });
 
     const pipeline = await screen.findByRole("region", { name: "Pipeline" });
     await waitFor(() => expect(within(pipeline).getByTestId("tile-nascente")).toHaveTextContent("5.120"));
@@ -152,7 +168,11 @@ describe("PainelVisaoGeral", () => {
 
   it("flags records waiting in Revisão and opens that tab", async () => {
     const user = userEvent.setup();
-    const { onOpenRegistros } = setup({ ...calm, counts: { ...counts, rio: { ...counts.rio, dlq: 8 } } });
+    const { onOpenRegistros } = setup(
+      { ...calm, counts: { ...counts, rio: { ...counts.rio, dlq: 11 } } },
+      {},
+      { dlq: 8, mar: 412 },
+    );
 
     const item = await within(attention()).findByTestId("attention-revisao");
     expect(item).toHaveTextContent("8 registros esperando revisão");
@@ -189,5 +209,29 @@ describe("PainelVisaoGeral", () => {
     await waitFor(() => expect(cost).toHaveTextContent("US$ 7,6577"));
     expect(within(cost).getByTestId("cap-places-today")).toHaveTextContent("US$ 12,50");
     expect(within(cost).getByTestId("cap-apify-today")).toHaveTextContent("US$ 0,40");
+  });
+
+  it("re-renders every cost value when the operator switches to reais", async () => {
+    const user = userEvent.setup();
+    setup();
+    const cost = await screen.findByRole("region", { name: "Custo" });
+    await waitFor(() => expect(cost).toHaveTextContent("US$ 7,6577"));
+
+    await user.click(screen.getByRole("button", { name: "Real" }));
+    expect(cost).not.toHaveTextContent("US$");
+    // 7.6577 × 5,42 and 12.50 × 5,42.
+    expect(cost.textContent?.replace(/\u00a0/g, " ")).toContain("R$ 41,5047");
+    expect(within(cost).getByTestId("cap-places-today").textContent?.replace(/\u00a0/g, " ")).toContain("R$ 67,75");
+  });
+
+  it("says when the cost failed to load, with a retry", async () => {
+    const user = userEvent.setup();
+    setup(calm, {}, undefined, costError());
+    const cost = await screen.findByRole("region", { name: "Custo" });
+
+    expect(await within(cost).findByRole("alert")).toHaveTextContent("Não foi possível carregar o custo.");
+    server.use(costSuccess());
+    await user.click(within(cost).getByRole("button", { name: "Tentar de novo" }));
+    await waitFor(() => expect(cost).toHaveTextContent("US$ 7,6577"));
   });
 });

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PainelDuplicados } from "@/components/painel/PainelDuplicados";
 import {
   dedupPairsEmpty,
+  dedupPairsError,
   dedupPairsSuccess,
   dedupResolveSuccess,
   sampleDedupPairs,
@@ -151,6 +152,48 @@ describe("PainelDuplicados", () => {
 
     expect(resolves).toHaveLength(0);
     expect(screen.getAllByTestId("dedup-pair")).toHaveLength(2);
+  });
+
+  it("keeps a resolved pair hidden after leaving and coming back inside the window, and sends one resolve", async () => {
+    const first = renderDup();
+    await screen.findAllByTestId("dedup-pair");
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    fireEvent.click(screen.getByRole("button", { name: "Descartar candidato" }));
+    await advance(100);
+    first.unmount(); // the operator switches view; the commit stays pending
+
+    renderDup();
+    await vi.waitFor(async () => {
+      await advance(50);
+      expect(screen.getAllByTestId("dedup-pair")).toHaveLength(1);
+    });
+    expect(screen.getByTestId("dedup-detail")).toHaveTextContent("Salvador");
+    expect(resolves).toHaveLength(0);
+
+    await advance(6_500);
+    await vi.waitFor(() => expect(resolves).toHaveLength(1));
+    expect(resolves[0].id).toBe("cand-ce-praca");
+  });
+
+  it("says when the server compared only the first candidates", async () => {
+    server.use(dedupPairsSuccess(sampleDedupPairs, 1_200));
+    renderDup();
+
+    expect(await screen.findByTestId("dedup-truncated")).toHaveTextContent(
+      "Só os primeiros 500 de 1.200 candidatos pendentes foram comparados",
+    );
+    expect(requests.some((r) => r.url.includes("limit=500"))).toBe(true);
+  });
+
+  it("shows a failed load as an error with a retry, not as loading", async () => {
+    server.use(dedupPairsError());
+    renderDup();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível carregar os pares.");
+    server.use(dedupPairsEmpty());
+    fireEvent.click(screen.getByRole("button", { name: "Tentar de novo" }));
+    await screen.findByTestId("dedup-empty");
   });
 
   it("renders the empty state when there are no pending pairs", async () => {

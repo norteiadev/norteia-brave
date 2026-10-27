@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { fetchFailureCards } from "@/lib/atrativos-api";
+import { atrativoCountQuery, fetchFailureCards } from "@/lib/atrativos-api";
 import { type CostData, costKeys, fetchCost, totalUsd } from "@/lib/cost-api";
 import {
   DEPTH_LABELS,
@@ -22,12 +22,15 @@ import {
 import { CostMeter } from "./CostMeter";
 import { TA_WARN_SECONDS, apiDownLabel, fmtMMSS, pauseReasonLabel } from "./PainelStatusBar";
 import { useCurrency } from "./currency";
+import { LoadError } from "./telas-ui";
 import type { PainelViewKey, RegistrosTab } from "./nav";
 
 /**
  * Visão geral (#82 Phase 0): only the parts the current API backs. The run card,
  * the attention list and the pipeline tiles read GET /engine/status (+ TA session
- * and failure cards); the cost block reads GET /cost. Hidden until their data
+ * and failure cards); the cost block reads GET /cost. The clickable Revisão and
+ * Mar tiles count atrativos (the list total the Registros tab they open shows),
+ * not engine/status, whose Rio/Mar counts include destinos. Hidden until their data
  * source exists (Phase 1+): hourly Rio chart, live feed, Revisão reasons, UF
  * coverage, sync steps, page X of Y, ETA and pace.
  */
@@ -67,13 +70,14 @@ interface Attention {
 const SEV: Record<Severity, { label: string; bar: string; ink: string }> = {
   crit: { label: "Crítico", bar: "var(--falha)", ink: "var(--falha-ink)" },
   warn: { label: "Atenção", bar: "var(--dlq)", ink: "var(--dlq-ink)" },
-  info: { label: "Info", bar: "var(--rio)", ink: "var(--rio)" },
+  info: { label: "Info", bar: "var(--rio)", ink: "var(--navy)" },
 };
 
 /** The attention list, built only from real signals, most severe first. */
 function buildAttention(
   s: EngineStatus | undefined,
   ta: TASessionStatus | undefined,
+  revisao: number | undefined,
   openTab: (tab: RegistrosTab) => void,
   openView?: (key: PainelViewKey) => void,
 ): Attention[] {
@@ -111,7 +115,7 @@ function buildAttention(
       id: "pause",
       sev: "warn",
       title: pauseReasonLabel(s.pause_reason),
-      detail: `Desde ${hhmm(s.pause_reason.at)}. Retome em “Continuar”, na barra de status.`,
+      detail: `Desde ${hhmm(s.pause_reason.at)}. Retome em “Continuar”, no aviso de pausa no topo.`,
       action: s.pause_reason.reason === "manual" ? undefined : view("Ver tetos", "custo"),
     });
   if (ta) {
@@ -141,7 +145,7 @@ function buildAttention(
       detail: `${b.error_type} às ${hhmm(b.at)}.`,
       action: view("Ver monitor", "monitor"),
     });
-  const dlq = s?.counts.rio.dlq ?? 0;
+  const dlq = revisao ?? 0;
   if (dlq > 0)
     items.push({
       id: "revisao",
@@ -178,13 +182,20 @@ export function PainelVisaoGeral({
     select: (cards) => cards.length,
     refetchInterval: AGGREGATE_REFETCH_MS,
   });
-  const { data: cost } = useQuery({
+  // Same keys as the sidebar badges and the Registros tabs: one number per queue.
+  const { data: revisao } = useQuery({ ...atrativoCountQuery("dlq"), refetchInterval: AGGREGATE_REFETCH_MS });
+  const { data: mar } = useQuery({ ...atrativoCountQuery("mar"), refetchInterval: AGGREGATE_REFETCH_MS });
+  const {
+    data: cost,
+    isError: costError,
+    refetch: refetchCost,
+  } = useQuery({
     queryKey: costKeys.data("lane", LLM_WINDOW_HOURS),
     queryFn: () => fetchCost("lane", LLM_WINDOW_HOURS),
     refetchInterval: AGGREGATE_REFETCH_MS,
   });
 
-  const attention = status ? buildAttention(status, ta, onOpenRegistros, onOpenView) : [];
+  const attention = status ? buildAttention(status, ta, revisao, onOpenRegistros, onOpenView) : [];
 
   return (
     <div data-testid="painel-visao-geral" className="flex h-full flex-col gap-4 overflow-y-auto px-[22px] pb-7 pt-[18px]">
@@ -208,7 +219,7 @@ export function PainelVisaoGeral({
           <h2 className="text-[13.5px] font-semibold text-[var(--ink)]">Pipeline</h2>
           <span className="text-[12px] text-[var(--ink-3)]">clique numa etapa para abrir os registros</span>
         </div>
-        <PipelineTiles status={status} falha={falha} onOpen={onOpenRegistros} />
+        <PipelineTiles status={status} revisao={revisao} mar={mar} falha={falha} onOpen={onOpenRegistros} />
       </section>
 
       <Panel
@@ -216,7 +227,11 @@ export function PainelVisaoGeral({
         hint="LLM nas últimas 24 h · Places e Apify no dia UTC e no total"
         className="lg:max-w-[560px]"
       >
-        {cost ? <CostBlock data={cost} /> : null}
+        {cost ? (
+          <CostBlock data={cost} />
+        ) : costError ? (
+          <LoadError what="o custo" onRetry={() => void refetchCost()} />
+        ) : null}
       </Panel>
     </div>
   );
@@ -363,10 +378,14 @@ interface TileDef {
 
 function PipelineTiles({
   status,
+  revisao,
+  mar,
   falha,
   onOpen,
 }: {
   status: EngineStatus | undefined;
+  revisao: number | undefined;
+  mar: number | undefined;
   falha: number | undefined;
   onOpen: (tab: RegistrosTab) => void;
 }) {
@@ -379,16 +398,16 @@ function PipelineTiles({
       id: "revisao",
       label: "Revisão",
       color: "var(--dlq)",
-      value: c?.rio.dlq,
-      meta: "na fila de revisão",
+      value: revisao,
+      meta: "atrativos na fila de revisão",
       tab: "revisao",
-      tone: c?.rio.dlq ? "attn" : undefined,
+      tone: revisao ? "attn" : undefined,
     },
     {
       id: "mar",
       label: "Mar",
       color: "var(--mar)",
-      value: c?.mar,
+      value: mar,
       meta: api ? (
         <>
           <b className="font-semibold text-[var(--ink)]">{nf(api.pending)}</b> pendentes ·{" "}

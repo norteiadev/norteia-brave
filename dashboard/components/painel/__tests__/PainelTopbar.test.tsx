@@ -309,6 +309,26 @@ describe("PainelTopbar", () => {
     );
   });
 
+  it("re-opening the motor menu closes the start popover, and picking Ligado again keeps it open", async () => {
+    server.use(
+      engineStatus({ source: "tripadvisor", enabled: false, state: "idle", mode: "DESLIGADO" }),
+      taSessionStatus({ present: true, expires_in: 1200 }),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+
+    await pickMode(user, "painel-motor-ligar");
+    await screen.findByTestId("painel-depth-menu");
+
+    // The mode menu opens at the same anchor: never stacked over the popover.
+    await user.click(screen.getByTestId("painel-motor-btn"));
+    expect(screen.getByRole("menu", { name: "Modo do motor" })).toBeInTheDocument();
+    expect(screen.queryByTestId("painel-depth-menu")).toBeNull();
+
+    await user.click(screen.getByTestId("painel-motor-ligar"));
+    expect(await screen.findByTestId("painel-depth-menu")).toBeInTheDocument();
+  });
+
   it("opening the depth menu without picking does NOT fire POST /start", async () => {
     let startCalled = false;
     server.use(

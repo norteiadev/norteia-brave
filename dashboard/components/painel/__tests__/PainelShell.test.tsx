@@ -42,8 +42,17 @@ beforeEach(() => {
   window.localStorage.clear();
   server.use(
     atrativosCountByRouting({ dlq: 2859, mar: 412 }),
-    failureCardsSuccess(),
-    dedupPairsSuccess(),
+    failureCardsSuccess([
+      ...sampleFailureCards,
+      // Destinos are out of this lane: never counted under Falha.
+      {
+        ...sampleFailureCards[0],
+        source_ref: "tripadvisor:destination:1",
+        entity_type: "destination",
+      },
+    ]),
+    // `total` counts every pending Rio candidate, not pairs.
+    dedupPairsSuccess(sampleDedupPairs, 3_000),
   );
 });
 
@@ -99,9 +108,8 @@ describe("PainelShell", () => {
     expect(
       await screen.findByTestId("painel-nav-count-registros-falha"),
     ).toHaveTextContent(String(sampleFailureCards.length));
-    expect(await screen.findByTestId("painel-nav-count-duplicados")).toHaveTextContent(
-      String(sampleDedupPairs.length),
-    );
+    // No real pending-pair total until Phase 2: no Duplicados badge at all.
+    expect(screen.queryByTestId("painel-nav-count-duplicados")).toBeNull();
   });
 
   it("collapses to the symbol + icons, keeps accessible names, and remembers it across a remount", async () => {

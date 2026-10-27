@@ -87,6 +87,8 @@ describe("PainelConfig", () => {
     expect(env).toHaveTextContent("US$ 300,00");
     expect(env).toHaveTextContent("APIFY_TOTAL_USD_CAP");
     expect(env.querySelector("input")).toBeNull();
+    // env_file is read on container create: restart would keep the old cap.
+    expect(env).toHaveTextContent("docker compose up -d worker api");
   });
 
   it("blocks Salvar with a clear message while the weights do not sum to 100", async () => {

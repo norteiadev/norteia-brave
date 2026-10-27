@@ -5,12 +5,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { useCurrency } from "@/components/painel/currency";
-import {
-  Panel,
-  Pill,
-  Switch,
-  useUndoableCommit,
-} from "@/components/painel/telas-ui";
+import { Panel, Pill, Switch } from "@/components/painel/telas-ui";
+import { useDeferredCommit } from "@/components/painel/useDeferredCommit";
 import { SOURCE_LABELS } from "@/lib/engine-api";
 import {
   type AppConfigSnapshot,
@@ -133,7 +129,7 @@ function diff(draft: Form, base: Form): { lines: string[]; body: ConfigPatchBody
 
 export function PainelConfig() {
   const qc = useQueryClient();
-  const commit = useUndoableCommit();
+  const commit = useDeferredCommit();
   const { format } = useCurrency();
 
   const { data } = useQuery({ queryKey: configKeys.snapshot, queryFn: fetchConfig });
@@ -285,8 +281,8 @@ export function PainelConfig() {
               </div>
             ))}
             <p className="mt-3 text-[12px] text-[var(--ink-3)]">
-              Para mudar, edite o .env e rode{" "}
-              <span className="font-mono">docker compose restart worker api</span>.
+              Para mudar, edite o .env e recrie os serviços com{" "}
+              <span className="font-mono">docker compose up -d worker api</span> (restart não relê o .env).
             </p>
           </Panel>
         )}

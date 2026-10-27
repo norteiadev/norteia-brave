@@ -30,45 +30,6 @@ const BASE = "http://localhost:3000/api/api/v1/atrativos";
 // Failure Log endpoints live under the same double-prefix BFF mount.
 const FAILURES_BASE = "http://localhost:3000/api/api/v1/failures";
 
-export const sampleAtrativos: AtrativoListItem[] = [
-  {
-    id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-    entity_type: "attraction",
-    uf: "BA",
-    routing: "in_progress",
-    sub_state: "discovered",
-    score: null,
-    name: "Mercado Modelo",
-    source: "tripadvisor",
-    validation_pending: false,
-    description_pending: true,
-    mar_id: null,
-    parent_mar_id: "11111111-1111-1111-1111-111111111111",
-    contacts_summary: {
-      phone_masked: "**1234",
-      website: "https://mercadomodelo.ba.gov.br",
-    },
-  },
-  {
-    id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    entity_type: "attraction",
-    uf: "BA",
-    routing: "in_progress",
-    sub_state: "aguardando_consulta_whatsapp",
-    score: 68.5,
-    name: "Elevador Lacerda",
-    source: "tripadvisor",
-    validation_pending: true,
-    description_pending: false,
-    mar_id: null,
-    parent_mar_id: "11111111-1111-1111-1111-111111111111",
-    contacts_summary: {
-      phone_masked: "**5678",
-      website: null,
-    },
-  },
-];
-
 export const sampleAtrativoDetail: AtrativoDetail = {
   id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
   entity_type: "attraction",
@@ -180,28 +141,6 @@ export const sampleAtrativoDetail: AtrativoDetail = {
   score_version: "v1",
 };
 
-/** GET list — success. Supports sub_state + uf + parent_mar_id query param filtering. */
-export function atrativosListSuccess(items: AtrativoListItem[] = sampleAtrativos) {
-  return http.get(BASE, ({ request }) => {
-    const url = new URL(request.url);
-    const uf = url.searchParams.get("uf");
-    const sub_state = url.searchParams.get("sub_state");
-    const parent_mar_id = url.searchParams.get("parent_mar_id");
-
-    let filtered = items;
-    if (uf) filtered = filtered.filter((i) => i.uf === uf);
-    if (sub_state) filtered = filtered.filter((i) => i.sub_state === sub_state);
-    if (parent_mar_id) filtered = filtered.filter((i) => i.parent_mar_id === parent_mar_id);
-
-    return HttpResponse.json({
-      items: filtered,
-      total: filtered.length,
-      offset: 0,
-      limit: 50,
-    });
-  });
-}
-
 /**
  * GET list — envelope totals keyed by `?routing=` (the `limit=1` count queries
  * behind the sidebar badges). A routing absent from `totals` counts 0.
@@ -284,13 +223,6 @@ export function atrativoDescarteSuccess() {
 export function atrativoEditSuccess() {
   return http.patch(`${BASE}/:id/edit`, () =>
     HttpResponse.json({ status: "ok" }),
-  );
-}
-
-/** PATCH transition — success (generic audited stage transition, UI-PAINEL-2). */
-export function atrativoTransitionSuccess() {
-  return http.patch(`${BASE}/:id/transition`, () =>
-    HttpResponse.json({ status: "ok", routing: "dlq" }),
   );
 }
 
@@ -398,7 +330,6 @@ export function atrativosUnauthorized() {
 
 /** Default barrel: list+detail+mutations success. */
 export const atrativoHandlers = [
-  atrativosListSuccess(),
   atrativoDetailSuccess(),
   atrativoAdvanceSuccess(),
   atrativoDescarteSuccess(),

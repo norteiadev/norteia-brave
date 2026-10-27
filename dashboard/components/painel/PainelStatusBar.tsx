@@ -94,7 +94,7 @@ type TaState = "ok" | "expiring" | "expired" | "needs_bootstrap";
  * Seconds left, counted down locally every second from the last poll: the
  * server's expires_in is anchored to the query's dataUpdatedAt, clamped at 0.
  */
-function useRemaining(expiresIn: number | undefined, anchor: number): number | undefined {
+export function useRemaining(expiresIn: number | undefined, anchor: number): number | undefined {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (expiresIn == null) return;
@@ -250,17 +250,20 @@ const MOTOR_META: Record<
  * Arrows move (wrapping), Enter/Space select (native button), Esc closes and
  * returns focus, outside click closes. Every pick reaches onSelect — the
  * topbar decides (a desynced LIGADO must still recover via a cold start).
- * `children` renders inside the anchor (the cold-start popover).
+ * `children` renders inside the anchor (the cold-start popover); `onOpen` lets
+ * the owner close it, since both open at the same anchor.
  */
 export function MotorMenu({
   mode,
   disabled,
   onSelect,
+  onOpen,
   children,
 }: {
   mode: EngineMode;
   disabled: boolean;
   onSelect: (mode: EngineMode) => void;
+  onOpen?: () => void;
   children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -311,7 +314,10 @@ export function MotorMenu({
         aria-controls={open ? menuId : undefined}
         aria-label={`Motor ${meta.label}. Trocar modo`}
         disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (!open) onOpen?.();
+          setOpen(!open);
+        }}
         className="inline-flex h-[28px] items-center gap-[6px] rounded-[7px] px-[7px] text-[12px] font-semibold disabled:opacity-60"
         style={{ background: meta.bg, color: meta.fg }}
       >

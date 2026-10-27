@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import {
@@ -10,7 +10,9 @@ import {
   FalhaDetailPanel,
   Flag,
 } from "@/components/painel/RegistroDetail";
+import { usePainelTheme } from "@/components/painel/PainelShell";
 import { apiDownLabel } from "@/components/painel/PainelStatusBar";
+import { LoadError } from "@/components/painel/telas-ui";
 import type { RegistrosTab } from "@/components/painel/nav";
 import {
   AlertDialog,
@@ -23,6 +25,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  atrativoCountQuery,
   atrativoKeys,
   fetchAtrativoList,
   fetchFailureCards,
@@ -33,7 +36,6 @@ import {
   type PromoteBulkRunResult,
 } from "@/lib/atrativos-api";
 import { configKeys, fetchConfig } from "@/lib/config-api";
-import { dedupKeys, fetchDedupPairs } from "@/lib/dedup-api";
 import {
   ENGINE_REFETCH_INTERVAL_MS,
   engineKeys,
@@ -51,7 +53,10 @@ import { STAGE_LABELS, fmt1, scorePotential } from "@/lib/registros";
  * tabs, a dense list and a detail panel. Phase 0 runs on the current API:
  * the list has no server sort, search or motivo, so it is a flat list in the
  * server's order (no client-side fake grouping), filtered by UF server-side.
- * Stage age is not exposed by the API yet, so rows carry no age.
+ * Stage age is not exposed by the API yet, so rows carry no age. Neither is a
+ * per-row duplicate signal: GET /dedup/pairs pairs only one page of candidates,
+ * so a "Possível duplicado" flag would be missing on most real duplicates. It
+ * comes back with Phase 2's duplicate_place; until then, Duplicados is the queue.
  */
 
 const PAGE = 25;
@@ -68,14 +73,10 @@ const TABS: { key: RegistrosTab; label: string; sub: string; color: string }[] =
 const ROUTING = { revisao: "dlq", mar: "mar" } as const;
 
 /** Same key as the sidebar badge when no UF is set, so they share one request. */
-function countQuery(routing: "dlq" | "mar", uf: string) {
-  return {
-    queryKey: atrativoKeys.list(uf ? { count: routing, uf } : { count: routing }),
-    queryFn: () => fetchAtrativoList({ routing, limit: 1, uf: uf || undefined }),
-    select: (r: { total: number }) => r.total,
-    refetchInterval: LIST_REFETCH_MS,
-  };
-}
+const countQuery = (routing: "dlq" | "mar", uf: string) => ({
+  ...atrativoCountQuery(routing, uf),
+  refetchInterval: LIST_REFETCH_MS,
+});
 
 function ScoreBar({ score, potential, threshold }: { score: number; potential: number; threshold?: number }) {
   const t = threshold ?? 101;
@@ -157,6 +158,7 @@ function ApiSync({ api }: { api: NonNullable<EngineStatus["norteia_api"]> }) {
 /** Promover em lote: dry-run → confirm → real run, scoped to the UF filter. */
 function PromoverLote({ uf, locked, apiDown }: { uf: string; locked: boolean; apiDown: boolean }) {
   const qc = useQueryClient();
+  const theme = usePainelTheme();
   const [busy, setBusy] = useState(false);
   const [dry, setDry] = useState<PromoteBulkDryRunResult | null>(null);
   const scope = uf || null;
@@ -195,8 +197,8 @@ function PromoverLote({ uf, locked, apiDown }: { uf: string; locked: boolean; ap
         Promover em lote
       </button>
       <AlertDialog open={dry !== null} onOpenChange={(open) => !open && setDry(null)}>
-        {/* Portal renders outside the /painel subtree — re-scope the tokens. */}
-        <AlertDialogContent className="painel-light" data-testid="promover-lote-dialog">
+        {/* Portal renders outside the /painel subtree — re-scope the tokens and theme. */}
+        <AlertDialogContent className="painel-light" data-painel-theme={theme} data-testid="promover-lote-dialog">
           <AlertDialogHeader>
             <AlertDialogTitle>Promover {dry?.would_promote} atrativos para o Mar?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -277,14 +279,13 @@ export function PainelRegistros({
     queryKey: atrativoKeys.list({ registros: routing, uf, limit }),
     queryFn: () => fetchAtrativoList({ routing: routing!, uf: uf || undefined, limit }),
     enabled: routing !== null,
-    placeholderData: keepPreviousData,
+    // Keep the rows only while "Mostrar mais" grows `limit`: another tab or UF
+    // must never show the previous one's rows (or let them be acted on).
+    placeholderData: (prev, prevQuery) => {
+      const k = prevQuery?.queryKey[2] as { registros?: string | null; uf?: string } | undefined;
+      return k?.registros === routing && k?.uf === uf ? prev : undefined;
+    },
     refetchInterval: LIST_REFETCH_MS,
-  });
-  // "Possível duplicado" = the row is a pending candidate of a dedup pair.
-  const { data: dupIds } = useQuery({
-    queryKey: dedupKeys.pairs(),
-    queryFn: () => fetchDedupPairs(),
-    select: (r) => new Set(r.items.map((p) => p.candidate_rio_id)),
   });
 
   const atrativos = routing ? (list.data?.items ?? []) : [];
@@ -292,13 +293,17 @@ export function PainelRegistros({
   const total = routing ? list.data?.total : totals.falha;
   const ids = routing ? atrativos.map((a) => a.id) : falhas.map((f) => f.source_ref);
   const shown = ids.length;
+  const current = routing ? list : failures;
+  const more = total == null ? 0 : Math.min(STEP, MAX_LIMIT - limit, total - shown);
   const activeRow = atrativos.find((a) => a.id === active);
   const activeFalha = falhas.find((f) => f.source_ref === active);
 
   // J/K walk the list (and open the row), Esc closes the detail.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // A dialog or menu owns its keys (its Esc must not also close the detail).
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (document.querySelector("[role=dialog], [role=alertdialog], [role=menu]")) return;
       const target = e.target as HTMLElement | null;
       if (target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
       const k = e.key.toLowerCase();
@@ -404,9 +409,11 @@ export function PainelRegistros({
             </div>
           ) : null}
 
-          {shown === 0 ? (
+          {shown === 0 && current.isError ? (
+            <LoadError what="os registros" onRetry={() => void current.refetch()} />
+          ) : shown === 0 ? (
             <div className="px-4 py-10 text-center text-[var(--ink-3)]">
-              {(routing ? list.isPending : failures.isPending) ? "Carregando…" : "Nenhum registro nesta etapa."}
+              {current.isPending ? "Carregando…" : "Nenhum registro nesta etapa."}
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)]">
@@ -417,7 +424,6 @@ export function PainelRegistros({
                     a={a}
                     cls={rowCls(a.id)}
                     selected={active === a.id}
-                    duplicate={tab === "revisao" && (dupIds?.has(a.id) ?? false)}
                     threshold={score?.threshold_mar}
                     weight={tab === "revisao" ? score?.weight_validacao_humana : undefined}
                     onOpen={() => setActive(a.id)}
@@ -431,13 +437,13 @@ export function PainelRegistros({
                 <span>
                   Mostrando {shown.toLocaleString("pt-BR")} de {(total ?? shown).toLocaleString("pt-BR")}
                 </span>
-                {total != null && shown < total && limit < MAX_LIMIT ? (
+                {more > 0 ? (
                   <button
                     type="button"
                     className="font-semibold text-[var(--navy)] underline-offset-2 hover:underline"
                     onClick={() => setLimit((l) => Math.min(MAX_LIMIT, l + STEP))}
                   >
-                    Mostrar mais 50
+                    Mostrar mais {more}
                   </button>
                 ) : total != null && shown < total ? (
                   <span>Filtre por UF para ver o restante.</span>
@@ -455,7 +461,7 @@ export function PainelRegistros({
             <AtrativoDetailPanel
               key={activeRow.id}
               row={activeRow}
-              editable={tab === "revisao"}
+              editable={activeRow.routing === "dlq"}
               locked={locked}
               score={score}
             />
@@ -476,7 +482,6 @@ function AtrativoRow({
   a,
   cls,
   selected,
-  duplicate,
   threshold,
   weight,
   onOpen,
@@ -484,7 +489,6 @@ function AtrativoRow({
   a: AtrativoListItem;
   cls: string;
   selected: boolean;
-  duplicate: boolean;
   threshold?: number;
   weight?: number;
   onOpen: () => void;
@@ -511,7 +515,6 @@ function AtrativoRow({
       <div className="flex min-w-0 flex-wrap gap-1">
         {a.description_pending ? <Flag>Sem descrição</Flag> : null}
         {a.temporarily_closed ? <Flag tone="bad">Fechado temporariamente</Flag> : null}
-        {duplicate ? <Flag tone="warn">Possível duplicado</Flag> : null}
       </div>
     </div>
   );

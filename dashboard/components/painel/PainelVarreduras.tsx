@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { PainelOrigem } from "@/components/painel/PainelOrigem";
-import { TA_WARN_SECONDS, fmtMMSS } from "@/components/painel/PainelStatusBar";
+import { TA_WARN_SECONDS, fmtMMSS, useRemaining } from "@/components/painel/PainelStatusBar";
 import {
   Btn,
   Kpi,
@@ -404,23 +404,29 @@ function NovaVarredura() {
 
 function SessaoTA() {
   const [open, setOpen] = useState(false);
-  const { data: s } = useSession();
+  const { data: s, dataUpdatedAt } = useSession();
 
-  const ttl = s?.present ? (s.expires_in ?? 0) : 0;
+  // Same local countdown (and states) as the status bar's TA pill, so the two
+  // readouts on this screen never disagree between polls.
+  const ttl = useRemaining(s?.present ? s.expires_in : undefined, dataUpdatedAt);
   const state: { tone: Tone; label: string } = !s
     ? { tone: "neutral", label: "Verificando" }
     : !s.present
-      ? { tone: "bad", label: "Sem sessão" }
-      : ttl <= 0
-        ? { tone: "bad", label: "Expirada" }
-        : ttl <= TA_WARN_SECONDS
-          ? { tone: "warn", label: "Expirando" }
-          : { tone: "ok", label: "Ativa" };
+      ? s.reason === "needs_bootstrap"
+        ? { tone: "warn", label: "Precisa bootstrap" }
+        : { tone: "bad", label: "Expirada" }
+      : ttl === undefined
+        ? { tone: "ok", label: "Ativa" }
+        : ttl <= 0
+          ? { tone: "bad", label: "Expirada" }
+          : ttl <= TA_WARN_SECONDS
+            ? { tone: "warn", label: "Expirando" }
+            : { tone: "ok", label: "Ativa" };
 
   return (
     <Panel title="Sessão TripAdvisor" right={<Pill tone={state.tone}>{state.label}</Pill>} testId="ta-session">
       <div className="flex flex-col gap-3">
-        {s?.present && (
+        {s?.present && ttl !== undefined && (
           <div className="flex items-baseline gap-2">
             <span className="font-mono text-[26px] font-semibold tracking-[-1px]">{fmtMMSS(ttl)}</span>
             <span className="text-[12px] text-[var(--ink-3)]">até expirar</span>

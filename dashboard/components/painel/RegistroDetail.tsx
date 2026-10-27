@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { useDeferredCommit } from "@/components/painel/useDeferredCommit";
+import { useDeferredCommit, usePendingCommits } from "@/components/painel/useDeferredCommit";
 import {
   atrativoKeys,
   editAtrativo,
@@ -109,17 +109,20 @@ function Timeline({ events }: { events: RecordEvent[] }) {
   );
 }
 
-function Field({ id, label, value }: { id: string; label: string; value: ReactNode | null }) {
-  const missing = value == null;
+/** A null value reads "ausente" in red, unless `unknown` says the API cannot tell yet. */
+function Field({ id, label, value, unknown }: { id: string; label: string; value: ReactNode | null; unknown?: string }) {
+  const missing = value == null && !unknown;
   return (
     <>
       <dt className="text-[var(--ink-3)]">{label}</dt>
       <dd
         data-testid={`registros-field-${id}`}
         data-missing={missing ? "true" : undefined}
-        className={`m-0 min-w-0 [overflow-wrap:anywhere] ${missing ? "text-[var(--falha-ink)]" : ""}`}
+        className={`m-0 min-w-0 [overflow-wrap:anywhere] ${
+          missing ? "text-[var(--falha-ink)]" : value == null ? "text-[var(--ink-3)]" : ""
+        }`}
       >
-        {missing ? "ausente" : value}
+        {value ?? unknown ?? "ausente"}
       </dd>
     </>
   );
@@ -147,6 +150,10 @@ export function AtrativoDetailPanel({
 }) {
   const qc = useQueryClient();
   const commit = useDeferredCommit();
+  // One pending action per record: a second click (or a change of mind) inside
+  // the undo window would schedule a second PATCH. Undo is the way back.
+  const commitKey = `atrativo:${row.id}`;
+  const busy = usePendingCommits().has(commitKey);
   const [editing, setEditing] = useState<Record<EditKey, string> | null>(null);
   const { data: d } = useQuery({
     queryKey: atrativoKeys.detail(row.id),
@@ -160,7 +167,12 @@ export function AtrativoDetailPanel({
     void qc.invalidateQueries({ queryKey: engineKeys.status });
   };
   const move = (to: "mar" | "descarte", message: string) =>
-    commit({ message, run: () => transition("atrativo", row.id, { to, expected: "dlq" }), onDone: refresh });
+    commit({
+      key: commitKey,
+      message,
+      run: () => transition("atrativo", row.id, { to, expected: "dlq" }),
+      onDone: refresh,
+    });
 
   const current: Record<EditKey, string> = {
     name: name ?? "",
@@ -175,7 +187,7 @@ export function AtrativoDetailPanel({
     );
     setEditing(null);
     if (Object.keys(fields).length === 0) return void toast("Nada mudou.");
-    commit({ message: `Edição de ${label} salva.`, run: () => editAtrativo(row.id, fields), onDone: refresh });
+    commit({ key: commitKey, message: `Edição de ${label} será salva.`, run: () => editAtrativo(row.id, fields), onDone: refresh });
   };
 
   const reason = explainReason(d?.dlq_reason ?? null, score?.weight_validacao_humana ?? 0);
@@ -265,7 +277,14 @@ export function AtrativoDetailPanel({
               <Field id="address" label="Endereço" value={str(n.address)} />
               <Field id="hours" label="Horário" value={hours.length ? hours.map((h) => <span key={h} className="block">{h}</span>) : null} />
               <Field id="site" label="Site" value={site} />
-              <Field id="phone" label="Telefone" value={row.contacts_summary?.phone_masked ? <span className="font-mono">{row.contacts_summary.phone_masked}</span> : null} />
+              {/* Only the backend-masked contact phone. The Places/TA phone lives unmasked
+                  in normalized.phone (masked from Phase 1), so null is not "ausente". */}
+              <Field
+                id="phone"
+                label="Telefone"
+                value={row.contacts_summary?.phone_masked ? <span className="font-mono">{row.contacts_summary.phone_masked}</span> : null}
+                unknown="não exibido (mascaramento pendente)"
+              />
               <Field id="last-review" label="Última review" value={lastReview ? new Date(lastReview).toLocaleDateString("pt-BR") : null} />
               <Field id="reviews" label="Nº de reviews" value={reviews != null ? reviews.toLocaleString("pt-BR") : null} />
               <Field id="rating" label="Nota" value={rating != null ? rating.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) : null} />
@@ -303,7 +322,7 @@ export function AtrativoDetailPanel({
               </label>
             ))}
             <div className="flex gap-2">
-              <button type="submit" className={BTN_PRIMARY} disabled={locked}>Salvar</button>
+              <button type="submit" className={BTN_PRIMARY} disabled={locked || busy}>Salvar</button>
               <button type="button" className={BTN} onClick={() => setEditing(null)}>Cancelar</button>
             </div>
           </form>
@@ -318,16 +337,16 @@ export function AtrativoDetailPanel({
 
       {editable ? (
         <div className="sticky bottom-0 mt-auto flex flex-wrap gap-2 border-t border-[var(--line)] bg-[var(--surface)] px-[18px] py-3">
-          <button type="button" className={BTN_PRIMARY} disabled={locked} onClick={() => move("mar", `${label} vai para o Mar.`)}>
+          <button type="button" className={BTN_PRIMARY} disabled={locked || busy} onClick={() => move("mar", `${label} vai para o Mar.`)}>
             Promover ao Mar
           </button>
-          <button type="button" className={BTN} disabled={locked || !d} onClick={() => setEditing(current)}>
+          <button type="button" className={BTN} disabled={locked || busy || !d} onClick={() => setEditing(current)}>
             Editar
           </button>
           <button
             type="button"
             className={`${BTN} text-[var(--falha-ink)]`}
-            disabled={locked}
+            disabled={locked || busy}
             onClick={() => move("descarte", `${label} descartado.`)}
           >
             Descartar
@@ -335,6 +354,10 @@ export function AtrativoDetailPanel({
           {locked ? (
             <span className="basis-full text-[11.5px] text-[var(--dlq-ink)]">
               Motor ligado: pause para promover, editar ou descartar.
+            </span>
+          ) : busy ? (
+            <span data-testid="registros-pending" className="basis-full text-[11.5px] text-[var(--ink-3)]">
+              Ação agendada. Para mudar de ideia, use “Desfazer” no aviso.
             </span>
           ) : null}
         </div>

@@ -7,7 +7,6 @@ import type {
   EngineStatus,
   TASessionStatus,
 } from "@/lib/engine-api";
-import type { NascenteListItem } from "@/lib/nascente-api";
 
 /**
  * MSW handlers for the collection-engine slice (offline test harness).
@@ -16,7 +15,6 @@ import type { NascenteListItem } from "@/lib/nascente-api";
 
 const BASE = "http://localhost:3000/api/api/v1/engine";
 const TA_BASE = "http://localhost:3000/api/api/v1/tripadvisor";
-const NASCENTE_BASE = "http://localhost:3000/api/api/v1/nascente";
 
 /** The default /engine/status body (a stopped engine), for handlers that count hits. */
 export function engineStatusFixture(overrides: Partial<EngineStatus> = {}): EngineStatus {
@@ -110,27 +108,6 @@ export function taSessionStatus(overrides: Partial<TASessionStatus> = {}) {
 }
 
 /**
- * Nascente list handler (GET /api/v1/nascente) — the read-only board cards.
- * `total` defaults to items.length; pass it explicitly to drive the Nascente
- * column COUNT independently of the seeded card list (limit:1 count query).
- */
-export function nascenteList(items: NascenteListItem[] = [], total?: number) {
-  return http.get(`${NASCENTE_BASE}`, () =>
-    HttpResponse.json({
-      items,
-      total: total ?? items.length,
-      offset: 0,
-      limit: 500,
-    }),
-  );
-}
-
-/** Empty Nascente list (default). */
-export function nascenteEmpty() {
-  return nascenteList([], 0);
-}
-
-/**
  * MSW handler for POST /engine/source — the dedicated set-source endpoint.
  * Returns {source: <whatever was POSTed} with 200.
  */
@@ -148,5 +125,4 @@ export const engineHandlers = [
   engineStopSuccess(),
   engineModeSuccess(),
   taSessionStatus(),
-  nascenteEmpty(),
 ];

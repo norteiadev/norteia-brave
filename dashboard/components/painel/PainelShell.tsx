@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 
 import { PainelSidebar, type PainelTheme } from "./PainelSidebar";
 import type { PainelViewKey, RegistrosTab } from "./nav";
@@ -28,6 +28,11 @@ interface PainelShellProps {
 
 const THEMES = ["light", "dark"] as const;
 
+// Portaled content (dialogs) renders outside the shell's data-painel-theme
+// subtree; it re-applies the theme from here.
+const PainelThemeContext = createContext<PainelTheme>("light");
+export const usePainelTheme = () => useContext(PainelThemeContext);
+
 export function PainelShell({
   active,
   registrosTab,
@@ -52,8 +57,10 @@ export function PainelShell({
         />
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
-        {topbar}
-        <div className="relative min-h-0 flex-1">{children}</div>
+        <PainelThemeContext.Provider value={theme}>
+          {topbar}
+          <div className="relative min-h-0 flex-1">{children}</div>
+        </PainelThemeContext.Provider>
       </main>
     </div>
   );

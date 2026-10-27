@@ -2,11 +2,6 @@
 
 import type { ReactNode } from "react";
 
-import {
-  type DeferredCommit,
-  useDeferredCommit,
-} from "@/components/painel/useDeferredCommit";
-
 /**
  * POC building blocks (docs/poc/painel-redesign: .panel, .pill, .btn, .seg,
  * .kpi, .switch) shared by Varreduras, Duplicados and Configuração. Colors come
@@ -216,19 +211,18 @@ export function UfBadge({ uf }: { uf: string }) {
   );
 }
 
-/**
- * useDeferredCommit plus an undo signal. `onUndo` runs when the operator
- * clicked "Desfazer" (nothing was sent); `onError` when the request failed.
- */
-export function useUndoableCommit() {
-  const commit = useDeferredCommit();
-  return ({ run, onError, ...rest }: DeferredCommit & { onUndo: () => void; onError?: () => void }) =>
-    commit({
-      ...rest,
-      run: () =>
-        run().catch((err: unknown) => {
-          onError?.();
-          throw err; // the shared hook turns it into the explained toast
-        }),
-    });
+/** A failed load, said as such (never an empty list), with a retry. */
+export function LoadError({ what, onRetry }: { what: string; onRetry: () => void }) {
+  return (
+    <div role="alert" className="px-4 py-10 text-center text-[13px] text-[var(--falha-ink)]">
+      Não foi possível carregar {what}.{" "}
+      <button
+        type="button"
+        onClick={onRetry}
+        className="font-semibold text-[var(--navy)] underline-offset-2 hover:underline"
+      >
+        Tentar de novo
+      </button>
+    </div>
+  );
 }

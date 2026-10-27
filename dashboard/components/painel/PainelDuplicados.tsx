@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { Btn, Pill, UfBadge, useUndoableCommit } from "@/components/painel/telas-ui";
+import { Btn, LoadError, Pill, UfBadge } from "@/components/painel/telas-ui";
+import { useDeferredCommit, usePendingCommits } from "@/components/painel/useDeferredCommit";
 import {
   type DedupAction,
   type DedupDivergedField,
@@ -52,6 +53,8 @@ function similaritySourceLabel(source: string): string {
   return source;
 }
 
+const dedupCommitKey = (candidateRioId: string) => `dedup:${candidateRioId}`;
+
 const fmtSim = (s: number) =>
   s.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -63,45 +66,35 @@ function safeValue(d: DedupDivergedField, v: unknown): string | null {
 
 export function PainelDuplicados() {
   const qc = useQueryClient();
-  const commit = useUndoableCommit();
+  const commit = useDeferredCommit();
   const [uf, setUf] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
-  // Resolved inside the undo window (or kept): out of the list until undone.
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
+  // Resolved inside the undo window (or in flight): out of the list until
+  // undone. Module-level, so leaving and coming back keeps the pair hidden.
+  const pending = usePendingCommits();
 
-  const { data } = useQuery({
+  const { data, isError, refetch } = useQuery({
     queryKey: dedupKeys.pairs(uf || undefined),
     queryFn: () => fetchDedupPairs(uf || undefined),
   });
 
-  const pairs = (data?.items ?? []).filter((p) => !hidden.has(p.candidate_rio_id));
+  const pairs = (data?.items ?? []).filter((p) => !pending.has(dedupCommitKey(p.candidate_rio_id)));
   const active = pairs.find((p) => p.candidate_rio_id === activeId) ?? pairs[0];
-
-  const unhide = (id: string) =>
-    setHidden((h) => {
-      const next = new Set(h);
-      next.delete(id);
-      return next;
-    });
+  // The server pairs only the first `limit` candidates; say so when it cut some.
+  const truncated = data != null && data.total > data.limit;
 
   function resolve(pair: DedupPairItem, action: DedupAction) {
     const id = pair.candidate_rio_id;
     const i = pairs.indexOf(pair);
     setActiveId((pairs[i + 1] ?? pairs[i - 1])?.candidate_rio_id ?? null);
-    setHidden((h) => new Set(h).add(id));
     commit({
+      key: dedupCommitKey(id),
       message: ACTION_TOAST[action],
       run: () => resolveDedupPair(id, { action, mar_id: pair.mar_id }),
-      onDone: () => {
-        void qc.invalidateQueries({ queryKey: dedupKeys.all });
-        // "Manter ambos" only writes an audit row today: the pair comes back.
-        if (action === "keep") unhide(id);
-      },
-      onUndo: () => {
-        unhide(id);
-        setActiveId(id);
-      },
-      onError: () => unhide(id),
+      // "Manter ambos" only writes an audit row today: the pair comes back
+      // after this refetch.
+      onDone: () => qc.invalidateQueries({ queryKey: dedupKeys.all }),
+      onUndo: () => setActiveId(id),
     });
   }
 
@@ -127,10 +120,14 @@ export function PainelDuplicados() {
       </div>
 
       {!data ? (
-        <div className="px-4 py-10 text-center text-[13px] text-[var(--ink-3)]">
-          Carregando pares…
-        </div>
-      ) : pairs.length === 0 ? (
+        isError ? (
+          <LoadError what="os pares" onRetry={() => void refetch()} />
+        ) : (
+          <div className="px-4 py-10 text-center text-[13px] text-[var(--ink-3)]">
+            Carregando pares…
+          </div>
+        )
+      ) : pairs.length === 0 && !truncated ? (
         <div data-testid="dedup-empty" className="px-4 py-10 text-center text-[var(--ink-3)]">
           <div className="text-[14px] font-semibold text-[var(--ink-2)]">
             Nenhum duplicado pendente
@@ -145,6 +142,12 @@ export function PainelDuplicados() {
                 <span className="text-[13px] font-semibold">Pares para revisar</span>
                 <span className="font-mono text-[12px] text-[var(--ink-3)]">{pairs.length}</span>
               </div>
+              {truncated ? (
+                <p data-testid="dedup-truncated" className="m-0 border-t border-[var(--line-2)] px-3 py-2 text-[12px] text-[var(--dlq-ink)]">
+                  Só os primeiros {data.limit.toLocaleString("pt-BR")} de {data.total.toLocaleString("pt-BR")} candidatos
+                  pendentes foram comparados. Filtre por UF para ver o restante.
+                </p>
+              ) : null}
               <div role="listbox" aria-label="Pares suspeitos">
                 {pairs.map((p) => {
                   const sel = p === active;

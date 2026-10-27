@@ -20,7 +20,7 @@ export function explainError(err: unknown): string {
     // Edit-lock backstop: the server 423s every record mutation while the
     // Motor is LIGADO.
     if (err.status === 423)
-      return "Motor ligado — pause o motor para editar os cards.";
+      return "Motor ligado — pause o motor para promover, descartar ou editar registros.";
     return err.message;
   }
   return "Falha ao atualizar o registro.";

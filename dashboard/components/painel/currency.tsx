@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useId, useMemo, type ReactNode } from "react";
 
 import { FX_USD_BRL, formatFxDate, formatMoney, type Currency } from "@/lib/money";
 
@@ -47,33 +47,46 @@ const OPTIONS: { value: Currency; symbol: string; label: string }[] = [
   { value: "BRL", symbol: "R$", label: "Real" },
 ];
 
-/** US$ / R$ segmented switch; the tooltip shows the fixed rate and its date. */
+/**
+ * US$ / R$ segmented switch. In reais, the fixed rate and its date are shown
+ * next to it (not only in a hover title: touch and keyboard users see it too).
+ */
 export function CurrencySwitch() {
   const { currency, setCurrency, fx } = useCurrency();
+  const fxId = useId();
   const rate = fx.rate.toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+  const brl = currency === "BRL";
   return (
-    <div
-      role="group"
-      aria-label="Moeda"
-      title={`Câmbio fixo: R$ ${rate} por US$ 1 (definido em ${formatFxDate(fx.date)})`}
-      className="inline-flex overflow-hidden rounded-[7px] border border-[var(--line)] text-[11.5px] font-semibold"
-    >
-      {OPTIONS.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          aria-label={o.label}
-          aria-pressed={currency === o.value}
-          onClick={() => setCurrency(o.value)}
-          className={`px-[8px] py-[3px] ${
-            currency === o.value
-              ? "bg-[var(--surface-2)] text-[var(--ink)]"
-              : "text-[var(--ink-3)] hover:bg-[var(--surface-3)]"
-          }`}
-        >
-          {o.symbol}
-        </button>
-      ))}
-    </div>
+    <span className="inline-flex items-center gap-[6px]">
+      <div
+        role="group"
+        aria-label="Moeda"
+        aria-describedby={brl ? fxId : undefined}
+        title={`Câmbio fixo: R$ ${rate} por US$ 1 (definido em ${formatFxDate(fx.date)})`}
+        className="inline-flex overflow-hidden rounded-[7px] border border-[var(--line)] text-[11.5px] font-semibold"
+      >
+        {OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            aria-label={o.label}
+            aria-pressed={currency === o.value}
+            onClick={() => setCurrency(o.value)}
+            className={`px-[8px] py-[3px] ${
+              currency === o.value
+                ? "bg-[var(--surface-2)] text-[var(--ink)]"
+                : "text-[var(--ink-3)] hover:bg-[var(--surface-3)]"
+            }`}
+          >
+            {o.symbol}
+          </button>
+        ))}
+      </div>
+      {brl ? (
+        <span id={fxId} data-testid="currency-fx" className="whitespace-nowrap font-mono text-[11px] text-[var(--ink-3)]">
+          câmbio fixo R$ {rate} · {formatFxDate(fx.date)}
+        </span>
+      ) : null}
+    </span>
   );
 }

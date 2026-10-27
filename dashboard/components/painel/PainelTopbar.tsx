@@ -219,8 +219,8 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     prevEnabledRef.current = enabled;
   }, [data?.enabled, taBlocked]);
 
-  // Close the depth menu on any click outside its wrapper (Ligar included, so the
-  // Ligar toggle keeps working) or on Escape.
+  // Close the depth menu on any click outside its wrapper, on Escape, or when
+  // the mode menu opens over it (same anchor).
   const motorRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!depthMenuOpen) return;
@@ -252,9 +252,10 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
       setMode.mutate("LIGADO");
       return;
     }
-    // Engine is off — open the start popover. The R2 TA-session gate (taBlocked)
-    // only disables the Varredura section; Descrição needs no TA session.
-    setDepthMenuOpen((v) => !v);
+    // Engine is off — open the start popover (picking Ligado again keeps it
+    // open). The R2 TA-session gate (taBlocked) only disables the Varredura
+    // section; Descrição needs no TA session.
+    setDepthMenuOpen(true);
   };
 
   const onPausar = () => {
@@ -396,6 +397,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
             <MotorMenu
               mode={mode}
               disabled={pending}
+              onOpen={() => setDepthMenuOpen(false)}
               onSelect={(m) =>
                 m === "LIGADO" ? onLigar() : m === "PAUSADO" ? onPausar() : onDesligar()
               }

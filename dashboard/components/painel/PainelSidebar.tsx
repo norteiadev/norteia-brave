@@ -20,8 +20,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { atrativoKeys, fetchAtrativoList, fetchFailureCards } from "@/lib/atrativos-api";
-import { dedupKeys, fetchDedupPairs } from "@/lib/dedup-api";
+import { atrativoCountQuery, fetchFailureCards } from "@/lib/atrativos-api";
 import { engineKeys } from "@/lib/engine-api";
 
 import { NAV_GROUPS, type PainelNavItem, type PainelViewKey, type RegistrosTab } from "./nav";
@@ -65,41 +64,26 @@ const COUNT_REFETCH_MS = 60_000;
 
 /**
  * Work-waiting counts from data the API already returns: list-envelope totals
- * (limit 1), the failure-card list length and the dedup pair total. Keys match
- * the existing queries so mutations that invalidate them refresh the badges.
- * A count stays hidden while unknown (loading or error).
+ * (limit 1) and the failure-card list length. Keys match the existing queries
+ * so mutations that invalidate them refresh the badges. A count stays hidden
+ * while unknown (loading or error). Duplicados has no badge until the dedup
+ * endpoint returns a real pending-pair total (Phase 2): today's `total` counts
+ * every pending Rio candidate, not pairs.
  */
 function useNavCounts(): Partial<Record<string, number>> {
   const opts = { refetchInterval: COUNT_REFETCH_MS };
-  const revisao = useQuery({
-    ...opts,
-    queryKey: atrativoKeys.list({ count: "dlq" }),
-    queryFn: () => fetchAtrativoList({ routing: "dlq", limit: 1 }),
-    select: (r) => r.total,
-  });
-  const mar = useQuery({
-    ...opts,
-    queryKey: atrativoKeys.list({ count: "mar" }),
-    queryFn: () => fetchAtrativoList({ routing: "mar", limit: 1 }),
-    select: (r) => r.total,
-  });
+  const revisao = useQuery({ ...opts, ...atrativoCountQuery("dlq") });
+  const mar = useQuery({ ...opts, ...atrativoCountQuery("mar") });
   const falha = useQuery({
     ...opts,
     queryKey: engineKeys.failures,
     queryFn: () => fetchFailureCards(),
     select: (cards) => cards.length,
   });
-  const duplicados = useQuery({
-    ...opts,
-    queryKey: dedupKeys.pairs(),
-    queryFn: () => fetchDedupPairs(),
-    select: (r) => r.total,
-  });
   return {
     "registros-revisao": revisao.data,
     "registros-mar": mar.data,
     "registros-falha": falha.data,
-    duplicados: duplicados.data,
   };
 }
 

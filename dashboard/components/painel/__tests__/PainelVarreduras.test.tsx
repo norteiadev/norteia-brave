@@ -1,7 +1,7 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { Toaster } from "sonner";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PainelVarreduras } from "@/components/painel/PainelVarreduras";
 import { engineStatus, taSessionStatus } from "@/mocks/handlers/engine";
@@ -148,7 +148,7 @@ describe("PainelVarreduras", () => {
     renderVarreduras();
 
     await waitFor(() =>
-      expect(screen.getByTestId("ta-session")).toHaveTextContent("Sem sessão"),
+      expect(screen.getByTestId("ta-session")).toHaveTextContent("Precisa bootstrap"),
     );
     fireEvent.click(screen.getByRole("button", { name: "SE" }));
     expect(screen.getByRole("button", { name: "Iniciar varredura" })).toBeDisabled();
@@ -164,6 +164,23 @@ describe("PainelVarreduras", () => {
     const card = screen.getByTestId("ta-session");
     await waitFor(() => expect(card).toHaveTextContent("Expirando"));
     expect(card).toHaveTextContent("4:00");
+  });
+
+  it("counts the TTL down locally between polls, like the status bar", async () => {
+    server.use(taSessionStatus({ expires_in: 240 }));
+    // The 1 s ticker starts with the card: fake it (and the clock) from the start.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      renderVarreduras();
+      const card = screen.getByTestId("ta-session");
+      await waitFor(() => expect(card).toHaveTextContent("4:00"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(card).toHaveTextContent("3:57");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("opens the cURL injection dialog from the session card", async () => {

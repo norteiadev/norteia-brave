@@ -7,24 +7,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithClient } from "@/components/cms/__tests__/test-utils";
 import type { RegistrosTab } from "@/components/painel/nav";
 import { PainelRegistros } from "@/components/painel/PainelRegistros";
+import { PainelShell } from "@/components/painel/PainelShell";
 import type { AtrativoDetail, AtrativoListItem } from "@/lib/atrativos-api";
 import {
   atrativoDetailSuccess,
   atrativosByRouting,
   failureCardLogSuccess,
   failureCardsSuccess,
+  sampleFailureCards,
   promoteBulkDryRunSuccess,
   promoteBulkRunSuccess,
   promoteBulkZeroCandidates,
 } from "@/mocks/handlers/atrativos";
 import { configGetSuccess } from "@/mocks/handlers/config";
-import { dedupPairsSuccess, sampleDedupPairs } from "@/mocks/handlers/dedup";
 import { engineModeSuccess, engineStatus, marRepushSuccess } from "@/mocks/handlers/engine";
 import { server } from "@/mocks/server";
 
 const API = "http://localhost:3000/api/api/v1";
-const LOCKED_COPY = "Motor ligado — pause o motor para editar os cards.";
+const LOCKED_COPY = "Motor ligado — pause o motor para promover, descartar ou editar registros.";
 const RAW_PHONE = "+55 71 99999-0000";
+const RAW_CONTACT_PHONE = "+5571988887777";
+const RAW_EMAIL = "contato@mercado.example";
 
 function row(over: Partial<AtrativoListItem>): AtrativoListItem {
   return {
@@ -78,6 +81,7 @@ const DETAIL: AtrativoDetail = {
   normalized: {
     name: "Mercado Modelo",
     phone: RAW_PHONE,
+    contacts: { phone_e164: RAW_CONTACT_PHONE, email: RAW_EMAIL },
     address: "Praça Visconde de Cayru, 250",
     weekday_text: ["segunda-feira: 09:00–18:00", "terça-feira: 09:00–18:00"],
     website: "https://mercadomodelo.ba.gov.br",
@@ -114,7 +118,6 @@ beforeEach(() => {
   server.use(
     engineStatus(),
     configGetSuccess(),
-    dedupPairsSuccess([{ ...sampleDedupPairs[0], candidate_rio_id: "rio-1" }]),
     atrativosByRouting([...DLQ_ROWS, ...MAR_ROWS]),
     failureCardsSuccess(),
     atrativoDetailSuccess(DETAIL),
@@ -189,20 +192,33 @@ describe("Registros — tabs and list", () => {
     expect(first.getByText("Salvador · BA")).toBeInTheDocument();
     expect(first.getByText("Sem descrição")).toBeInTheDocument();
     expect(first.getByText("Fechado temporariamente")).toBeInTheDocument();
-    expect(first.getByText("Possível duplicado")).toBeInTheDocument();
     expect(first.getByText("61")).toBeInTheDocument();
-    // Only the Mercado is a pending dedup candidate.
-    expect(ui.getAllByText("Possível duplicado")).toHaveLength(1);
+    // The dedup endpoint pairs only one page of candidates: no partial
+    // "Possível duplicado" flag until Phase 2 (its absence would read as "not one").
+    expect(ui.queryByText("Possível duplicado")).toBeNull();
+    expect(count("GET /dedup")).toBe(0);
   });
 
-  it("'Mostrar mais 50' grows the page and shows N de TOTAL", async () => {
+  it("'Mostrar mais' grows the page by what is left and shows N de TOTAL", async () => {
     const ui = mount();
-    fireEvent.click(await ui.findByRole("button", { name: "Mostrar mais 50" }));
+    fireEvent.click(await ui.findByRole("button", { name: "Mostrar mais 5" }));
 
     await waitFor(() => expect(ui.getAllByTestId("registros-row")).toHaveLength(30));
     expect(count("GET /atrativos?routing=dlq&limit=75")).toBe(1);
     expect(ui.getByText("Mostrando 30 de 30")).toBeInTheDocument();
-    expect(ui.queryByRole("button", { name: "Mostrar mais 50" })).toBeNull();
+    expect(ui.queryByRole("button", { name: /Mostrar mais/ })).toBeNull();
+  });
+
+  it("a failed load says so with a retry, instead of an empty queue", async () => {
+    server.use(http.get(`${API}/atrativos`, () => HttpResponse.json({ detail: "boom" }, { status: 500 })));
+    const ui = mount();
+
+    expect(await ui.findByRole("alert")).toHaveTextContent("Não foi possível carregar os registros.");
+    expect(ui.queryByText("Nenhum registro nesta etapa.")).toBeNull();
+
+    server.use(atrativosByRouting([...DLQ_ROWS, ...MAR_ROWS]));
+    fireEvent.click(ui.getByRole("button", { name: "Tentar de novo" }));
+    expect(await ui.findByText("Mercado Modelo")).toBeInTheDocument();
   });
 
   it("filters by UF on the server", async () => {
@@ -256,6 +272,20 @@ describe("Registros — tabs and list", () => {
     expect(off.queryByTestId("api-sync-label")).toBeNull();
   });
 
+  it("Falha leaves destino quarantines out of the list and its count", async () => {
+    server.use(
+      failureCardsSuccess([
+        ...sampleFailureCards,
+        { ...sampleFailureCards[0], source_ref: "tripadvisor:destination:7", name: "Destino X", entity_type: "destination" },
+      ]),
+    );
+    const ui = mount("falha");
+
+    expect(await ui.findByText("Praia Do Bosque")).toBeInTheDocument();
+    expect(ui.queryByText("Destino X")).toBeNull();
+    expect(ui.getByTestId("registros-tab-count-falha")).toHaveTextContent("1");
+  });
+
   it("Falha lists the failure cards and opens the record's log", async () => {
     const ui = mount("falha");
 
@@ -275,6 +305,30 @@ describe("Registros — tabs and list", () => {
 
     expect(await ui.findByText("Farol da Barra")).toBeInTheDocument();
     expect(ui.getByRole("tab", { name: /Mar/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("a new tab never shows the previous tab's rows while it loads", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    server.use(
+      http.get(`${API}/atrativos`, async ({ request }) => {
+        const sp = new URL(request.url).searchParams;
+        const routing = sp.get("routing");
+        const rows = [...DLQ_ROWS, ...MAR_ROWS].filter((r) => r.routing === routing);
+        if (routing === "mar" && sp.get("limit") !== "1") await gate;
+        return HttpResponse.json({ items: rows.slice(0, Number(sp.get("limit"))), total: rows.length, offset: 0, limit: 25 });
+      }),
+    );
+    const ui = mount();
+    await ui.findByText("Mercado Modelo");
+    fireEvent.click(ui.getByRole("tab", { name: /Mar/ }));
+
+    expect(await ui.findByText("Carregando…")).toBeInTheDocument();
+    expect(ui.queryByText("Mercado Modelo")).toBeNull();
+    expect(ui.queryByText(/Mostrando/)).toBeNull();
+
+    release();
+    expect(await ui.findByText("Farol da Barra")).toBeInTheDocument();
   });
 });
 
@@ -306,13 +360,26 @@ describe("Registros — detail", () => {
     expect(detail.getByTestId("registros-field-description")).toHaveAttribute("data-missing", "true");
     expect(detail.getByTestId("registros-field-address")).not.toHaveAttribute("data-missing");
 
-    // LGPD: the raw normalized phone never reaches the screen.
+    // LGPD: the raw normalized phone and contacts never reach the screen.
     expect(ui.queryByText(RAW_PHONE, { exact: false })).toBeNull();
-    expect(document.body.textContent).not.toContain(RAW_PHONE);
+    for (const raw of [RAW_PHONE, RAW_CONTACT_PHONE, RAW_EMAIL]) {
+      expect(document.body.textContent).not.toContain(raw);
+    }
 
     const tl = within(detail.getByRole("list", { name: "Linha do tempo" }));
     expect(tl.getByText("Pontuado (confiabilidade)")).toBeInTheDocument();
     expect(tl.getByText("Roteado")).toBeInTheDocument();
+  });
+
+  it("a record without a masked contact phone is not marked as missing a phone", async () => {
+    const ui = mount();
+    fireEvent.click(await ui.findByText("Atrativo 2"));
+    const detail = within(ui.getByRole("complementary", { name: "Detalhe do registro" }));
+
+    const phone = await detail.findByTestId("registros-field-phone");
+    expect(phone).not.toHaveAttribute("data-missing");
+    expect(phone).toHaveTextContent("não exibido (mascaramento pendente)");
+    expect(document.body.textContent).not.toContain(RAW_PHONE);
   });
 
   it("explains the score-gate free text with the score embedded", async () => {
@@ -358,6 +425,26 @@ describe("Registros — single actions with undo", () => {
 
     fakeTimers();
     fireEvent.click(detail.getByRole("button", { name: "Promover ao Mar" }));
+    await expireWindow();
+
+    await waitFor(() => expect(count("PATCH /atrativos/rio-1/transition")).toBe(1));
+    expect(bodies("PATCH /atrativos/rio-1/transition")).toEqual([{ to: "mar", expected: "dlq" }]);
+  });
+
+  it("one pending action per record: a second click inside the window sends nothing more", async () => {
+    const ui = mount();
+    const detail = await openMercado(ui);
+    await detail.findByTestId("registros-motivo");
+    server.use(http.patch(`${API}/atrativos/:id/transition`, () => HttpResponse.json({ status: "ok" })));
+
+    fakeTimers();
+    fireEvent.click(detail.getByRole("button", { name: "Promover ao Mar" }));
+    for (const name of ["Promover ao Mar", "Editar", "Descartar"]) {
+      expect(detail.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(detail.getByTestId("registros-pending")).toHaveTextContent("Desfazer");
+    fireEvent.click(detail.getByRole("button", { name: "Promover ao Mar" }));
+    fireEvent.click(detail.getByRole("button", { name: "Descartar" }));
     await expireWindow();
 
     await waitFor(() => expect(count("PATCH /atrativos/rio-1/transition")).toBe(1));
@@ -497,6 +584,22 @@ describe("Registros — keyboard", () => {
     expect(within(aside).getByText(/Escolha um registro/)).toBeInTheDocument();
   });
 
+  it("leaves J/K and Esc to an open dialog", async () => {
+    server.use(promoteBulkDryRunSuccess());
+    const ui = mount();
+    const detail = await openMercado(ui);
+    fireEvent.click(ui.getByTestId("promover-lote-btn"));
+    const dialog = await ui.findByTestId("promover-lote-dialog");
+
+    fireEvent.keyDown(dialog, { key: "j" });
+    expect(ui.getAllByTestId("registros-row")[1]).toHaveAttribute("aria-selected", "false");
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(ui.queryByTestId("promover-lote-dialog")).toBeNull());
+    // Esc closed the dialog only, not the record behind it.
+    expect(detail.getByRole("heading", { name: "Mercado Modelo" })).toBeInTheDocument();
+  });
+
   it("ignores J/K while typing in a field", async () => {
     const ui = mount();
     await ui.findByText("Mercado Modelo");
@@ -531,6 +634,20 @@ describe("Registros — Promover em lote", () => {
       { uf: "BA", dry_run: true },
       { uf: "BA", dry_run: false },
     ]);
+  });
+
+  it("the confirm dialog follows the dark theme outside the shell subtree", async () => {
+    window.localStorage.setItem("brave.painelTheme", "dark");
+    server.use(promoteBulkDryRunSuccess(), atrativosByRouting([...DLQ_ROWS, ...MAR_ROWS]));
+    const ui = renderWithClient(
+      <PainelShell active="registros" registrosTab="revisao" onSelect={() => {}} topbar={null}>
+        <Harness />
+      </PainelShell>,
+    );
+    fireEvent.click(await ui.findByTestId("promover-lote-btn"));
+
+    expect(await ui.findByTestId("promover-lote-dialog")).toHaveAttribute("data-painel-theme", "dark");
+    window.localStorage.clear();
   });
 
   it("cancelling the confirm makes no second request", async () => {

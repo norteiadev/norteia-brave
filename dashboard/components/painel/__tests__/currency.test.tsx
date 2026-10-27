@@ -53,6 +53,9 @@ describe("currency switch", () => {
 
     expect(text(screen.getByTestId("today"))).toBe("R$ 159,56");
     expect(text(screen.getByTestId("cap"))).toBe("R$ 271");
+    // In reais the fixed rate and its date are on screen, not only in a tooltip.
+    expect(screen.getByTestId("currency-fx")).toBeVisible();
+    expect(text(screen.getByTestId("currency-fx"))).toBe("câmbio fixo R$ 5,42 · 26/10/2026");
     expect(screen.getByRole("button", { name: "Real" })).toHaveAttribute(
       "aria-pressed",
       "true",
