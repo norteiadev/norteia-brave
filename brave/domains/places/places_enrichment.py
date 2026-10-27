@@ -285,8 +285,10 @@ def _ta_nature_category(category: Any) -> bool:
 # steward: an adega can also be just a wine shop.
 _TA_DRINKS_CATEGORY_TERMS: tuple[str, ...] = ("adegas e vinicolas", "destilarias")
 _DRINKS_TYPES = frozenset({"liquor_store", "bar", "brewery", "winery"})
-# Agencies are forbidden in Norteia; on a place-to-visit card an agency match is a same-name
-# tour operator ("Cachoeira X Ecoturismo"), never the place: 111 natureza cards parked on one.
+# Agencies are forbidden in Norteia. An agency match on a place-to-visit card stays with a
+# steward (google_tipo_negocio): of the 139 parked 10/2026, ~115 cards ARE the agency (TA
+# files "Jeri Tur Brasil" under Parques nacionais) and only ~20 are a place with a same-name
+# operator — dropping the match would send the agencies on to a description and Mar.
 _AGENCY_TYPES = frozenset({"tour_agency", "travel_agency"})
 
 
@@ -298,12 +300,6 @@ def _drinks_tourism(category: Any, details: dict[str, Any]) -> bool:
         and not _AGENCY_TYPES & types
         and not _is_mall(details)
     )
-
-
-def _agency_on_place_card(category: Any, details: dict[str, Any]) -> bool:
-    return _ta_attraction_category(category) and bool(
-        _AGENCY_TYPES.intersection(details.get("types") or ())
-    ) and not _PLACE_TYPES.intersection(details.get("types") or ())
 
 
 def categoria_nao_confirmada(canonical_key: str, normalized: dict[str, Any]) -> bool:
@@ -942,13 +938,6 @@ class PlacesEnrichmentAgent:
                         place_id, include_reviews=include_reviews
                     )
                     places_consulted = bool(details)
-                    if details and _agency_on_place_card(normalized.get("category"), details):
-                        # Not the place: drop the match, keep the TA floor, route by score —
-                        # a steward has nothing to decide (an agency is never accepted).
-                        logger.info("places_agency_match_dropped", rio_id=str(rio.id), uf=uf)
-                        details = {}
-                        new_normalized["place_id_cache"] = None
-                        new_normalized["google_place_id"] = None
                     if not include_reviews:
                         logger.info("places_details_reviews_skipped", rio_id=str(rio.id), uf=uf)
                 else:

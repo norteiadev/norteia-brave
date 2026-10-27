@@ -163,19 +163,19 @@ async def test_drinks_tourism_card_passes_the_business_gate(category, types, kep
 
 
 @pytest.mark.asyncio
-async def test_agency_match_on_a_place_card_is_dropped_not_reviewed() -> None:
-    """'Cachoeira X Ecoturismo' is a tour operator named after the waterfall: never the place.
-    The match is dropped (no id, no Google data), the TA floor stays and the score routes it."""
-    name = "Cachoeira do Tabuleiro"
+async def test_agency_match_on_a_place_card_stays_with_a_steward() -> None:
+    """Most agency matches on a place card ARE the card (TA files "Jeri Tur Brasil" under
+    Parques nacionais): dropping the match would send an agency on to Mar. A steward decides;
+    none of the agency's data is kept."""
+    name = "Jeri Tur Brasil"
     agent, _, _ = _agent({Q: _apify(title=name)},
                          _essentials(types=["tour_agency", "travel_agency", "point_of_interest"]),
                          ids={f"{name}, Vila Velha - ES": [PID]})
-    rio = _rio(name=name, category="Cachoeiras")
+    rio = _rio(name=name, category="Parques nacionais")
     await _run(agent, rio)
     n = rio.normalized
-    assert rio.dlq_reason != "google_tipo_negocio"
+    assert (rio.routing, rio.dlq_reason) == ("dlq", "google_tipo_negocio")
     assert n.get("google_place_id") is None and n.get("place_id_cache") is None
-    assert n["google_enriched"] is True  # consulted: no re-search on the next pass
 
 
 # -- run() flow ------------------------------------------------------------------------
