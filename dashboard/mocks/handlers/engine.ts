@@ -18,8 +18,9 @@ const BASE = "http://localhost:3000/api/api/v1/engine";
 const TA_BASE = "http://localhost:3000/api/api/v1/tripadvisor";
 const NASCENTE_BASE = "http://localhost:3000/api/api/v1/nascente";
 
-export function engineStatus(overrides: Partial<EngineStatus> = {}) {
-  const status: EngineStatus = {
+/** The default /engine/status body (a stopped engine), for handlers that count hits. */
+export function engineStatusFixture(overrides: Partial<EngineStatus> = {}): EngineStatus {
+  return {
     state: "idle",
     current_uf: null,
     ufs_done: 0,
@@ -42,6 +43,10 @@ export function engineStatus(overrides: Partial<EngineStatus> = {}) {
     editing_unlocked: true,
     ...overrides,
   };
+}
+
+export function engineStatus(overrides: Partial<EngineStatus> = {}) {
+  const status = engineStatusFixture(overrides);
   return http.get(`${BASE}/status`, () => HttpResponse.json(status));
 }
 
