@@ -4,7 +4,28 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { PainelOrigem } from "@/components/painel/PainelOrigem";
+import {
+  Btn,
+  Kpi,
+  Panel,
+  Pill,
+  Seg,
+  type Tone,
+  UfBadge,
+} from "@/components/painel/telas-ui";
 import { ApiError } from "@/lib/api-client";
+import {
+  DEPTH_LABELS,
+  ENGINE_REFETCH_INTERVAL_MS,
+  type EngineDepth,
+  engineKeys,
+  fetchEngineStatus,
+  fetchTASessionStatus,
+  startEngine,
+  taSessionKeys,
+} from "@/lib/engine-api";
+import { BR_UFS } from "@/lib/painel-data";
 import {
   type RunItem,
   type RunsFilters,
@@ -19,74 +40,62 @@ import {
 } from "@/lib/runs-api";
 
 /**
- * PainelVarreduras — the "Varreduras" runs-history view (Painel light theme).
+ * PainelVarreduras — "Varreduras" (spec #82 Phase 0, POC view-varreduras).
  *
- * Surfaces the durable engine-run trail (plan 17.1-02): each row is one engine
- * sweep with Início (started_at), UF(s), Fonte (source), Profundidade (depth),
- * Total, Sincr. (synced), Falhas (failed) and a colored Status pill
- * (concluido/parcial/falha/running). Two segmented controls (Fonte, Profundidade)
- * drive the real `GET /api/v1/runs` query through the BFF; the UF chips filter the
- * loaded set client-side over each run's `ufs` array.
+ *   - Nova varredura: multi-UF sweep with a depth (POST /engine/start). The
+ *     server's 409/422 reasons surface as toasts.
+ *   - Sessão TripAdvisor: presence + TTL from /tripadvisor/session/status; the
+ *     cURL injection reuses PainelOrigem (distinct 422 vs 503 messages).
+ *   - 7-day KPIs and the run history (GET /runs), with Fonte/Profundidade/UF
+ *     filters and the run reprocess PATCH.
  *
- * The "↺ Falhas" action fires the REAL reprocess PATCH
- * (`PATCH /api/v1/runs/{id}/reprocess`, steward-guarded) and invalidates the runs
- * query (TanStack invalidation). 7-day stat cards summarize the recent run set
- * (reusing the runs-api window helpers).
- *
- * Pure scoped `--painel-*` token styling; the status-pill accents use the
- * design's exact oklch literals (no token exists for them).
+ * Not here yet: UF "já varrida"/queue states, estimates, cookie/canary details,
+ * status filter, per-run cost and partial reason (Phase 1/3/4 backend).
  */
 
-/** Fonte (source) filter options — "" = Todas. */
-const SOURCE_OPTIONS: { key: string; label: string }[] = [
+const SOURCE_OPTIONS = [
   { key: "", label: "Todas" },
   { key: "tripadvisor", label: "TripAdvisor" },
-];
+] as const;
 
-/** Profundidade (depth) filter options — "" = Todas. */
-const DEPTH_OPTIONS: { key: string; label: string }[] = [
+const DEPTH_OPTIONS = [
   { key: "", label: "Todas" },
   { key: "nascente", label: "Nascente" },
   { key: "nascente_rio", label: "Rio" },
   { key: "nascente_rio_mar", label: "Mar" },
-];
+] as const;
+
+const START_DEPTHS: { key: EngineDepth; label: string }[] = (
+  ["nascente", "nascente_rio", "nascente_rio_mar"] as const
+).map((k) => ({ key: k, label: k === "nascente" ? "Nascente" : DEPTH_LABELS[k] }));
 
 const DEPTH_LABEL: Record<string, string> = {
   nascente: "Nascente",
   nascente_rio: "Nascente → Rio",
   nascente_rio_mar: "Nascente → Rio → Mar",
+  descricao: "Descrição",
 };
 
-/** Status pill accent (text + background) by run status. */
-const STATUS_STYLE: Record<string, { text: string; bg: string; label: string }> = {
-  concluido: {
-    text: "oklch(0.5 0.13 150)",
-    bg: "color-mix(in oklch, oklch(0.62 0.17 150) 14%, white)",
-    label: "Concluído",
-  },
-  parcial: {
-    text: "oklch(0.55 0.13 75)",
-    bg: "color-mix(in oklch, oklch(0.72 0.15 75) 16%, white)",
-    label: "Parcial",
-  },
-  falha: {
-    text: "oklch(0.5 0.18 27)",
-    bg: "color-mix(in oklch, oklch(0.55 0.20 27) 13%, white)",
-    label: "Falha",
-  },
-  running: {
-    text: "var(--painel-navy)",
-    bg: "var(--painel-chip)",
-    label: "Em execução",
-  },
+const SOURCE_LABEL: Record<string, string> = {
+  tripadvisor: "TripAdvisor",
+  ta_backfill: "Backfill TripAdvisor",
+  descricao: "Descrição",
 };
 
-function explainError(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
-  return "Falha ao reprocessar a varredura.";
+const STATUS: Record<string, { tone: Tone; label: string }> = {
+  concluido: { tone: "ok", label: "Concluído" },
+  parcial: { tone: "warn", label: "Parcial" },
+  falha: { tone: "bad", label: "Falha" },
+  running: { tone: "run", label: "Em andamento" },
+};
+
+/** TTL warn band (seconds), same as the status bar. */
+const TA_WARN_SECONDS = 5 * 60;
+
+function explainError(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
 }
 
-/** Format an ISO timestamp as a compact pt-BR date+time, or "—" when absent. */
 function fmtStarted(iso: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return "—";
@@ -98,17 +107,28 @@ function fmtStarted(iso: string): string {
   });
 }
 
+function fmtDuration(run: RunItem): string {
+  if (!run.ended_at) return "em andamento";
+  const min = Math.round((Date.parse(run.ended_at) - Date.parse(run.started_at)) / 60_000);
+  if (Number.isNaN(min)) return "—";
+  if (min < 1) return "< 1 min";
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  return min % 60 ? `${h} h ${min % 60} min` : `${h} h`;
+}
+
+function fmtMMSS(seconds: number): string {
+  const t = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+}
+
 export function PainelVarreduras() {
   const qc = useQueryClient();
   const [source, setSource] = useState("");
   const [depth, setDepth] = useState("");
   const [uf, setUf] = useState("");
 
-  const filters: RunsFilters = {
-    source: source || undefined,
-    depth: depth || undefined,
-  };
-
+  const filters: RunsFilters = { source: source || undefined, depth: depth || undefined };
   const { data } = useQuery({
     queryKey: runsKeys.list(filters),
     queryFn: () => fetchRuns(filters),
@@ -116,276 +136,318 @@ export function PainelVarreduras() {
 
   const reprocess = useMutation({
     mutationFn: (run: RunItem) => reprocessRun(run.id),
-    onError: (err) => toast.error(explainError(err)),
-    onSuccess: () => toast.success("Reprocessamento das falhas iniciado"),
+    onError: (err) => toast.error(explainError(err, "Falha ao reexecutar a varredura.")),
+    onSuccess: () => toast.success("Reexecução da varredura iniciada."),
     onSettled: () => void qc.invalidateQueries({ queryKey: runsKeys.all }),
   });
 
   const allItems: RunItem[] = data?.items ?? [];
-
-  // UF chips are derived from the loaded set; uf filtering is applied client-side
-  // over each run's `ufs` array (the backend filters uf in Python too).
+  // UF options come from the loaded set; the uf filter runs client-side.
   const ufOptions = Array.from(new Set(allItems.flatMap((r) => r.ufs))).sort();
   const rows = uf ? allItems.filter((r) => r.ufs.includes(uf)) : allItems;
-
   const recent = recentRuns(rows);
+  const partials = recent.filter((r) => r.status === "parcial").length;
+  const processed = recent.reduce((s, r) => s + r.total, 0);
 
   return (
-    <div className="h-full overflow-y-auto px-[22px] pb-7 pt-5">
-      {/* Filters: Fonte + Profundidade + UF */}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <SegGroup
-          prefix="runs-source"
-          options={SOURCE_OPTIONS}
-          active={source}
-          onSelect={setSource}
-        />
-        <SegGroup
-          prefix="runs-depth"
-          options={DEPTH_OPTIONS}
-          active={depth}
-          onSelect={setDepth}
-        />
-        {ufOptions.length > 0 && (
-          <SegGroup
-            prefix="runs-uf"
-            options={[{ key: "", label: "Todas UF" }, ...ufOptions.map((u) => ({ key: u, label: u }))]}
-            active={uf}
-            onSelect={setUf}
+    <div className="h-full overflow-y-auto px-[22px] pb-7 pt-[18px]">
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+          <NovaVarredura />
+          <SessaoTA />
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Kpi
+            label="Varreduras (7 dias)"
+            testId="runs-stat-total"
+            value={formatCount(totalRuns(recent))}
+            sub={`${partials} ${partials === 1 ? "parcial" : "parciais"}`}
           />
-        )}
-      </div>
-
-      {/* 7-day stat cards */}
-      <div className="mb-[18px] grid grid-cols-3 gap-[14px]">
-        <SummaryCard label="Varreduras (7 dias)">
-          <span
-            data-testid="runs-stat-total"
-            className="font-mono text-[26px] font-semibold tracking-[-0.5px] text-[var(--painel-navy)]"
-          >
-            {formatCount(totalRuns(recent))}
-          </span>
-        </SummaryCard>
-        <SummaryCard label="Sincronizados (7 dias)">
-          <span
-            data-testid="runs-stat-synced"
-            className="font-mono text-[26px] font-semibold tracking-[-0.5px]"
-            style={{ color: "oklch(0.5 0.13 150)" }}
-          >
-            {formatCount(totalSynced(recent))}
-          </span>
-        </SummaryCard>
-        <SummaryCard label="Falhas (7 dias)">
-          <span
-            data-testid="runs-stat-failed"
-            className="font-mono text-[26px] font-semibold tracking-[-0.5px]"
-            style={{ color: "oklch(0.55 0.20 27)" }}
-          >
-            {formatCount(totalFailed(recent))}
-          </span>
-        </SummaryCard>
-      </div>
-
-      {/* Runs table */}
-      {rows.length === 0 ? (
-        <div
-          data-testid="runs-empty"
-          className="px-5 py-[60px] text-center text-[var(--painel-muted-2)]"
-        >
-          <div className="mb-2 text-[28px]">🛰️</div>
-          <div className="text-[14px] font-semibold text-[var(--painel-muted)]">
-            Nenhuma varredura registrada
-          </div>
-          <div className="mt-[4px] text-[12px]">
-            As varreduras do motor aparecem aqui assim que executadas.
-          </div>
+          <Kpi
+            label="Sincronizados (7 dias)"
+            testId="runs-stat-synced"
+            value={formatCount(totalSynced(recent))}
+            sub={`de ${formatCount(processed)} processados`}
+          />
+          <Kpi
+            label="Falhas (7 dias)"
+            testId="runs-stat-failed"
+            value={formatCount(totalFailed(recent))}
+          />
         </div>
-      ) : (
-        <div className="max-w-[1100px] overflow-hidden rounded-[13px] border border-[var(--painel-border-outer)] bg-[var(--card)]">
-          <table className="w-full border-collapse text-[12.5px]">
-            <thead>
-              <tr className="text-left text-[10.5px] uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
-                <Th>Início</Th>
-                <Th>UF</Th>
-                <Th>Fonte</Th>
-                <Th>Profundidade</Th>
-                <Th right>Total</Th>
-                <Th right>Sincr.</Th>
-                <Th right>Falhas</Th>
-                <Th>Status</Th>
-                <Th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((run) => {
-                const st = STATUS_STYLE[run.status] ?? STATUS_STYLE.running;
-                const hasFailures = run.failed > 0;
-                return (
-                  <tr
-                    key={run.id}
-                    data-testid="runs-row"
-                    className="border-t border-[var(--painel-border-inner)]"
-                  >
-                    <Td>
-                      <span className="font-mono text-[var(--painel-muted)]">
-                        {fmtStarted(run.started_at)}
-                      </span>
-                    </Td>
-                    <Td>
-                      <span className="font-mono font-semibold">
-                        {run.ufs.join(", ") || "—"}
-                      </span>
-                    </Td>
-                    <Td>{run.source}</Td>
-                    <Td>
-                      <span title={DEPTH_LABEL[run.depth] ?? run.depth}>
-                        {DEPTH_LABEL[run.depth] ?? run.depth}
-                      </span>
-                    </Td>
-                    <Td right>
-                      <span className="font-mono">{formatCount(run.total)}</span>
-                    </Td>
-                    <Td right>
-                      <span
-                        className="font-mono"
-                        style={{ color: "oklch(0.5 0.13 150)" }}
-                      >
-                        {formatCount(run.synced)}
-                      </span>
-                    </Td>
-                    <Td right>
-                      <span
-                        className="font-mono"
-                        style={{
-                          color: hasFailures
-                            ? "oklch(0.55 0.20 27)"
-                            : "var(--painel-muted-2)",
-                        }}
-                      >
-                        {formatCount(run.failed)}
-                      </span>
-                    </Td>
-                    <Td>
-                      <span
-                        data-testid="runs-status-pill"
-                        data-status={run.status}
-                        className="inline-flex rounded-[5px] px-[8px] py-[2px] text-[10.5px] font-semibold"
-                        style={{ color: st.text, background: st.bg }}
-                      >
-                        {st.label}
-                      </span>
-                    </Td>
-                    <Td>
-                      <button
-                        type="button"
-                        data-testid="runs-reprocess"
-                        disabled={!hasFailures || reprocess.isPending}
-                        onClick={() => reprocess.mutate(run)}
-                        title={
-                          hasFailures
-                            ? "Reprocessar as falhas desta varredura"
-                            : "Sem falhas para reprocessar"
-                        }
-                        className="h-[28px] cursor-pointer rounded-[7px] border border-[var(--painel-border-outer)] bg-[var(--card)] px-[10px] text-[11.5px] font-semibold text-[var(--painel-text)] disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        ↺ Falhas
-                      </button>
-                    </Td>
+
+        <Panel title="Histórico de varreduras" hint="runs do motor, mais recentes primeiro">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Seg
+              label="Fonte"
+              options={SOURCE_OPTIONS}
+              value={source}
+              onChange={setSource}
+              testIdPrefix="runs-source"
+            />
+            <Seg
+              label="Profundidade"
+              options={DEPTH_OPTIONS}
+              value={depth}
+              onChange={setDepth}
+              testIdPrefix="runs-depth"
+            />
+            {ufOptions.length > 0 && (
+              <Seg
+                label="UF do histórico"
+                options={[{ key: "", label: "Todas UF" }, ...ufOptions.map((u) => ({ key: u, label: u }))]}
+                value={uf}
+                onChange={setUf}
+                testIdPrefix="runs-uf"
+              />
+            )}
+          </div>
+
+          {rows.length === 0 ? (
+            <div data-testid="runs-empty" className="px-4 py-10 text-center text-[var(--ink-3)]">
+              <div className="text-[14px] font-semibold text-[var(--ink-2)]">
+                Nenhuma varredura registrada
+              </div>
+              <div className="mt-1 text-[12px]">
+                As varreduras do motor aparecem aqui assim que executadas.
+              </div>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-[12.5px]">
+                <thead>
+                  <tr className="text-left text-[10.5px] uppercase tracking-[0.5px] text-[var(--ink-3)]">
+                    <Th>Run</Th>
+                    <Th>Início</Th>
+                    <Th>UFs</Th>
+                    <Th>Tipo</Th>
+                    <Th right>Total</Th>
+                    <Th right>Sincr.</Th>
+                    <Th right>Falhas</Th>
+                    <Th>Duração</Th>
+                    <Th>Status</Th>
+                    <Th />
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SegGroup({
-  prefix,
-  options,
-  active,
-  onSelect,
-}: {
-  prefix: string;
-  options: { key: string; label: string }[];
-  active: string;
-  onSelect: (key: string) => void;
-}) {
-  return (
-    <div className="inline-flex gap-0.5 rounded-[9px] bg-[var(--painel-chip)] p-[3px]">
-      {options.map((opt) => (
-        <Seg
-          key={opt.key || "all"}
-          testId={`${prefix}-${opt.key || "all"}`}
-          active={active === opt.key}
-          onClick={() => onSelect(opt.key)}
-        >
-          {opt.label}
-        </Seg>
-      ))}
-    </div>
-  );
-}
-
-function Seg({
-  testId,
-  active,
-  onClick,
-  children,
-}: {
-  testId: string;
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      data-active={active ? "true" : "false"}
-      aria-pressed={active}
-      onClick={onClick}
-      className={`flex h-7 items-center rounded-[7px] px-[11px] text-[12.5px] font-semibold transition-colors ${
-        active
-          ? "bg-[var(--card)] text-[var(--painel-navy)] shadow-sm"
-          : "text-[var(--painel-muted)]"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function SummaryCard({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-[12px] border border-[var(--painel-border-outer)] bg-[var(--card)] px-[17px] py-[15px]">
-      <div className="mb-[7px] text-[10.5px] uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
-        {label}
+                </thead>
+                <tbody>
+                  {rows.map((run) => {
+                    const st = STATUS[run.status] ?? { tone: "neutral" as const, label: run.status };
+                    return (
+                      <tr key={run.id} data-testid="runs-row">
+                        <Td>
+                          <span className="font-mono text-[12px]" title={run.id}>
+                            {run.id.slice(0, 8)}
+                          </span>
+                        </Td>
+                        <Td>
+                          <span className="font-mono text-[var(--ink-3)]">{fmtStarted(run.started_at)}</span>
+                        </Td>
+                        <Td>
+                          <span className="inline-flex flex-wrap gap-1">
+                            {run.ufs.length ? run.ufs.map((u) => <UfBadge key={u} uf={u} />) : "—"}
+                          </span>
+                        </Td>
+                        <Td>
+                          {DEPTH_LABEL[run.depth] ?? run.depth}
+                          <div className="text-[11.5px] text-[var(--ink-3)]">
+                            {SOURCE_LABEL[run.source] ?? run.source}
+                          </div>
+                        </Td>
+                        <Td right mono>{formatCount(run.total)}</Td>
+                        <Td right mono>{formatCount(run.synced)}</Td>
+                        <Td right mono>
+                          <span className={run.failed ? "font-semibold text-[var(--falha-ink)]" : ""}>
+                            {formatCount(run.failed)}
+                          </span>
+                        </Td>
+                        <Td mono>{fmtDuration(run)}</Td>
+                        <Td>
+                          <Pill tone={st.tone} data-testid="runs-status-pill" data-status={run.status}>
+                            {st.label}
+                          </Pill>
+                        </Td>
+                        <Td>
+                          <Btn
+                            small
+                            data-testid="runs-reprocess"
+                            disabled={run.failed === 0 || reprocess.isPending}
+                            onClick={() => reprocess.mutate(run)}
+                            title={
+                              run.failed
+                                ? "Reexecuta o escopo inteiro do run (UFs × profundidade), não só as falhas"
+                                : "Sem falhas neste run"
+                            }
+                          >
+                            Reexecutar
+                          </Btn>
+                        </Td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
       </div>
-      {children}
     </div>
   );
 }
 
-function Th({
-  children,
-  right,
-}: {
-  children?: React.ReactNode;
-  right?: boolean;
-}) {
+function useSession() {
+  return useQuery({
+    queryKey: taSessionKeys.status,
+    queryFn: fetchTASessionStatus,
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchOnWindowFocus: false,
+  });
+}
+
+function NovaVarredura() {
+  const qc = useQueryClient();
+  const [ufs, setUfs] = useState<ReadonlySet<string>>(new Set());
+  const [depth, setDepth] = useState<EngineDepth>("nascente_rio");
+
+  const { data: engine } = useQuery({
+    queryKey: engineKeys.status,
+    queryFn: fetchEngineStatus,
+    refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
+    refetchOnWindowFocus: false,
+  });
+  const { data: session } = useSession();
+  // The server refuses a TripAdvisor sweep without a live session (409).
+  const taReady = !!session?.present && (session.expires_in ?? 0) > 0;
+  const runningUf = engine?.state === "running" ? engine.current_uf : null;
+
+  const start = useMutation({
+    mutationFn: (sel: string[]) => startEngine({ depth, source: "tripadvisor", ufs: sel }),
+    onError: (err) => toast.error(explainError(err, "Falha ao iniciar a varredura.")),
+    onSuccess: (_res, sel) => {
+      toast.success(`Varredura de ${sel.join(", ")} iniciada.`);
+      setUfs(new Set());
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: engineKeys.status });
+      void qc.invalidateQueries({ queryKey: runsKeys.all });
+    },
+  });
+
+  const toggle = (u: string) =>
+    setUfs((s) => {
+      const next = new Set(s);
+      if (next.has(u)) next.delete(u);
+      else next.add(u);
+      return next;
+    });
+
+  const selected = BR_UFS.filter((u) => ufs.has(u));
+
   return (
-    <th
-      className={`px-[14px] py-[10px] font-semibold ${right ? "text-right" : "text-left"}`}
-    >
+    <Panel title="Nova varredura" hint="TripAdvisor por UF">
+      <div className="flex flex-col gap-[14px]">
+        <div>
+          <div className="mb-2 text-[12px] text-[var(--ink-3)]">
+            UFs
+            {runningUf && (
+              <span className="ml-2">
+                <span className="mr-1 inline-block h-2 w-2 rounded-full bg-[var(--rio)]" />
+                em andamento: {runningUf}
+              </span>
+            )}
+          </div>
+          <div role="group" aria-label="UFs" className="flex flex-wrap gap-[6px]">
+            {BR_UFS.map((u) => {
+              const on = ufs.has(u);
+              return (
+                <button
+                  key={u}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggle(u)}
+                  className={`relative h-8 min-w-[46px] cursor-pointer rounded-[7px] border px-2 font-mono text-[12px] font-semibold ${
+                    on
+                      ? "border-[var(--navy)] bg-[var(--navy-soft)] text-[var(--navy)]"
+                      : "border-[var(--line)] bg-[var(--surface)] text-[var(--ink-2)]"
+                  }`}
+                >
+                  {u}
+                  {u === runningUf && (
+                    <span
+                      aria-hidden
+                      className="absolute right-1 top-1 h-[6px] w-[6px] rounded-full bg-[var(--rio)]"
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-[10px]">
+          <span className="text-[12px] text-[var(--ink-3)]">Até onde vai</span>
+          <Seg label="Profundidade da varredura" options={START_DEPTHS} value={depth} onChange={setDepth} />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Btn
+            variant="primary"
+            disabled={selected.length === 0 || !taReady || start.isPending}
+            onClick={() => start.mutate(selected)}
+          >
+            Iniciar varredura
+          </Btn>
+          {session && !taReady && (
+            <span className="text-[12px] text-[var(--dlq-ink)]">
+              Injete uma sessão do TripAdvisor para iniciar.
+            </span>
+          )}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function SessaoTA() {
+  const [open, setOpen] = useState(false);
+  const { data: s } = useSession();
+
+  const ttl = s?.present ? (s.expires_in ?? 0) : 0;
+  const state: { tone: Tone; label: string } = !s
+    ? { tone: "neutral", label: "Verificando" }
+    : !s.present
+      ? { tone: "bad", label: "Sem sessão" }
+      : ttl <= 0
+        ? { tone: "bad", label: "Expirada" }
+        : ttl <= TA_WARN_SECONDS
+          ? { tone: "warn", label: "Expirando" }
+          : { tone: "ok", label: "Ativa" };
+
+  return (
+    <Panel title="Sessão TripAdvisor" right={<Pill tone={state.tone}>{state.label}</Pill>} testId="ta-session">
+      <div className="flex flex-col gap-3">
+        {s?.present && (
+          <div className="flex items-baseline gap-2">
+            <span className="font-mono text-[26px] font-semibold tracking-[-1px]">{fmtMMSS(ttl)}</span>
+            <span className="text-[12px] text-[var(--ink-3)]">até expirar</span>
+          </div>
+        )}
+        <div>
+          <Btn onClick={() => setOpen(true)}>Atualizar sessão (cURL)</Btn>
+        </div>
+        <p className="m-0 text-[12px] text-[var(--ink-3)]">
+          Sem sessão válida, a varredura do TripAdvisor não inicia. Cole o cURL da
+          requisição GraphQL autenticada (DevTools → Network → Copiar como cURL).
+        </p>
+      </div>
+      <PainelOrigem open={open} onClose={() => setOpen(false)} initialSource="tripadvisor" />
+    </Panel>
+  );
+}
+
+function Th({ children, right }: { children?: React.ReactNode; right?: boolean }) {
+  return (
+    <th className={`whitespace-nowrap px-[10px] pb-2 font-semibold ${right ? "text-right" : "text-left"}`}>
       {children}
     </th>
   );
@@ -394,12 +456,18 @@ function Th({
 function Td({
   children,
   right,
+  mono,
 }: {
   children?: React.ReactNode;
   right?: boolean;
+  mono?: boolean;
 }) {
   return (
-    <td className={`px-[14px] py-[11px] ${right ? "text-right" : "text-left"}`}>
+    <td
+      className={`whitespace-nowrap border-t border-[var(--line-2)] px-[10px] py-2 align-middle ${
+        right ? "text-right" : "text-left"
+      } ${mono ? "font-mono" : ""}`}
+    >
       {children}
     </td>
   );

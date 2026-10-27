@@ -89,9 +89,12 @@ export function dedupPairsError(status = 500) {
 }
 
 /** Resolve handler: echoes the posted action (mirrors resolve_pair return). */
-export function dedupResolveSuccess() {
-  return http.patch(RESOLVE, async ({ request }) => {
+export function dedupResolveSuccess(
+  onResolve?: (candidateRioId: string, body: unknown) => void,
+) {
+  return http.patch(RESOLVE, async ({ request, params }) => {
     const body = (await request.json()) as { action: DedupResolveResult["action"] };
+    onResolve?.(String(params.candidateRioId), body);
     return HttpResponse.json({
       status: "ok",
       action: body.action,
