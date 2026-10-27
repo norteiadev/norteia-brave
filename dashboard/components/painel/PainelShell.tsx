@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useContext, type ReactNode } from "react";
+import { useTheme } from "next-themes";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
 
 import { PainelSidebar, type PainelTheme } from "./PainelSidebar";
 import type { PainelViewKey, RegistrosTab } from "./nav";
@@ -41,6 +42,10 @@ export function PainelShell({
   children,
 }: PainelShellProps) {
   const [theme, setTheme] = useStoredState<PainelTheme>("brave.painelTheme", THEMES);
+  // The global Toaster lives in the root layout, outside this subtree, and reads
+  // the next-themes app theme (dark by default): keep it in step with the Painel.
+  const { setTheme: setAppTheme } = useTheme();
+  useEffect(() => setAppTheme(theme), [theme, setAppTheme]);
   return (
     <div
       className="painel-light relative flex h-screen w-full overflow-hidden text-[13px]"
