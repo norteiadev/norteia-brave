@@ -215,12 +215,19 @@ _NOT_ATRATIVO_PRIMARY_TYPES = frozenset({
 })
 # A place type anywhere in ``types`` overrides the primaryType: Google files Parque dos
 # Falcões (518 TA reviews) as pet_care, yet it is also a tourist_attraction and a park.
+# Operator-approved 10/2026: a winery is enotourism, not a business — Google also files it
+# under "food", which parked 124 vinícolas (108 in RS) in google_tipo_negocio.
 _PLACE_TYPES = frozenset({
+    "winery", "vineyard",
     "tourist_attraction", "park", "national_park", "city_park", "museum", "historical_landmark",
     "historical_place", "monument", "beach", "church", "place_of_worship", "nature_preserve",
     "scenic_spot", "cultural_center", "art_gallery", "performing_arts_theater", "zoo",
     "aquarium", "amusement_park", "hiking_area", "island", "lake",
 })
+# A winery is a place on a winery card, but on a card TA files as a shop ("Lojas", "Bares de
+# vinho") it may be the winery's outlet store (Casa do Vinho SC, Ingá Vinhos Finos PE): there
+# it confirms nothing and a steward decides (categoria_revisao), not Mar.
+_CATEGORY_PLACE_TYPES = _PLACE_TYPES - {"winery", "vineyard"}
 
 
 # TA card categories (normalized["category"], AttractionsFusion primaryInfo.text) that name a
@@ -283,7 +290,7 @@ def categoria_nao_confirmada(canonical_key: str, normalized: dict[str, Any]) -> 
         and not normalized.get(CATEGORIA_LIBERADA_KEY)
         and not normalized.get(GOOGLE_TIPO_ACEITO_KEY)
         and not _ta_attraction_category(normalized.get("category"))
-        and not _PLACE_TYPES.intersection(normalized.get("google_types") or ())
+        and not _CATEGORY_PLACE_TYPES.intersection(normalized.get("google_types") or ())
     )
 
 

@@ -256,6 +256,7 @@ async def test_google_business_type_hard_descarte() -> None:
         ("pet_care", ["tourist_attraction", "park", "pet_care"], False),  # Parque dos Falcões
         ("non_profit_organization", ["non_profit_organization"], False),  # Projeto Tamar
         ("church", ["church", "place_of_worship"], False),
+        ("winery", ["winery", "farm", "manufacturer", "food"], False),  # Vinícola Aurora
         # Google's generic "an address" type, not a business (Usina de Xingó, Farol da Ponta Verde)
         ("premise", ["premise", "establishment"], False),
         ("", ["restaurant", "museum", "park"], False),  # no primaryType → not judged
@@ -2043,3 +2044,15 @@ def test_accepted_google_match_confirms_the_category() -> None:
     assert categoria_nao_confirmada("tripadvisor:attraction:1", market) is True
     accepted = {**market, "google_tipo_aceito": "ChIJmercado"}
     assert categoria_nao_confirmada("tripadvisor:attraction:1", accepted) is False
+
+
+def test_winery_type_confirms_only_a_winery_card() -> None:
+    """A winery passes the business gate, but on a card TA files as a shop it may be the
+    winery's outlet store: a steward decides (categoria_revisao), it does not go to Mar."""
+    from brave.domains.places.places_enrichment import categoria_nao_confirmada
+
+    types = ["winery", "farm", "wholesaler", "manufacturer", "food"]
+    shop = {"category": "Lojas especializadas e de suvenir • Bares de vinho", "google_types": types}
+    assert categoria_nao_confirmada("tripadvisor:attraction:1", shop) is True
+    winery = {"category": "Adegas e vinícolas", "google_types": types}
+    assert categoria_nao_confirmada("tripadvisor:attraction:1", winery) is False

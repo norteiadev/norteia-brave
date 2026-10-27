@@ -90,6 +90,9 @@ def _agent(apify_fixture=None, essentials=None, ids=None, more_essentials=None, 
         (["pet_care", "park", "point_of_interest", "establishment"], False),  # Parque dos Falcões
         (["shopping_mall", "park", "point_of_interest"], True),  # malls always out
         (["tourist_attraction", "point_of_interest", "establishment"], False),
+        # Vinícola Aurora (RS): enotourism, though Google also calls it food
+        (["winery", "farm", "manufacturer", "food", "point_of_interest", "establishment"], False),
+        (["winery", "liquor_store", "farm", "store", "food", "establishment"], False),
     ],
 )
 def test_hybrid_gate_judges_on_essentials_types(types, expected) -> None:
