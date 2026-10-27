@@ -182,3 +182,17 @@ GSD commands are optional. Direct repo edits are fine without starting a GSD wor
 > Profile not yet configured. Run `/gsd-profile-user` to generate your developer profile.
 > This section is managed by `generate-claude-profile` -- do not edit manually.
 <!-- GSD:profile-end -->
+
+## Agent skills
+
+### Issue tracker
+
+Issues no GitHub Issues de norteiadev/norteia-brave (gh CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Os 5 rótulos padrão: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: glossário em `CONTEXT.md` na raiz + ADRs em `docs/adr/`. See `docs/agents/domain.md`.
