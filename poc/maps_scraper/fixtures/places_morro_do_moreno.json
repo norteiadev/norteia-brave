@@ -1,0 +1,176 @@
+{
+ "id": "ChIJixdqrlIWuAARlfIafNUX-qk",
+ "types": [
+  "tourist_attraction",
+  "point_of_interest",
+  "establishment"
+ ],
+ "internationalPhoneNumber": "+55 27 99887-1444",
+ "formattedAddress": "1056 - R. José Mário Lopes, 262 - Praia da Costa, Vila Velha - ES, 29101-190, Brasil",
+ "addressComponents": [
+  {
+   "longText": "1056",
+   "languageCode": "pt"
+  },
+  {
+   "longText": "262",
+   "shortText": "262",
+   "types": [
+    "street_number"
+   ],
+   "languageCode": "pt-BR"
+  },
+  {
+   "longText": "Rua José Mário Lopes",
+   "shortText": "R. José Mário Lopes",
+   "types": [
+    "route"
+   ],
+   "languageCode": "pt"
+  },
+  {
+   "longText": "Praia da Costa",
+   "shortText": "Praia da Costa",
+   "types": [
+    "sublocality_level_1",
+    "sublocality",
+    "political"
+   ],
+   "languageCode": "pt"
+  },
+  {
+   "longText": "Vila Velha",
+   "shortText": "Vila Velha",
+   "types": [
+    "administrative_area_level_2",
+    "political"
+   ],
+   "languageCode": "pt"
+  },
+  {
+   "longText": "Espírito Santo",
+   "shortText": "ES",
+   "types": [
+    "administrative_area_level_1",
+    "political"
+   ],
+   "languageCode": "pt"
+  },
+  {
+   "longText": "Brasil",
+   "shortText": "BR",
+   "types": [
+    "country",
+    "political"
+   ],
+   "languageCode": "pt"
+  },
+  {
+   "longText": "29101-190",
+   "shortText": "29101-190",
+   "types": [
+    "postal_code"
+   ],
+   "languageCode": "pt-BR"
+  }
+ ],
+ "location": {
+  "latitude": -20.326306799999998,
+  "longitude": -40.277463499999996
+ },
+ "websiteUri": "http://www.vilavelha.es.gov.br/",
+ "regularOpeningHours": {
+  "openNow": true,
+  "periods": [
+   {
+    "open": {
+     "day": 0,
+     "hour": 0,
+     "minute": 0
+    }
+   }
+  ],
+  "weekdayDescriptions": [
+   "segunda-feira: Atendimento 24 horas",
+   "terça-feira: Atendimento 24 horas",
+   "quarta-feira: Atendimento 24 horas",
+   "quinta-feira: Atendimento 24 horas",
+   "sexta-feira: Atendimento 24 horas",
+   "sábado: Atendimento 24 horas",
+   "domingo: Atendimento 24 horas"
+  ]
+ },
+ "businessStatus": "OPERATIONAL",
+ "displayName": {
+  "text": "Morro do Moreno",
+  "languageCode": "pt"
+ },
+ "primaryType": "tourist_attraction",
+ "reviews": [
+  {
+   "relativePublishTimeDescription": "9 meses atrás",
+   "rating": 4,
+   "text": {
+    "text": "Bela Vista de parte da cidade. Cuidado: não há infraestrutura mínima para os turistas/visitantes, nem mesmo toaletes ou seguranças. A trilha está em estado bastante precário. É possível que em breve melhore, pois há materiais de construção lá e uma placa sinalizando obras de melhoria (porém muitíssimo atrasadas visto ser datada de 2024).",
+    "languageCode": "pt"
+   },
+   "originalText": {
+    "text": "Bela Vista de parte da cidade. Cuidado: não há infraestrutura mínima para os turistas/visitantes, nem mesmo toaletes ou seguranças. A trilha está em estado bastante precário. É possível que em breve melhore, pois há materiais de construção lá e uma placa sinalizando obras de melhoria (porém muitíssimo atrasadas visto ser datada de 2024).",
+    "languageCode": "pt"
+   },
+   "publishTime": "2026-01-06T02:05:08.776609879Z"
+  },
+  {
+   "relativePublishTimeDescription": "6 meses atrás",
+   "rating": 5,
+   "text": {
+    "text": "Fiquei sabendo que o morro estava interditado para visitas, mas encontrei um morador de Vila Velha que me deu dica pra subir o morro, que se o portão estivesse fechado, pra eu voltar 1 (um) ou 2 metros que teria uma entradinha, andaria uns 50 metros e já pegaria a estrada,  foi o que eu e minha amiga fizemos. Uma pequena subida e você depara com uma paisagem belíssima da ponte que liga Vitória a Vila Velha e ao fundo a cidade de Vitória, vale a pena, vista maravilhosa.",
+    "languageCode": "pt"
+   },
+   "originalText": {
+    "text": "Fiquei sabendo que o morro estava interditado para visitas, mas encontrei um morador de Vila Velha que me deu dica pra subir o morro, que se o portão estivesse fechado, pra eu voltar 1 (um) ou 2 metros que teria uma entradinha, andaria uns 50 metros e já pegaria a estrada,  foi o que eu e minha amiga fizemos. Uma pequena subida e você depara com uma paisagem belíssima da ponte que liga Vitória a Vila Velha e ao fundo a cidade de Vitória, vale a pena, vista maravilhosa.",
+    "languageCode": "pt"
+   },
+   "publishTime": "2026-03-27T15:15:26.943145092Z"
+  },
+  {
+   "relativePublishTimeDescription": "5 meses atrás",
+   "rating": 5,
+   "text": {
+    "text": "Subi dia 05/05/26 as 08:00 msm tendo obras, a pé mesmo, não pode subir de carro pois estão colocando tijolos na pista, a vista é incrível, pedi minha namorada em noivado lá no topo, só tinha eu e ela, apareceu galinhas cocas tbm rsrs",
+    "languageCode": "pt"
+   },
+   "originalText": {
+    "text": "Subi dia 05/05/26 as 08:00 msm tendo obras, a pé mesmo, não pode subir de carro pois estão colocando tijolos na pista, a vista é incrível, pedi minha namorada em noivado lá no topo, só tinha eu e ela, apareceu galinhas cocas tbm rsrs",
+    "languageCode": "pt"
+   },
+   "publishTime": "2026-05-07T00:05:52.753919199Z"
+  },
+  {
+   "relativePublishTimeDescription": "9 meses atrás",
+   "rating": 5,
+   "text": {
+    "text": "Parque morro do moreno, esta fechado para reforma, estão melhorando o calçamento. Mas mesmo assim é possível subir, chegamos na entrada tinha um portão, o rapaz que tomava conta simplesmente disse que não iria atrapalhar nosso passeio...\nParte da subida é pavimentada... Depois começa começa a estrada de terra... Nesse local os trabalhadores estão colocando calçamento a passos de tartaruga...\nSubida bem inclinada, no começo até tem a sombra das árvores mas da metade para cima... Só sol ..\nDeu uns 40 minutos de caminhada...\nMas super vale a pena... A vista é excelente, não dá vontade de descer...\nJá passei em muito lugares bonitos, mas esse me surpreendeu...\nA descida é bem rápidinho...\nDa para subir de chinelo. Levar água.\nRecomendamos...",
+    "languageCode": "pt"
+   },
+   "originalText": {
+    "text": "Parque morro do moreno, esta fechado para reforma, estão melhorando o calçamento. Mas mesmo assim é possível subir, chegamos na entrada tinha um portão, o rapaz que tomava conta simplesmente disse que não iria atrapalhar nosso passeio...\nParte da subida é pavimentada... Depois começa começa a estrada de terra... Nesse local os trabalhadores estão colocando calçamento a passos de tartaruga...\nSubida bem inclinada, no começo até tem a sombra das árvores mas da metade para cima... Só sol ..\nDeu uns 40 minutos de caminhada...\nMas super vale a pena... A vista é excelente, não dá vontade de descer...\nJá passei em muito lugares bonitos, mas esse me surpreendeu...\nA descida é bem rápidinho...\nDa para subir de chinelo. Levar água.\nRecomendamos...",
+    "languageCode": "pt"
+   },
+   "publishTime": "2026-01-13T20:44:51.013753964Z"
+  },
+  {
+   "relativePublishTimeDescription": "3 meses atrás",
+   "rating": 5,
+   "text": {
+    "text": "A melhor vista da região, uma subida de dificuldade intermediária, mas chegando lá em cima vale a pena, local sem infraestrutura então recomenda-se levar água e algo se quiser um lanche.",
+    "languageCode": "pt"
+   },
+   "originalText": {
+    "text": "A melhor vista da região, uma subida de dificuldade intermediária, mas chegando lá em cima vale a pena, local sem infraestrutura então recomenda-se levar água e algo se quiser um lanche.",
+    "languageCode": "pt"
+   },
+   "publishTime": "2026-07-20T12:11:49.639502869Z"
+  }
+ ]
+}
