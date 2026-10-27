@@ -213,6 +213,30 @@ export function atrativosCountByRouting(totals: Record<string, number>) {
   });
 }
 
+/**
+ * GET list — server-side `?routing=` / `?uf=` filters plus `offset`/`limit`
+ * paging over `items`, with the envelope `total` of the filtered set (the
+ * Registros tabs and their "N de TOTAL").
+ */
+export function atrativosByRouting(items: AtrativoListItem[]) {
+  return http.get(BASE, ({ request }) => {
+    const sp = new URL(request.url).searchParams;
+    const routing = sp.get("routing");
+    const uf = sp.get("uf");
+    const offset = Number(sp.get("offset") ?? 0);
+    const limit = Number(sp.get("limit") ?? 50);
+    const filtered = items.filter(
+      (i) => (!routing || i.routing === routing) && (!uf || i.uf === uf),
+    );
+    return HttpResponse.json({
+      items: filtered.slice(offset, offset + limit),
+      total: filtered.length,
+      offset,
+      limit,
+    });
+  });
+}
+
 /** GET list — empty (zero items, valid envelope). */
 export function atrativosListEmpty() {
   return http.get(BASE, () =>
