@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { atrativosCountByRouting, failureCardsSuccess } from "@/mocks/handlers/atrativos";
+import { costSuccess } from "@/mocks/handlers/cost";
 import { dedupPairsEmpty } from "@/mocks/handlers/dedup";
 import { engineStatus, taSessionStatus } from "@/mocks/handlers/engine";
 import { server } from "@/mocks/server";
@@ -23,6 +24,7 @@ beforeEach(() => {
     atrativosCountByRouting({ dlq: 3, mar: 7 }),
     failureCardsSuccess(),
     dedupPairsEmpty(),
+    costSuccess(),
   );
 });
 
@@ -31,9 +33,7 @@ describe("/painel page", () => {
     const user = userEvent.setup();
     renderWithClient(<PainelPage />);
 
-    expect(
-      await screen.findByRole("heading", { level: 2, name: "Visão geral" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByTestId("painel-visao-geral")).toBeInTheDocument();
     expect(screen.getByTestId("painel-topbar")).toHaveTextContent("Visão geral");
 
     await user.click(screen.getByTestId("painel-nav-item-registros-mar"));
