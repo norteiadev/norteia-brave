@@ -137,6 +137,50 @@ async def test_hybrid_pet_care_park_is_kept() -> None:
     assert rio.normalized["google_place_id"] == PID and rio.routing == "dlq"
 
 
+@pytest.mark.parametrize(
+    ("category", "types", "kept"),
+    [
+        # Alambique / destilaria (operator 10/2026): drinks tourism, not a business
+        ("Destilarias", ["liquor_store", "manufacturer", "food", "store"], True),
+        ("Adegas e vinícolas", ["bar", "food", "point_of_interest"], True),
+        # A plain store under Adegas can be just a wine shop: a steward decides
+        ("Adegas e vinícolas", ["store", "point_of_interest"], False),
+        # A liquor store on a beach card is a same-name business
+        ("Praias", ["liquor_store", "store"], False),
+        # TA also files it as a shop/bar: a wine shop (Loja Jolimont, Adega Nacional)
+        ("Adegas e vinícolas • Lojas especializadas e de suvenir", ["liquor_store"], False),
+        ("Adegas e vinícolas • Bares de vinho", ["bar", "food"], False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_drinks_tourism_card_passes_the_business_gate(category, types, kept) -> None:
+    name = "Alambique Cachaça Artesanal"
+    agent, _, _ = _agent({Q: _apify(title=name)}, _essentials(types=types),
+                         ids={f"{name}, Vila Velha - ES": [PID]})
+    rio = _rio(name=name, category=category)
+    await _run(agent, rio)
+    if kept:
+        assert rio.normalized["google_place_id"] == PID and rio.dlq_reason != "google_tipo_negocio"
+    else:
+        assert (rio.routing, rio.dlq_reason) == ("dlq", "google_tipo_negocio")
+
+
+@pytest.mark.asyncio
+async def test_agency_match_on_a_place_card_stays_with_a_steward() -> None:
+    """Most agency matches on a place card ARE the card (TA files "Jeri Tur Brasil" under
+    Parques nacionais): dropping the match would send an agency on to Mar. A steward decides;
+    none of the agency's data is kept."""
+    name = "Jeri Tur Brasil"
+    agent, _, _ = _agent({Q: _apify(title=name)},
+                         _essentials(types=["tour_agency", "travel_agency", "point_of_interest"]),
+                         ids={f"{name}, Vila Velha - ES": [PID]})
+    rio = _rio(name=name, category="Parques nacionais")
+    await _run(agent, rio)
+    n = rio.normalized
+    assert (rio.routing, rio.dlq_reason) == ("dlq", "google_tipo_negocio")
+    assert n.get("google_place_id") is None and n.get("place_id_cache") is None
+
+
 # -- run() flow ------------------------------------------------------------------------
 
 

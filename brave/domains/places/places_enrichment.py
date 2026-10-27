@@ -279,6 +279,32 @@ def _ta_nature_category(category: Any) -> bool:
     return _ta_category_starts(category, _TA_NATURE_CATEGORY_TERMS)
 
 
+# Operator-approved 10/2026: an alambique, distillery or adega TA files under "Adegas e
+# vinícolas" / "Destilarias" is drinks tourism, though Google calls it a liquor store or bar
+# (40 parked in google_tipo_negocio after the winery fix). An adega can also be just a wine
+# shop: a plain "store", or a card TA also files under "Lojas…"/"Bares…" (Loja Jolimont,
+# Adega Nacional), still goes to a steward.
+_TA_DRINKS_CATEGORY_TERMS: tuple[str, ...] = ("adegas e vinicolas", "destilarias")
+_TA_SHOP_CATEGORY_TERMS: tuple[str, ...] = ("lojas", "bares")
+_DRINKS_TYPES = frozenset({"liquor_store", "bar", "brewery", "winery"})
+# Agencies are forbidden in Norteia. An agency match on a place-to-visit card stays with a
+# steward (google_tipo_negocio): of the 139 parked 10/2026, ~115 cards ARE the agency (TA
+# files "Jeri Tur Brasil" under Parques nacionais) and only ~20 are a place with a same-name
+# operator — dropping the match would send the agencies on to a description and Mar.
+_AGENCY_TYPES = frozenset({"tour_agency", "travel_agency"})
+
+
+def _drinks_tourism(category: Any, details: dict[str, Any]) -> bool:
+    types = set(details.get("types") or ())
+    return (
+        _ta_category_starts(category, _TA_DRINKS_CATEGORY_TERMS)
+        and not _ta_category_starts(category, _TA_SHOP_CATEGORY_TERMS)
+        and bool(_DRINKS_TYPES & types)
+        and not _AGENCY_TYPES & types
+        and not _is_mall(details)
+    )
+
+
 def categoria_nao_confirmada(canonical_key: str, normalized: dict[str, Any]) -> bool:
     """A TA card the Brave does not categorize as an atrativo: its TA category is not a place
     to visit and Google's types (once fetched) do not name one either. A steward decides
@@ -962,7 +988,10 @@ class PlacesEnrichmentAgent:
                 and normalized.get(GOOGLE_TIPO_ACEITO_KEY) == place_id
                 and not _is_mall(details)
             )
-            if closed or (_google_not_atrativo(details) and not accepted):
+            business = _google_not_atrativo(details) and not _drinks_tourism(
+                normalized.get("category"), details
+            )
+            if closed or (business and not accepted):
                 # A business match on a card TA files as a place to visit (Praias, Museus…)
                 # is likely a same-name business: a steward decides (DLQ), no descarte. None
                 # of its data is written. Malls stay out regardless (operator rule). Closed:
