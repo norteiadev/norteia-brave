@@ -1,94 +1,160 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { PainelShell } from "@/components/painel/PainelShell";
-import { PainelView } from "@/components/painel/PainelView";
-import { atrativosListSuccess } from "@/mocks/handlers/atrativos";
-import { destinosListSuccess } from "@/mocks/handlers/destinos";
-import { dedupPairsEmpty } from "@/mocks/handlers/dedup";
-import { engineStatus } from "@/mocks/handlers/engine";
+import {
+  NAV_GROUPS,
+  type PainelViewKey,
+  type RegistrosTab,
+} from "@/components/painel/nav";
+import {
+  atrativosCountByRouting,
+  failureCardsSuccess,
+  sampleFailureCards,
+} from "@/mocks/handlers/atrativos";
+import { dedupPairsSuccess, sampleDedupPairs } from "@/mocks/handlers/dedup";
 import { server } from "@/mocks/server";
 
-// PainelView (17-05) now loads real board data + metrics, so it must mount
-// inside a QueryClient with the destinos/atrativos/engine handlers registered.
-function renderShell(ui: ReactNode) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+import { renderWithClient } from "../../cms/__tests__/test-utils";
+
+const ALL_ITEMS = NAV_GROUPS.flatMap((g) => g.items);
+
+// Stateful harness: the page owns view + tab state; the shell only reports clicks.
+function Harness() {
+  const [nav, setNav] = useState<{ view: PainelViewKey; tab?: RegistrosTab }>({
+    view: "visao",
   });
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  return (
+    <PainelShell
+      active={nav.view}
+      registrosTab={nav.tab}
+      onSelect={(view, tab) => setNav({ view, tab })}
+      topbar={<div data-testid="stub-topbar">topbar</div>}
+    >
+      <div data-testid="stub-body">body</div>
+    </PainelShell>
+  );
 }
 
 beforeEach(() => {
-  // usePainelBoard (mounted via <PainelView/>) now fires a dedup-pairs query for
-  // the "possível duplicado" badge — register it so no request escapes the mock.
+  window.localStorage.clear();
   server.use(
-    destinosListSuccess(),
-    atrativosListSuccess(),
-    engineStatus(),
-    dedupPairsEmpty(),
+    atrativosCountByRouting({ dlq: 2859, mar: 412 }),
+    failureCardsSuccess([
+      ...sampleFailureCards,
+      // Destinos are out of this lane: never counted under Falha.
+      {
+        ...sampleFailureCards[0],
+        source_ref: "tripadvisor:destination:1",
+        entity_type: "destination",
+      },
+    ]),
+    // `total` counts every pending Rio candidate, not pairs.
+    dedupPairsSuccess(sampleDedupPairs, 3_000),
   );
 });
 
 describe("PainelShell", () => {
-  it("renders all 5 nav items, both group headers and the operator footer", () => {
-    renderShell(
-      <PainelShell
-        active="painel"
-        onSelect={() => {}}
-        topbar={<div data-testid="stub-topbar">topbar</div>}
-      >
-        <PainelView />
-      </PainelShell>,
+  it("renders the Norteia lockup, the grouped nav and the topbar/content slots", () => {
+    renderWithClient(<Harness />);
+
+    expect(screen.getByRole("img", { name: "Norteia" })).toHaveAttribute(
+      "data-testid",
+      "painel-brand-logo",
     );
-
-    // 5 nav labels (pt-BR, from the design contract; Conversas WhatsApp retired)
-    expect(screen.getByText("Painel de Processamento")).toBeInTheDocument();
-    expect(screen.getByText("Duplicados")).toBeInTheDocument();
-    expect(screen.getByText("Mapeamento")).toBeInTheDocument();
-    expect(screen.getByText("Varreduras")).toBeInTheDocument();
-    expect(screen.getByText("Custo & LLM")).toBeInTheDocument();
-
-    // group headers
-    expect(screen.getByText("Processamento")).toBeInTheDocument();
-    expect(screen.getByText("Operação")).toBeInTheDocument();
-
-    // operator footer
-    expect(screen.getByText("Operador Brave")).toBeInTheDocument();
-    expect(screen.getByText("CMS Territorial")).toBeInTheDocument();
-
-    // topbar + content slots render
+    for (const { group } of NAV_GROUPS) {
+      expect(screen.getByRole("navigation", { name: group })).toBeInTheDocument();
+    }
     expect(screen.getByTestId("stub-topbar")).toBeInTheDocument();
-    expect(screen.getByTestId("painel-view")).toBeInTheDocument();
+    expect(screen.getByTestId("stub-body")).toBeInTheDocument();
+    // The kanban is gone from the navigation.
+    expect(screen.queryByText("Painel de Processamento")).not.toBeInTheDocument();
   });
 
-  it("marks the active nav item with aria-current/data-active", () => {
-    renderShell(
-      <PainelShell active="painel" onSelect={() => {}} topbar={null}>
-        <PainelView />
-      </PainelShell>,
-    );
-
-    const activeBtn = screen.getByText("Painel de Processamento").closest("button");
-    expect(activeBtn).toHaveAttribute("aria-current", "page");
-    expect(activeBtn).toHaveAttribute("data-active", "true");
-
-    const inactiveBtn = screen.getByText("Duplicados").closest("button");
-    expect(inactiveBtn).not.toHaveAttribute("aria-current");
-  });
-
-  it("fires onSelect with the clicked view key", async () => {
-    const onSelect = vi.fn();
+  it("reaches every view from the nav and highlights only the active item", async () => {
     const user = userEvent.setup();
-    renderShell(
-      <PainelShell active="painel" onSelect={onSelect} topbar={null}>
-        <PainelView />
-      </PainelShell>,
+    renderWithClient(<Harness />);
+
+    // Default view: Visão geral.
+    expect(screen.getByRole("button", { name: /Visão geral/ })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
 
-    await user.click(screen.getByText("Duplicados"));
-    expect(onSelect).toHaveBeenCalledWith("duplicados");
+    for (const item of ALL_ITEMS) {
+      const link = screen.getByTestId(`painel-nav-item-${item.id}`);
+      await user.click(link);
+      expect(link).toHaveAttribute("aria-current", "page");
+      const current = ALL_ITEMS.filter(
+        (it) =>
+          screen.getByTestId(`painel-nav-item-${it.id}`).getAttribute("aria-current") ===
+          "page",
+      );
+      expect(current.map((it) => it.id)).toEqual([item.id]);
+    }
+  });
+
+  it("shows the work-waiting counts from the API envelopes", async () => {
+    renderWithClient(<Harness />);
+
+    expect(
+      await screen.findByTestId("painel-nav-count-registros-revisao"),
+    ).toHaveTextContent("2.859");
+    expect(await screen.findByTestId("painel-nav-count-registros-mar")).toHaveTextContent(
+      "412",
+    );
+    expect(
+      await screen.findByTestId("painel-nav-count-registros-falha"),
+    ).toHaveTextContent(String(sampleFailureCards.length));
+    // No real pending-pair total until Phase 2: no Duplicados badge at all.
+    expect(screen.queryByTestId("painel-nav-count-duplicados")).toBeNull();
+  });
+
+  it("collapses to the symbol + icons, keeps accessible names, and remembers it across a remount", async () => {
+    const user = userEvent.setup();
+    const first = renderWithClient(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "Recolher menu" }));
+
+    expect(screen.queryByTestId("painel-brand-logo")).not.toBeInTheDocument();
+    expect(screen.getByTestId("painel-brand-symbol")).toBeInTheDocument();
+    const mar = screen.getByTestId("painel-nav-item-registros-mar");
+    expect(mar).toHaveAccessibleName("Mar");
+    expect(mar).toHaveAttribute("title", expect.stringContaining("Mar"));
+    // Visible label text is gone; only the icon remains.
+    expect(within(mar).queryByText("Mar")).not.toBeInTheDocument();
+
+    first.unmount();
+    renderWithClient(<Harness />);
+
+    expect(screen.getByTestId("painel-brand-symbol")).toBeInTheDocument();
+    expect(screen.getByTestId("painel-nav-item-config")).toHaveAccessibleName(
+      "Configuração",
+    );
+    await user.click(screen.getByRole("button", { name: "Expandir menu" }));
+    expect(screen.getByTestId("painel-brand-logo")).toBeInTheDocument();
+    expect(screen.getByTestId("painel-nav-item-config")).toHaveTextContent("Configuração");
+  });
+
+  it("toggles the dark theme on the .painel-light wrapper and remembers it", async () => {
+    const user = userEvent.setup();
+    const first = renderWithClient(<Harness />);
+
+    const shell = screen.getByTestId("painel-shell");
+    expect(shell).toHaveClass("painel-light");
+    expect(shell).toHaveAttribute("data-painel-theme", "light");
+
+    await user.click(screen.getByRole("button", { name: "Tema escuro" }));
+    expect(shell).toHaveAttribute("data-painel-theme", "dark");
+    expect(screen.getByRole("button", { name: "Tema escuro" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    first.unmount();
+    renderWithClient(<Harness />);
+    expect(screen.getByTestId("painel-shell")).toHaveAttribute("data-painel-theme", "dark");
   });
 });

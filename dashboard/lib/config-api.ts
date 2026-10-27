@@ -24,12 +24,6 @@ import { apiFetch } from "@/lib/api-client";
 /** Operator engine mode — the settable `engine.mode` values. */
 export type EngineMode = "LIGADO" | "PAUSADO" | "DESLIGADO";
 
-export const ENGINE_MODES: readonly EngineMode[] = [
-  "LIGADO",
-  "PAUSADO",
-  "DESLIGADO",
-] as const;
-
 export const ENGINE_MODE_LABELS: Record<EngineMode, string> = {
   LIGADO: "Ligado",
   PAUSADO: "Pausado",

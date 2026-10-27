@@ -18,8 +18,7 @@ export type { EngineMode } from "@/lib/config-api";
 
 // Reuse the canonical failures client + types (lib/workers-api.ts) rather than
 // re-declaring a second, drift-prone FailureItem here. Re-exported so the painel
-// data layer + the board's falha sourcing depend on a single engine-api surface
-// (key_link: painel-data → GET /api/v1/failures).
+// depends on a single engine-api surface for GET /api/v1/failures.
 export { fetchFailures, type FailureItem, type FailuresData } from "@/lib/workers-api";
 
 export type EngineState = "idle" | "running" | "stopping";
@@ -176,9 +175,8 @@ export interface TransitionResult {
 }
 
 /**
- * Fire ONE generic, audited stage transition for a destino/atrativo. The client
- * `mapDrop` allow-list (lib/painel-actions.ts) is the twin of the server-side
- * `_ALLOWED_EDGES`; this client only ever calls a path mapDrop already approved.
+ * Fire ONE generic, audited stage transition for a destino/atrativo. The server's
+ * `_ALLOWED_EDGES` is the authority; Registros only calls dlq→mar and dlq→descarte.
  * Routes to PATCH /api/v1/{destinos|atrativos}/{rioId}/transition.
  */
 export function transition(

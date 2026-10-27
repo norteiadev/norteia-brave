@@ -29,6 +29,15 @@ export const sampleConfig: AppConfigSnapshot = {
   engine: { mode: "LIGADO" },
   sources: { tripadvisor: true, default: false },
   description_enrichment_enabled: true,
+  places_enrichment_enabled: true,
+  atrativo_description_cascade_enabled: true,
+  atrativo_description_batch_enabled: false,
+  // Env-only spend limits (read-only on the Configuração screen).
+  llm: { usd_daily_budget: 50 },
+  places_total_usd_cap: 300,
+  places_daily_usd_cap: 300,
+  apify_daily_usd_cap: 2,
+  apify_total_usd_cap: 5,
 };
 
 export function configGetSuccess(
@@ -48,9 +57,11 @@ export function configGetError(status = 500) {
 /** PATCH — echoes the sorted touched keys + the (post-write) redacted snapshot. */
 export function configPatchSuccess(
   config: AppConfigSnapshot = sampleConfig,
+  onBody?: (body: Record<string, unknown>) => void,
 ) {
   return http.patch(BASE, async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>;
+    onBody?.(body);
     return HttpResponse.json({
       updated: Object.keys(body ?? {}).sort(),
       config,

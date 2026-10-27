@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 
-import type { CostData, CostGroupBy } from "@/lib/cost-api";
+import type { ApifyCost, CostData, CostGroupBy, PlacesCost } from "@/lib/cost-api";
 
 /**
  * MSW handlers for the cost slice (D-07, offline test harness).
@@ -19,8 +19,27 @@ import type { CostData, CostGroupBy } from "@/lib/cost-api";
 
 const BASE = "http://localhost:3000/api/api/v1/cost";
 
+/** Places/Apify cost-guard blocks (same on every group_by; `since` ignores them). */
+export const samplePlacesCost: PlacesCost = {
+  key_id: "a1b2c3d4e5f6",
+  usd_today: 12.5,
+  daily_cap_usd: 300,
+  usd_total: 112.4,
+  total_cap_usd: 300,
+};
+
+export const sampleApifyCost: ApifyCost = {
+  usd_today: 0.4,
+  daily_cap_usd: 2,
+  usd_total: 1.25,
+  total_cap_usd: 5,
+};
+
+const guards = { places: samplePlacesCost, apify: sampleApifyCost };
+
 export const sampleCostByLane: CostData = {
   group_by: "lane",
+  ...guards,
   rows: [
     { key: "destinos", usd_cost: 4.215, tokens: 1_280_400, count: 1820 },
     { key: "atrativos", usd_cost: 2.8307, tokens: 940_120, count: 1310 },
@@ -30,6 +49,7 @@ export const sampleCostByLane: CostData = {
 
 export const sampleCostByModel: CostData = {
   group_by: "model",
+  ...guards,
   rows: [
     {
       key: "deepseek/deepseek-chat:nitro",
@@ -63,7 +83,12 @@ export function costEmpty() {
   return http.get(BASE, ({ request }) => {
     const url = new URL(request.url);
     const groupBy = (url.searchParams.get("group_by") ?? "lane") as CostGroupBy;
-    return HttpResponse.json({ group_by: groupBy, rows: [] } satisfies CostData);
+    return HttpResponse.json({
+      group_by: groupBy,
+      rows: [],
+      places: { ...samplePlacesCost, usd_today: 0, usd_total: 0 },
+      apify: { ...sampleApifyCost, usd_today: 0, usd_total: 0 },
+    } satisfies CostData);
   });
 }
 

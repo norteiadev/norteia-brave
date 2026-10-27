@@ -96,13 +96,13 @@ export function PainelMonitor() {
           label="Mar · publicado"
           testId="monitor-mar"
           value={monitor?.volume.mar_count}
-          accent="oklch(0.5 0.13 150)"
+          accent="var(--mar-ink)"
         />
         <Tile
           label="DLQ · revisão"
           testId="monitor-dlq"
           value={monitor?.volume.rio_count.dlq}
-          accent="oklch(0.55 0.13 75)"
+          accent="var(--dlq-ink)"
         />
       </div>
 
@@ -118,7 +118,7 @@ export function PainelMonitor() {
           testId="monitor-failures"
           value={monitor?.alerts.failures}
           accent={
-            monitor?.alerts.failures ? "oklch(0.55 0.20 27)" : undefined
+            monitor?.alerts.failures ? "var(--falha)" : undefined
           }
         />
         <div className="rounded-[12px] border border-[var(--painel-border-outer)] bg-[var(--card)] px-[17px] py-[15px]">
@@ -132,14 +132,14 @@ export function PainelMonitor() {
             style={
               monitor?.alerts.quality
                 ? {
-                    color: "oklch(0.5 0.18 27)",
+                    color: "var(--falha-ink)",
                     background:
-                      "color-mix(in oklch, oklch(0.55 0.20 27) 13%, white)",
+                      "var(--falha-soft)",
                   }
                 : {
-                    color: "oklch(0.5 0.13 150)",
+                    color: "var(--mar-ink)",
                     background:
-                      "color-mix(in oklch, oklch(0.62 0.17 150) 14%, white)",
+                      "var(--mar-soft)",
                   }
             }
           >

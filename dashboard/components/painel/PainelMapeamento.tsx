@@ -27,7 +27,7 @@ import {
  *
  * Tokens: scoped painel CSS vars where available (--card, --painel-border-outer,
  * --painel-navy, --painel-chip, --painel-muted-2, etc.). The navy preview panel
- * uses the exact design literals it shows (#9fb3d4 subtext, green status dot).
+ * reads --navy / --on-primary so it inverts with the dark theme.
  */
 export function PainelMapeamento() {
   const [source, setSource] = useState<MapSourceKey>("tripadvisor");
@@ -122,33 +122,33 @@ export function PainelMapeamento() {
         </div>
 
         {/* right panel: canonical preview */}
-        <div className="sticky top-0 min-w-[300px] flex-1 rounded-[13px] bg-[var(--painel-navy)] px-[18px] py-4 text-white">
+        <div className="sticky top-0 min-w-[300px] flex-1 rounded-[13px] bg-[var(--painel-navy)] px-[18px] py-4 text-[var(--on-primary)]">
           <div className="mb-[3px] flex items-center gap-2 text-[13px] font-semibold">
             Registro canônico · Brave
           </div>
-          <div className="mb-[14px] text-[11px] text-[#9fb3d4]">
+          <div className="mb-[14px] text-[11px] text-[color-mix(in_oklch,var(--on-primary)_70%,var(--navy))]">
             Resultado do mapeamento — entra no Nascente
           </div>
-          <div className="flex flex-col gap-px overflow-hidden rounded-[9px] bg-white/10">
+          <div className="flex flex-col gap-px overflow-hidden rounded-[9px] bg-[color-mix(in_oklch,var(--on-primary)_10%,transparent)]">
             {previewRows.map((pr) => (
               <div
                 key={pr.key}
                 data-testid="map-preview-row"
-                className="flex items-center justify-between gap-3 bg-white/[0.03] px-[13px] py-[9px]"
+                className="flex items-center justify-between gap-3 bg-[color-mix(in_oklch,var(--on-primary)_3%,transparent)] px-[13px] py-[9px]"
               >
-                <span className="font-mono text-[11px] text-[#9fb3d4]">
+                <span className="font-mono text-[11px] text-[color-mix(in_oklch,var(--on-primary)_70%,var(--navy))]">
                   {pr.key}
                 </span>
-                <span className="max-w-[170px] overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-[11.5px] font-semibold text-white">
+                <span className="max-w-[170px] overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-[11.5px] font-semibold text-[var(--on-primary)]">
                   {pr.value}
                 </span>
               </div>
             ))}
           </div>
-          <div className="mt-[13px] flex items-center gap-2 text-[11px] text-[#9fb3d4]">
+          <div className="mt-[13px] flex items-center gap-2 text-[11px] text-[color-mix(in_oklch,var(--on-primary)_70%,var(--navy))]">
             <span
               className="h-[6px] w-[6px] rounded-full"
-              style={{ background: "oklch(0.7 0.17 150)" }}
+              style={{ background: "var(--mar)" }}
             />
             Validado pelo schema canônico · {previewRows.length} campos
           </div>

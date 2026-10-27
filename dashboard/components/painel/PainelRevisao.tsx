@@ -306,8 +306,8 @@ function ActionButton({
 }) {
   const toneStyle =
     tone === "approve"
-      ? { color: "oklch(0.5 0.13 150)" }
-      : { color: "oklch(0.5 0.18 27)" };
+      ? { color: "var(--mar-ink)" }
+      : { color: "var(--falha-ink)" };
   return (
     <button
       type="button"

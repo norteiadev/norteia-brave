@@ -23,21 +23,30 @@ import {
 } from "@/lib/engine-api";
 import { ENGINE_MODE_LABELS, type EngineMode } from "@/lib/config-api";
 import { BR_UFS } from "@/lib/painel-data";
+import { CurrencySwitch } from "@/components/painel/currency";
 import { PainelLogs } from "@/components/painel/PainelLogs";
 import { PainelOrigem } from "@/components/painel/PainelOrigem";
+import {
+  ApiHealthItem,
+  LiveChip,
+  MotorMenu,
+  StatusSep,
+  TA_WARN_SECONDS,
+  TaSessionItem,
+  fmtMMSS,
+  pauseReasonLabel,
+} from "@/components/painel/PainelStatusBar";
 
 /**
  * PainelTopbar — 58px chrome row of the Painel Brave shell.
  *
- * Left: static page title/subtitle (per active view). Right (design order):
- * TripAdvisor session pill · read-only "Origem {source}" · divider · motor
- * label + on/off switch. The motor switch + TA pill are wired to the REAL
- * engine-api through the BFF (mirrors EngineControl's mutation pattern). The
- * "Origem {source}" button opens the PainelOrigem modal (source pick + TA cURL
- * (re)inject); the motor switch collects a pipeline DEPTH before starting (the
- * backend 422s a depthless start); the TA pill + expiry toast are driven by the
- * real session `expires_in` (warn at 5 min). All colors resolve from the scoped
- * `.painel-light` CSS vars.
+ * Left: page title/subtitle (per active view). Right: Origem + logs buttons and
+ * ONE status bar (POC .statusbar): collection live chip · TA session TTL ·
+ * norteia-api health · currency · compact motor menu. Everything reads the
+ * engine + TA status polled here at ENGINE_REFETCH_INTERVAL_MS. A cold Ligar
+ * (engine off) opens the start popover to pick scope + DEPTH (the backend 422s
+ * a depthless start). The "Hoje" spend chip waits for the Phase 1 /cost today
+ * block, so it is not rendered.
  */
 
 interface PainelTopbarProps {
@@ -45,35 +54,12 @@ interface PainelTopbarProps {
   subtitle: string;
 }
 
-/** The tri-state motor modes, in Ligar/Pausar/Desligar order. */
-const MOTOR_MODES: EngineMode[] = ["LIGADO", "PAUSADO", "DESLIGADO"];
-
-/**
- * Per-mode button metadata: the imperative ACTION label/testid (Ligar/Pausar/
- * Desligar) — distinct from the state adjective (Ligado/Pausado/Desligado) shown
- * in the "Motor · …" label.
- */
-const MOTOR_ACTION_META: Record<EngineMode, { label: string; testid: string }> = {
-  LIGADO: { label: "Ligar", testid: "painel-motor-ligar" },
-  PAUSADO: { label: "Pausar", testid: "painel-motor-pausar" },
-  DESLIGADO: { label: "Desligar", testid: "painel-motor-desligar" },
-};
-
 /** Depth options offered when starting the motor (order = least → most spend). */
 const DEPTH_ORDER: EngineDepth[] = [
   "nascente",
   "nascente_rio",
   "nascente_rio_mar",
 ];
-
-/** TA session expiry warn band (seconds) — mirrors the design's 5-min warn. */
-const TA_WARN_SECONDS = 5 * 60;
-
-/** Format a seconds count as m:ss. */
-function fmtMMSS(seconds: number): string {
-  const t = Math.max(0, Math.floor(seconds));
-  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
-}
 
 /** PT-BR error explainer — ported from EngineControl (not exported there). */
 function explainError(err: unknown): string {
@@ -95,27 +81,6 @@ function sessionWarning(s: TASessionStatus): boolean {
   );
 }
 
-/**
- * TA session display label — driven by the REAL `expires_in` (warn at 5 min),
- * not a hardcoded clock. A present session inside the warn band shows the live
- * remaining mm:ss so the operator can recreate it before it lapses.
- */
-function sessionLabel(s: TASessionStatus): string {
-  if (s.present) {
-    if (sessionWarning(s)) return `Expira em ${fmtMMSS(s.expires_in as number)}`;
-    return "Pronta";
-  }
-  if (s.reason === "needs_bootstrap") return "Precisa bootstrap";
-  return "Expirada";
-}
-
-/** TA session dot/text color (scoped status var) — amber in the warn band. */
-function sessionColor(s: TASessionStatus): string {
-  if (s.present) return sessionWarning(s) ? "var(--status-dlq)" : "var(--status-mar)";
-  if (s.reason === "needs_bootstrap") return "var(--status-dlq)";
-  return "var(--status-descarte)";
-}
-
 /** Continuar's confirm text. A Places key swap only reaches the worker when its container is
  *  RECREATED (env_file is read at create; `restart` keeps the old key and re-pauses at once). */
 function continuarConfirmText(reason: { reason: string; provider: string | null }): string {
@@ -125,14 +90,6 @@ function continuarConfirmText(reason: { reason: string; provider: string | null 
   if (reason.provider === "apify")
     return "Saldo Apify recarregado? Suba APIFY_TOTAL_USD_CAP (ou troque BRAVE_APIFY_API_KEY) no .env e recrie worker e api antes (docker compose up -d worker api) — restart não relê o .env.";
   return "Saldo recarregado?";
-}
-
-/** PT-BR pause-reason banner text (quick-260918-ohm) — reason + which provider tripped it. */
-function pauseReasonLabel(reason: { reason: string; provider: string | null }): string {
-  if (reason.reason === "daily_budget") return "Motor pausado: orçamento diário atingido";
-  if (reason.reason === "manual") return "Motor pausado: backfill interrompido";
-  if (reason.provider) return `Motor pausado: sem saldo (${reason.provider})`;
-  return "Motor pausado: sem saldo";
 }
 
 export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
@@ -154,7 +111,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     refetchOnWindowFocus: false,
   });
 
-  const { data: sessionStatus } = useQuery({
+  const { data: sessionStatus, dataUpdatedAt: sessionUpdatedAt } = useQuery({
     queryKey: taSessionKeys.status,
     queryFn: fetchTASessionStatus,
     refetchInterval: ENGINE_REFETCH_INTERVAL_MS,
@@ -225,13 +182,6 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
   // (workers still processing) and only clears it when /stop is explicitly called.
   const motorOn = data?.enabled ?? (state !== "idle");
 
-  // Tri-state sync phase for the topbar indicator. Prefer the backend-computed
-  // sync_phase (idle | syncing | synced); fall back to deriving from motorOn
-  // (syncing while the motor is on, else idle) so a status payload without the
-  // field still renders a sensible two-state indicator.
-  const syncPhase: "idle" | "syncing" | "synced" =
-    data?.sync_phase ?? (motorOn ? "syncing" : "idle");
-
   // R2 client gate: when source is tripadvisor, require a valid session before
   // enabling the Varredura depth buttons. Reuses the sessionStatus query (present && expires_in > 0).
   const taBlocked =
@@ -269,8 +219,8 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
     prevEnabledRef.current = enabled;
   }, [data?.enabled, taBlocked]);
 
-  // Close the depth menu on any click outside its wrapper (Ligar included, so the
-  // Ligar toggle keeps working) or on Escape. Mirrors PainelFilters' popover pattern.
+  // Close the depth menu on any click outside its wrapper, on Escape, or when
+  // the mode menu opens over it (same anchor).
   const motorRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!depthMenuOpen) return;
@@ -302,9 +252,10 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
       setMode.mutate("LIGADO");
       return;
     }
-    // Engine is off — open the start popover. The R2 TA-session gate (taBlocked)
-    // only disables the Varredura section; Descrição needs no TA session.
-    setDepthMenuOpen((v) => !v);
+    // Engine is off — open the start popover (picking Ligado again keeps it
+    // open). The R2 TA-session gate (taBlocked) only disables the Varredura
+    // section; Descrição needs no TA session.
+    setDepthMenuOpen(true);
   };
 
   const onPausar = () => {
@@ -380,12 +331,8 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
       {pauseReason && (
         <div
           data-testid="painel-pause-banner"
-          className="flex h-[34px] flex-shrink-0 items-center gap-[10px] rounded-[8px] border px-[12px] text-[12px] font-medium"
-          style={{
-            borderColor: "var(--status-dlq)",
-            background: "var(--status-dlq)",
-            color: "white",
-          }}
+          role="status"
+          className="flex h-[34px] flex-shrink-0 items-center gap-[10px] rounded-[8px] border border-[var(--dlq)] bg-[var(--dlq-soft)] px-[12px] text-[12px] font-medium text-[var(--dlq-ink)]"
         >
           <span>{pauseReasonLabel(pauseReason)}</span>
           <button
@@ -393,7 +340,7 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
             data-testid="painel-pause-continuar"
             disabled={pending}
             onClick={onContinuar}
-            className="rounded-[6px] bg-white/20 px-[8px] py-[3px] text-[11.5px] font-semibold hover:bg-white/30 disabled:opacity-60"
+            className="rounded-[6px] bg-[var(--surface)] px-[8px] py-[3px] text-[11.5px] font-semibold text-[var(--ink)] hover:bg-[var(--surface-3)] disabled:opacity-60"
           >
             Continuar
           </button>
@@ -401,120 +348,18 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
       )}
 
       {/* Right controls */}
-      <div className="flex flex-shrink-0 items-center gap-[10px]">
-        {/* TripAdvisor session pill (click = no-op this slice) */}
-        {sessionStatus !== undefined && (
-          <button
-            type="button"
-            data-testid="painel-ta-pill"
-            aria-label="Sessão TripAdvisor"
-            className="flex h-[34px] items-center gap-[7px] rounded-[8px] border bg-[var(--card)] px-[12px] text-[12px] font-medium"
-            style={{ borderColor: "var(--painel-border-outer)" }}
-          >
-            <span
-              className="h-[7px] w-[7px] rounded-full"
-              style={{ background: sessionColor(sessionStatus) }}
-              aria-hidden
-            />
-            <span style={{ color: sessionColor(sessionStatus) }}>
-              {sessionLabel(sessionStatus)}
-            </span>
-          </button>
-        )}
-
+      <div className="flex flex-shrink-0 items-center gap-[8px]">
         {/* Origem {source} — opens the source-pick + TA cURL (re)inject modal */}
         <button
           type="button"
           data-testid="painel-source"
           aria-haspopup="dialog"
           onClick={() => setOrigemOpen(true)}
-          className="flex h-[34px] items-center gap-[8px] rounded-[8px] border bg-[var(--card)] px-[12px] text-[12.5px] font-medium text-[var(--painel-text)] hover:bg-[var(--painel-chip)]"
-          style={{ borderColor: "var(--painel-border-outer)" }}
+          className="flex h-[30px] items-center gap-[8px] rounded-[8px] border border-[var(--line)] bg-[var(--surface)] px-[10px] text-[12px] font-medium text-[var(--ink-2)] hover:bg-[var(--surface-3)]"
         >
-          <span
-            className="h-[7px] w-[7px] rounded-[2px]"
-            style={{ background: "var(--painel-navy)" }}
-            aria-hidden
-          />
-          Origem <strong className="font-semibold">{SOURCE_LABELS[source]}</strong>
+          <span className="h-[7px] w-[7px] rounded-[2px] bg-[var(--navy)]" aria-hidden />
+          Origem <strong className="font-semibold text-[var(--ink)]">{SOURCE_LABELS[source]}</strong>
         </button>
-
-        {/* Runtime (execução) indicator — reads from the existing engine/status query (no second poll).
-            Tri-state sync_phase: syncing (yellow, Sincronizando + UF progress) · synced (green,
-            "Sincronizado") · idle (muted "Execução parada"). This is the RUNTIME axis (is a sweep
-            dispatching / has one just completed) — distinct from the "Modo · …" operator-mode label
-            below. aria-live polite so screen readers announce state changes. */}
-        <div
-          data-testid="sync-indicator"
-          className="flex min-w-[160px] flex-col items-end gap-[3px]"
-        >
-          {syncPhase === "syncing" && (
-            <>
-              <div className="flex items-center gap-[6px]">
-                <span
-                  className="h-[7px] w-[7px] flex-shrink-0 animate-pulse rounded-full"
-                  style={{ background: "var(--status-dlq)" }}
-                  aria-hidden
-                />
-                <span
-                  aria-live="polite"
-                  data-testid="sync-indicator-label"
-                  data-phase={syncPhase}
-                  className="whitespace-nowrap text-[11.5px] font-medium"
-                  style={{ color: "var(--status-dlq)" }}
-                >
-                  Sincronizando {SOURCE_LABELS[source]} · UF{" "}
-                  {data?.ufs_done ?? 0}/{data?.ufs_total ?? 0}
-                  {data?.current_uf ? ` · ${data.current_uf}` : ""}
-                </span>
-              </div>
-              {(data?.ufs_total ?? 0) > 0 && (
-                <div
-                  className="h-[3px] w-full overflow-hidden rounded-full"
-                  style={{ background: "var(--painel-border-outer)" }}
-                  aria-hidden
-                >
-                  <div
-                    className="h-full rounded-full transition-[width]"
-                    style={{
-                      background: "var(--status-dlq)",
-                      width: `${Math.min(100, Math.round(((data?.ufs_done ?? 0) / (data?.ufs_total ?? 1)) * 100))}%`,
-                    }}
-                  />
-                </div>
-              )}
-            </>
-          )}
-          {syncPhase === "synced" && (
-            <div className="flex items-center gap-[6px]">
-              <span
-                className="h-[7px] w-[7px] flex-shrink-0 rounded-full"
-                style={{ background: "var(--status-mar)" }}
-                aria-hidden
-              />
-              <span
-                aria-live="polite"
-                data-testid="sync-indicator-label"
-                data-phase={syncPhase}
-                className="whitespace-nowrap text-[11.5px] font-medium"
-                style={{ color: "var(--status-mar)" }}
-              >
-                Sincronizado
-              </span>
-            </div>
-          )}
-          {syncPhase === "idle" && (
-            <span
-              aria-live="polite"
-              data-testid="sync-indicator-label"
-              data-phase={syncPhase}
-              className="whitespace-nowrap text-[11.5px]"
-              style={{ color: "var(--painel-muted)" }}
-            >
-              Execução parada
-            </span>
-          )}
-        </div>
 
         {/* Logs sidebar toggle — opens the per-source log ring buffer viewer */}
         <button
@@ -523,159 +368,125 @@ export function PainelTopbar({ title, subtitle }: PainelTopbarProps) {
           aria-label="Ver logs de sincronização"
           aria-pressed={logsOpen}
           onClick={() => setLogsOpen((v) => !v)}
-          className="flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-[8px] border bg-[var(--card)] hover:bg-[var(--painel-chip)]"
-          style={{ borderColor: "var(--painel-border-outer)" }}
+          className="grid h-[30px] w-[30px] flex-shrink-0 place-items-center rounded-[8px] border border-[var(--line)] bg-[var(--surface)] hover:bg-[var(--surface-3)]"
         >
           <Terminal
             className="h-[15px] w-[15px]"
-            style={{ color: logsOpen ? "var(--painel-navy)" : "var(--painel-muted)" }}
+            style={{ color: logsOpen ? "var(--navy)" : "var(--ink-3)" }}
           />
         </button>
 
-        {/* Divider */}
+        {/* Status bar: service state, currency and motor in one block (POC .statusbar) */}
         <div
-          className="h-[24px] w-px"
-          style={{ background: "var(--painel-border-outer)" }}
-          aria-hidden
-        />
-
-        {/* Motor tri-state: Ligar / Pausar / Desligar (POST /api/v1/engine/mode) */}
-        <div className="flex items-center gap-[9px]">
-          <span
-            className="text-[12px] font-medium text-[var(--painel-muted)]"
-            data-testid="painel-motor-state"
-          >
-            {/* Operator-MODE axis (edit-lock source of truth), orthogonal to the
-                runtime "Execução …" indicator above — hence "Modo · …", not "Motor · …". */}
-            Modo · {ENGINE_MODE_LABELS[mode]}
-          </span>
-          <div className="relative" ref={motorRef}>
-            <div
-              role="group"
-              aria-label="Modo do motor"
-              data-testid="painel-motor-modes"
-              className="inline-flex gap-0.5 rounded-[9px] border p-[3px]"
-              style={{
-                borderColor: "var(--painel-border-outer)",
-                background: "var(--painel-chip)",
-              }}
+          role="group"
+          aria-label="Status do serviço"
+          data-testid="painel-statusbar"
+          className="flex h-[38px] items-center gap-[2px] rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-[4px]"
+        >
+          <LiveChip status={data} />
+          <StatusSep />
+          {sessionStatus !== undefined && (
+            <TaSessionItem session={sessionStatus} updatedAt={sessionUpdatedAt} />
+          )}
+          {data?.norteia_api && <ApiHealthItem api={data.norteia_api} />}
+          <StatusSep />
+          <CurrencySwitch />
+          <StatusSep />
+          {/* Motor: compact button + mode menu; a cold Ligar opens the start popover */}
+          <div ref={motorRef}>
+            <MotorMenu
+              mode={mode}
+              disabled={pending}
+              onOpen={() => setDepthMenuOpen(false)}
+              onSelect={(m) =>
+                m === "LIGADO" ? onLigar() : m === "PAUSADO" ? onPausar() : onDesligar()
+              }
             >
-              {MOTOR_MODES.map((m) => {
-                const active = m === mode;
-                const onClick =
-                  m === "LIGADO"
-                    ? onLigar
-                    : m === "PAUSADO"
-                      ? onPausar
-                      : onDesligar;
-                const meta = MOTOR_ACTION_META[m];
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    data-testid={meta.testid}
-                    aria-pressed={active}
-                    disabled={pending}
-                    onClick={onClick}
-                    className="rounded-[6px] px-[10px] py-[4px] text-[12px] font-semibold transition-colors disabled:opacity-60"
-                    style={{
-                      background: active ? "var(--card)" : "transparent",
-                      color: active
-                        ? "var(--painel-navy)"
-                        : "var(--painel-muted)",
-                      boxShadow: active ? "0 1px 2px rgba(15,23,42,.10)" : "none",
-                    }}
-                  >
-                    {meta.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Start popover — a COLD Ligar (engine off). Shared UF + cap on top,
-                then Varredura (needs a depth; backend 422s without one) and Descrição
-                (action "describe"). Only shown when the engine is off (motorOn=false). */}
-            {depthMenuOpen && !motorOn && (
-              <div
-                role="menu"
-                data-testid="painel-depth-menu"
-                className="absolute right-0 top-[30px] z-[20] w-[208px] rounded-[10px] border bg-[var(--card)] p-[6px] shadow-lg"
-                style={{ borderColor: "var(--painel-border-outer)" }}
-              >
-                {/* Bug 2: UF scope — source-independent. "" ⇒ all 27 UFs. */}
-                <div className="px-[8px] pb-[3px] pt-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
-                  Abrangência
-                </div>
-                <select
-                  data-testid="painel-uf-select"
-                  value={startUf}
-                  onChange={(e) => setStartUf(e.target.value)}
-                  className="mb-[6px] block w-full rounded-[7px] border bg-[var(--card)] px-[8px] py-[6px] text-[12.5px] font-medium text-[var(--painel-text)]"
+              {/* Start popover — a COLD Ligar (engine off). Shared UF + cap on top,
+                  then Varredura (needs a depth; backend 422s without one) and Descrição
+                  (action "describe"). Only shown when the engine is off (motorOn=false). */}
+              {depthMenuOpen && !motorOn && (
+                <div
+                  role="menu"
+                  data-testid="painel-depth-menu"
+                  className="absolute right-0 top-[calc(100%+8px)] z-[20] w-[208px] rounded-[10px] border bg-[var(--card)] p-[6px] shadow-lg"
                   style={{ borderColor: "var(--painel-border-outer)" }}
                 >
-                  <option value="">Todo o Brasil (27 UFs)</option>
-                  {BR_UFS.map((uf) => (
-                    <option key={uf} value={uf}>
-                      {uf}
-                    </option>
-                  ))}
-                </select>
-                {/* Optional per-UF attraction cap (test-run throttle). Empty ⇒ full
-                    sweep. TripAdvisor lane only. */}
-                <div className="px-[8px] pb-[3px] pt-[2px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
-                  Máx. atrativos por UF
-                </div>
-                <input
-                  type="number"
-                  data-testid="painel-max-per-uf"
-                  value={maxPerUf}
-                  min={1}
-                  step={1}
-                  placeholder="Sem limite"
-                  onChange={(e) => setMaxPerUf(e.target.value)}
-                  className="mb-[6px] block w-full rounded-[7px] border bg-[var(--card)] px-[8px] py-[6px] text-[12.5px] font-medium text-[var(--painel-text)]"
-                  style={{ borderColor: "var(--painel-border-outer)" }}
-                />
-                <div className="px-[8px] py-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
-                  Varredura
-                </div>
-                {/* R2 gate: the sweep needs a valid TA session; Descrição does not. */}
-                {taBlocked && (
-                  <div
-                    data-testid="painel-sweep-blocked"
-                    className="px-[8px] pb-[4px] text-[11px] text-[var(--painel-muted)]"
-                  >
-                    Injete uma sessão TripAdvisor válida para varrer.
+                  {/* Bug 2: UF scope — source-independent. "" ⇒ all 27 UFs. */}
+                  <div className="px-[8px] pb-[3px] pt-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
+                    Abrangência
                   </div>
-                )}
-                {DEPTH_ORDER.map((depth) => (
+                  <select
+                    data-testid="painel-uf-select"
+                    value={startUf}
+                    onChange={(e) => setStartUf(e.target.value)}
+                    className="mb-[6px] block w-full rounded-[7px] border bg-[var(--card)] px-[8px] py-[6px] text-[12.5px] font-medium text-[var(--painel-text)]"
+                    style={{ borderColor: "var(--painel-border-outer)" }}
+                  >
+                    <option value="">Todo o Brasil (27 UFs)</option>
+                    {BR_UFS.map((uf) => (
+                      <option key={uf} value={uf}>
+                        {uf}
+                      </option>
+                    ))}
+                  </select>
+                  {/* Optional per-UF attraction cap (test-run throttle). Empty ⇒ full
+                      sweep. TripAdvisor lane only. */}
+                  <div className="px-[8px] pb-[3px] pt-[2px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
+                    Máx. atrativos por UF
+                  </div>
+                  <input
+                    type="number"
+                    data-testid="painel-max-per-uf"
+                    value={maxPerUf}
+                    min={1}
+                    step={1}
+                    placeholder="Sem limite"
+                    onChange={(e) => setMaxPerUf(e.target.value)}
+                    className="mb-[6px] block w-full rounded-[7px] border bg-[var(--card)] px-[8px] py-[6px] text-[12.5px] font-medium text-[var(--painel-text)]"
+                    style={{ borderColor: "var(--painel-border-outer)" }}
+                  />
+                  <div className="px-[8px] py-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
+                    Varredura
+                  </div>
+                  {/* R2 gate: the sweep needs a valid TA session; Descrição does not. */}
+                  {taBlocked && (
+                    <div
+                      data-testid="painel-sweep-blocked"
+                      className="px-[8px] pb-[4px] text-[11px] text-[var(--painel-muted)]"
+                    >
+                      Injete uma sessão TripAdvisor válida para varrer.
+                    </div>
+                  )}
+                  {DEPTH_ORDER.map((depth) => (
+                    <button
+                      key={depth}
+                      type="button"
+                      role="menuitem"
+                      data-testid={`painel-depth-${depth}`}
+                      disabled={pending || taBlocked}
+                      onClick={() => onPickDepth(depth)}
+                      className="block w-full rounded-[7px] px-[8px] py-[7px] text-left text-[12.5px] font-medium text-[var(--painel-text)] hover:bg-[var(--painel-chip)] disabled:opacity-50"
+                    >
+                      {DEPTH_LABELS[depth]}
+                    </button>
+                  ))}
+                  <div className="px-[8px] py-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
+                    Descrição
+                  </div>
                   <button
-                    key={depth}
                     type="button"
                     role="menuitem"
-                    data-testid={`painel-depth-${depth}`}
-                    disabled={pending || taBlocked}
-                    onClick={() => onPickDepth(depth)}
+                    data-testid="painel-describe"
+                    disabled={pending}
+                    onClick={onDescribe}
                     className="block w-full rounded-[7px] px-[8px] py-[7px] text-left text-[12.5px] font-medium text-[var(--painel-text)] hover:bg-[var(--painel-chip)] disabled:opacity-50"
                   >
-                    {DEPTH_LABELS[depth]}
+                    Gerar descrições
                   </button>
-                ))}
-                <div className="px-[8px] py-[5px] text-[10px] font-semibold uppercase tracking-[0.4px] text-[var(--painel-muted-2)]">
-                  Descrição
                 </div>
-                <button
-                  type="button"
-                  role="menuitem"
-                  data-testid="painel-describe"
-                  disabled={pending}
-                  onClick={onDescribe}
-                  className="block w-full rounded-[7px] px-[8px] py-[7px] text-left text-[12.5px] font-medium text-[var(--painel-text)] hover:bg-[var(--painel-chip)] disabled:opacity-50"
-                >
-                  Gerar descrições
-                </button>
-              </div>
-            )}
+              )}
+            </MotorMenu>
           </div>
         </div>
       </div>

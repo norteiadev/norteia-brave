@@ -1,17 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { ApiError } from "@/lib/api-client";
-import { type EngineSource, SOURCE_LABELS } from "@/lib/engine-api";
+import { useCurrency } from "@/components/painel/currency";
+import { Panel, Pill, Switch } from "@/components/painel/telas-ui";
+import { useDeferredCommit } from "@/components/painel/useDeferredCommit";
+import { SOURCE_LABELS } from "@/lib/engine-api";
 import {
+  type AppConfigSnapshot,
   type ConfigPatchBody,
-  type EngineMode,
   type WeightKey,
-  ENGINE_MODES,
-  ENGINE_MODE_LABELS,
   WEIGHT_KEYS,
   WEIGHT_LABELS,
   configKeys,
@@ -22,322 +22,353 @@ import {
 } from "@/lib/config-api";
 
 /**
- * PainelConfig — the "Configuração" painel view (phase H).
+ * PainelConfig — "Configuração" (spec #82 Phase 0, POC view-config).
  *
- * The operator-tunable runtime surface over GET/PATCH /api/v1/config:
- *   - Fontes: per-source on/off (`source.<name>.enabled`) — toggled inline.
- *   - Pesos de confiabilidade: the five score weights + `score.threshold_mar`. The five
- *     weights MUST sum to 100 — enforced CLIENT-SIDE here (Salvar disabled +
- *     live sum indicator) and again server-side (the authoritative 422).
- *   - Motor: `engine.mode` ∈ LIGADO / PAUSADO / DESLIGADO.
+ * Over GET/PATCH /api/v1/config:
+ *   - Score: the five weights (slider + number, must sum to 100: Salvar is
+ *     disabled client-side, the server 422 is the backstop) and `threshold_mar`.
+ *   - Lanes: switches for the registered boolean keys only.
+ *   - Limites de gasto: env-only caps, read-only (never part of the PATCH).
+ * Edits pile up in a draft; the pending bar saves them through a deferred
+ * commit, so the PATCH leaves only after the "Desfazer" window.
  *
- * Only the settable keys above are sent; the snapshot's other blocks (llm,
- * whatsapp, …) are read-only and not surfaced here.
+ * Not here yet: the impact preview (needs POST /config/simulate) and the
+ * engine mode (lives in the status bar).
  */
 
-type WeightForm = Record<WeightKey, number>;
+interface Lane {
+  key: string;
+  label: string;
+  desc: string;
+  read: (c: AppConfigSnapshot) => unknown;
+}
 
-const ZERO_WEIGHTS: WeightForm = Object.fromEntries(
-  WEIGHT_KEYS.map((k) => [k, 0]),
-) as WeightForm;
+const LANES: Lane[] = [
+  ...Object.entries(SOURCE_LABELS).map(([name, label]) => ({
+    key: `source.${name}.enabled`,
+    label: `Coleta ${label}`,
+    desc: "Lane de coleta: sweep por UF.",
+    read: (c: AppConfigSnapshot) => c.sources?.[name],
+  })),
+  {
+    key: "places_enrichment_enabled",
+    label: "Enriquecimento Google Places",
+    desc: "Horário, endereço e reviews. Gasta Places e Apify.",
+    read: (c) => c.places_enrichment_enabled,
+  },
+  {
+    key: "description_enrichment_enabled",
+    label: "Descrição editorial",
+    desc: "Escreve a descrição editorial na voz Norteia. Desligue para coletar sem custo de LLM.",
+    read: (c) => c.description_enrichment_enabled,
+  },
+  {
+    key: "atrativo_description_cascade_enabled",
+    label: "Cascata de descrição",
+    desc: "Busca aberta, gate de menção e escrita mais barata no lugar da busca do Claude.",
+    read: (c) => c.atrativo_description_cascade_enabled,
+  },
+  {
+    key: "atrativo_description_batch_enabled",
+    label: "Descrição em lote (Batch API)",
+    desc: "Rota Claude em lote: 50% mais barata, assíncrona (até 24 h).",
+    read: (c) => c.atrativo_description_batch_enabled,
+  },
+];
 
-function explainError(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.status === 401) return "Sessão expirada. Faça login novamente.";
-    return err.message; // 422 → the server's weight-sum / range / mode detail
+const ENV_LIMITS: { label: string; env: string; read: (c: AppConfigSnapshot) => unknown }[] = [
+  {
+    label: "Orçamento LLM diário",
+    env: "BRAVE_LLM_USD_DAILY_BUDGET",
+    read: (c) => (c.llm as { usd_daily_budget?: unknown } | undefined)?.usd_daily_budget,
+  },
+  { label: "Crédito do Google Places", env: "PLACES_TOTAL_USD_CAP", read: (c) => c.places_total_usd_cap },
+  { label: "Places por dia", env: "PLACES_DAILY_USD_CAP", read: (c) => c.places_daily_usd_cap },
+  { label: "Apify por dia", env: "APIFY_DAILY_USD_CAP", read: (c) => c.apify_daily_usd_cap },
+  { label: "Apify total", env: "APIFY_TOTAL_USD_CAP", read: (c) => c.apify_total_usd_cap },
+];
+
+interface Form {
+  weights: Record<WeightKey, number>;
+  threshold: number;
+  lanes: Record<string, boolean>;
+}
+
+function seed(c: AppConfigSnapshot): Form {
+  const weights = {} as Record<WeightKey, number>;
+  for (const k of WEIGHT_KEYS) weights[k] = Number(c.score[k]) || 0;
+  const lanes: Record<string, boolean> = {};
+  // A lane the snapshot does not carry is hidden, never guessed.
+  for (const l of LANES) {
+    const v = l.read(c);
+    if (typeof v === "boolean") lanes[l.key] = v;
   }
-  return "Falha ao atualizar a configuração.";
+  return { weights, threshold: Number(c.score.threshold_mar) || 0, lanes };
+}
+
+/** Readable diff lines plus the PATCH body: only changed keys, all five weights if any moved. */
+function diff(draft: Form, base: Form): { lines: string[]; body: ConfigPatchBody } {
+  const lines: string[] = [];
+  const body: ConfigPatchBody = {};
+  if (draft.threshold !== base.threshold) {
+    lines.push(`Limiar ${base.threshold} → ${draft.threshold}`);
+    body["score.threshold_mar"] = draft.threshold;
+  }
+  const moved = WEIGHT_KEYS.filter((k) => draft.weights[k] !== base.weights[k]);
+  for (const k of moved)
+    lines.push(`${WEIGHT_LABELS[k]} ${base.weights[k]} → ${draft.weights[k]}`);
+  // The server checks the merged sum; sending the full set keeps it exact.
+  if (moved.length) for (const k of WEIGHT_KEYS) body[`score.${k}`] = draft.weights[k];
+  for (const l of LANES) {
+    if (!(l.key in draft.lanes) || draft.lanes[l.key] === base.lanes[l.key]) continue;
+    lines.push(`${l.label} ${draft.lanes[l.key] ? "ligada" : "desligada"}`);
+    body[l.key] = draft.lanes[l.key];
+  }
+  return { lines, body };
 }
 
 export function PainelConfig() {
   const qc = useQueryClient();
+  const commit = useDeferredCommit();
+  const { format } = useCurrency();
 
-  const { data } = useQuery({
-    queryKey: configKeys.snapshot,
-    queryFn: fetchConfig,
-  });
+  const { data } = useQuery({ queryKey: configKeys.snapshot, queryFn: fetchConfig });
 
-  // Editable form for the pesos block, seeded from the server snapshot (on mount
-  // and after each successful save re-warms the snapshot).
-  const [form, setForm] = useState<{ weights: WeightForm; threshold: number }>(
-    () => ({ weights: ZERO_WEIGHTS, threshold: 0 }),
-  );
+  const [draft, setDraft] = useState<Form | null>(null);
+  // Saved but still inside the undo window: the screen treats it as the baseline.
+  const [optimistic, setOptimistic] = useState<Form | null>(null);
 
   useEffect(() => {
     if (!data) return;
-    const seed = { ...ZERO_WEIGHTS };
-    for (const k of WEIGHT_KEYS) seed[k] = Number(data.score[k]) || 0;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- seed the editable form from the authoritative server snapshot (mount + post-save)
-    setForm({ weights: seed, threshold: Number(data.score.threshold_mar) || 0 });
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reseed the draft from the authoritative snapshot (mount + post-save)
+    setDraft(seed(data));
   }, [data]);
 
-  const patch = useMutation({
-    mutationFn: (body: ConfigPatchBody) => updateConfig(body),
-    onError: (e) => toast.error(explainError(e)),
-    onSuccess: (res) =>
-      toast.success(`Configuração atualizada (${res.updated.length})`),
-    onSettled: () =>
-      void qc.invalidateQueries({ queryKey: configKeys.snapshot }),
-  });
-
-  if (!data) {
+  if (!data || !draft) {
     return (
-      <div className="grid h-full place-items-center text-[13px] text-[var(--painel-muted-2)]">
+      <div className="grid h-full place-items-center text-[13px] text-[var(--ink-3)]">
         Carregando configuração…
       </div>
     );
   }
 
-  const sum = weightsSum(form.weights);
-  const valid = weightsValid(form.weights);
-  // Only surface sources the dashboard actually exposes (SOURCE_LABELS). The
-  // dormant "default"/Places lane stays in the backend config but is not shown
-  // or toggled here — TripAdvisor is the only operator-facing source.
-  const sources = Object.entries(data.sources).filter(
-    ([name]) => name in SOURCE_LABELS,
-  );
-  const activeMode = data.engine.mode;
+  const server = seed(data);
+  const base = optimistic ?? server;
+  const { lines, body } = diff(draft, base);
+  const sum = weightsSum(draft.weights);
+  const valid = weightsValid(draft.weights);
 
-  function setWeight(key: WeightKey, value: number) {
-    setForm((f) => ({ ...f, weights: { ...f.weights, [key]: value } }));
+  const setWeight = (k: WeightKey, v: number) =>
+    setDraft({ ...draft, weights: { ...draft.weights, [k]: v } });
+
+  function save() {
+    if (!draft) return;
+    const saved = draft;
+    const n = lines.length;
+    setOptimistic(saved);
+    commit({
+      message: `${n} ${n === 1 ? "alteração será salva" : "alterações serão salvas"}.`,
+      run: () => updateConfig(body),
+      onDone: () => {
+        toast.success(
+          `${n} ${n === 1 ? "chave salva" : "chaves salvas"} em config_settings. Os scores já calculados não mudam.`,
+        );
+        void qc.invalidateQueries({ queryKey: configKeys.snapshot }).then(() =>
+          setOptimistic(null),
+        );
+      },
+      // Nothing was sent: back to what the server has.
+      onUndo: () => {
+        setOptimistic(null);
+        setDraft(server);
+      },
+      // The draft stays, so the pending bar comes back with the server's reason.
+      onError: () => setOptimistic(null),
+    });
   }
 
-  function savePesos() {
-    const body: ConfigPatchBody = {};
-    for (const k of WEIGHT_KEYS) body[`score.${k}`] = form.weights[k];
-    body["score.threshold_mar"] = form.threshold;
-    patch.mutate(body);
-  }
-
-  function toggleSource(name: string, next: boolean) {
-    patch.mutate({ [`source.${name}.enabled`]: next });
-  }
-
-  function toggleEnrichment(next: boolean) {
-    patch.mutate({ description_enrichment_enabled: next });
-  }
-
-  function setMode(mode: EngineMode) {
-    if (mode === activeMode) return;
-    patch.mutate({ "engine.mode": mode });
-  }
+  const shownEnv = ENV_LIMITS.flatMap((e) => {
+    const v = e.read(data);
+    return typeof v === "number" ? [{ ...e, value: v }] : [];
+  });
+  const batchOn = draft.lanes.atrativo_description_batch_enabled === true;
 
   return (
     <div className="h-full overflow-y-auto px-[22px] pb-8 pt-5">
-      <div className="flex max-w-[720px] flex-col gap-5">
-        {/* Motor mode */}
-        <Card title="Modo do motor" subtitle="Estado operacional da coleta contínua">
-          <div
-            className="inline-flex gap-0.5 rounded-[9px] bg-[var(--painel-chip)] p-[3px]"
-            data-testid="config-mode"
-          >
-            {ENGINE_MODES.map((m) => {
-              const isActive = m === activeMode;
-              return (
-                <button
-                  key={m}
-                  type="button"
-                  data-testid={`config-mode-${m}`}
-                  data-active={isActive ? "true" : "false"}
-                  aria-pressed={isActive}
-                  disabled={patch.isPending}
-                  onClick={() => setMode(m)}
-                  className={`flex h-8 items-center rounded-[7px] px-[13px] text-[12.5px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                    isActive
-                      ? "bg-[var(--card)] text-[var(--painel-navy)] shadow-sm"
-                      : "text-[var(--painel-muted)]"
-                  }`}
-                >
-                  {ENGINE_MODE_LABELS[m]}
-                </button>
-              );
-            })}
-          </div>
-        </Card>
-
-        {/* Fontes */}
-        <Card title="Fontes" subtitle="Habilita/desabilita cada lane de coleta">
-          {sources.length === 0 ? (
-            <div className="text-[12.5px] text-[var(--painel-muted-2)]">
-              Nenhuma fonte configurada.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1">
-              {sources.map(([name, enabled]) => (
-                <label
-                  key={name}
-                  data-testid={`config-source-${name}`}
-                  className="flex items-center justify-between rounded-[8px] px-[10px] py-[9px] hover:bg-[var(--painel-chip)]"
-                >
-                  <span className="text-[13px] font-medium text-[var(--painel-text)]">
-                    {SOURCE_LABELS[name as EngineSource] ?? name}
-                  </span>
-                  <input
-                    type="checkbox"
-                    data-testid={`config-source-toggle-${name}`}
-                    checked={enabled}
-                    disabled={patch.isPending}
-                    onChange={(e) => toggleSource(name, e.target.checked)}
-                    className="h-4 w-4 cursor-pointer accent-[var(--painel-navy)] disabled:cursor-not-allowed"
-                  />
-                </label>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        {/* Enriquecimento de descrição */}
-        <Card
-          title="Enriquecimento de descrição"
-          subtitle="Gera a descrição editorial via LLM. Desligue para rodar coletas locais sem custo."
-        >
-          <label
-            data-testid="config-enrichment"
-            className="flex items-center justify-between rounded-[8px] px-[10px] py-[9px] hover:bg-[var(--painel-chip)]"
-          >
-            <span className="text-[13px] font-medium text-[var(--painel-text)]">
-              Descrição editorial (Melhores Destinos + LLM)
+      <div className="flex max-w-[1000px] flex-col gap-4">
+        <Panel
+          title="Score de confiabilidade"
+          hint="os pesos somam 100 · o limiar decide quem pode ir ao Mar"
+          right={
+            <span data-testid="config-weight-sum" data-valid={valid ? "true" : "false"}>
+              <Pill tone={valid ? "ok" : "bad"}>
+                {valid ? "Soma 100 ✓" : `Soma ${sum}: precisa ser 100`}
+              </Pill>
             </span>
-            <input
-              type="checkbox"
-              data-testid="config-enrichment-toggle"
-              checked={data.description_enrichment_enabled}
-              disabled={patch.isPending}
-              onChange={(e) => toggleEnrichment(e.target.checked)}
-              className="h-4 w-4 cursor-pointer accent-[var(--painel-navy)] disabled:cursor-not-allowed"
-            />
-          </label>
-        </Card>
-
-        {/* Pesos de confiabilidade + threshold */}
-        <Card
-          title="Pesos de confiabilidade e limiar do Mar"
-          subtitle="Os cinco pesos devem somar 100"
+          }
         >
-          <div className="flex flex-col gap-[10px]">
-            {WEIGHT_KEYS.map((k) => (
-              <Field key={k} label={WEIGHT_LABELS[k]}>
-                <NumberInput
-                  testId={`config-weight-${k}`}
-                  value={form.weights[k]}
-                  onChange={(v) => setWeight(k, v)}
-                  disabled={patch.isPending}
-                />
-              </Field>
-            ))}
-
-            <div className="mt-1 flex items-center gap-2 text-[12px]">
-              <span className="text-[var(--painel-muted-2)]">Soma dos pesos:</span>
-              <span
-                data-testid="config-weight-sum"
-                data-valid={valid ? "true" : "false"}
-                className="font-mono font-semibold"
-                style={{
-                  color: valid ? "oklch(0.5 0.13 150)" : "oklch(0.5 0.18 27)",
-                }}
-              >
-                {sum}
-              </span>
-              {!valid && (
-                <span
-                  data-testid="config-weight-warning"
-                  className="text-[11.5px]"
-                  style={{ color: "oklch(0.5 0.18 27)" }}
-                >
-                  precisa somar 100
-                </span>
-              )}
-            </div>
-
-            <div className="my-2 h-px bg-[var(--painel-border-inner)]" />
-
-            <Field label="Limiar do Mar (threshold_mar)">
-              <NumberInput
-                testId="config-threshold-mar"
-                value={form.threshold}
-                onChange={(v) => setForm((f) => ({ ...f, threshold: v }))}
-                disabled={patch.isPending}
-              />
-            </Field>
-
-            <div className="mt-2 flex justify-end">
-              <button
-                type="button"
-                data-testid="config-save-pesos"
-                onClick={savePesos}
-                disabled={!valid || patch.isPending}
-                className="h-[32px] cursor-pointer rounded-[8px] bg-[var(--painel-navy)] px-[16px] text-[12.5px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Salvar pesos
-              </button>
-            </div>
+          {WEIGHT_KEYS.map((k) => (
+            <WeightRow
+              key={k}
+              id={`w-${k}`}
+              label={WEIGHT_LABELS[k]}
+              testId={`config-weight-${k}`}
+              value={draft.weights[k]}
+              dirty={draft.weights[k] !== base.weights[k]}
+              onChange={(v) => setWeight(k, v)}
+            />
+          ))}
+          <div className="mt-2 border-t border-[var(--line-2)] pt-3">
+            <WeightRow
+              id="w-threshold"
+              label="Limiar do Mar"
+              testId="config-threshold-mar"
+              value={draft.threshold}
+              dirty={draft.threshold !== base.threshold}
+              onChange={(v) => setDraft({ ...draft, threshold: v })}
+            />
           </div>
-        </Card>
+          <p className="mt-3 text-[12px] text-[var(--ink-3)]">
+            Salvar muda a regra para os próximos registros processados. Os scores já
+            calculados não são recalculados.
+          </p>
+        </Panel>
+
+        <Panel title="Lanes e enriquecimento" hint="liga e desliga sem reiniciar o worker">
+          {LANES.filter((l) => l.key in draft.lanes).map((l, i) => (
+            <div
+              key={l.key}
+              className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-[2px] py-3 ${
+                i ? "border-t border-[var(--line-2)]" : "pt-0"
+              }`}
+            >
+              <div>
+                <b id={`lane-${l.key}`} className="text-[13px] font-semibold text-[var(--ink)]">
+                  {l.label}
+                </b>{" "}
+                <span className="font-mono text-[11px] text-[var(--ink-3)]">{l.key}</span>
+              </div>
+              <Switch
+                checked={draft.lanes[l.key]}
+                labelledBy={`lane-${l.key}`}
+                onChange={(v) => setDraft({ ...draft, lanes: { ...draft.lanes, [l.key]: v } })}
+              />
+              <p className="col-start-1 m-0 text-[12px] text-[var(--ink-3)]">
+                {l.desc}
+                {l.key === "atrativo_description_cascade_enabled" && batchOn &&
+                  " Sem efeito enquanto a descrição em lote estiver ligada."}
+              </p>
+            </div>
+          ))}
+        </Panel>
+
+        {shownEnv.length > 0 && (
+          <Panel title="Limites de gasto" hint="somente leitura: vêm do .env" testId="config-env-limits">
+            {shownEnv.map((e, i) => (
+              <div
+                key={e.env}
+                className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 py-3 ${
+                  i ? "border-t border-[var(--line-2)]" : "pt-0"
+                }`}
+              >
+                <div>
+                  <b className="text-[13px] font-semibold text-[var(--ink)]">{e.label}</b>{" "}
+                  <span className="font-mono text-[11px] text-[var(--ink-3)]">{e.env}</span>
+                </div>
+                <span className="rounded-[6px] bg-[var(--surface-2)] px-2 py-1 font-mono text-[13px] font-semibold text-[var(--ink-2)]">
+                  {format(e.value)}
+                </span>
+              </div>
+            ))}
+            <p className="mt-3 text-[12px] text-[var(--ink-3)]">
+              Para mudar, edite o .env e recrie os serviços com{" "}
+              <span className="font-mono">docker compose up -d worker api</span> (restart não relê o .env).
+            </p>
+          </Panel>
+        )}
+
+        {lines.length > 0 && (
+          <div
+            data-testid="config-save-bar"
+            className="sticky bottom-3 flex flex-wrap items-center gap-2 rounded-[12px] bg-[var(--ink)] py-2 pl-[14px] pr-[10px] text-[13px] text-[var(--bg)] shadow-[var(--shadow)]"
+          >
+            <span>
+              <b className="font-mono">{lines.length}</b>{" "}
+              {lines.length === 1 ? "alteração" : "alterações"}: {lines.slice(0, 3).join(" · ")}
+              {lines.length > 3 ? " …" : ""}
+            </span>
+            <span className="flex-1" />
+            {!valid && (
+              <span data-testid="config-weight-warning" className="text-[12px] font-semibold">
+                Os pesos precisam somar 100
+              </span>
+            )}
+            {/* Inverted bar (POC .bulk): its buttons carry their own colors. */}
+            <button
+              type="button"
+              onClick={() => setDraft(base)}
+              className="min-h-[30px] cursor-pointer rounded-[8px] border border-[var(--ink-3)] bg-transparent px-3 text-[12.5px] font-semibold text-[var(--bg)]"
+            >
+              Descartar
+            </button>
+            <button
+              type="button"
+              disabled={!valid}
+              onClick={save}
+              className="min-h-[30px] cursor-pointer rounded-[8px] border border-[var(--bg)] bg-[var(--bg)] px-3 text-[12.5px] font-semibold text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              Salvar
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function Card({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-[13px] border border-[var(--painel-border-outer)] bg-[var(--card)] p-[18px]">
-      <div className="mb-[14px]">
-        <h2 className="text-[14px] font-semibold text-[var(--painel-text)]">
-          {title}
-        </h2>
-        <p className="mt-[2px] text-[11.5px] text-[var(--painel-muted-2)]">
-          {subtitle}
-        </p>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function Field({
+function WeightRow({
+  id,
   label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="flex items-center justify-between gap-4">
-      <span className="text-[12.5px] text-[var(--painel-text)]">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function NumberInput({
   testId,
   value,
+  dirty,
   onChange,
-  disabled,
 }: {
+  id: string;
+  label: string;
   testId: string;
   value: number;
-  onChange: (value: number) => void;
-  disabled?: boolean;
+  dirty: boolean;
+  onChange: (v: number) => void;
 }) {
+  const set = (raw: string) => onChange(Math.round(Number(raw)) || 0);
+  const tone = dirty ? "font-bold text-[var(--navy)]" : "text-[var(--ink)]";
   return (
-    <input
-      type="number"
-      data-testid={testId}
-      value={Number.isFinite(value) ? value : 0}
-      min={0}
-      max={100}
-      disabled={disabled}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className="h-8 w-[92px] rounded-[7px] border border-[var(--painel-border-outer)] bg-[var(--card)] px-[9px] text-right font-mono text-[12.5px] text-[var(--painel-text)] disabled:cursor-not-allowed disabled:opacity-50"
-    />
+    <div className="grid grid-cols-[150px_minmax(0,1fr)_70px] items-center gap-3 py-[6px] max-sm:grid-cols-[1fr_70px]">
+      <label htmlFor={id} className={`text-[13px] font-medium ${tone}`}>
+        {label}
+      </label>
+      <input
+        id={id}
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={value}
+        onChange={(e) => set(e.target.value)}
+        className="w-full accent-[var(--navy)] max-sm:hidden"
+      />
+      <input
+        type="number"
+        min={0}
+        max={100}
+        step={1}
+        aria-label={`${label} (número)`}
+        data-testid={testId}
+        value={value}
+        onChange={(e) => set(e.target.value)}
+        className={`h-8 w-[70px] rounded-[7px] border border-[var(--line)] bg-[var(--surface)] px-2 text-right font-mono text-[13px] ${tone}`}
+      />
+    </div>
   );
 }

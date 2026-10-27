@@ -103,3 +103,71 @@ describe("D-01 globals.css Norteia brand tokens", () => {
     }
   });
 });
+
+/**
+ * Painel redesign (#83) — POC tokens scoped to `.painel-light` (light) and
+ * `.painel-light[data-painel-theme="dark"]` (dark). Both themes must keep WCAG
+ * AA contrast (4.5:1) for text and for the status inks on their soft chips.
+ */
+function blockTokens(selector: string): Record<string, string> {
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = css.match(new RegExp(`(?:^|\\n)${esc}\\s*\\{([\\s\\S]*?)\\}`));
+  if (!m) return {};
+  return Object.fromEntries(
+    [...m[1].matchAll(/--([\w-]+)\s*:\s*([^;]+);/g)].map((t) => [t[1], t[2].trim()]),
+  );
+}
+
+function luminance(hex: string): number {
+  const n = hex.replace("#", "");
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const c = parseInt(n.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+const POC_TOKENS = [
+  "surface", "surface-2", "surface-3", "line", "line-2",
+  "ink", "ink-2", "ink-3", "ink-4", "navy", "navy-soft", "on-primary",
+  "mar", "mar-ink", "mar-soft", "dlq", "dlq-ink", "dlq-soft",
+  "falha", "falha-ink", "falha-soft", "rio", "descarte", "focus", "shadow",
+];
+
+describe("Painel light/dark theme tokens", () => {
+  const themes = {
+    light: blockTokens(".painel-light"),
+    dark: blockTokens('.painel-light[data-painel-theme="dark"]'),
+  };
+
+  for (const [name, t] of Object.entries(themes)) {
+    it(`${name}: declares every POC token`, () => {
+      for (const token of POC_TOKENS) expect(t[token], `--${token}`).toBeTruthy();
+    });
+
+    it(`${name}: text and status inks pass AA contrast`, () => {
+      const pairs: [string, string][] = [
+        ["ink", "surface"], ["ink-2", "surface"], ["ink-3", "surface"],
+        ["ink", "surface-2"], ["ink-3", "surface-2"], ["navy", "surface"],
+        ["on-primary", "navy"],
+        ["mar-ink", "mar-soft"], ["dlq-ink", "dlq-soft"], ["falha-ink", "falha-soft"],
+        ["mar-ink", "surface"], ["dlq-ink", "surface"], ["falha-ink", "surface"],
+      ];
+      for (const [fg, bg] of pairs) {
+        expect(contrast(t[fg], t[bg]), `--${fg} on --${bg}`).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+  }
+
+  it("remaps the legacy --painel-* and shadcn vars onto the POC tokens", () => {
+    const t = themes.light;
+    expect(t["painel-text"]).toBe("var(--ink)");
+    expect(t["card"]).toBe("var(--surface)");
+    expect(t["primary"]).toBe("var(--navy)");
+  });
+});
