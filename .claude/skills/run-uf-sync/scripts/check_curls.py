@@ -20,8 +20,22 @@ DIR = ROOT / "scripts" / "single_attraction"
 MAX_AGE_H = 6
 
 
+def split(curl: str) -> list[str]:
+    """shlex has no ANSI-C quoting: DevTools emits $'...' whenever a value has a quote or
+    non-ASCII ("São", "d'Ajuda") — decode it into a plain '...' token (as scripts/ta_bootstrap.py)."""
+    curl = re.sub(
+        r"\$'((?:[^'\\]|\\.)*)'",
+        lambda m: shlex.quote(
+            m.group(1).encode("latin-1", "backslashreplace").decode("unicode_escape")
+        ),
+        curl,
+        flags=re.DOTALL,
+    )
+    return shlex.split(curl.replace("\\\n", " "))
+
+
 def batch(curl: str) -> list:
-    tokens = shlex.split(curl.replace("\\\n", " "))
+    tokens = split(curl)
     for flag in ("--data-raw", "--data", "--data-binary", "-d"):
         if flag in tokens and tokens.index(flag) + 1 < len(tokens):
             body = json.loads(tokens[tokens.index(flag) + 1])
@@ -30,7 +44,7 @@ def batch(curl: str) -> list:
 
 
 def cookies(curl: str) -> str:
-    tokens = shlex.split(curl.replace("\\\n", " "))
+    tokens = split(curl)
     for flag in ("-b", "--cookie"):
         if flag in tokens:
             return tokens[tokens.index(flag) + 1]
@@ -45,7 +59,7 @@ def check(name: str, label: str, test) -> None:
     age_h = (time.time() - path.stat().st_mtime) / 3600
     try:
         problem, note = test(path.read_text(encoding="utf-8"))
-    except (ValueError, IndexError) as exc:
+    except Exception as exc:  # a crash would print no FAIL line and preflight.sh would count 0
         problem, note = f"ilegível ({type(exc).__name__})", ""
     if problem:
         print(f"FAIL  cURL {label}: {problem} (references/events.md › TA session)")
