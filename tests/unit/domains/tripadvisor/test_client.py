@@ -1108,6 +1108,32 @@ class TestBootstrapQueryIdRejectList:
             f"Expected session_id='E75FBE95', got: {result['session_id']!r}"
         )
 
+    def test_parse_curl_reads_batch_with_bracket_quote_inside_json(self):
+        """TA's batch carries "value":"[object Object]" (28/10): the `]"` inside the JSON
+        must not end --data-raw early, or every qid is lost."""
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "ta_bootstrap",
+            Path(__file__).parent.parent.parent.parent.parent
+            / "scripts"
+            / "ta_bootstrap.py",
+        )
+        ta_bootstrap = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ta_bootstrap)
+
+        curl_str = (
+            "curl 'https://www.tripadvisor.com.br/data/graphql/ids' \\\n"
+            "  -b 'datadome=abc; TASID=E75FBE95' \\\n"
+            "  --data-raw '[{\"variables\":{\"parameters\":[{\"key\":\"filters\","
+            "\"value\":\"[object Object]\"}]},\"extensions\":{\"preRegisteredQueryId\":"
+            "\"a5cb7fa004b5e4b5\"}}]'"
+        )
+
+        result = ta_bootstrap.parse_curl(curl_str)
+        assert result["query_ids"].get("attractions") == "a5cb7fa004b5e4b5"
+
     def test_parse_curl_session_id_empty_when_no_tasid(self):
         """cURL with no TASID cookie → parse_curl returns session_id == ''."""
         import importlib.util

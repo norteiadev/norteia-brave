@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import sys
 import urllib.request
 from datetime import datetime, timezone
@@ -105,20 +106,34 @@ def parse_curl(curl_str: str) -> dict:
     # --- Extract query_ids from --data-raw (batch-array JSON) ---
     query_ids: dict[str, str] = {}
 
-    data_raw_match = re.search(
-        r"""--data-raw\s+['"](\[.*?\])['"]""",
-        curl_str,
-        re.DOTALL,
-    )
+    # The shell's own tokenizer first: a non-greedy regex stops at the first `]'`/`]"`
+    # inside the JSON (TA sends "value":"[object Object]", 28/10) and loses the batch.
+    raw_json = None
+    try:
+        tokens = shlex.split(curl_str.replace("\\\n", " "))
+        for flag in ("--data-raw", "--data", "--data-binary", "-d"):
+            if flag in tokens and tokens.index(flag) + 1 < len(tokens):
+                raw_json = tokens[tokens.index(flag) + 1]
+                break
+    except ValueError:
+        pass
+
+    data_raw_match = None
+    if not raw_json:
+        data_raw_match = re.search(
+            r"""--data-raw\s+['"](\[.*?\])['"]""",
+            curl_str,
+            re.DOTALL,
+        )
     # Also handle $'...' quoting style (curl sometimes escapes single quotes)
-    if not data_raw_match:
+    if not raw_json and not data_raw_match:
         data_raw_match = re.search(
             r"""--data-raw\s+\$'(\[.*?\])'""",
             curl_str,
             re.DOTALL,
         )
     # And plain unquoted JSON array
-    if not data_raw_match:
+    if not raw_json and not data_raw_match:
         data_raw_match = re.search(
             r"""--data(?:-raw)?\s+(\[.*?\])""",
             curl_str,
@@ -129,6 +144,7 @@ def parse_curl(curl_str: str) -> dict:
         raw_json = data_raw_match.group(1)
         # Unescape single-quoted shell strings: \' -> '
         raw_json = raw_json.replace("\\'", "'")
+    if raw_json:
         try:
             batch = json.loads(raw_json)
             if not isinstance(batch, list):
