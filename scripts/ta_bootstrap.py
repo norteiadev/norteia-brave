@@ -110,7 +110,17 @@ def parse_curl(curl_str: str) -> dict:
     # inside the JSON (TA sends "value":"[object Object]", 28/10) and loses the batch.
     raw_json = None
     try:
-        tokens = shlex.split(curl_str.replace("\\\n", " "))
+        # shlex has no ANSI-C quoting: DevTools emits $'...' (\uXXXX, \', \\) whenever the
+        # body has a quote or non-ASCII ("São", "Água") — decode it into a plain '...' token.
+        posix_str = re.sub(
+            r"\$'((?:[^'\\]|\\.)*)'",
+            lambda m: shlex.quote(
+                m.group(1).encode("latin-1", "backslashreplace").decode("unicode_escape")
+            ),
+            curl_str,
+            flags=re.DOTALL,
+        )
+        tokens = shlex.split(posix_str.replace("\\\n", " "))
         for flag in ("--data-raw", "--data", "--data-binary", "-d"):
             if flag in tokens and tokens.index(flag) + 1 < len(tokens):
                 raw_json = tokens[tokens.index(flag) + 1]

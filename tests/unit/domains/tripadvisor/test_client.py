@@ -1134,6 +1134,30 @@ class TestBootstrapQueryIdRejectList:
         result = ta_bootstrap.parse_curl(curl_str)
         assert result["query_ids"].get("attractions") == "a5cb7fa004b5e4b5"
 
+    def test_parse_curl_reads_ansi_c_quoted_batch(self):
+        """DevTools quotes the body as $'...' when it has non-ASCII or a quote
+        (S\\u00e3o, d\\'Agua): shlex alone yields a `$[...]` token and the batch is lost."""
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "ta_bootstrap",
+            Path(__file__).parent.parent.parent.parent.parent
+            / "scripts"
+            / "ta_bootstrap.py",
+        )
+        ta_bootstrap = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ta_bootstrap)
+
+        for body in ('"q":"S\\u00e3o"', '"q":"a\\\\"b d\\\'Agua","v":"[object Object]"'):
+            curl_str = (
+                "curl 'https://www.tripadvisor.com.br/data/graphql/ids' \\\n"
+                "  --data-raw $'[{\"variables\":{" + body + "},\"extensions\":"
+                "{\"preRegisteredQueryId\":\"a5cb7fa004b5e4b5\"}}]'"
+            )
+            result = ta_bootstrap.parse_curl(curl_str)
+            assert result["query_ids"].get("attractions") == "a5cb7fa004b5e4b5", body
+
     def test_parse_curl_session_id_empty_when_no_tasid(self):
         """cURL with no TASID cookie → parse_curl returns session_id == ''."""
         import importlib.util
