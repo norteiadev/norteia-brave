@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -325,7 +325,10 @@ export function PainelRegistros({
     !activeFalha &&
     (routing ? linked.isError || linked.isSuccess : failures.isSuccess);
 
-  // J/K walk the list (and open the row), Esc closes the detail.
+  // J/K walk the list (and open the row), Esc closes the detail. The page hands
+  // a new onSelect each render; reading it as an effect event keeps the
+  // listener subscribed once per list change.
+  const select = useEffectEvent((id: string | null) => onSelect(id));
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       // A dialog or menu owns its keys (its Esc must not also close the detail).
@@ -334,18 +337,18 @@ export function PainelRegistros({
       const target = e.target as HTMLElement | null;
       if (target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
       const k = e.key.toLowerCase();
-      if (k === "escape") return onSelect(null);
+      if (k === "escape") return select(null);
       if (k !== "j" && k !== "k") return;
       e.preventDefault();
       if (ids.length === 0) return;
       const i = ids.indexOf(active ?? "");
       const next = i === -1 ? 0 : Math.max(0, Math.min(ids.length - 1, i + (k === "j" ? 1 : -1)));
-      onSelect(ids[next]);
+      select(ids[next]);
       document.querySelector(`[data-row-id="${CSS.escape(ids[next])}"]`)?.scrollIntoView?.({ block: "nearest" });
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [ids, active, onSelect]);
+  }, [ids, active]);
 
   const pauseMotor = () =>
     setEngineMode("PAUSADO").then(

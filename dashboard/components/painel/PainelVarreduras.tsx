@@ -301,11 +301,37 @@ function useSession() {
   });
 }
 
+/** PT-BR error for an engine call (start or mode). */
+export function explainEngineError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401) return "Sessão expirada ou token inválido.";
+    if (err.status === 409) return err.message || "Motor já está em execução.";
+    return err.message;
+  }
+  return "Falha ao controlar o motor.";
+}
+
 /** One start request + its success copy. */
 type StartRequest = { body: Parameters<typeof startEngine>[0]; done: string };
 
-function NovaVarredura({ focusStart }: { focusStart: number }) {
+/** POST /engine/start for this panel and the pause banner's Continuar. */
+export function useStartEngine(onStarted?: () => void) {
   const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (req: StartRequest) => startEngine(req.body),
+    onError: (err) => toast.error(explainEngineError(err)),
+    onSuccess: (_res, req) => {
+      toast.success(req.done);
+      onStarted?.();
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: engineKeys.status });
+      void qc.invalidateQueries({ queryKey: runsKeys.all });
+    },
+  });
+}
+
+function NovaVarredura({ focusStart }: { focusStart: number }) {
   const [ufs, setUfs] = useState<ReadonlySet<string>>(new Set());
   const [allBrazil, setAllBrazil] = useState(false);
   const [depth, setDepth] = useState<EngineDepth>("nascente_rio");
@@ -329,18 +355,9 @@ function NovaVarredura({ focusStart }: { focusStart: number }) {
   const taReady = !!session?.present && (session.expires_in ?? 0) > 0;
   const runningUf = engine?.state === "running" ? engine.current_uf : null;
 
-  const start = useMutation({
-    mutationFn: (req: StartRequest) => startEngine(req.body),
-    onError: (err) => toast.error(explainError(err, "Falha ao iniciar a coleta.")),
-    onSuccess: (_res, req) => {
-      toast.success(req.done);
-      setUfs(new Set());
-      setAllBrazil(false);
-    },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: engineKeys.status });
-      void qc.invalidateQueries({ queryKey: runsKeys.all });
-    },
+  const start = useStartEngine(() => {
+    setUfs(new Set());
+    setAllBrazil(false);
   });
 
   const toggle = (u: string) => {

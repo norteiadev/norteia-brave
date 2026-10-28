@@ -5,7 +5,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Terminal } from "lucide-react";
 import { toast } from "sonner";
 
-import { ApiError } from "@/lib/api-client";
 import {
   ENGINE_REFETCH_INTERVAL_MS,
   SOURCE_LABELS,
@@ -13,9 +12,7 @@ import {
   fetchEngineStatus,
   fetchTASessionStatus,
   setEngineMode,
-  startEngine,
   taSessionKeys,
-  type EngineDepth,
   type EngineSource,
   type EngineState,
   type TASessionStatus,
@@ -24,6 +21,7 @@ import { ENGINE_MODE_LABELS, type EngineMode } from "@/lib/config-api";
 import { CurrencySwitch } from "@/components/painel/currency";
 import { PainelLogs } from "@/components/painel/PainelLogs";
 import { PainelOrigem } from "@/components/painel/PainelOrigem";
+import { explainEngineError, useStartEngine } from "@/components/painel/PainelVarreduras";
 import {
   ApiHealthItem,
   LiveChip,
@@ -52,16 +50,6 @@ interface PainelTopbarProps {
   subtitle: string;
   /** A cold Ligar (engine off): open Varreduras on its start panel. */
   onStart?: () => void;
-}
-
-/** PT-BR error explainer — ported from EngineControl (not exported there). */
-function explainError(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.status === 401) return "Sessão expirada ou token inválido.";
-    if (err.status === 409) return err.message || "Motor já está em execução.";
-    return err.message;
-  }
-  return "Falha ao controlar o motor.";
 }
 
 /** True when a present session is inside the 5-min expiry warn band. */
@@ -107,33 +95,15 @@ export function PainelTopbar({ title, subtitle, onStart }: PainelTopbarProps) {
   const invalidate = () =>
     void qc.invalidateQueries({ queryKey: engineKeys.status });
 
-  // Continuar's resume of a paused run. A sweep needs its depth (the backend
-  // 422s a depthless start) and the origem lane; describe and backfill need none.
-  const start = useMutation({
-    mutationFn: (
-      vars: { action: "sweep"; depth: EngineDepth } | { action: "describe" } | { action: "backfill" },
-    ) =>
-      startEngine(
-        vars.action === "sweep" ? { depth: vars.depth, source } : { action: vars.action },
-      ),
-    onError: (err) => toast.error(explainError(err)),
-    onSuccess: (_res, vars) =>
-      toast.success(
-        vars.action === "backfill"
-          ? "Motor ligado — backfill retomado"
-          : vars.action === "describe"
-            ? "Motor ligado — gerando descrições"
-            : "Motor ligado — varredura iniciada",
-      ),
-    onSettled: invalidate,
-  });
+  // Continuar's resume of a paused run.
+  const start = useStartEngine();
 
   // Tri-state motor mode (phase H edit-lock) — POST /api/v1/engine/mode. Pausar /
   // Desligar go straight through here; a warm Ligar (resume from Pausado) too. A
   // cold Ligar (engine off) opens Varreduras instead.
   const setMode = useMutation({
     mutationFn: (mode: EngineMode) => setEngineMode(mode),
-    onError: (err) => toast.error(explainError(err)),
+    onError: (err) => toast.error(explainEngineError(err)),
     onSuccess: (res) =>
       toast.success(`Modo · ${ENGINE_MODE_LABELS[res.mode]}`),
     onSettled: invalidate,
@@ -221,11 +191,15 @@ export function PainelTopbar({ title, subtitle, onStart }: PainelTopbarProps) {
     if (!pauseReason) return;
     if (!window.confirm(continuarConfirmText(pauseReason))) return;
     if (pauseReason.action === "describe") {
-      start.mutate({ action: "describe" });
+      start.mutate({ body: { action: "describe" }, done: "Motor ligado — gerando descrições" });
     } else if (pauseReason.action === "backfill") {
-      start.mutate({ action: "backfill" });
+      start.mutate({ body: { action: "backfill" }, done: "Motor ligado — backfill retomado" });
     } else if (pauseReason.action === "sweep") {
-      start.mutate({ action: "sweep", depth: data?.depth ?? "nascente_rio" });
+      // A sweep needs its depth (the backend 422s a depthless start) and the lane.
+      start.mutate({
+        body: { depth: data?.depth ?? "nascente_rio", source },
+        done: "Motor ligado — varredura iniciada",
+      });
     } else {
       setMode.mutate("LIGADO");
     }

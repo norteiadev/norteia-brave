@@ -25,7 +25,9 @@ import { BR_UFS } from "@/lib/painel-data";
  * /painel — the Painel Brave single-shell (phase 17.1, slice 2).
  *
  * View switching is SPA style, not nested Next routes, but the place lives in
- * the URL (#119): `/painel?view=registros&tab=revisao&uf=BA&id=<rio_id>`. A
+ * the URL (#119): `/painel?view=registros&tab=revisao&uf=BA&id=<rio_id>`. It
+ * is synced with window.history (which the App Router integrates) rather than
+ * useSearchParams, so the static page needs no Suspense boundary. A
  * reload restores it and a link opens the same record. A new screen or tab
  * pushes a history entry; the UF filter and row moves (J/K) only replace it, so
  * Back returns to the previous screen/tab. The shell root is the scoped
@@ -115,6 +117,9 @@ function parseNav(search: string): PainelNav {
   };
 }
 
+/** What the Registros view changes in place (replace, not push). */
+type RegistrosPatch = Partial<Pick<PainelNav, "uf" | "id">>;
+
 /** Only Registros carries tab, UF and record. */
 function navSearch(n: PainelNav): string {
   const p = new URLSearchParams();
@@ -131,7 +136,7 @@ function navSearch(n: PainelNav): string {
 interface PainelBodyProps {
   nav: PainelNav;
   onNavigate: (view: PainelViewKey, tab?: RegistrosTab) => void;
-  onRegistros: (patch: { uf?: string; id?: string | null }) => void;
+  onRegistros: (patch: RegistrosPatch) => void;
   focusStart: number;
 }
 
@@ -181,7 +186,9 @@ export default function PainelPage() {
   const router = useRouter();
   const [nav, setNav] = useState<PainelNav>(HOME);
   const [authed, setAuthed] = useState<boolean | null>(null);
-  // Bumped by each cold Ligar so Varreduras focuses its start panel; 0 otherwise.
+  // A nonce: each cold Ligar sets a new value so Varreduras focuses its start
+  // panel (even when already on it); any other navigation resets it to 0 so a
+  // plain visit to Varreduras does not steal the focus.
   const [focusStart, setFocusStart] = useState(0);
   const starts = useRef(0);
   const { title, subtitle } = viewHeader(nav.view);
@@ -230,7 +237,7 @@ export default function PainelPage() {
     setFocusStart(0);
     go({ view, tab: tab ?? nav.tab, uf: view === nav.view ? nav.uf : "", id: null }, true);
   };
-  const updateRegistros = (patch: { uf?: string; id?: string | null }) =>
+  const updateRegistros = (patch: RegistrosPatch) =>
     go({ ...nav, ...patch }, false);
   const openStart = () => {
     navigate("varreduras");
