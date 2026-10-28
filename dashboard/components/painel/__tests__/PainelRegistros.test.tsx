@@ -455,6 +455,15 @@ describe("Registros — linked record", () => {
     expect(await aside.findByText("Registro não encontrado nesta etapa.")).toBeInTheDocument();
   });
 
+  it("a failed list never leaves the linked detail stuck on loading", async () => {
+    server.use(http.get(`${API}/atrativos`, () => HttpResponse.json({ detail: "boom" }, { status: 500 })));
+    const ui = mount("revisao", "dlq-30");
+
+    expect(await ui.findByText(/Não foi possível carregar os registros/)).toBeInTheDocument();
+    const aside = within(ui.getByRole("complementary", { name: "Detalhe do registro" }));
+    expect(aside.queryByText("Carregando…")).toBeNull();
+  });
+
   it("an unknown failure card shows the note too", async () => {
     const ui = mount("falha", "tripadvisor:attraction:nope");
 

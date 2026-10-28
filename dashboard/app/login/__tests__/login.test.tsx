@@ -65,4 +65,22 @@ describe("Login gate (DASH-06, UI-SPEC)", () => {
     expect(getOperatorToken()).toBe("my-operator-token");
     expect(push).toHaveBeenCalledWith("/painel");
   });
+
+  it("returns to the Painel link the operator opened before logging in", async () => {
+    searchParams = new URLSearchParams({ next: "/painel?view=registros&tab=mar&id=mar-1" });
+    const user = userEvent.setup();
+    render(<LoginPage />);
+    await user.type(screen.getByPlaceholderText("Bearer token"), "tok");
+    await user.click(screen.getByRole("button", { name: "Entrar" }));
+    expect(push).toHaveBeenCalledWith("/painel?view=registros&tab=mar&id=mar-1");
+  });
+
+  it("never follows a `next` outside the Painel", async () => {
+    searchParams = new URLSearchParams({ next: "//evil.example/painel" });
+    const user = userEvent.setup();
+    render(<LoginPage />);
+    await user.type(screen.getByPlaceholderText("Bearer token"), "tok");
+    await user.click(screen.getByRole("button", { name: "Entrar" }));
+    expect(push).toHaveBeenCalledWith("/painel");
+  });
 });

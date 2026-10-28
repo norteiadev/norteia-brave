@@ -497,7 +497,9 @@ export function PainelRegistros({
             </div>
           ) : (
             <div className="m-auto max-w-[300px] px-6 py-10 text-center text-[13px] text-[var(--ink-3)]">
-              {active ? "Carregando…" : "Escolha um registro para ver o score, o motivo e a linha do tempo."}
+              {active && !current.isError
+                ? "Carregando…"
+                : "Escolha um registro para ver o score, o motivo e a linha do tempo."}
             </div>
           )}
         </aside>

@@ -17,7 +17,7 @@ import { PainelTopbar } from "@/components/painel/PainelTopbar";
 import { PainelVarreduras } from "@/components/painel/PainelVarreduras";
 import { PainelVisaoGeral } from "@/components/painel/PainelVisaoGeral";
 import { CurrencyProvider } from "@/components/painel/currency";
-import { type PainelViewKey, type RegistrosTab } from "@/components/painel/nav";
+import { REGISTROS_TABS, type PainelViewKey, type RegistrosTab } from "@/components/painel/nav";
 import { getOperatorToken } from "@/lib/api-client";
 import { BR_UFS } from "@/lib/painel-data";
 
@@ -99,7 +99,6 @@ interface PainelNav {
   id: string | null;
 }
 
-const TABS: readonly string[] = ["revisao", "mar", "falha"] satisfies RegistrosTab[];
 const HOME: PainelNav = { view: "visao", tab: "revisao", uf: "", id: null };
 
 /** Unknown values fall back to the defaults (a stale or hand-typed link). */
@@ -110,7 +109,7 @@ function parseNav(search: string): PainelNav {
   const uf = p.get("uf") ?? "";
   return {
     view: Object.keys(VIEW_HEADERS).includes(view) ? (view as PainelViewKey) : "visao",
-    tab: TABS.includes(tab) ? (tab as RegistrosTab) : "revisao",
+    tab: (REGISTROS_TABS as readonly string[]).includes(tab) ? (tab as RegistrosTab) : "revisao",
     uf: BR_UFS.includes(uf) ? uf : "",
     id: p.get("id") || null,
   };
@@ -193,7 +192,9 @@ export default function PainelPage() {
   // authority (it 401s data calls without a valid token) — this is just UX.
   useEffect(() => {
     if (!getOperatorToken()) {
-      router.replace("/login");
+      // Keep the link: the login brings the operator back to it.
+      const next = `${window.location.pathname}${window.location.search}`;
+      router.replace(`/login?next=${encodeURIComponent(next)}`);
       return;
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount gate

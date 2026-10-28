@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,10 +16,11 @@ import { engineStatus, taSessionStatus } from "@/mocks/handlers/engine";
 import { runsListSuccess } from "@/mocks/handlers/runs";
 import { server } from "@/mocks/server";
 
-import { renderWithClient } from "../../../components/cms/__tests__/test-utils";
+import { ClientWrapper, renderWithClient } from "../../../components/cms/__tests__/test-utils";
 
+const replace = vi.fn();
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn() }),
+  useRouter: () => ({ replace }),
 }));
 
 import PainelPage from "../page";
@@ -165,6 +166,20 @@ describe("/painel page", () => {
     expect(window.location.search).toBe("?view=varreduras");
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Todo o Brasil" })).toHaveFocus(),
+    );
+  });
+
+  it("sends a logged-out operator to the login with the link to come back to", async () => {
+    window.history.replaceState(null, "", "/painel?view=registros&tab=mar&id=mar-1");
+    render(
+      <ClientWrapper>
+        <PainelPage />
+      </ClientWrapper>,
+    );
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(
+        `/login?next=${encodeURIComponent("/painel?view=registros&tab=mar&id=mar-1")}`,
+      ),
     );
   });
 });
