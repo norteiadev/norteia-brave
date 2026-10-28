@@ -21,7 +21,7 @@ One UF = sweep → backfill gap check → describe → promote → push, watched
 .claude/skills/run-uf-sync/scripts/preflight.sh
 ```
 
-Done when it prints `PREFLIGHT PASSED`. A `FAIL` stops the sync: fix it via `references/events.md` (TA session, token) and re-run. Read the `WARN` lines to the user, especially the credits: each `places`/`apify` line shows how many atrativos the credit left covers (~US$0.007 each). Check both cover the UF. Apify (`APIFY_TOTAL_USD_CAP`) has the smaller credit and runs out first.
+Done when it prints `PREFLIGHT PASSED`. A `FAIL` stops the sync: fix it via `references/events.md` (TA session, token) and re-run. The two TA cURLs (paginação and página Brazil) are mandatory: ask the user for whichever is missing. Read the `WARN` lines to the user, especially the credits: each `places`/`apify` line shows how many atrativos the credit left covers (~US$0.007 each). Check both cover the UF. Apify (`APIFY_TOTAL_USD_CAP`) has the smaller credit and runs out first.
 
 ## 2. Arm the monitor
 

@@ -40,6 +40,8 @@ PY
 )
   [ "$probe" = ok ] && ok "TA probe: listing + attraction page answer" || fail "TA probe: ${probe:-no answer} — the sweep cannot use this session: inject a fresh listing cURL"
 fi
+curls=$(.venv/bin/python .claude/skills/run-uf-sync/scripts/check_curls.py); echo "$curls"
+fails=$((fails + $(grep -c '^FAIL' <<<"$curls")))
 kf=$(rds GET brave:ta:keepalive_failures); [ "${kf:-0}" = 0 ] && ok "keepalive failures 0" || warn "keepalive failures ${kf}"
 
 U="${BRAVE_NORTEIA_API_URL%/}"

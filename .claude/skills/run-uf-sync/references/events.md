@@ -58,14 +58,17 @@ Read the line, find its row, act. Rows marked **benign** need no action; say so 
 
 ## TA session
 
-The user captures it (only they can): Chrome logged in on TripAdvisor → the UF's attractions listing → DevTools › Network (clear) → click **next page** → Cmd+F `pagee` → the `POST /data/graphql/ids` whose payload has `routeParameters.pagee` → Copy as cURL (bash). Save it to `scripts/single_attraction/ta_session.curl` (gitignored), then:
+Only the user can capture it. Pre-flight requires **two** cURLs, both gitignored in `scripts/single_attraction/`. Capture them in Chrome, logged in on TripAdvisor, in this order:
+
+1. **Paginação → `ta_paginacao.curl`.** Open a UF's attractions listing. Open DevTools › Network and clear it. Click **next page**, then Cmd+F `pagee`. Find the `POST /data/graphql/ids` whose payload has `routeParameters.pagee` and Copy as cURL (bash). Pre-flight compares its qid with the one the sweep sends: a mismatch is a WARN, and you act on it only on `PersistedQueryNotFound` (row above).
+2. **Página Brazil → `ta_brazil.curl`.** Load `https://www.tripadvisor.com.br/Attractions-g294280-Activities-Brazil.html`. Copy any `POST /data/graphql/ids` it makes as cURL. Its fresh `datadome` cookie is the one the attraction pages need. It is the cURL to inject:
 
 ```bash
 set -a; . ./.env; set +a
-.venv/bin/python scripts/ta_bootstrap.py --curl scripts/single_attraction/ta_session.curl --endpoint http://localhost:8000
+.venv/bin/python scripts/ta_bootstrap.py --curl scripts/single_attraction/ta_brazil.curl --endpoint http://localhost:8000
 ```
 
-`Session injected — canary result: ready`, then a pre-flight `OK    TA probe` = done. The canary checks the listing only: on 24/10 a 14 h-old cURL passed it while DataDome 403'd every attraction page, and the sweep stopped 5 min in. The first-page load batch of the listing is telemetry only and fails the canary.
+`Session injected — canary result: ready`, then a pre-flight `OK    TA probe` and `OK    cURL` ×2 = done. On 28/10 a listing cURL injected at 15:52 got its attraction pages 403'd by DataDome at 16:08. A Brazil-page cURL then unblocked them, while re-injecting the old cURL did not. The canary checks the listing only: on 24/10 a 14 h-old cURL passed it while DataDome 403'd every attraction page, and the sweep stopped 5 min in. The first-page load batch of the listing is telemetry only and fails the canary.
 
 ## Token
 
