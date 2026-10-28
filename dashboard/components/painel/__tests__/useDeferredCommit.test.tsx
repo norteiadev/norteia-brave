@@ -88,4 +88,31 @@ describe("useDeferredCommit", () => {
     await advance(30_000);
     expect(calls).toBe(1);
   });
+
+  it("asks before leaving the page while a commit waits in its undo window", async () => {
+    render(
+      <>
+        <Toaster />
+        <DiscardButton />
+      </>,
+    );
+    const leave = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+
+    expect(leave()).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Descartar" }));
+    expect(leave()).toBe(true);
+
+    await advance(100);
+    fireEvent.click(screen.getByRole("button", { name: "Desfazer" }));
+    expect(leave()).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Descartar" }));
+    await advance(6_000);
+    await vi.waitFor(() => expect(calls).toBe(1));
+    expect(leave()).toBe(false);
+  });
 });

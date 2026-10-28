@@ -36,6 +36,16 @@ export interface DeferredCommit {
 let pending: ReadonlySet<string> = new Set();
 const listeners = new Set<() => void>();
 
+// A reload or closed tab kills the timer, so the action is never sent and the
+// operator is never told. While any commit waits in its window, ask before
+// leaving (the browser shows its own "leave site?" prompt).
+let waiting = 0;
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", (e) => {
+    if (waiting > 0) e.preventDefault();
+  });
+}
+
 function setPending(key: string, on: boolean) {
   const next = new Set(pending);
   if (on) next.add(key);
@@ -48,8 +58,10 @@ function commit({ message, run, delayMs = 6000, key, onDone, onUndo, onError }: 
   if (key && pending.has(key)) return;
   if (key) setPending(key, true);
   const release = () => key && setPending(key, false);
+  waiting += 1;
 
   const timer = setTimeout(() => {
+    waiting -= 1;
     // Sonner pauses its own timer on hover: drop the toast so "Desfazer" can
     // never be clicked after the request went out.
     toast.dismiss(id);
@@ -71,6 +83,7 @@ function commit({ message, run, delayMs = 6000, key, onDone, onUndo, onError }: 
       label: "Desfazer",
       onClick: () => {
         clearTimeout(timer);
+        waiting -= 1;
         release();
         onUndo?.();
         toast("Ação desfeita.");

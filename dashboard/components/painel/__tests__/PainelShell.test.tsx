@@ -1,5 +1,6 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ThemeProvider } from "next-themes";
 import { useState } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -156,5 +157,25 @@ describe("PainelShell", () => {
     first.unmount();
     renderWithClient(<Harness />);
     expect(screen.getByTestId("painel-shell")).toHaveAttribute("data-painel-theme", "dark");
+  });
+
+  it("drives the app theme too, so toasts (rendered outside the shell) match the Painel", async () => {
+    // next-themes subscribes to prefers-color-scheme; jsdom has no matchMedia.
+    window.matchMedia ??= ((query: string) => ({
+      matches: false,
+      media: query,
+      addListener: () => {},
+      removeListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    const user = userEvent.setup();
+    renderWithClient(
+      <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+        <Harness />
+      </ThemeProvider>,
+    );
+
+    await waitFor(() => expect(document.documentElement).toHaveClass("light"));
+    await user.click(screen.getByRole("button", { name: "Tema escuro" }));
+    await waitFor(() => expect(document.documentElement).toHaveClass("dark"));
   });
 });

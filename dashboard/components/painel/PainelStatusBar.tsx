@@ -43,9 +43,10 @@ const ITEM =
 // ---------------------------------------------------------------------------
 
 /**
- * "Ao vivo" only while the motor is LIGADO and a sweep is dispatching; a sweep
- * still draining under PAUSADO reads as paused. sync_phase falls back to the
- * enabled latch for servers that omit it.
+ * "Coletando" only while the motor is LIGADO and a sweep is dispatching; a sweep
+ * still draining under PAUSADO reads as paused. A verb, not "Ao vivo": every
+ * screen polls, so "live" read as "this page refreshes". sync_phase falls back to
+ * the enabled latch for servers that omit it.
  */
 export function LiveChip({ status }: { status: EngineStatus | undefined }) {
   const enabled = status?.enabled ?? (status ? status.state !== "idle" : false);
@@ -55,13 +56,13 @@ export function LiveChip({ status }: { status: EngineStatus | undefined }) {
   const progress =
     total > 0 ? `UF ${status?.ufs_done ?? 0}/${total}${status?.current_uf ? ` · ${status.current_uf}` : ""}` : "";
 
-  let label = "Sem coleta";
+  let label = "Coleta parada";
   let color = "var(--ink-4)";
   let pulse = false;
   let title = "Ligue o motor para retomar a coleta.";
   if (phase === "syncing") {
     const live = status?.mode === "LIGADO";
-    label = live ? "Ao vivo" : "Coleta pausada";
+    label = live ? "Coletando" : "Coleta pausada";
     color = live ? "var(--mar)" : "var(--dlq)";
     pulse = live;
     title = `${live ? "Sincronizando" : "Pausado após a tarefa atual"} ${SOURCE_LABELS[source]}${progress ? ` · ${progress}` : ""}`;

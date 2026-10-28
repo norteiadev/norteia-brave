@@ -694,7 +694,7 @@ describe("PainelTopbar", () => {
   });
 
   describe("live indicator", () => {
-    it("motor LIGADO + syncing → 'Ao vivo' with the UF progress", async () => {
+    it("motor LIGADO + syncing → 'Coletando' with the UF progress", async () => {
       server.use(
         engineStatus({
           mode: "LIGADO",
@@ -711,7 +711,7 @@ describe("PainelTopbar", () => {
       renderWithClient(<PainelTopbar title="P" subtitle="s" />);
       const ind = await screen.findByTestId("sync-indicator");
       await waitFor(() => {
-        expect(ind).toHaveTextContent("Ao vivo");
+        expect(ind).toHaveTextContent("Coletando");
         expect(ind).toHaveTextContent("3/27");
         expect(ind).toHaveTextContent("SP");
         expect(ind).toHaveAttribute("title", expect.stringContaining("TripAdvisor"));
@@ -726,7 +726,7 @@ describe("PainelTopbar", () => {
       );
       renderWithClient(<PainelTopbar title="P" subtitle="s" />);
       const ind = await screen.findByTestId("sync-indicator");
-      await waitFor(() => expect(ind).toHaveTextContent("Ao vivo"));
+      await waitFor(() => expect(ind).toHaveTextContent("Coletando"));
     });
 
     it("syncing while PAUSADO → paused, not live", async () => {
@@ -737,7 +737,7 @@ describe("PainelTopbar", () => {
       renderWithClient(<PainelTopbar title="P" subtitle="s" />);
       const ind = await screen.findByTestId("sync-indicator");
       await waitFor(() => expect(ind).toHaveTextContent("Coleta pausada"));
-      expect(ind).not.toHaveTextContent("Ao vivo");
+      expect(ind).not.toHaveTextContent("Coletando");
     });
 
     it("sync_phase='synced' → 'Sincronizado'", async () => {
@@ -753,7 +753,7 @@ describe("PainelTopbar", () => {
       });
     });
 
-    it("idle runtime → 'Sem coleta'", async () => {
+    it("idle runtime → 'Coleta parada'", async () => {
       server.use(
         engineStatus({ sync_phase: "idle", enabled: false, state: "idle" }),
         taSessionStatus(),
@@ -762,7 +762,7 @@ describe("PainelTopbar", () => {
       await waitFor(() => {
         const label = screen.getByTestId("sync-indicator-label");
         expect(label).toHaveAttribute("data-phase", "idle");
-        expect(label).toHaveTextContent("Sem coleta");
+        expect(label).toHaveTextContent("Coleta parada");
       });
     });
   });
