@@ -23,7 +23,8 @@ export type PainelViewKey =
   | "config";
 
 /** Registros tabs, one per routing the steward works on. */
-export type RegistrosTab = "revisao" | "mar" | "falha";
+export const REGISTROS_TABS = ["revisao", "mar", "falha"] as const;
+export type RegistrosTab = (typeof REGISTROS_TABS)[number];
 
 export type PainelNavGroup = "Operação" | "Ferramentas" | "Observabilidade" | "Sistema";
 

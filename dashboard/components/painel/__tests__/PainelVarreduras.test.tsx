@@ -153,8 +153,75 @@ describe("PainelVarreduras", () => {
     fireEvent.click(screen.getByRole("button", { name: "SE" }));
     expect(screen.getByRole("button", { name: "Iniciar varredura" })).toBeDisabled();
     expect(
-      screen.getByText("Injete uma sessão do TripAdvisor para iniciar."),
+      screen.getByText("Injete uma sessão do TripAdvisor para varrer ou retomar o backfill."),
     ).toBeInTheDocument();
+  });
+
+  it("Todo o Brasil starts without ufs, so the server sweeps all 27", async () => {
+    renderVarreduras();
+    await waitFor(() => expect(screen.getByTestId("ta-session")).toHaveTextContent("Ativa"));
+    const ufs = screen.getByRole("group", { name: "UFs" });
+    fireEvent.click(within(ufs).getByRole("button", { name: "CE" }));
+    fireEvent.click(within(ufs).getByRole("button", { name: "Todo o Brasil" }));
+    // One scope at a time: the whole country replaces the picked UFs.
+    expect(within(ufs).getByRole("button", { name: "CE" })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Iniciar varredura" }));
+
+    await waitFor(() => expect(starts).toHaveLength(1));
+    expect(starts[0]).toEqual({ depth: "nascente_rio", source: "tripadvisor" });
+    expect(await screen.findByText("Varredura de todo o Brasil iniciada.")).toBeInTheDocument();
+  });
+
+  it("a per-UF cap goes in the body as max_atrativos_per_uf", async () => {
+    renderVarreduras();
+    await waitFor(() => expect(screen.getByTestId("ta-session")).toHaveTextContent("Ativa"));
+    fireEvent.click(screen.getByRole("button", { name: "SE" }));
+    fireEvent.change(screen.getByLabelText("Máx. atrativos por UF"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Iniciar varredura" }));
+
+    await waitFor(() => expect(starts).toHaveLength(1));
+    expect(starts[0]).toEqual({
+      depth: "nascente_rio",
+      source: "tripadvisor",
+      ufs: ["SE"],
+      max_atrativos_per_uf: 5,
+    });
+  });
+
+  it("Gerar descrições needs a scope but no TA session, and sends no depth", async () => {
+    server.use(taSessionStatus({ present: false, expires_in: undefined, reason: null }));
+    renderVarreduras();
+    await waitFor(() => expect(screen.getByTestId("ta-session")).toHaveTextContent("Expirada"));
+    const describe = screen.getByRole("button", { name: "Gerar descrições" });
+    expect(describe).toBeDisabled(); // no scope yet
+
+    fireEvent.click(screen.getByRole("button", { name: "SP" }));
+    fireEvent.change(screen.getByLabelText("Máx. atrativos por UF"), { target: { value: "3" } });
+    // The sweep and the backfill need the session; the descriptions do not.
+    expect(screen.getByRole("button", { name: "Iniciar varredura" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retomar backfill" })).toBeDisabled();
+    fireEvent.click(describe);
+
+    await waitFor(() => expect(starts).toHaveLength(1));
+    expect(starts[0]).toEqual({ action: "describe", ufs: ["SP"], max_atrativos_per_uf: 3 });
+    expect(await screen.findByText("Gerando descrições de SP.")).toBeInTheDocument();
+  });
+
+  it("Retomar backfill resumes the TripAdvisor backfill run", async () => {
+    renderVarreduras();
+    await waitFor(() => expect(screen.getByTestId("ta-session")).toHaveTextContent("Ativa"));
+    fireEvent.click(screen.getByRole("button", { name: "Retomar backfill" }));
+
+    await waitFor(() => expect(starts).toHaveLength(1));
+    expect(starts[0]).toEqual({ action: "backfill" });
+    expect(await screen.findByText("Backfill retomado.")).toBeInTheDocument();
+  });
+
+  it("puts the focus on the start panel when opened from a cold Ligar", async () => {
+    renderWithClient(<PainelVarreduras focusStart={1} />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Todo o Brasil" })).toHaveFocus(),
+    );
   });
 
   it("shows the session TTL and warns when it is about to expire", async () => {

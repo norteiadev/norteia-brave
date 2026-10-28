@@ -8,7 +8,6 @@ import { PainelTopbar } from "@/components/painel/PainelTopbar";
 import { ENGINE_REFETCH_INTERVAL_MS } from "@/lib/engine-api";
 import { server } from "@/mocks/server";
 import {
-  engineStartSuccess,
   engineStatus,
   engineStatusFixture,
   taSessionStatus,
@@ -109,8 +108,9 @@ describe("PainelTopbar", () => {
     await waitFor(() => expect(modeBody).toMatchObject({ mode: "DESLIGADO" }));
   });
 
-  it("warm Ligar (mode PAUSADO, engine enabled) POSTs mode LIGADO and does NOT open the depth menu", async () => {
+  it("warm Ligar (mode PAUSADO, engine enabled) POSTs mode LIGADO and does NOT open Varreduras", async () => {
     let modeBody: { mode?: string } | null = null;
+    const onStart = vi.fn();
     server.use(
       engineStatus({ mode: "PAUSADO", editing_unlocked: true, enabled: true, state: "running" }),
       taSessionStatus(),
@@ -120,232 +120,66 @@ describe("PainelTopbar", () => {
       }),
     );
     const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
+    renderWithClient(<PainelTopbar title="P" subtitle="s" onStart={onStart} />);
 
     await waitForMode("Pausado");
     await pickMode(user, "painel-motor-ligar");
     await waitFor(() => expect(modeBody).toMatchObject({ mode: "LIGADO" }));
-    // A warm resume never opens the depth picker.
-    expect(screen.queryByTestId("painel-depth-menu")).toBeNull();
+    // A warm resume never sends the operator to the start panel.
+    expect(onStart).not.toHaveBeenCalled();
   });
 
-  it("desynced Ligar (mode LIGADO but engine idle+disabled) RECOVERS — opens the depth picker", async () => {
-    // Regression: an R1 session-expiry auto-off (or an idle /stop) can leave
-    // mode=LIGADO while enabled=false & state=idle. Clicking Ligar must fall through
-    // to cold-start recovery, not no-op on the mode===LIGADO guard.
-    let startBody: { depth?: string } | null = null;
+  it("cold Ligar (engine off) opens Varreduras instead of a popover, and starts nothing", async () => {
+    const onStart = vi.fn();
+    let starts = 0;
     server.use(
-      engineStatus({ mode: "LIGADO", editing_unlocked: false, state: "idle", enabled: false }),
+      engineStatus({ mode: "DESLIGADO", editing_unlocked: true, state: "idle", enabled: false }),
       taSessionStatus(),
-      http.post(START_URL, async ({ request }) => {
-        startBody = (await request.json()) as { depth?: string };
+      http.post(START_URL, () => {
+        starts += 1;
         return HttpResponse.json({ status: "started", ufs_total: 27 }, { status: 202 });
       }),
     );
     const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+    renderWithClient(<PainelTopbar title="P" subtitle="s" onStart={onStart} />);
 
+    await waitForMode("Desligado");
     await pickMode(user, "painel-motor-ligar");
-    // Recovery path: the depth picker opens (was a no-op before the guard fix).
-    await screen.findByTestId("painel-depth-menu");
-    await user.click(screen.getByTestId("painel-depth-nascente"));
-    await waitFor(() => expect(startBody).not.toBeNull());
-    expect(startBody).toMatchObject({ depth: "nascente" });
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(starts).toBe(0);
   });
 
-  it("genuinely-running Ligar (mode LIGADO, enabled) stays a no-op — no depth picker", async () => {
+  it("desynced Ligar (mode LIGADO but engine idle+disabled) RECOVERS — opens Varreduras", async () => {
+    // Regression: an R1 session-expiry auto-off (or an idle /stop) can leave
+    // mode=LIGADO while enabled=false & state=idle. Clicking Ligar must fall through
+    // to cold-start recovery, not no-op on the mode===LIGADO guard.
+    const onStart = vi.fn();
+    server.use(
+      engineStatus({ mode: "LIGADO", editing_unlocked: false, state: "idle", enabled: false }),
+      taSessionStatus(),
+    );
+    const user = userEvent.setup();
+    renderWithClient(<PainelTopbar title="Painel" subtitle="x" onStart={onStart} />);
+
+    await waitForMode("Ligado");
+    await pickMode(user, "painel-motor-ligar");
+    expect(onStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("genuinely-running Ligar (mode LIGADO, enabled) stays a no-op", async () => {
+    const onStart = vi.fn();
     server.use(
       engineStatus({ mode: "LIGADO", editing_unlocked: false, state: "running", enabled: true }),
       taSessionStatus(),
     );
     const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
+    renderWithClient(<PainelTopbar title="Painel" subtitle="x" onStart={onStart} />);
 
     await waitForMode("Ligado");
     await pickMode(user, "painel-motor-ligar");
-    // A truly-on engine: Ligar must do nothing (no picker, no restart).
-    expect(screen.queryByTestId("painel-depth-menu")).toBeNull();
-  });
-
-  it("cold Ligar (engine off) opens the depth menu; picking a depth fires POST /start WITH that depth", async () => {
-    let startBody: { depth?: string } | null = null;
-    server.use(
-      engineStatus({ mode: "DESLIGADO", editing_unlocked: true, state: "idle", enabled: false }),
-      taSessionStatus(),
-      http.post(START_URL, async ({ request }) => {
-        startBody = (await request.json()) as { depth?: string };
-        return HttpResponse.json(
-          { status: "started", ufs_total: 27 },
-          { status: 202 },
-        );
-      }),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
-
-    await waitForMode("Desligado");
-    // Cold Ligar opens the depth menu — it must NOT start without a depth.
-    await pickMode(user, "painel-motor-ligar");
-    await screen.findByTestId("painel-depth-menu");
-
-    await user.click(screen.getByTestId("painel-depth-nascente_rio"));
-    await waitFor(() => expect(startBody).not.toBeNull());
-    expect(startBody).toMatchObject({ depth: "nascente_rio" });
-  });
-
-  it("cold Ligar defaults to Todo o Brasil — no ufs in the /start body", async () => {
-    let startBody: Record<string, unknown> | null = null;
-    server.use(
-      engineStatus({ mode: "DESLIGADO", editing_unlocked: true, state: "idle", enabled: false }),
-      taSessionStatus(),
-      http.post(START_URL, async ({ request }) => {
-        startBody = (await request.json()) as Record<string, unknown>;
-        return HttpResponse.json(
-          { status: "started", ufs_total: 27 },
-          { status: 202 },
-        );
-      }),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
-
-    await pickMode(user, "painel-motor-ligar");
-    await screen.findByTestId("painel-depth-menu");
-    // Abrangência defaults to "" (Todo o Brasil) → ufs omitted (backend uses 27).
-    expect(screen.getByTestId("painel-uf-select")).toHaveValue("");
-    await user.click(screen.getByTestId("painel-depth-nascente"));
-    await waitFor(() => expect(startBody).not.toBeNull());
-    expect(startBody).not.toHaveProperty("ufs");
-  });
-
-  it("cold Ligar scoped to a UF fires POST /start with ufs=[UF] (source-independent)", async () => {
-    let startBody: { depth?: string; ufs?: string[] } | null = null;
-    server.use(
-      engineStatus({ mode: "DESLIGADO", editing_unlocked: true, state: "idle", enabled: false }),
-      taSessionStatus(),
-      http.post(START_URL, async ({ request }) => {
-        startBody = (await request.json()) as { depth?: string; ufs?: string[] };
-        return HttpResponse.json(
-          { status: "started", ufs_total: 1 },
-          { status: 202 },
-        );
-      }),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
-
-    await pickMode(user, "painel-motor-ligar");
-    await screen.findByTestId("painel-depth-menu");
-    await user.selectOptions(screen.getByTestId("painel-uf-select"), "SP");
-    await user.click(screen.getByTestId("painel-depth-nascente_rio"));
-    await waitFor(() => expect(startBody).not.toBeNull());
-    expect(startBody).toMatchObject({ depth: "nascente_rio", ufs: ["SP"] });
-  });
-
-  it("typing a per-UF cap sends max_atrativos_per_uf in the /start body", async () => {
-    let startBody: Record<string, unknown> | null = null;
-    server.use(
-      engineStatus({ mode: "DESLIGADO", editing_unlocked: true, state: "idle", enabled: false }),
-      taSessionStatus(),
-      http.post(START_URL, async ({ request }) => {
-        startBody = (await request.json()) as Record<string, unknown>;
-        return HttpResponse.json(
-          { status: "started", ufs_total: 27 },
-          { status: 202 },
-        );
-      }),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
-
-    await pickMode(user, "painel-motor-ligar");
-    await screen.findByTestId("painel-depth-menu");
-    await user.type(screen.getByTestId("painel-max-per-uf"), "5");
-    await user.click(screen.getByTestId("painel-depth-nascente"));
-    await waitFor(() => expect(startBody).not.toBeNull());
-    expect(startBody).toMatchObject({ depth: "nascente", max_atrativos_per_uf: 5 });
-  });
-
-  it("empty per-UF cap omits max_atrativos_per_uf from the /start body", async () => {
-    let startBody: Record<string, unknown> | null = null;
-    server.use(
-      engineStatus({ mode: "DESLIGADO", editing_unlocked: true, state: "idle", enabled: false }),
-      taSessionStatus(),
-      http.post(START_URL, async ({ request }) => {
-        startBody = (await request.json()) as Record<string, unknown>;
-        return HttpResponse.json(
-          { status: "started", ufs_total: 27 },
-          { status: 202 },
-        );
-      }),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
-
-    await pickMode(user, "painel-motor-ligar");
-    await screen.findByTestId("painel-depth-menu");
-    // Leave the cap input empty → full sweep, field must not be sent.
-    await user.click(screen.getByTestId("painel-depth-nascente"));
-    await waitFor(() => expect(startBody).not.toBeNull());
-    expect(startBody).not.toHaveProperty("max_atrativos_per_uf");
-  });
-
-  it("clicking outside the motor wrapper closes the open depth menu", async () => {
-    server.use(
-      engineStatus({ source: "tripadvisor", enabled: false, state: "idle", mode: "DESLIGADO" }),
-      taSessionStatus({ present: true, expires_in: 1200 }),
-      engineStartSuccess(),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-
-    await pickMode(user, "painel-motor-ligar");
-    await screen.findByTestId("painel-depth-menu");
-
-    // Click somewhere outside the motor wrapper (the page title) → menu closes.
-    await user.click(screen.getByTestId("painel-topbar"));
-    await waitFor(() =>
-      expect(screen.queryByTestId("painel-depth-menu")).toBeNull(),
-    );
-  });
-
-  it("re-opening the motor menu closes the start popover, and picking Ligado again keeps it open", async () => {
-    server.use(
-      engineStatus({ source: "tripadvisor", enabled: false, state: "idle", mode: "DESLIGADO" }),
-      taSessionStatus({ present: true, expires_in: 1200 }),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-
-    await pickMode(user, "painel-motor-ligar");
-    await screen.findByTestId("painel-depth-menu");
-
-    // The mode menu opens at the same anchor: never stacked over the popover.
-    await user.click(screen.getByTestId("painel-motor-btn"));
-    expect(screen.getByRole("menu", { name: "Modo do motor" })).toBeInTheDocument();
-    expect(screen.queryByTestId("painel-depth-menu")).toBeNull();
-
-    await user.click(screen.getByTestId("painel-motor-ligar"));
-    expect(await screen.findByTestId("painel-depth-menu")).toBeInTheDocument();
-  });
-
-  it("opening the depth menu without picking does NOT fire POST /start", async () => {
-    let startCalled = false;
-    server.use(
-      engineStatus({ mode: "DESLIGADO", state: "idle", enabled: false }),
-      taSessionStatus(),
-      http.post(START_URL, () => {
-        startCalled = true;
-        return HttpResponse.json({ status: "started" }, { status: 202 });
-      }),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="Painel" subtitle="x" />);
-
-    await pickMode(user, "painel-motor-ligar");
-    await screen.findByTestId("painel-depth-menu");
-    await new Promise((r) => setTimeout(r, 50));
-    expect(startCalled).toBe(false);
+    // A truly-on engine: Ligar must do nothing (no start panel, no restart).
+    expect(onStart).not.toHaveBeenCalled();
   });
 
   // ---------------------------------------------------------------------------
@@ -548,110 +382,6 @@ describe("PainelTopbar", () => {
   // R2 client gate — cold Ligar honors the TripAdvisor session gate
   // ---------------------------------------------------------------------------
 
-  it("source=tripadvisor + no valid session still opens the popover, with Varredura disabled", async () => {
-    server.use(
-      engineStatus({ source: "tripadvisor", enabled: false, state: "idle", mode: "DESLIGADO" }),
-      taSessionStatus({ present: false, reason: null }),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-    await pickMode(user, "painel-motor-ligar");
-    // taBlocked only gates the sweep: the popover opens, depth buttons disabled,
-    // Gerar descrições stays enabled (it needs no TA session).
-    await screen.findByTestId("painel-depth-menu");
-    await waitFor(() =>
-      expect(screen.getByTestId("painel-depth-nascente")).toBeDisabled(),
-    );
-    expect(screen.getByTestId("painel-depth-nascente_rio")).toBeDisabled();
-    expect(screen.getByTestId("painel-depth-nascente_rio_mar")).toBeDisabled();
-    expect(screen.getByTestId("painel-sweep-blocked")).toBeInTheDocument();
-    expect(screen.getByTestId("painel-describe")).toBeEnabled();
-  });
-
-  it("Gerar descrições with UF=SP fires POST /start {action: 'describe', ufs: ['SP']} without depth", async () => {
-    let startBody: Record<string, unknown> | null = null;
-    const spy = vi.spyOn(toast, "success");
-    server.use(
-      engineStatus({ source: "tripadvisor", enabled: false, state: "idle", mode: "DESLIGADO" }),
-      taSessionStatus({ present: false, reason: null }),
-      http.post(START_URL, async ({ request }) => {
-        startBody = (await request.json()) as Record<string, unknown>;
-        return HttpResponse.json({ status: "started", ufs_total: 1 }, { status: 202 });
-      }),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-    await pickMode(user, "painel-motor-ligar");
-    await screen.findByTestId("painel-depth-menu");
-    await user.selectOptions(screen.getByTestId("painel-uf-select"), "SP");
-    await user.type(screen.getByTestId("painel-max-per-uf"), "3");
-    await user.click(screen.getByTestId("painel-describe"));
-    await waitFor(() => expect(startBody).not.toBeNull());
-    expect(startBody).toEqual({
-      action: "describe",
-      ufs: ["SP"],
-      max_atrativos_per_uf: 3,
-    });
-    await waitFor(() =>
-      expect(spy).toHaveBeenCalledWith("Motor ligado — gerando descrições"),
-    );
-  });
-
-  it("source=tripadvisor + valid session → cold Ligar opens the depth menu", async () => {
-    server.use(
-      engineStatus({ source: "tripadvisor", enabled: false, state: "idle", mode: "DESLIGADO" }),
-      taSessionStatus({ present: true, expires_in: 1200 }),
-      engineStartSuccess(),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-    await pickMode(user, "painel-motor-ligar");
-    await screen.findByTestId("painel-depth-menu");
-  });
-
-  it("source=tripadvisor: picking a depth fires POST /start with {depth, source: 'tripadvisor'}", async () => {
-    let startBody: { depth?: string; source?: string } | null = null;
-    server.use(
-      engineStatus({ source: "tripadvisor", state: "idle", enabled: false, mode: "DESLIGADO" }),
-      taSessionStatus({ present: true, expires_in: 1200 }),
-      http.post(START_URL, async ({ request }) => {
-        startBody = (await request.json()) as { depth?: string; source?: string };
-        return HttpResponse.json(
-          { status: "started", ufs_total: 27 },
-          { status: 202 },
-        );
-      }),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-    await pickMode(user, "painel-motor-ligar");
-    await screen.findByTestId("painel-depth-menu");
-    await user.click(screen.getByTestId("painel-depth-nascente_rio"));
-    await waitFor(() => expect(startBody).not.toBeNull());
-    expect(startBody).toMatchObject({
-      depth: "nascente_rio",
-      source: "tripadvisor",
-    });
-  });
-
-  it("409 from startEngine with TA detail message shows the backend message", async () => {
-    const TA_MSG =
-      "Motor TripAdvisor requer uma sessão com TTL válido — injete um cURL primeiro.";
-    const spy = vi.spyOn(toast, "error");
-    server.use(
-      engineStatus({ source: "tripadvisor", enabled: false, state: "idle", mode: "DESLIGADO" }),
-      taSessionStatus({ present: true, expires_in: 1200 }),
-      http.post(START_URL, () => HttpResponse.json({ detail: TA_MSG }, { status: 409 })),
-    );
-    const user = userEvent.setup();
-    renderWithClient(<PainelTopbar title="P" subtitle="s" />);
-    await pickMode(user, "painel-motor-ligar");
-    await screen.findByTestId("painel-depth-menu");
-    await user.click(screen.getByTestId("painel-depth-nascente"));
-    await waitFor(() =>
-      expect(spy).toHaveBeenCalledWith(expect.stringContaining("TTL")),
-    );
-  });
 
   it("surfaces a 422 invalid-mode error via toast", async () => {
     const spy = vi.spyOn(toast, "error");

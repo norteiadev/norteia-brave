@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -27,6 +27,7 @@ import {
 import {
   atrativoCountQuery,
   atrativoKeys,
+  fetchAtrativoDetail,
   fetchAtrativoList,
   fetchFailureCards,
   promoteBulkAtrativos,
@@ -57,6 +58,10 @@ import { STAGE_LABELS, fmt1, scorePotential } from "@/lib/registros";
  * per-row duplicate signal: GET /dedup/pairs pairs only one page of candidates,
  * so a "Possível duplicado" flag would be missing on most real duplicates. It
  * comes back with Phase 2's duplicate_place; until then, Duplicados is the queue.
+ *
+ * Tab, UF and the open record belong to the page, which keeps them in the URL
+ * (#119). A linked record past the loaded page opens from its detail; one that
+ * is gone or left this stage gets a short note.
  */
 
 const PAGE = 25;
@@ -231,22 +236,30 @@ function PromoverLote({ uf, locked, apiDown }: { uf: string; locked: boolean; ap
 
 export function PainelRegistros({
   tab,
+  uf,
+  selected: active,
   onTabChange,
+  onUfChange,
+  onSelect,
 }: {
   tab: RegistrosTab;
+  /** "" = every UF. */
+  uf: string;
+  /** Open record: rio id, or source_ref on Falha. */
+  selected: string | null;
   onTabChange: (tab: RegistrosTab) => void;
+  onUfChange: (uf: string) => void;
+  onSelect: (id: string | null) => void;
 }) {
   const qc = useQueryClient();
-  const [uf, setUf] = useState("");
   const [limit, setLimit] = useState(PAGE);
-  const [active, setActive] = useState<string | null>(null);
 
-  // A new tab (from here or the sidebar) starts at the top with no detail open.
-  const [prevTab, setPrevTab] = useState(tab);
-  if (prevTab !== tab) {
-    setPrevTab(tab);
+  // A new tab or UF starts at the top.
+  const scopeKey = `${tab}|${uf}`;
+  const [prevScope, setPrevScope] = useState(scopeKey);
+  if (prevScope !== scopeKey) {
+    setPrevScope(scopeKey);
     setLimit(PAGE);
-    setActive(null);
   }
 
   const { data: engine } = useQuery({
@@ -295,10 +308,27 @@ export function PainelRegistros({
   const shown = ids.length;
   const current = routing ? list : failures;
   const more = total == null ? 0 : Math.min(STEP, MAX_LIMIT - limit, total - shown);
-  const activeRow = atrativos.find((a) => a.id === active);
-  const activeFalha = falhas.find((f) => f.source_ref === active);
+  // A linked record past the loaded page: open it from its detail, but only
+  // while it is still in this tab's stage.
+  const listed = atrativos.find((a) => a.id === active);
+  const linked = useQuery({
+    queryKey: atrativoKeys.detail(active ?? ""),
+    queryFn: () => fetchAtrativoDetail(active!),
+    enabled: routing !== null && active !== null && list.isSuccess && !listed,
+    retry: false,
+  });
+  const activeRow = listed ?? (linked.data?.routing === routing ? linked.data : undefined);
+  const activeFalha = falhaRows.find((f) => f.source_ref === active);
+  const notFound =
+    active !== null &&
+    !activeRow &&
+    !activeFalha &&
+    (routing ? linked.isError || linked.isSuccess : failures.isSuccess);
 
-  // J/K walk the list (and open the row), Esc closes the detail.
+  // J/K walk the list (and open the row), Esc closes the detail. The page hands
+  // a new onSelect each render; reading it as an effect event keeps the
+  // listener subscribed once per list change.
+  const select = useEffectEvent((id: string | null) => onSelect(id));
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       // A dialog or menu owns its keys (its Esc must not also close the detail).
@@ -307,13 +337,13 @@ export function PainelRegistros({
       const target = e.target as HTMLElement | null;
       if (target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
       const k = e.key.toLowerCase();
-      if (k === "escape") return setActive(null);
+      if (k === "escape") return select(null);
       if (k !== "j" && k !== "k") return;
       e.preventDefault();
       if (ids.length === 0) return;
       const i = ids.indexOf(active ?? "");
       const next = i === -1 ? 0 : Math.max(0, Math.min(ids.length - 1, i + (k === "j" ? 1 : -1)));
-      setActive(ids[next]);
+      select(ids[next]);
       document.querySelector(`[data-row-id="${CSS.escape(ids[next])}"]`)?.scrollIntoView?.({ block: "nearest" });
     }
     document.addEventListener("keydown", onKey);
@@ -367,11 +397,7 @@ export function PainelRegistros({
           <select
             aria-label="UF"
             value={uf}
-            onChange={(e) => {
-              setUf(e.target.value);
-              setLimit(PAGE);
-              setActive(null);
-            }}
+            onChange={(e) => onUfChange(e.target.value)}
             className="bg-transparent text-[12.5px] outline-none"
           >
             <option value="">Todas</option>
@@ -426,11 +452,11 @@ export function PainelRegistros({
                     selected={active === a.id}
                     threshold={score?.threshold_mar}
                     weight={tab === "revisao" ? score?.weight_validacao_humana : undefined}
-                    onOpen={() => setActive(a.id)}
+                    onOpen={() => onSelect(a.id)}
                   />
                 ))}
                 {falhas.map((f) => (
-                  <FalhaRow key={f.source_ref} f={f} cls={rowCls(f.source_ref)} selected={active === f.source_ref} onOpen={() => setActive(f.source_ref)} />
+                  <FalhaRow key={f.source_ref} f={f} cls={rowCls(f.source_ref)} selected={active === f.source_ref} onOpen={() => onSelect(f.source_ref)} />
                 ))}
               </div>
               <div className="flex items-center gap-2.5 border-t border-[var(--line-2)] px-3 py-2 text-[12px] text-[var(--ink-3)]">
@@ -467,9 +493,16 @@ export function PainelRegistros({
             />
           ) : activeFalha ? (
             <FalhaDetailPanel key={activeFalha.source_ref} card={activeFalha} />
+          ) : notFound ? (
+            <div role="status" className="m-auto max-w-[300px] px-6 py-10 text-center text-[13px] text-[var(--ink-3)]">
+              <b className="block text-[var(--ink-2)]">Registro não encontrado nesta etapa.</b>
+              Ele pode ter mudado de etapa ou saído da base.
+            </div>
           ) : (
             <div className="m-auto max-w-[300px] px-6 py-10 text-center text-[13px] text-[var(--ink-3)]">
-              Escolha um registro para ver o score, o motivo e a linha do tempo.
+              {active && !current.isError
+                ? "Carregando…"
+                : "Escolha um registro para ver o score, o motivo e a linha do tempo."}
             </div>
           )}
         </aside>

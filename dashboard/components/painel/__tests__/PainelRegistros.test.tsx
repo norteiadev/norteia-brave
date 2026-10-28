@@ -131,16 +131,34 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function Harness({ initial = "revisao" }: { initial?: RegistrosTab }) {
+// The page owns tab, UF and the open record (they live in the URL); same here.
+function Harness({ initial = "revisao", id = null }: { initial?: RegistrosTab; id?: string | null }) {
   const [tab, setTab] = useState<RegistrosTab>(initial);
-  return <PainelRegistros tab={tab} onTabChange={setTab} />;
+  const [uf, setUf] = useState("");
+  const [selected, setSelected] = useState<string | null>(id);
+  return (
+    <PainelRegistros
+      tab={tab}
+      uf={uf}
+      selected={selected}
+      onTabChange={(t) => {
+        setTab(t);
+        setSelected(null);
+      }}
+      onUfChange={(u) => {
+        setUf(u);
+        setSelected(null);
+      }}
+      onSelect={setSelected}
+    />
+  );
 }
 
-function mount(initial?: RegistrosTab) {
+function mount(initial?: RegistrosTab, id?: string) {
   return renderWithClient(
     <>
       <Toaster />
-      <Harness initial={initial} />
+      <Harness initial={initial} id={id} />
     </>,
   );
 }
@@ -400,6 +418,57 @@ describe("Registros — detail", () => {
     const detail = await openMercado(ui);
 
     expect(await detail.findByText("dlq_reason = algo_novo")).toBeInTheDocument();
+  });
+});
+
+describe("Registros — linked record", () => {
+  it("opens a linked record that is past the loaded page", async () => {
+    const far = { ...DETAIL, id: "dlq-30", name: "Atrativo 30" };
+    server.use(http.get(`${API}/atrativos/:id`, () => HttpResponse.json(far)));
+    const ui = mount("revisao", "dlq-30");
+
+    const aside = within(ui.getByRole("complementary", { name: "Detalhe do registro" }));
+    expect(await aside.findByRole("heading", { name: "Atrativo 30" })).toBeInTheDocument();
+    expect(ui.getAllByTestId("registros-row")).toHaveLength(25);
+  });
+
+  it("an unknown id shows the list with a short note, not an empty panel", async () => {
+    server.use(
+      http.get(`${API}/atrativos/:id`, () => HttpResponse.json({ detail: "not found" }, { status: 404 })),
+    );
+    const ui = mount("revisao", "sumiu");
+
+    const aside = within(ui.getByRole("complementary", { name: "Detalhe do registro" }));
+    expect(await aside.findByText("Registro não encontrado nesta etapa.")).toBeInTheDocument();
+    expect(ui.getAllByTestId("registros-row")).toHaveLength(25);
+  });
+
+  it("a record that left this stage counts as not found here", async () => {
+    server.use(
+      http.get(`${API}/atrativos/:id`, () =>
+        HttpResponse.json({ ...DETAIL, id: "promovido", routing: "mar" }),
+      ),
+    );
+    const ui = mount("revisao", "promovido");
+
+    const aside = within(ui.getByRole("complementary", { name: "Detalhe do registro" }));
+    expect(await aside.findByText("Registro não encontrado nesta etapa.")).toBeInTheDocument();
+  });
+
+  it("a failed list never leaves the linked detail stuck on loading", async () => {
+    server.use(http.get(`${API}/atrativos`, () => HttpResponse.json({ detail: "boom" }, { status: 500 })));
+    const ui = mount("revisao", "dlq-30");
+
+    expect(await ui.findByText(/Não foi possível carregar os registros/)).toBeInTheDocument();
+    const aside = within(ui.getByRole("complementary", { name: "Detalhe do registro" }));
+    expect(aside.queryByText("Carregando…")).toBeNull();
+  });
+
+  it("an unknown failure card shows the note too", async () => {
+    const ui = mount("falha", "tripadvisor:attraction:nope");
+
+    const aside = within(ui.getByRole("complementary", { name: "Detalhe do registro" }));
+    expect(await aside.findByText("Registro não encontrado nesta etapa.")).toBeInTheDocument();
   });
 });
 

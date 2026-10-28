@@ -26,7 +26,10 @@ function LoginForm() {
     setOperatorToken(token.trim());
     // Land directly on the single-shell painel (phase H removed the `/` hub;
     // `/` now 307-redirects to `/painel` anyway — push there to skip the hop).
-    router.push("/painel");
+    // A `next` back to a Painel link (#119) is followed; anything else is not
+    // (no open redirect).
+    const next = params.get("next");
+    router.push(next?.startsWith("/painel") ? next : "/painel");
   }
 
   return (

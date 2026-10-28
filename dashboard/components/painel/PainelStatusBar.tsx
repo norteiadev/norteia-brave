@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { Check, ChevronDown, Pause, Play, Square, type LucideIcon } from "lucide-react";
 
 import { SOURCE_LABELS, type EngineSource, type EngineStatus, type TASessionStatus } from "@/lib/engine-api";
@@ -258,14 +258,10 @@ export function MotorMenu({
   mode,
   disabled,
   onSelect,
-  onOpen,
-  children,
 }: {
   mode: EngineMode;
   disabled: boolean;
   onSelect: (mode: EngineMode) => void;
-  onOpen?: () => void;
-  children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -315,10 +311,7 @@ export function MotorMenu({
         aria-controls={open ? menuId : undefined}
         aria-label={`Motor ${meta.label}. Trocar modo`}
         disabled={disabled}
-        onClick={() => {
-          if (!open) onOpen?.();
-          setOpen(!open);
-        }}
+        onClick={() => setOpen(!open)}
         className="inline-flex h-[28px] items-center gap-[6px] rounded-[7px] px-[7px] text-[12px] font-semibold disabled:opacity-60"
         style={{ background: meta.bg, color: meta.fg }}
       >
@@ -373,7 +366,6 @@ export function MotorMenu({
           })}
         </div>
       )}
-      {children}
     </div>
   );
 }
