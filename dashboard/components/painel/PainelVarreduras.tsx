@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -43,8 +43,11 @@ import {
 /**
  * PainelVarreduras — "Varreduras" (spec #82 Phase 0, POC view-varreduras).
  *
- *   - Nova varredura: multi-UF sweep with a depth (POST /engine/start). The
- *     server's 409/422 reasons surface as toasts.
+ *   - Nova varredura: the one place that starts a collection (#120). A sweep
+ *     (UFs or all Brazil, depth, optional per-UF cap), the per-UF descriptions
+ *     and the backfill resume, all through POST /engine/start. The server's
+ *     409/422 reasons surface as toasts. A cold Ligar in the motor menu lands
+ *     here with the focus on this panel.
  *   - Sessão TripAdvisor: presence + TTL from /tripadvisor/session/status; the
  *     cURL injection reuses PainelOrigem (distinct 422 vs 503 messages).
  *   - 7-day KPIs and the run history (GET /runs), with Fonte/Profundidade/UF
@@ -116,7 +119,7 @@ function fmtDuration(run: RunItem): string {
   return min % 60 ? `${h} h ${min % 60} min` : `${h} h`;
 }
 
-export function PainelVarreduras() {
+export function PainelVarreduras({ focusStart = 0 }: { focusStart?: number }) {
   const qc = useQueryClient();
   const [source, setSource] = useState("");
   const [depth, setDepth] = useState("");
@@ -147,7 +150,7 @@ export function PainelVarreduras() {
     <div className="h-full overflow-y-auto px-[22px] pb-7 pt-[18px]">
       <div className="flex flex-col gap-4">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-          <NovaVarredura />
+          <NovaVarredura focusStart={focusStart} />
           <SessaoTA />
         </div>
 
@@ -298,10 +301,22 @@ function useSession() {
   });
 }
 
-function NovaVarredura() {
+/** One start request + its success copy. */
+type StartRequest = { body: Parameters<typeof startEngine>[0]; done: string };
+
+function NovaVarredura({ focusStart }: { focusStart: number }) {
   const qc = useQueryClient();
   const [ufs, setUfs] = useState<ReadonlySet<string>>(new Set());
+  const [allBrazil, setAllBrazil] = useState(false);
   const [depth, setDepth] = useState<EngineDepth>("nascente_rio");
+  // Optional per-UF attraction cap (test-run throttle). "" = no cap.
+  const [maxPerUf, setMaxPerUf] = useState("");
+  const firstRef = useRef<HTMLButtonElement | null>(null);
+
+  // Each cold Ligar bumps focusStart: land the keyboard on the scope picker.
+  useEffect(() => {
+    if (focusStart) firstRef.current?.focus();
+  }, [focusStart]);
 
   const { data: engine } = useQuery({
     queryKey: engineKeys.status,
@@ -310,16 +325,17 @@ function NovaVarredura() {
     refetchOnWindowFocus: false,
   });
   const { data: session } = useSession();
-  // The server refuses a TripAdvisor sweep without a live session (409).
+  // The server refuses a TripAdvisor sweep or backfill without a live session (409).
   const taReady = !!session?.present && (session.expires_in ?? 0) > 0;
   const runningUf = engine?.state === "running" ? engine.current_uf : null;
 
   const start = useMutation({
-    mutationFn: (sel: string[]) => startEngine({ depth, source: "tripadvisor", ufs: sel }),
-    onError: (err) => toast.error(explainError(err, "Falha ao iniciar a varredura.")),
-    onSuccess: (_res, sel) => {
-      toast.success(`Varredura de ${sel.join(", ")} iniciada.`);
+    mutationFn: (req: StartRequest) => startEngine(req.body),
+    onError: (err) => toast.error(explainError(err, "Falha ao iniciar a coleta.")),
+    onSuccess: (_res, req) => {
+      toast.success(req.done);
       setUfs(new Set());
+      setAllBrazil(false);
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: engineKeys.status });
@@ -327,18 +343,28 @@ function NovaVarredura() {
     },
   });
 
-  const toggle = (u: string) =>
+  const toggle = (u: string) => {
+    setAllBrazil(false);
     setUfs((s) => {
       const next = new Set(s);
       if (next.has(u)) next.delete(u);
       else next.add(u);
       return next;
     });
+  };
 
   const selected = BR_UFS.filter((u) => ufs.has(u));
+  const hasScope = allBrazil || selected.length > 0;
+  // No ufs = the server's all 27. Number("") is 0, so the >= 1 guard drops an empty cap.
+  const cap = Number(maxPerUf);
+  const scope = {
+    ufs: allBrazil ? undefined : selected,
+    max_atrativos_per_uf: Number.isInteger(cap) && cap >= 1 ? cap : undefined,
+  };
+  const where = allBrazil ? "todo o Brasil" : selected.join(", ");
 
   return (
-    <Panel title="Nova varredura" hint="TripAdvisor por UF">
+    <Panel title="Nova varredura" hint="TripAdvisor por UF, descrições e backfill">
       <div className="flex flex-col gap-[14px]">
         <div>
           <div className="mb-2 text-[12px] text-[var(--ink-3)]">
@@ -351,6 +377,22 @@ function NovaVarredura() {
             )}
           </div>
           <div role="group" aria-label="UFs" className="flex flex-wrap gap-[6px]">
+            <button
+              ref={firstRef}
+              type="button"
+              aria-pressed={allBrazil}
+              onClick={() => {
+                setAllBrazil((v) => !v);
+                setUfs(new Set());
+              }}
+              className={`h-8 cursor-pointer rounded-[7px] border px-2.5 text-[12px] font-semibold ${
+                allBrazil
+                  ? "border-[var(--navy)] bg-[var(--navy-soft)] text-[var(--navy)]"
+                  : "border-[var(--line)] bg-[var(--surface)] text-[var(--ink-2)]"
+              }`}
+            >
+              Todo o Brasil
+            </button>
             {BR_UFS.map((u) => {
               const on = ufs.has(u);
               return (
@@ -383,17 +425,51 @@ function NovaVarredura() {
           <Seg label="Profundidade da varredura" options={START_DEPTHS} value={depth} onChange={setDepth} />
         </div>
 
+        <label className="flex flex-wrap items-center gap-[10px] text-[12px] text-[var(--ink-3)]">
+          Máx. atrativos por UF
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={maxPerUf}
+            placeholder="Sem limite"
+            onChange={(e) => setMaxPerUf(e.target.value)}
+            className="h-8 w-[120px] rounded-[7px] border border-[var(--line)] bg-[var(--surface)] px-2 text-[12.5px] text-[var(--ink)]"
+          />
+        </label>
+
         <div className="flex flex-wrap items-center gap-2">
           <Btn
             variant="primary"
-            disabled={selected.length === 0 || !taReady || start.isPending}
-            onClick={() => start.mutate(selected)}
+            disabled={!hasScope || !taReady || start.isPending}
+            onClick={() =>
+              start.mutate({
+                body: { depth, source: "tripadvisor", ...scope },
+                done: `Varredura de ${where} iniciada.`,
+              })
+            }
           >
             Iniciar varredura
           </Btn>
+          <Btn
+            disabled={!hasScope || start.isPending}
+            title="Gera a descrição editorial dos atrativos sem descrição, por UF. Não usa a sessão do TripAdvisor."
+            onClick={() =>
+              start.mutate({ body: { action: "describe", ...scope }, done: `Gerando descrições de ${where}.` })
+            }
+          >
+            Gerar descrições
+          </Btn>
+          <Btn
+            disabled={!taReady || start.isPending}
+            title="Retoma o backfill do TripAdvisor (por exemplo, depois de trocar a chave do Places)."
+            onClick={() => start.mutate({ body: { action: "backfill" }, done: "Backfill retomado." })}
+          >
+            Retomar backfill
+          </Btn>
           {session && !taReady && (
             <span className="text-[12px] text-[var(--dlq-ink)]">
-              Injete uma sessão do TripAdvisor para iniciar.
+              Injete uma sessão do TripAdvisor para varrer ou retomar o backfill.
             </span>
           )}
         </div>

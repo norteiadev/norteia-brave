@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { PainelConfig } from "@/components/painel/PainelConfig";
@@ -19,15 +19,19 @@ import { PainelVisaoGeral } from "@/components/painel/PainelVisaoGeral";
 import { CurrencyProvider } from "@/components/painel/currency";
 import { type PainelViewKey, type RegistrosTab } from "@/components/painel/nav";
 import { getOperatorToken } from "@/lib/api-client";
+import { BR_UFS } from "@/lib/painel-data";
 
 /**
  * /painel — the Painel Brave single-shell (phase 17.1, slice 2).
  *
- * View switching is local state (SPA style), not nested Next routes. The shell
- * root is the scoped `.painel-light` wrapper (light/dark per operator) so the
- * global dark theme is untouched. The redesign (#83) opens on Visão geral;
- * Revisão / Mar / Falha open the Registros view on their tab. The old kanban is
- * no longer reachable. Money renders through CurrencyProvider (USD/BRL).
+ * View switching is SPA style, not nested Next routes, but the place lives in
+ * the URL (#119): `/painel?view=registros&tab=revisao&uf=BA&id=<rio_id>`. A
+ * reload restores it and a link opens the same record. A new screen or tab
+ * pushes a history entry; the UF filter and row moves (J/K) only replace it, so
+ * Back returns to the previous screen/tab. The shell root is the scoped
+ * `.painel-light` wrapper (light/dark per operator) so the global dark theme is
+ * untouched. The redesign (#83) opens on Visão geral; Revisão / Mar / Falha open
+ * the Registros view on their tab. Money renders through CurrencyProvider.
  */
 
 /** Static title/subtitle per active view (design NAV copy, lines 502-509). */
@@ -86,15 +90,55 @@ function viewHeader(view: PainelViewKey): { title: string; subtitle: string } {
   return VIEW_HEADERS[view];
 }
 
-interface PainelBodyProps {
+/** Where the operator is: everything the URL carries. */
+interface PainelNav {
   view: PainelViewKey;
   tab: RegistrosTab;
+  /** "" = every UF. */
+  uf: string;
+  id: string | null;
+}
+
+const TABS: readonly string[] = ["revisao", "mar", "falha"] satisfies RegistrosTab[];
+const HOME: PainelNav = { view: "visao", tab: "revisao", uf: "", id: null };
+
+/** Unknown values fall back to the defaults (a stale or hand-typed link). */
+function parseNav(search: string): PainelNav {
+  const p = new URLSearchParams(search);
+  const view = p.get("view") ?? "";
+  const tab = p.get("tab") ?? "";
+  const uf = p.get("uf") ?? "";
+  return {
+    view: Object.keys(VIEW_HEADERS).includes(view) ? (view as PainelViewKey) : "visao",
+    tab: TABS.includes(tab) ? (tab as RegistrosTab) : "revisao",
+    uf: BR_UFS.includes(uf) ? uf : "",
+    id: p.get("id") || null,
+  };
+}
+
+/** Only Registros carries tab, UF and record. */
+function navSearch(n: PainelNav): string {
+  const p = new URLSearchParams();
+  if (n.view !== "visao") p.set("view", n.view);
+  if (n.view === "registros") {
+    p.set("tab", n.tab);
+    if (n.uf) p.set("uf", n.uf);
+    if (n.id) p.set("id", n.id);
+  }
+  const q = p.toString();
+  return q ? `?${q}` : "";
+}
+
+interface PainelBodyProps {
+  nav: PainelNav;
   onNavigate: (view: PainelViewKey, tab?: RegistrosTab) => void;
+  onRegistros: (patch: { uf?: string; id?: string | null }) => void;
+  focusStart: number;
 }
 
 /** Render the active view body. */
-function PainelBody({ view, tab, onNavigate }: PainelBodyProps) {
-  switch (view) {
+function PainelBody({ nav, onNavigate, onRegistros, focusStart }: PainelBodyProps) {
+  switch (nav.view) {
     case "visao":
       return (
         <PainelVisaoGeral
@@ -103,13 +147,22 @@ function PainelBody({ view, tab, onNavigate }: PainelBodyProps) {
         />
       );
     case "registros":
-      return <PainelRegistros tab={tab} onTabChange={(t) => onNavigate("registros", t)} />;
+      return (
+        <PainelRegistros
+          tab={nav.tab}
+          uf={nav.uf}
+          selected={nav.id}
+          onTabChange={(t) => onNavigate("registros", t)}
+          onUfChange={(uf) => onRegistros({ uf, id: null })}
+          onSelect={(id) => onRegistros({ id })}
+        />
+      );
     case "duplicados":
       return <PainelDuplicados />;
     case "mapeamento":
       return <PainelMapeamento />;
     case "varreduras":
-      return <PainelVarreduras />;
+      return <PainelVarreduras focusStart={focusStart} />;
     case "conversas":
       return <PainelConversas />;
     case "custo":
@@ -127,10 +180,12 @@ function PainelBody({ view, tab, onNavigate }: PainelBodyProps) {
 
 export default function PainelPage() {
   const router = useRouter();
-  const [view, setView] = useState<PainelViewKey>("visao");
-  const [tab, setTab] = useState<RegistrosTab>("revisao");
+  const [nav, setNav] = useState<PainelNav>(HOME);
   const [authed, setAuthed] = useState<boolean | null>(null);
-  const { title, subtitle } = viewHeader(view);
+  // Bumped by each cold Ligar so Varreduras focuses its start panel; 0 otherwise.
+  const [focusStart, setFocusStart] = useState(0);
+  const starts = useRef(0);
+  const { title, subtitle } = viewHeader(nav.view);
 
   // Operator-token gate. Phase H removed the standalone `/` hub (which held the
   // only client gate) and points `/` → `/painel`; the gate moves here so an
@@ -145,6 +200,15 @@ export default function PainelPage() {
     setAuthed(true);
   }, [router]);
 
+  // The URL is the source of truth: read it once on mount (the server render
+  // has no window) and again on Back/Forward.
+  useEffect(() => {
+    const read = () => setNav(parseNav(window.location.search));
+    read();
+    window.addEventListener("popstate", read);
+    return () => window.removeEventListener("popstate", read);
+  }, []);
+
   if (authed === null) {
     return (
       <div className="painel-light grid h-screen place-items-center">
@@ -153,20 +217,39 @@ export default function PainelPage() {
     );
   }
 
-  const navigate = (next: PainelViewKey, nextTab?: RegistrosTab) => {
-    setView(next);
-    if (nextTab) setTab(nextTab);
+  const go = (next: PainelNav, push: boolean) => {
+    setNav(next);
+    const url = `${window.location.pathname}${navSearch(next)}`;
+    if (url === `${window.location.pathname}${window.location.search}`) return;
+    window.history[push ? "pushState" : "replaceState"](null, "", url);
+  };
+  // A new screen or tab: its own history entry, no record open. The UF filter
+  // survives a tab change inside Registros only.
+  const navigate = (view: PainelViewKey, tab?: RegistrosTab) => {
+    setFocusStart(0);
+    go({ view, tab: tab ?? nav.tab, uf: view === nav.view ? nav.uf : "", id: null }, true);
+  };
+  const updateRegistros = (patch: { uf?: string; id?: string | null }) =>
+    go({ ...nav, ...patch }, false);
+  const openStart = () => {
+    navigate("varreduras");
+    setFocusStart(++starts.current);
   };
 
   return (
     <CurrencyProvider>
       <PainelShell
-        active={view}
-        registrosTab={tab}
+        active={nav.view}
+        registrosTab={nav.tab}
         onSelect={navigate}
-        topbar={<PainelTopbar title={title} subtitle={subtitle} />}
+        topbar={<PainelTopbar title={title} subtitle={subtitle} onStart={openStart} />}
       >
-        <PainelBody view={view} tab={tab} onNavigate={navigate} />
+        <PainelBody
+          nav={nav}
+          onNavigate={navigate}
+          onRegistros={updateRegistros}
+          focusStart={focusStart}
+        />
       </PainelShell>
     </CurrencyProvider>
   );
