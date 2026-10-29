@@ -7,6 +7,9 @@
   pages on a stale one while the listing still answers (24/10, 28/10).
 """
 
+import contextlib
+import importlib.util
+import io
 import json
 import os
 import re
@@ -43,14 +46,6 @@ def batch(curl: str) -> list:
     return []
 
 
-def cookies(curl: str) -> str:
-    tokens = split(curl)
-    for flag in ("-b", "--cookie"):
-        if flag in tokens:
-            return tokens[tokens.index(flag) + 1]
-    return next((t.split(":", 1)[1] for t in tokens if t.lower().startswith("cookie:")), "")
-
-
 def check(name: str, label: str, test) -> None:
     path = DIR / name
     if not path.is_file():
@@ -72,7 +67,26 @@ def check(name: str, label: str, test) -> None:
         print(f"OK    cURL {label} ({age_h:.1f} h)")
 
 
+def injectable(curl: str) -> str:
+    """What the inject would refuse, judged by the parser that builds its payload
+    (scripts/ta_bootstrap.py): no datadome cookie, or a batch of telemetry/ad qids only."""
+    spec = importlib.util.spec_from_file_location(
+        "ta_bootstrap", ROOT / "scripts" / "ta_bootstrap.py"
+    )
+    ta_bootstrap = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ta_bootstrap)
+    with contextlib.redirect_stderr(io.StringIO()):  # its per-qid warnings are not ours
+        parsed = ta_bootstrap.parse_curl(curl)
+    if "datadome" not in parsed["cookies"]:
+        return "sem cookie datadome"
+    if not parsed["query_ids"]:
+        return "lote só de telemetria/anúncio — o inject o recusaria (422): copie outro POST"
+    return ""
+
+
 def paginacao(curl: str) -> tuple[str, str]:
+    if problem := injectable(curl):
+        return problem, ""
     items = [
         i
         for i in batch(curl)
@@ -102,13 +116,14 @@ def listing_qid() -> str:
 
 
 def brazil(curl: str) -> tuple[str, str]:
-    if "datadome=" not in cookies(curl):
-        return "sem cookie datadome", ""
+    if problem := injectable(curl):
+        return problem, ""
     if "g294280" not in curl:
         return "não veio da página Brazil (g294280)", ""
     return "", ""
 
 
-check("ta_paginacao.curl", "paginação", paginacao)
-check("ta_brazil.curl", "página Brazil", brazil)
-sys.exit(0)
+if __name__ == "__main__":
+    check("ta_paginacao.curl", "paginação", paginacao)
+    check("ta_brazil.curl", "página Brazil", brazil)
+    sys.exit(0)
