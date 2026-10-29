@@ -20,6 +20,8 @@ CHROME = (
     "bandeira", "brasao", "brasão", "mapa", "locator", "location", "map of", "flag",
 )
 BAD_EXT = (".svg", ".tif", ".tiff", ".pdf", ".ogv", ".webm", ".xcf", ".gif")
+# What norteia-api's media endpoint accepts.
+PHOTO_MIMES = ("image/jpeg", "image/png", "image/webp")
 COLLAGE = ("collage", "montagem", "montage", "mosaico", "composicao", "composição")
 COVER_MIN_WIDTH = 1280
 COVER_MIN_ASPECT = 1.2
@@ -59,7 +61,7 @@ def reject_reason(f: CommonsFile | None) -> str | None:
     if f is None:
         return "missing"
     title = f.title.lower()
-    if title.endswith(BAD_EXT) or not f.mime.startswith("image/"):
+    if title.endswith(BAD_EXT) or f.mime not in PHOTO_MIMES:
         return "not_photo"
     if any(c in title for c in CHROME):
         return "chrome"

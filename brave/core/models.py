@@ -383,7 +383,8 @@ class AtrativoBusca(Base):
 class ImageLookup(Base):
     """One per entity: the image lane's idempotency marker and QID cache.
 
-    outcome: matched | no_match | error. ``error`` is not final — the next run retries.
+    outcome: matched | no_match | no_photo | error. ``no_photo`` (a destino with no cover
+    yet) and ``error`` are not final — the next run retries.
     via: ibge (destino) | around5km | name30km (atrativo).
     """
 

@@ -41,6 +41,9 @@ def test_reject_reason() -> None:
     assert reject_reason(_f("File:Bandeira de Aracaju.jpg")) == "chrome"
     assert reject_reason(_f("File:Mapa.svg")) == "not_photo"
     assert reject_reason(None) == "missing"
+    djvu = CommonsFile(title="File:Livro.djvu", url="", page="", width=3000, height=2000,
+                       mime="image/vnd.djvu", license_code="cc0")
+    assert reject_reason(djvu) == "not_photo"  # norteia-api takes jpeg/png/webp only
 
 
 def test_cover_reject_for_destino() -> None:

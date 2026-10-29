@@ -614,6 +614,8 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
 
     import httpx  # noqa: PLC0415
 
+    from sqlalchemy import update  # noqa: PLC0415
+
     from brave.clients.image_store import image_store_for  # noqa: PLC0415
     from brave.core.models import EntityImage, Image  # noqa: PLC0415
 
@@ -629,35 +631,45 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
             .order_by(EntityImage.created_at)
             .limit(limit)
         ).all()
-        if not rows:
+        # Plain values, then end the read transaction: nothing sits idle-in-transaction
+        # through the POSTs. Each outcome is its own UPDATE + commit.
+        jobs = [
+            (row.id, row.entity_type, row.canonical_key, media_fields(row, img), img.storage_key, img.mime)
+            for row, img in rows
+        ]
+        session.rollback()
+        if not jobs:
             return 0
         store = image_store_for(effective.images)
         api = clients_for(effective).norteia_api
 
+        def _stamp(row_id: uuid.UUID, **values: Any) -> None:
+            session.execute(update(EntityImage).where(EntityImage.id == row_id).values(**values))
+            session.commit()
+
         async def _push() -> int:
             pushed = 0
-            for row, img in rows:
+            # ponytail: 404 destinos stay first in created_at order; if a whole batch of them
+            # ever piles up it starves the rest — order them last when that shows up.
+            for row_id, entity_type, key, fields, storage_key, mime in jobs:
                 try:
                     ok = await api.push_media(
-                        media_fields(row, img), store.get(img.storage_key),
-                        img.storage_key.rsplit("/", 1)[-1], img.mime,
+                        fields, store.get(storage_key), storage_key.rsplit("/", 1)[-1], mime
                     )
                 except httpx.HTTPStatusError as exc:
                     status = exc.response.status_code
                     if status >= 500:
                         logger.warning("push_media_api_error", status=status)
                         break
-                    if not (status == 404 and row.entity_type == "destination"):
-                        row.push_error = f"{status}: {exc.response.text[:500]}"
-                        session.commit()
-                        logger.warning("push_media_rejected", canonical_key=row.canonical_key, status=status)
+                    if not (status == 404 and entity_type == "destination"):
+                        _stamp(row_id, push_error=f"{status}: {exc.response.text[:500]}")
+                        logger.warning("push_media_rejected", canonical_key=key, status=status)
                     continue
                 except httpx.TransportError as exc:
                     logger.warning("push_media_transport_error", error=type(exc).__name__)
                     break
                 if ok:
-                    row.pushed_at = datetime.now(UTC)
-                    session.commit()
+                    _stamp(row_id, pushed_at=datetime.now(UTC))
                     pushed += 1
             return pushed
 

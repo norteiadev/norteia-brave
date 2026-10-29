@@ -219,3 +219,23 @@ async def test_destino_last_resort_is_the_top_item_of_the_municipio(db_session, 
 async def test_destino_without_wikidata_item_is_no_match(db_session, tmp_path) -> None:
     result = await _agent(db_session, FakeWikimediaClient(), tmp_path).run(_destino())
     assert result.outcome == "no_match"
+
+
+async def test_destino_without_a_cover_yet_is_retried_later(db_session, tmp_path) -> None:
+    """No usable cover now (collage P18, no atrativo cover yet, no top item): not a final
+    marker, so a later run finds the atrativo covers collected in between."""
+    files = {t: photo(t) for t in ("File:Aracaju montagem.jpg", "File:Popular.jpg")}
+    fake = FakeWikimediaClient(files=files, municipio={"2800308": ARACAJU})
+    agent = _agent(db_session, fake, tmp_path)
+
+    assert (await agent.run(_destino())).outcome == "no_photo"
+    assert db_session.get(ImageLookup, "ibge:SE:2800308").outcome == "no_photo"
+
+    _seed_atrativo(db_session, "ta:2", 900)
+    item = WdItem("Q2", frozenset({"ta:2"}), ("File:Popular.jpg",))
+    await _agent(db_session, FakeWikimediaClient(around=[item], files=files), tmp_path).run(
+        _atrativo("ta:2", name="ta:2")
+    )
+    assert (await agent.run(_destino())).outcome == "matched"
+    [row] = _rows(db_session, "ibge:SE:2800308")
+    assert row.lane == "atrativo"

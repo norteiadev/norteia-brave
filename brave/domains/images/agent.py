@@ -37,13 +37,15 @@ from brave.domains.images.policy import Pick, cover_reject, pick_attraction, pic
 
 logger = structlog.get_logger(__name__)
 
+# no_photo (a destino whose cover can still come from atrativos collected later) and error
+# are not final: the next run tries again.
 FINAL_OUTCOMES = ("matched", "no_match")
 _EXTERNAL_ERRORS = (httpx.HTTPError, WikimediaError)
 
 
 @dataclass
 class LaneResult:
-    outcome: str  # matched | no_match | error
+    outcome: str  # matched | no_match | no_photo | error
     picks: list[Pick] = field(default_factory=list)
     rejected: Counter[str] = field(default_factory=Counter)
     downloaded: int = 0
@@ -130,6 +132,8 @@ class ImageLaneAgent:
             files = await self._wm.image_info(titles) if titles else {}
             result.picks, more = pick_destination("muni_top", titles, files)
             result.rejected += more
+            if not result.picks:
+                result.outcome = "no_photo"
         await self._save(rio, result.picks, files, muni.qid, result)
         return result, muni, "ibge"
 
