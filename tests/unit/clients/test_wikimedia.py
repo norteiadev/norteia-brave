@@ -1,0 +1,152 @@
+"""WikimediaClient (WDQS + Commons API + upload server), 100% offline via respx.
+
+What these pin down, each paid for in the image POCs:
+  - Commons answers HTTP 200 with {"error": {"code": "cirrussearch-too-busy-error"}}: that is
+    retried, never read as an empty lane.
+  - 429 / 5xx are retried.
+  - The original URL's ?utm_ query is stripped before the /thumb/ URL is built, and only the
+    configured standard width is asked for (other widths are a 400 on the upload server).
+  - The descriptive User-Agent goes on every request.
+"""
+
+from __future__ import annotations
+
+import fakeredis
+import httpx
+import pytest
+import respx
+
+from brave.config.settings import ImagesConfig
+
+API = "https://commons.wikimedia.org/w/api.php"
+WDQS = "https://query.wikidata.org/sparql"
+UPLOAD = "https://upload.wikimedia.org/wikipedia/commons"
+
+
+@pytest.fixture
+def client(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    from brave.clients.wikimedia import WikimediaClient
+
+    return WikimediaClient(
+        config=ImagesConfig(min_interval_s=0, backoff_s=0), redis=fakeredis.FakeRedis()
+    )
+
+
+def _imageinfo_page(title: str, width: int, url: str | None = None, **meta: str) -> dict:
+    ext = {k: {"value": v} for k, v in meta.items()}
+    return {
+        "title": title,
+        "imageinfo": [{
+            "url": url or f"{UPLOAD}/a/ab/{title.removeprefix('File:').replace(' ', '_')}",
+            "descriptionurl": f"https://commons.wikimedia.org/wiki/{title.replace(' ', '_')}",
+            "width": width,
+            "height": width * 2 // 3,
+            "mime": "image/jpeg",
+            "extmetadata": ext,
+        }],
+    }
+
+
+def test_guard_raises() -> None:
+    from brave.clients.wikimedia import WikimediaClient
+
+    with pytest.raises(RuntimeError, match="run_real_externals=False"):
+        WikimediaClient(config=ImagesConfig(), redis=fakeredis.FakeRedis())
+
+
+async def test_busy_error_in_200_is_retried(client) -> None:
+    page = _imageinfo_page(
+        "File:Praia.jpg", 4000, License="cc-by-sa-4.0", LicenseShortName="CC BY-SA 4.0",
+        Artist='<a href="x">Fulano</a>',
+    )
+    with respx.mock:
+        route = respx.get(API).mock(side_effect=[
+            httpx.Response(200, json={"error": {"code": "cirrussearch-too-busy-error"}}),
+            httpx.Response(429),
+            httpx.Response(200, json={"query": {"pages": [page]}}),
+        ])
+        info = await client.image_info(["File:Praia.jpg"])
+
+    assert route.call_count == 3
+    f = info["File:Praia.jpg"]
+    assert (f.width, f.license_code, f.license, f.artist) == (4000, "cc-by-sa-4.0", "CC BY-SA 4.0", "Fulano")
+    assert route.calls.last.request.headers["User-Agent"].startswith("norteia-brave/")
+
+
+async def test_busy_error_that_never_clears_raises(client) -> None:
+    from brave.clients.wikimedia import WikimediaError
+
+    with respx.mock:
+        respx.get(API).mock(
+            return_value=httpx.Response(200, json={"error": {"code": "maxlag"}})
+        )
+        with pytest.raises(WikimediaError):
+            await client.image_info(["File:Praia.jpg"])
+
+
+async def test_unknown_api_error_is_not_retried(client) -> None:
+    from brave.clients.wikimedia import WikimediaError
+
+    with respx.mock:
+        route = respx.get(API).mock(
+            return_value=httpx.Response(200, json={"error": {"code": "badvalue"}})
+        )
+        with pytest.raises(WikimediaError):
+            await client.image_info(["File:Praia.jpg"])
+    assert route.call_count == 1
+
+
+async def test_download_strips_utm_and_uses_standard_width(client) -> None:
+    from brave.clients.wikimedia import CommonsFile
+
+    big = CommonsFile(
+        title="File:Praia do Saco.jpg",
+        url=f"{UPLOAD}/a/ab/Praia_do_Saco.jpg?utm_source=commons.wikimedia.org&utm_campaign=x",
+        page="", width=4000, height=3000, mime="image/jpeg",
+    )
+    small = CommonsFile(
+        title="File:Mini.jpg", url=f"{UPLOAD}/c/cd/Mini.jpg?utm_source=x",
+        page="", width=800, height=600, mime="image/jpeg",
+    )
+    with respx.mock:
+        thumb = respx.get(f"{UPLOAD}/thumb/a/ab/Praia_do_Saco.jpg/1920px-Praia_do_Saco.jpg").mock(
+            return_value=httpx.Response(200, content=b"big", headers={"content-type": "image/jpeg"})
+        )
+        orig = respx.get(f"{UPLOAD}/c/cd/Mini.jpg").mock(
+            return_value=httpx.Response(200, content=b"small", headers={"content-type": "image/jpeg"})
+        )
+        assert await client.download(big) == (b"big", "image/jpeg")
+        assert await client.download(small) == (b"small", "image/jpeg")
+    assert thumb.calls.last.request.url.query == b""
+    assert orig.calls.last.request.url.query == b""
+
+
+async def test_items_around_parses_sparql(client) -> None:
+    bindings = [
+        {
+            "item": {"value": "http://www.wikidata.org/entity/Q1"},
+            "label": {"value": "Praia do Saco"},
+            "p18": {"value": "http://commons.wikimedia.org/wiki/Special:FilePath/Praia%20do%20Saco.jpg"},
+            "p373": {"value": "Praia do Saco"},
+            "dist": {"value": "1.25"},
+        },
+        {
+            "item": {"value": "http://www.wikidata.org/entity/Q1"},
+            "label": {"value": "Saco beach"},
+            "dist": {"value": "1.25"},
+        },
+    ]
+    with respx.mock:
+        route = respx.post(WDQS).mock(side_effect=[
+            httpx.Response(503),
+            httpx.Response(200, json={"results": {"bindings": bindings}}),
+        ])
+        items = await client.items_around(-11.2, -37.3, 5)
+
+    assert route.call_count == 2
+    [it] = items
+    assert (it.qid, it.labels, it.p18, it.p373, it.dist_km) == (
+        "Q1", frozenset({"Praia do Saco", "Saco beach"}), ("File:Praia do Saco.jpg",),
+        "Praia do Saco", 1.25,
+    )

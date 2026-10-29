@@ -377,6 +377,38 @@ class NominatimConfig(BaseSettings):
     # CR-02: NO Field(alias=...) anywhere in this class.
 
 
+class ImagesConfig(BaseSettings):
+    """Image lane (Wikidata + Wikimedia Commons → Brave archive → norteia-api).
+
+    Env prefix: BRAVE_IMAGES_ (no aliases, CR-02). The R2 fields are read only when
+    ``store == "r2"``; their values never leave the process (exclude=True).
+    """
+
+    # Wikimedia's User-Agent policy: no UA or a library UA gets 403.
+    user_agent: str = "norteia-brave/1.0 (https://norteia.com.br; leandro.freire08@gmail.com)"
+    wdqs_url: str = "https://query.wikidata.org/sparql"
+    commons_api: str = "https://commons.wikimedia.org/w/api.php"
+    # Every Wikimedia request (WDQS, Commons API, upload) goes out in series, this far apart.
+    min_interval_s: float = 1.0
+    timeout_seconds: float = 60.0
+    max_attempts: int = 5
+    backoff_s: float = 2.0
+    around_km: float = 5.0
+    name_km: float = 30.0
+    geo_m: int = 500
+    gallery_max: int = 5
+    # The upload server only renders its standard widths; any other width is a 400.
+    thumb_width: Literal[250, 330, 960, 1280, 1920] = 1920
+    store: Literal["local", "r2"] = "local"
+    local_dir: str = "var/images"
+    r2_endpoint: str = Field(default="", exclude=True)
+    r2_bucket: str = Field(default="", exclude=True)
+    r2_access_key_id: str = Field(default="", exclude=True)
+    r2_secret_access_key: str = Field(default="", exclude=True)
+
+    model_config = SettingsConfigDict(env_prefix="BRAVE_IMAGES_")
+
+
 class EngineConfig(BaseModel):
     """Engine operator-mode overlay (Phase D, config_settings key ``engine.mode``).
 
@@ -421,6 +453,7 @@ class AppConfig(BaseSettings):
     ramp: RampConfig = Field(default_factory=RampConfig)
     tripadvisor: TripAdvisorConfig = Field(default_factory=TripAdvisorConfig)
     nominatim: NominatimConfig = Field(default_factory=NominatimConfig)
+    images: ImagesConfig = Field(default_factory=ImagesConfig)
 
     # Per-source enable flags (Phase D overlay key ``source.<name>.enabled``).
     # Both known lanes enabled by default → effective config == pre-Phase-D behavior.

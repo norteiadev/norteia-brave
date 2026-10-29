@@ -405,3 +405,19 @@ class GeocoderClientProtocol(Protocol):
             ``None`` when Nominatim returns no results.
         """
         ...
+
+
+class WikimediaClientProtocol(Protocol):
+    """Wikidata + Wikimedia Commons for the image lane (brave/clients/wikimedia.py).
+
+    Item/file types are brave.clients.wikimedia.WdItem / CommonsFile. Every call may raise
+    httpx errors or WikimediaError after its retries; the lane records that as outcome=error.
+    """
+
+    async def items_around(self, lat: float, lon: float, km: float) -> list[Any]: ...
+
+    async def items_by_name(self, name: str, lat: float, lon: float, km: float) -> list[Any]: ...
+
+    async def image_info(self, titles: list[str]) -> dict[str, Any]: ...
+
+    async def download(self, f: Any) -> tuple[bytes, str]: ...

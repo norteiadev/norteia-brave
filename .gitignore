@@ -53,3 +53,6 @@ docs/poc/*.auto.md
 docs/poc/*.raw.json
 docs/poc/*.sample34.json
 docs/poc/osm-probe.json
+
+# Image lane local archive (BRAVE_IMAGES_LOCAL_DIR default)
+var/images/
