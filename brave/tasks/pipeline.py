@@ -655,17 +655,22 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
             session.commit()
 
         def _archive_holds_a_pushed_photo(missing_keys: list[str]) -> bool:
-            probe = session.scalar(
+            # A few of the latest, not one arbitrary row: one lost file must not decide it.
+            probes = session.scalars(
                 select(Image.storage_key)
                 .join(EntityImage, EntityImage.image_id == Image.id)
                 .where(EntityImage.pushed_at.is_not(None), Image.storage_key.not_in(missing_keys))
-                .limit(1)
-            )
+                .order_by(EntityImage.pushed_at.desc())
+                .limit(5)
+            ).all()
             session.rollback()
-            try:
-                return probe is not None and bool(store.get(probe))
-            except FileNotFoundError:
-                return False
+            for probe in probes:
+                try:
+                    if store.get(probe):
+                        return True
+                except FileNotFoundError:
+                    continue
+            return False
 
         async def _push() -> int:
             pushed, found, missing = 0, False, []

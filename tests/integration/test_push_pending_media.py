@@ -251,6 +251,51 @@ def test_lost_photos_alone_in_a_tick_are_recorded_when_the_archive_holds_a_pushe
     assert gone.push_error.startswith("archive:") and gone.pushed_at is None
 
 
+def test_lost_pushed_files_do_not_decide_the_archive_proof(h) -> None:
+    keys = [f"ta:{n}" for n in range(6)]
+    for key in keys:
+        _mar(h, _rio(h, key, "attraction"))
+    *lost, kept, gone = (_photo(h, k, "attraction") for k in keys)
+    for day, r in enumerate(lost, start=20):  # the latest pushes, their files since lost
+        r.pushed_at = datetime(2026, 10, day, tzinfo=UTC)
+    kept.pushed_at = datetime(2026, 10, 1, tzinfo=UTC)  # an older push, still in the archive
+    h.session.commit()
+    for r in (*lost, gone):
+        (h.store._root / h.session.get(Image, r.image_id).storage_key).unlink()
+
+    with respx.mock:
+        respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        assert pipeline.push_pending_media.run() == 0
+
+    h.session.expire_all()
+    assert gone.push_error.startswith("archive:") and gone.pushed_at is None
+
+
+@pytest.mark.parametrize("reply", [503, httpx.ConnectError("down")], ids=["5xx", "transport"])
+def test_a_5xx_or_transport_error_ends_the_tick_and_leaves_rows_pending(h, beat, monkeypatch, reply) -> None:
+    from tenacity import wait_none
+
+    from brave.clients import norteia_api
+
+    monkeypatch.setattr(norteia_api, "wait_exponential", lambda **_: wait_none())  # retries kept, no backoff
+    for key in ("ta:1", "ta:2"):
+        _mar(h, _rio(h, key, "attraction"))
+    rows = [_photo(h, k, "attraction") for k in ("ta:1", "ta:2")]
+
+    with respx.mock:
+        if isinstance(reply, int):
+            route = respx.post(MEDIA).mock(return_value=httpx.Response(reply, json={"message": "busy"}))
+        else:
+            route = respx.post(MEDIA).mock(side_effect=reply)
+        assert pipeline.push_pending_media.run() == 0
+
+    assert route.call_count >= 1
+    assert all(b"ta:1" in c.request.content for c in route.calls)  # the tick never reached ta:2
+    h.session.expire_all()
+    assert [(r.pushed_at, r.push_error) for r in rows] == [(None, None), (None, None)]
+    assert beat[-1] == ("brave.push_pending_media", None)
+
+
 def test_a_store_error_other_than_a_missing_key_fails_the_tick_and_marks_nothing(h, beat, monkeypatch) -> None:
     _mar(h, _rio(h, "ta:1", "attraction"))
     row = _photo(h, "ta:1", "attraction")
