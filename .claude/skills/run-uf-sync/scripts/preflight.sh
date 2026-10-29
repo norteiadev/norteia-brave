@@ -22,7 +22,7 @@ pr=$(echo "$st" | jq -c '.pause_reason // empty' 2>/dev/null); [ -z "$pr" ] && o
 ttl=$(rds TTL brave:ta:session)
 if [ "${ttl:--2}" -gt 300 ] 2>/dev/null || [ "$ttl" = -1 ]; then ok "TA session alive (ttl=${ttl}s)"
 elif [ "${ttl:--2}" -gt 0 ] 2>/dev/null; then warn "TA session expiring (ttl=${ttl}s)"
-else fail "TA session ABSENT: inject a fresh Brazil-page cURL (ta_brazil.curl) (references/events.md › TA session)"; fi
+else fail "TA session ABSENT: inject a fresh paginação cURL (ta_paginacao.curl) (references/events.md › TA session)"; fi
 # Live probe of both surfaces the per-UF sweep uses: the listing (GraphQL) can answer 200
 # while DataDome 403s the attraction pages (PR, 24/10) — a TTL check alone passes that session.
 if [ "${ttl:--2}" -gt 0 ] 2>/dev/null || [ "$ttl" = -1 ]; then
@@ -38,10 +38,14 @@ except Exception as exc:
     print(type(exc).__name__, *getattr(exc, "__notes__", []))
 PY
 )
-  [ "$probe" = ok ] && ok "TA probe: listing + attraction page answer" || fail "TA probe: ${probe:-no answer} — the sweep cannot use this session: inject a fresh Brazil-page cURL (ta_brazil.curl)"
+  [ "$probe" = ok ] && ok "TA probe: listing + attraction page answer" || fail "TA probe: ${probe:-no answer} — the sweep cannot use this session: inject a fresh paginação cURL (ta_paginacao.curl)"
 fi
 curls=$(.venv/bin/python .claude/skills/run-uf-sync/scripts/check_curls.py) || curls+=$'\nFAIL  check_curls.py crashed (traceback above)'; echo "$curls"
 fails=$((fails + $(grep -c '^FAIL' <<<"$curls")))
+# A TA pinger outside the Brave (28/10: an orphaned ta_keepalive.py, 11 days, same IP) adds
+# bot traffic DataDome sees next to the sweep's.
+orphans=$(ps -A -o pid=,command= | grep -E "ta_keepalive\.py|scripts/monitors/" | grep -v grep)
+[ -z "$orphans" ] && ok "no stray TA processes on the host" || warn "stray TA processes on the host (kill them before a sweep): $(echo "$orphans" | awk '{print $1}' | xargs)"
 kf=$(rds GET brave:ta:keepalive_failures); [ "${kf:-0}" = 0 ] && ok "keepalive failures 0" || warn "keepalive failures ${kf}"
 
 U="${BRAVE_NORTEIA_API_URL%/}"

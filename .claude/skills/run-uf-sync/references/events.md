@@ -9,7 +9,7 @@
 | `motor pausado: {reason: …}` | The engine paused itself: `daily_budget` / `provider_balance` rows below. A pause the user asked for needs nothing. |
 | `sessão TA ausente` | Session dead: **TA session** below (reinject the saved cURL with `scripts/ta_bootstrap.py` first; ask for a new one only if the canary fails). |
 | `internet caiu (desde …)` (a notice, not a `FALHA`) | Nothing to do: every TA request waits (polling every 15 s, the session TTL kept alive) and resends once the internet is back, on the same card. The monitor prints `internet voltou` when it does. Hours offline only cycle the producer through its time-budget hand-overs at the same page. |
-| `páginas TA bloqueadas (403)` (a notice) | DataDome 403s the attraction pages while the listing answers: the sweep goes on, placing cards by name without `ta_backfilled_at`, and retries one page every 5 min (`páginas TA voltaram` when one answers). Ask the user for a fresh Brazil-page cURL now; after the sweep, the **Backfill gap check** (step 4) redoes those pages. A 403 on the listing itself still stops the sweep (`sessão TA ausente`). |
+| `páginas TA bloqueadas (403)` (a notice) | DataDome 403s the attraction pages while the listing answers: the sweep goes on, placing cards by name without `ta_backfilled_at`, and retries one page every 5 min (`páginas TA voltaram` when one answers). Ask the user for a fresh paginação cURL now (a CAPTCHA pending in their browser first); after the sweep, the **Backfill gap check** (step 4) redoes those pages. A 403 on the listing itself still stops the sweep (`sessão TA ausente`). |
 | `produtor falhou` | Blocking. Get the traceback (`docker compose logs --since 10m worker`), fix through **Failures and code fixes**, restart the worker and resume the same UF. |
 | `serviço parado: …` | `docker compose up -d <svc>`. A restart you planned is benign. |
 | `norteia-api fora` | Benign for < 1 min (a DEV deploy). Longer: tell the user. Pushes wait for repush. |
@@ -41,7 +41,7 @@ Read the line, find its row, act. Rows marked **benign** need no action; say so 
 
 | Event | Cause | Action |
 |---|---|---|
-| `sweep_tripadvisor_session_fail_fast`, engine → DESLIGADO | TA 403/captcha: session dead | Ask the user for a fresh Brazil-page cURL (see **TA session** below), inject, restart the sweep. Already-ingested cards are skipped. |
+| `sweep_tripadvisor_session_fail_fast`, engine → DESLIGADO | TA 403/captcha: session dead | Ask the user for a fresh paginação cURL (see **TA session** below; a CAPTCHA pending in their browser first), inject, restart the sweep. Already-ingested cards are skipped. |
 | `PersistedQueryNotFound`, `ta_keepalive_error error_type=SourceSchemaError`, inject returns 503 `canary_unverified` | TA rotated the listing qid | Ask the user for a listing cURL; take the `preRegisteredQueryId` of the batch item whose variables carry `request.routeParameters.pagee`; set `BRAVE_TA_QUERY_ID_OVERRIDE={"listing":"<qid>"}` in `.env`; `docker compose up -d api worker beat`; inject the session. Then update `_LISTING_QID_GQL` in `brave/domains/tripadvisor/client.py` in a PR. |
 | `sweep_tripadvisor_rate_limited` | TA 429 | Nothing: the task re-enqueues itself with `Retry-After` (max 5 without progress). Escalate only if it repeats with no new pages. |
 | `PAUSE_REASON {reason: daily_budget}` | Cost guard of the UTC day | Tell the user. Either wait for the UTC day to turn (beat resumes) or the user raises the cap. |
@@ -58,17 +58,27 @@ Read the line, find its row, act. Rows marked **benign** need no action; say so 
 
 ## TA session
 
-Only the user can capture it. Pre-flight requires **two** cURLs, both gitignored in `scripts/single_attraction/`. Capture them in Chrome, logged in on TripAdvisor, in this order:
+Only the user can capture it. Pre-flight requires **two** cURLs, both gitignored in `scripts/single_attraction/`. Capture them in Chrome, logged in on TripAdvisor. **Solve any CAPTCHA TripAdvisor shows first**: a cookie captured while one is pending dies within minutes (see below).
 
-1. **Paginação → `ta_paginacao.curl`.** Open a UF's attractions listing. Open DevTools › Network and clear it. Click **next page**, then Cmd+F `pagee`. Find the `POST /data/graphql/ids` whose payload has `routeParameters.pagee` and Copy as cURL (bash). Pre-flight compares its qid with the one the sweep sends: a mismatch is a WARN, and you act on it only on `PersistedQueryNotFound` (row above).
-2. **Página Brazil → `ta_brazil.curl`.** Load `https://www.tripadvisor.com.br/Attractions-g294280-Activities-Brazil.html`. Copy any `POST /data/graphql/ids` it makes as cURL. Its fresh `datadome` cookie is the one the attraction pages need. It is the cURL to inject:
+1. **Paginação → `ta_paginacao.curl`. This is the one to inject.**
+   - Open a UF's attractions listing on a **category** page, e.g. `https://www.tripadvisor.com.br/Attractions-g303370-Activities-c42-State_of_Minas_Gerais.html`. The unfiltered state page has no pagination, only "ver mais" links.
+   - Open DevTools › Network and clear it. Click **next page**, then Cmd+F `pagee`.
+   - Find the `POST /data/graphql/ids` whose payload has `routeParameters.pagee` and Copy as cURL (bash).
+   - Pre-flight compares its qid with the one the sweep sends. On 28/10 the category page sent `f636910242d1734a` while the pinned `0e26761de5110a17` kept working, so a mismatch is only a WARN. Act on it only on `PersistedQueryNotFound` (row above).
+2. **Página Brazil → `ta_brazil.curl`. This is the fallback.** Load `https://www.tripadvisor.com.br/Attractions-g294280-Activities-Brazil.html` and Copy as cURL any `POST /data/graphql/ids` it makes. It carries a fresh `datadome` too. Inject it when the paginação one fails the canary or probe.
 
 ```bash
 set -a; . ./.env; set +a
-.venv/bin/python scripts/ta_bootstrap.py --curl scripts/single_attraction/ta_brazil.curl --endpoint http://localhost:8000
+.venv/bin/python scripts/ta_bootstrap.py --curl scripts/single_attraction/ta_paginacao.curl --endpoint http://localhost:8000
 ```
 
-`Session injected — canary result: ready`, then a pre-flight `OK    TA probe` and `OK    cURL` ×2 = done. On 28/10 a listing cURL injected at 15:52 got its attraction pages 403'd by DataDome at 16:08. A Brazil-page cURL then unblocked them, while re-injecting the old cURL did not. The canary checks the listing only: on 24/10 a 14 h-old cURL passed it while DataDome 403'd every attraction page, and the sweep stopped 5 min in. The first-page load batch of the listing is telemetry only and fails the canary.
+Done when you see `Session injected — canary result: ready`, then a pre-flight `OK    TA probe` and `OK    cURL` ×2. A successful inject also clears the keepalive failure streak and the `needs_bootstrap` marker.
+
+**A 403 that comes back within minutes of a fresh cURL means the browser itself is flagged.** On 28/10, two fresh cURLs had their attraction pages 403'd after 16 and 8 min. Re-injecting did not help. TripAdvisor had a CAPTCHA pending in the user's Chrome. After it was solved, a new cURL held for the rest of MG.
+
+That same day an orphaned `ta_keepalive.py` from an old session had been pinging TA from the host every 5 min for 11 days: same IP, its own cookies. Pre-flight now WARNs on any such process. Kill it before a sweep.
+
+The canary checks the listing only. On 24/10 a 14 h-old cURL passed it while DataDome 403'd every attraction page, and the sweep stopped 5 min in. The first-page load batch of the listing is telemetry only and fails the canary.
 
 ## Token
 
