@@ -485,6 +485,11 @@ class AppConfig(BaseSettings):
     # (brave.config.runtime); toggled in the /painel config surface. Defaults True.
     places_enrichment_enabled: bool = True
 
+    # images_enrichment_enabled gates the image lane (engine action "images", brave.images_uf):
+    # Wikidata + Commons photos into the Brave archive, pushed to norteia-api by
+    # push_pending_media. Off by default. Overlay key ``images_enrichment_enabled``.
+    images_enrichment_enabled: bool = False
+
     # atrativo_description_batch_enabled moves description writing off the synchronous
     # path: when True the INLINE copywriter is switched off and descriptions are instead
     # written asynchronously by the Message Batches lane (50% off tokens, up to 24h

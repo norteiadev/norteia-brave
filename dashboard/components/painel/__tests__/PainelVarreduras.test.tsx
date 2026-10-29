@@ -207,6 +207,21 @@ describe("PainelVarreduras", () => {
     expect(await screen.findByText("Gerando descrições de SP.")).toBeInTheDocument();
   });
 
+  it("Buscar imagens needs a scope but no TA session", async () => {
+    server.use(taSessionStatus({ present: false, expires_in: undefined, reason: null }));
+    renderVarreduras();
+    await waitFor(() => expect(screen.getByTestId("ta-session")).toHaveTextContent("Expirada"));
+    const images = screen.getByRole("button", { name: "Buscar imagens" });
+    expect(images).toBeDisabled(); // no scope yet
+
+    fireEvent.click(screen.getByRole("button", { name: "SE" }));
+    fireEvent.click(images);
+
+    await waitFor(() => expect(starts).toHaveLength(1));
+    expect(starts[0]).toEqual({ action: "images", ufs: ["SE"] });
+    expect(await screen.findByText("Buscando imagens de SE.")).toBeInTheDocument();
+  });
+
   it("Retomar backfill resumes the TripAdvisor backfill run", async () => {
     renderVarreduras();
     await waitFor(() => expect(screen.getByTestId("ta-session")).toHaveTextContent("Ativa"));

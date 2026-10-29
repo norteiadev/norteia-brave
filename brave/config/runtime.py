@@ -103,6 +103,7 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
         ConfigKey(ENGINE_MODE_KEY, ("engine", "mode"), "mode"),
         ConfigKey("description_enrichment_enabled", ("description_enrichment_enabled",), "bool"),
         ConfigKey("places_enrichment_enabled", ("places_enrichment_enabled",), "bool"),
+        ConfigKey("images_enrichment_enabled", ("images_enrichment_enabled",), "bool"),
         ConfigKey(
             "atrativo_description_batch_enabled", ("atrativo_description_batch_enabled",), "bool"
         ),

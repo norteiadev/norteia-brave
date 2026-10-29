@@ -21,6 +21,7 @@ EXPECTED_TASKS = [
     "brave.process_nascente",
     "brave.publish_mar",
     "brave.describe_uf",
+    "brave.images_uf",
 ]
 
 

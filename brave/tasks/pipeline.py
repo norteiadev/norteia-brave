@@ -1986,6 +1986,157 @@ def describe_uf(
 
 
 # ---------------------------------------------------------------------------
+# Image lane (engine action "images"): Wikidata + Commons photos → the Brave archive.
+# ---------------------------------------------------------------------------
+
+_IMAGES_CHUNK = 25
+
+
+def images_candidates(uf: str, phase: str) -> list:
+    """Rio rows the image lane still owes a final lookup, for one UF and phase.
+
+    attraction: Places-enriched (the name/coords are as good as they get), not discarded,
+    with coordinates. destination: the UF's IBGE municípios. Atrativos run first because
+    the destino cover falls back to the city's atrativo covers.
+    """
+    from sqlalchemy import exists  # noqa: PLC0415
+
+    from brave.core.models import ImageLookup  # noqa: PLC0415
+    from brave.domains.images.agent import FINAL_OUTCOMES  # noqa: PLC0415
+
+    done = exists().where(
+        ImageLookup.canonical_key == RioRecord.canonical_key,
+        ImageLookup.outcome.in_(FINAL_OUTCOMES),
+    )
+    if phase == "destination":
+        return [RioRecord.canonical_key.like(f"ibge:{uf}:%"), ~done]
+    return [
+        RioRecord.uf == uf,
+        RioRecord.entity_type == "attraction",
+        RioRecord.routing != "descarte",
+        RioRecord.normalized["google_enriched"].as_boolean().is_(True),
+        RioRecord.normalized["lat"].as_string().is_not(None),
+        RioRecord.normalized["lon"].as_string().is_not(None),
+        ~done,
+    ]
+
+
+async def _images_chunk(session: Session, agent: Any, clients: Any, ids: list, stop: Any, uf: str) -> int:
+    """Run the lane over ``ids`` serially, one commit per entity. Returns how many it got
+    through before ``stop()`` (a failed entity counts: it is logged and rolled back)."""
+    import time as _time  # noqa: PLC0415
+
+    async with clients:
+        for n, rio_id in enumerate(ids):
+            if stop():
+                return n
+            t0 = _time.monotonic()
+            try:
+                rio = session.get(RioRecord, rio_id)
+                result = await agent.run(rio) if rio is not None else None
+                session.commit()
+            except Exception:  # noqa: BLE001 — one bad entity must not abort the chunk
+                session.rollback()
+                logger.warning("images_entity_failed", uf=uf, rio_id=str(rio_id), exc_info=True)
+                continue
+            if result is not None:
+                logger.info(
+                    "images_entity_done", uf=uf, canonical_key=rio.canonical_key,
+                    entity_type=rio.entity_type, outcome=result.outcome,
+                    picks=[f"{p.role}:{p.lane}" for p in result.picks],
+                    rejected=dict(result.rejected), downloaded=result.downloaded,
+                    elapsed_s=round(_time.monotonic() - t0, 2),
+                )
+    return len(ids)
+
+
+@shared_task(
+    bind=True,
+    name="brave.images_uf",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=3600,
+    soft_time_limit=3540,
+    priority=_LONG_TASK_PRIORITY,
+)
+def images_uf(
+    self: Any,
+    uf: str,
+    max_n: int | None = None,
+    after_id: str | None = None,
+    *,
+    phase: str = "attraction",
+    run_id: str | None = None,
+) -> None:
+    """Find photos for one UF's entities (engine action "images"): atrativos, then destinos.
+
+    Chunked + keyset cursor (_IMAGES_CHUNK ids > after_id): a full chunk hands over to the
+    next one; an exhausted (or max_n-capped) atrativo phase hands over to the destino
+    phase; the end of the destino phase is terminal (_producer_done exactly once). Stop /
+    pause halts; so does the time budget, handing the rest of the UF on. Wikimedia is paced
+    by its client, so the entities run serially. max_n caps the atrativos only.
+
+    Writes only image_lookups / images / entity_images (never ``normalized``); the photos
+    reach norteia-api through push_pending_media.
+    """
+    import time as _time  # noqa: PLC0415
+
+    import redis as _redis_lib  # noqa: PLC0415
+
+    from brave.clients.image_store import image_store_for  # noqa: PLC0415
+    from brave.core import engine as collection_engine  # noqa: PLC0415
+    from brave.domains.images.agent import ImageLaneAgent  # noqa: PLC0415
+
+    rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+    session, _engine = _get_session()
+    handed = ok = False
+    try:
+        effective = _load_config(session)
+        if not (effective.run_real_externals and effective.images_enrichment_enabled):
+            logger.warning("images_uf_disabled", uf=uf)
+            return
+        attraction = phase == "attraction"
+        limit = _IMAGES_CHUNK if max_n is None or not attraction else min(_IMAGES_CHUNK, max_n)
+        stmt = select(RioRecord.id).where(*images_candidates(uf, phase))
+        if after_id:
+            stmt = stmt.where(RioRecord.id > uuid.UUID(after_id))
+        ids = list(session.scalars(stmt.order_by(RioRecord.id).limit(limit)).all()) if limit > 0 else []
+        session.rollback()  # no read transaction left open through the I/O
+
+        budget = _time_budget(self)
+        t0 = _time.monotonic()
+        halted = False
+
+        def _stop() -> bool:
+            nonlocal halted
+            if collection_engine.should_halt_producer(rc):
+                halted = True
+            return halted or (budget is not None and _time.monotonic() - t0 > budget)
+
+        done = 0
+        if ids:
+            clients = clients_for(effective)
+            agent = ImageLaneAgent(session, clients.wikimedia, image_store_for(effective.images), effective.images)
+            done = asyncio.run(_images_chunk(session, agent, clients, ids, _stop, uf))
+        if halted:
+            logger.info("images_uf_halted", uf=uf, phase=phase)
+        else:
+            # Cut by the time budget: resume right after the last entity it got through.
+            cursor = str(ids[done - 1]) if done else after_id
+            remaining = None if max_n is None or not attraction else max_n - done
+            if ids and (done < len(ids) or len(ids) == limit) and (remaining is None or remaining > 0):
+                handed = _hand_over(images_uf, uf, remaining if attraction else max_n,
+                                    cursor, phase=phase, run_id=run_id)
+            elif attraction:
+                handed = _hand_over(images_uf, uf, max_n, None, phase="destination", run_id=run_id)
+        ok = True
+    finally:
+        if not handed:
+            _producer_done(run_id, failed=not ok)
+        session.close()
+
+
+# ---------------------------------------------------------------------------
 # TripAdvisor backfill (C3): completes the records the bulk national listing left
 # without geo, review recency and Places — in batches, inside an engine run.
 # ---------------------------------------------------------------------------
@@ -3050,7 +3201,8 @@ def engine_sweep_run(
     same producer/chain tasks the beat and /sweep endpoint already use.
 
     action="describe" swaps the per-UF producer for describe_uf (descriptions for the
-    UF's already-swept atrativos, capped by max_per_uf); depth/source are unused then.
+    UF's already-swept atrativos, capped by max_per_uf); action="images" for images_uf
+    (the image lane); depth/source are unused then.
     The state/mode gates and the inflight lifecycle are identical.
     """
     import time as _time
@@ -3103,6 +3255,8 @@ def engine_sweep_run(
             # onto the single 'celery' queue; behavior is byte-identical per source.
             if action == "describe":
                 producers = [(describe_uf, (uf, max_per_uf), {})]
+            elif action == "images":
+                producers = [(images_uf, (uf, max_per_uf), {})]
             else:
                 producers = [
                     (

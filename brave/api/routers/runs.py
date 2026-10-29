@@ -225,7 +225,7 @@ def reprocess_run(
         if new_id is None:
             raise busy
     else:
-        action = "describe" if run.source == "descricao" else "sweep"
+        action = {"descricao": "describe", "imagens": "images"}.get(run.source, "sweep")
         valid_sources = None
         if action == "sweep":
             if run.depth not in collection_engine.VALID_DEPTHS:
@@ -247,8 +247,8 @@ def reprocess_run(
         if new_id is None:
             raise busy
         kwargs = dict(ufs=ufs, lane=run.lane, run_id=new_id, max_per_uf=run.max_per_uf)
-        if action == "describe":
-            kwargs["action"] = "describe"
+        if action != "sweep":
+            kwargs["action"] = action
         else:
             kwargs.update(depth=run.depth, source=run.source)
         try:

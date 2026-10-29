@@ -78,12 +78,14 @@ const DEPTH_LABEL: Record<string, string> = {
   nascente_rio: "Nascente → Rio",
   nascente_rio_mar: "Nascente → Rio → Mar",
   descricao: "Descrição",
+  imagens: "Imagens",
 };
 
 const SOURCE_LABEL: Record<string, string> = {
   tripadvisor: "TripAdvisor",
   ta_backfill: "Backfill TripAdvisor",
   descricao: "Descrição",
+  imagens: "Imagens",
 };
 
 const STATUS: Record<string, { tone: Tone; label: string }> = {
@@ -476,6 +478,15 @@ function NovaVarredura({ focusStart }: { focusStart: number }) {
             }
           >
             Gerar descrições
+          </Btn>
+          <Btn
+            disabled={!hasScope || start.isPending}
+            title="Busca capa e galeria no Wikidata e no Wikimedia Commons para os atrativos e destinos, por UF. Não usa a sessão do TripAdvisor."
+            onClick={() =>
+              start.mutate({ body: { action: "images", ...scope }, done: `Buscando imagens de ${where}.` })
+            }
+          >
+            Buscar imagens
           </Btn>
           <Btn
             disabled={!taReady || start.isPending}

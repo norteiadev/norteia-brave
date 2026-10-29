@@ -258,6 +258,9 @@ def engine_start(
     (brave.describe_uf) instead of a sweep: no depth, no source, no TA session —
     but 409 unless the inline copywriter is actually on (real externals, description
     flag ON, batch lane OFF), so a describe run never silently does nothing.
+
+    `action: "images"` runs the image lane per UF (brave.images_uf) — 409 unless real
+    externals and images_enrichment_enabled are both on.
     """
     from brave.tasks.beat_schedule import UF_LIST
 
@@ -265,9 +268,9 @@ def engine_start(
     lane = body.get("lane", "both")
 
     action = body.get("action", "sweep")
-    if action not in ("sweep", "describe", "backfill"):
+    if action not in ("sweep", "describe", "backfill", "images"):
         raise HTTPException(
-            status_code=422, detail="action must be 'sweep', 'describe' or 'backfill'"
+            status_code=422, detail="action must be 'sweep', 'describe', 'backfill' or 'images'"
         )
     if action == "backfill":
         # The Painel's Continuar after a backfill pause (Places key swap / budget wall):
@@ -298,6 +301,15 @@ def engine_start(
         # runs_history labels for the Varreduras trail; never written to the depth/source keys.
         depth = source = "descricao"
         lane = "atrativos"
+    elif action == "images":
+        cfg = _effective_config(db, redis)
+        if not (cfg.run_real_externals and cfg.images_enrichment_enabled):
+            raise HTTPException(
+                status_code=409,
+                detail="Imagens desligadas — ative images_enrichment_enabled e use externals reais.",
+            )
+        # runs_history labels for the Varreduras trail; never written to the depth/source keys.
+        depth = source = "imagens"
     else:
         # Validate depth BEFORE engine.start (and before the already-running/409 branch):
         # a missing/invalid depth must return 422 even mid-run, never flipping engine
@@ -378,13 +390,13 @@ def engine_start(
     try:
         from brave.tasks.pipeline import engine_sweep_run
 
-        if action == "describe":
+        if action in ("describe", "images"):
             engine_sweep_run.delay(
                 ufs=ufs,
                 lane=lane,
                 run_id=run_id,
                 max_per_uf=max_atrativos_per_uf,
-                action="describe",
+                action=action,
             )
         else:
             engine_sweep_run.delay(
