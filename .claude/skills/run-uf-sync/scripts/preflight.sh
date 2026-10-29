@@ -43,9 +43,10 @@ fi
 curls=$(.venv/bin/python .claude/skills/run-uf-sync/scripts/check_curls.py) || curls+=$'\nFAIL  check_curls.py crashed (traceback above)'; echo "$curls"
 fails=$((fails + $(grep -c '^FAIL' <<<"$curls")))
 # A TA pinger outside the Brave (28/10: an orphaned ta_keepalive.py, 11 days, same IP) adds
-# bot traffic DataDome sees next to the sweep's.
-orphans=$(ps -A -o pid=,command= | grep -E "ta_keepalive\.py|scripts/monitors/" | grep -v grep)
-[ -z "$orphans" ] && ok "no stray TA processes on the host" || warn "stray TA processes on the host (kill them before a sweep): $(echo "$orphans" | awk '{print $1}' | xargs)"
+# bot traffic DataDome sees next to the sweep's. Only ta_keepalive.py: scripts/monitors/ read
+# Redis/docker/the APIs, never TA, and the skill's own sweep.sh/tmux monitors must not be flagged.
+orphans=$(pgrep -f 'ta_keepalive\.py' | xargs)
+[ -z "$orphans" ] && ok "no stray ta_keepalive.py on the host" || warn "stray ta_keepalive.py on the host (kill it before a sweep): pids $orphans"
 kf=$(rds GET brave:ta:keepalive_failures); [ "${kf:-0}" = 0 ] && ok "keepalive failures 0" || warn "keepalive failures ${kf}"
 
 U="${BRAVE_NORTEIA_API_URL%/}"

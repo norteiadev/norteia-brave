@@ -112,7 +112,7 @@ H="Authorization: Bearer $BRAVE_DASHBOARD_BEARER_TOKEN"; API=http://localhost:80
 #        a página do estado sem filtro não pagina) › DevTools › Network (limpar) › PRÓXIMA PÁGINA ›
 #        Cmd+F "pagee" › o POST /data/graphql/ids com request.routeParameters.pagee › Copy as cURL (bash)
 #     b) ta_brazil.curl: carregar Attractions-g294280-Activities-Brazil.html › qualquer POST
-#        /data/graphql/ids › Copy as cURL (bash). Reserva: injete se o da paginação falhar no canary.
+#        /data/graphql/ids › Copy as cURL (bash). Reserva: injete se o da paginação falhar no canary ou no probe.
 #     Antes de capturar, resolva qualquer captcha do TA no navegador (cookie capturado com captcha
 #     pendente morre em minutos).
 #     Detalhes: .claude/skills/run-uf-sync/references/events.md › TA session

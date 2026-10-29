@@ -72,7 +72,7 @@ set -a; . ./.env; set +a
 .venv/bin/python scripts/ta_bootstrap.py --curl scripts/single_attraction/ta_paginacao.curl --endpoint http://localhost:8000
 ```
 
-Done when you see `Session injected — canary result: ready`, then a pre-flight `OK    TA probe` and `OK    cURL` ×2. A successful inject also clears the keepalive failure streak and the `needs_bootstrap` marker.
+Done when you see `Session injected — canary result: ready`, then a pre-flight `OK    TA probe` and no `FAIL  cURL` line (the paginação qid WARN above is expected). A successful inject also clears the keepalive failure streak and the `needs_bootstrap` marker.
 
 **A 403 that comes back within minutes of a fresh cURL means the browser itself is flagged.** On 28/10, two fresh cURLs had their attraction pages 403'd after 16 and 8 min. Re-injecting did not help. TripAdvisor had a CAPTCHA pending in the user's Chrome. After it was solved, a new cURL held for the rest of MG.
 
