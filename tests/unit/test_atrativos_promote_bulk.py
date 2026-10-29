@@ -138,6 +138,30 @@ def test_bucket_skips_a_place_already_in_mar_or_taken_by_a_higher_score():
     assert excluded["duplicate"] == 2
 
 
+def test_bucket_skips_a_same_name_place_already_in_mar_or_in_the_batch():
+    """TA lists one place under two cards whose names differ only in accents/connectors —
+    with a different place_id or none. The name key inside the município catches them."""
+
+    def card(score, name, municipio_id: str | None = "2704708", **kw):
+        row = _atr(score=score, name=name, **kw)
+        row.municipio_id = municipio_id
+        return row
+
+    in_mar = card(90.0, "Praia Itaunas")
+    best = card(80.0, "Praia do Francês", google_place_id="ChIJfrances")
+    twin = card(70.0, "Praia Frances", google_place_id="ChIJoutro")
+    other_town = card(70.0, "Praia do Francês", municipio_id="2704302")
+    no_town = card(70.0, "Praia do Francês", municipio_id=None)
+
+    candidates, excluded = _bucket_promote_bulk_candidates(
+        [in_mar, best, twin, other_town, no_town], 65.0, True,
+        taken_name_keys={("2704708", "praiaitaunas")},
+    )
+
+    assert candidates == [best, other_town, no_town]
+    assert excluded["duplicate"] == 2
+
+
 def test_dry_run_min_score_follows_the_threshold_overlay():
     """min_score omitted → threshold_mar - validação weight, so a cut never sits below what
     promote() can lift into Mar (a 55 under threshold 80 would only ever be held)."""
