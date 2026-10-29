@@ -1,0 +1,212 @@
+"""ImageLaneAgent: one Rio entity → its photos in the archive + entity_images rows.
+
+``run(rio)``:
+  1. ``image_lookups`` row with a final outcome (matched / no_match) → nothing to do (None).
+  2. Resolve the Wikidata QID (atrativo: items within around_km name-matched, else entity
+     search by name within name_km). No QID → no photo at all: "a photo from nearby"
+     misleads (the Jolimont case).
+  3. Candidate titles per lane → imageinfo → policy picks.
+  4. Each pick reuses its ``images`` row by commons_title (then by sha1 of the bytes);
+     otherwise the file is downloaded and written to the archive.
+  5. Upsert ``entity_images`` and the lookup.
+
+Writes only the lane's own tables — never ``normalized``. The caller commits. An external
+failure (HTTP / Commons error after retries) records ``outcome=error``, which is not a final
+marker, so the next run tries again (like _PROPAGATE in places_enrichment).
+"""
+
+from __future__ import annotations
+
+import hashlib
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+import httpx
+import structlog
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from brave.clients.image_store import ImageStoreProtocol, storage_key
+from brave.clients.wikimedia import CommonsFile, WdItem, WikimediaError
+from brave.config.settings import ImagesConfig
+from brave.core.models import EntityImage, Image, ImageLookup, RioRecord
+from brave.domains.images.matching import best_match
+from brave.domains.images.policy import Pick, cover_reject, pick_attraction, pick_destination
+
+logger = structlog.get_logger(__name__)
+
+# no_photo (a destino whose cover can still come from atrativos collected later) and error
+# are not final: the next run tries again.
+FINAL_OUTCOMES = ("matched", "no_match")
+_EXTERNAL_ERRORS = (httpx.HTTPError, WikimediaError)
+
+
+@dataclass
+class LaneResult:
+    outcome: str  # matched | no_match | no_photo | error
+    picks: list[Pick] = field(default_factory=list)
+    rejected: Counter[str] = field(default_factory=Counter)
+    downloaded: int = 0
+
+
+def credit_line(f: CommonsFile) -> str:
+    return f"{f.artist or 'Autor desconhecido'} · {f.license or f.license_code} · Wikimedia Commons"
+
+
+class ImageLaneAgent:
+    def __init__(
+        self, session: Session, wikimedia: Any, store: ImageStoreProtocol, config: ImagesConfig
+    ) -> None:
+        self._s = session
+        self._wm = wikimedia
+        self._store = store
+        self._cfg = config
+
+    async def run(self, rio: RioRecord) -> LaneResult | None:
+        key = rio.canonical_key or ""
+        lookup = self._s.get(ImageLookup, key)
+        if lookup is not None and lookup.outcome in FINAL_OUTCOMES:
+            return None
+        try:
+            if rio.entity_type == "destination":
+                result, match, via = await self._destination(rio)
+            else:
+                result, match, via = await self._attraction(rio)
+        except _EXTERNAL_ERRORS as exc:
+            logger.warning("images_external_error", canonical_key=key, error=f"{type(exc).__name__}: {exc}")
+            self._mark(rio, "error")
+            return LaneResult("error")
+        self._mark(rio, result.outcome, match, via)
+        return result
+
+    # -- atrativo -------------------------------------------------------------------
+
+    async def _resolve(self, name: str, lat: float, lon: float) -> tuple[WdItem | None, str | None]:
+        match = best_match(name, await self._wm.items_around(lat, lon, self._cfg.around_km))
+        if match is not None:
+            return match, "around5km"
+        match = best_match(name, await self._wm.items_by_name(name, lat, lon, self._cfg.name_km))
+        return match, ("name30km" if match else None)
+
+    async def _attraction(self, rio: RioRecord) -> tuple[LaneResult, WdItem | None, str | None]:
+        norm = rio.normalized or {}
+        lat, lon = float(norm["lat"]), float(norm["lon"])
+        match, via = await self._resolve(norm.get("name") or "", lat, lon)
+        if match is None:
+            return LaneResult("no_match"), None, None
+        lanes = {
+            "p18": list(match.p18),
+            "p180": await self._wm.depicts(match.qid),
+            "p373": await self._wm.category_files(match.p373) if match.p373 else [],
+            "geo500": await self._wm.geosearch(lat, lon, self._cfg.geo_m),
+        }
+        titles = [t for ts in lanes.values() for t in ts]
+        files = await self._wm.image_info(titles) if titles else {}
+        picks, rejected = pick_attraction(lanes, files, self._cfg.gallery_max)
+        result = LaneResult("matched", picks, rejected)
+        await self._save(rio, picks, files, match.qid, result)
+        return result, match, via
+
+    # -- destino --------------------------------------------------------------------
+
+    async def _destination(self, rio: RioRecord) -> tuple[LaneResult, WdItem | None, str | None]:
+        """Cover only: the municipality's P18 → the cover of the city's most-reviewed
+        atrativo (already in the archive) → the P18 of its best-known P131 items. Each
+        candidate must pass cover_reject (landscape, ≥1280 px, no collage)."""
+        code = rio.municipio_id or (rio.canonical_key or "").rsplit(":", 1)[-1]
+        muni = await self._wm.municipio(code)
+        if muni is None:
+            return LaneResult("no_match"), None, None
+        files = await self._wm.image_info(list(muni.p18)) if muni.p18 else {}
+        picks, rejected = pick_destination("p18", list(muni.p18), files)
+        result = LaneResult("matched", picks, rejected)
+        if not picks:
+            img = self._atrativo_cover(code)
+            if img is not None:
+                result.picks = [Pick(img.commons_title, "cover", 0, "atrativo")]
+                self._link(rio, [(result.picks[0], img)], muni.qid)
+                return result, muni, "ibge"
+            titles = [t for it in await self._wm.items_in_municipio(muni.qid) for t in it.p18]
+            files = await self._wm.image_info(titles) if titles else {}
+            result.picks, more = pick_destination("muni_top", titles, files)
+            result.rejected += more
+            if not result.picks:
+                result.outcome = "no_photo"
+        await self._save(rio, result.picks, files, muni.qid, result)
+        return result, muni, "ibge"
+
+    def _atrativo_cover(self, code: str) -> Image | None:
+        """The archived cover of the municipality's most-reviewed atrativo that is also a
+        good destino cover, or None."""
+        rows = self._s.scalars(
+            select(Image)
+            .join(EntityImage, EntityImage.image_id == Image.id)
+            .join(RioRecord, RioRecord.canonical_key == EntityImage.canonical_key)
+            .where(
+                EntityImage.role == "cover",
+                EntityImage.entity_type == "attraction",
+                EntityImage.removed_at.is_(None),
+                RioRecord.municipio_id == code,
+            )
+            .order_by(RioRecord.normalized["review_count"].as_integer().desc().nulls_last())
+        )
+        return next((i for i in rows if cover_reject(i.commons_title, i.width, i.height) is None), None)
+
+    # -- persistence ----------------------------------------------------------------
+
+    async def _archive(self, f: CommonsFile, result: LaneResult) -> Image:
+        img = self._s.scalar(select(Image).where(Image.commons_title == f.title))
+        if img is not None:
+            return img
+        data, mime = await self._wm.download(f)
+        sha1 = hashlib.sha1(data).hexdigest()
+        img = self._s.scalar(select(Image).where(Image.sha1 == sha1))
+        if img is not None:
+            return img
+        key = storage_key(sha1, mime)
+        self._store.put(key, data, mime)
+        result.downloaded += 1
+        tw = self._cfg.thumb_width
+        w, h = (tw, round(f.height * tw / f.width)) if f.width > tw else (f.width, f.height)
+        img = Image(
+            sha1=sha1, storage_key=key, commons_title=f.title, source_url=f.page,
+            file_url=f.url.split("?", 1)[0], width=w, height=h, mime=mime, bytes=len(data),
+            author=f.artist or None, license=f.license or f.license_code,
+            license_url=f.license_url or None, credit_line=credit_line(f),
+            assessment=f.assessment[:64] or None, commons_status="ok",
+        )
+        self._s.add(img)
+        self._s.flush()
+        return img
+
+    async def _save(
+        self, rio: RioRecord, picks: list[Pick], files: dict[str, CommonsFile], qid: str | None,
+        result: LaneResult,
+    ) -> None:
+        # All downloads first: an error mid-way leaves no entity_images half-set.
+        images = [await self._archive(files[p.title], result) for p in picks]
+        self._link(rio, list(zip(picks, images, strict=True)), qid)
+
+    def _link(self, rio: RioRecord, pairs: list[tuple[Pick, Image]], qid: str | None) -> None:
+        key = rio.canonical_key or ""
+        for pick, img in pairs:
+            row = self._s.scalar(
+                select(EntityImage).where(EntityImage.canonical_key == key, EntityImage.image_id == img.id)
+            )
+            if row is None:
+                row = EntityImage(canonical_key=key, entity_type=rio.entity_type, image_id=img.id)
+                self._s.add(row)
+            row.role, row.rank, row.lane, row.wikidata_qid = pick.role, pick.rank, pick.lane, qid
+            row.removed_at = None
+        self._s.flush()
+
+    def _mark(self, rio: RioRecord, outcome: str, match: WdItem | None = None, via: str | None = None) -> None:
+        self._s.merge(ImageLookup(
+            canonical_key=rio.canonical_key, entity_type=rio.entity_type, uf=rio.uf,
+            qid=match.qid if match else None, via=via,
+            dist_km=match.dist_km if match and via != "ibge" else None, outcome=outcome,
+            checked_at=datetime.now(UTC),
+        ))
+        self._s.flush()

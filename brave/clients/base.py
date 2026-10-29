@@ -95,6 +95,15 @@ class NorteiaApiClientProtocol(Protocol):
         """
         ...
 
+    async def push_media(
+        self, fields: dict[str, str], data: bytes, filename: str, mime: str
+    ) -> bool:
+        """POST one photo + its credit metadata (multipart) to the media endpoint.
+
+        True after a 2xx; False when nothing was sent (offline Null adapter).
+        """
+        ...
+
 
 class PlacesClientProtocol(Protocol):
     """Google Places (New API) client — Discovery and Signal agents (Phase 3).
@@ -405,3 +414,29 @@ class GeocoderClientProtocol(Protocol):
             ``None`` when Nominatim returns no results.
         """
         ...
+
+
+class WikimediaClientProtocol(Protocol):
+    """Wikidata + Wikimedia Commons for the image lane (brave/clients/wikimedia.py).
+
+    Item/file types are brave.clients.wikimedia.WdItem / CommonsFile. Every call may raise
+    httpx errors or WikimediaError after its retries; the lane records that as outcome=error.
+    """
+
+    async def items_around(self, lat: float, lon: float, km: float) -> list[Any]: ...
+
+    async def items_by_name(self, name: str, lat: float, lon: float, km: float) -> list[Any]: ...
+
+    async def municipio(self, ibge: str) -> Any | None: ...
+
+    async def items_in_municipio(self, qid: str) -> list[Any]: ...
+
+    async def depicts(self, qid: str) -> list[str]: ...
+
+    async def category_files(self, category: str) -> list[str]: ...
+
+    async def geosearch(self, lat: float, lon: float, radius_m: int) -> list[str]: ...
+
+    async def image_info(self, titles: list[str]) -> dict[str, Any]: ...
+
+    async def download(self, f: Any) -> tuple[bytes, str]: ...

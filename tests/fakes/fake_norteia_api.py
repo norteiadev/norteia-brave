@@ -34,6 +34,7 @@ class FakeNorteiaApiClient:
         self._should_fail = should_fail
         self.push_destination_calls: list[dict[str, Any]] = []
         self.push_attraction_calls: list[dict[str, Any]] = []
+        self.push_media_calls: list[dict[str, Any]] = []
 
     async def push_destination(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Record the call and return a canned destination push response.
@@ -82,6 +83,13 @@ class FakeNorteiaApiClient:
             await self.push_destination(payload)
         else:
             await self.push_attraction(payload)
+        return True
+
+    async def push_media(
+        self, fields: dict[str, str], data: bytes, filename: str, mime: str
+    ) -> bool:
+        """Record the photo push and report it as accepted."""
+        self.push_media_calls.append({"fields": fields, "filename": filename, "mime": mime})
         return True
 
 

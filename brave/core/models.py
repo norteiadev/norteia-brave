@@ -374,6 +374,93 @@ class AtrativoBusca(Base):
 
 
 # ---------------------------------------------------------------------------
+# Image lane — image_lookups / images / entity_images (alembic 0021)
+# ---------------------------------------------------------------------------
+# Keyed by canonical_key with NO foreign key to rio_records (the AtrativoBusca pattern): the
+# archive and its lookups survive a reset-brave-db (REFERENCE_TABLES).
+
+
+class ImageLookup(Base):
+    """One per entity: the image lane's idempotency marker and QID cache.
+
+    outcome: matched | no_match | no_photo | error. ``no_photo`` (a destino with no cover
+    yet) and ``error`` are not final — the next run retries.
+    via: ibge (destino) | around5km | name30km (atrativo).
+    """
+
+    __tablename__ = "image_lookups"
+
+    canonical_key: Mapped[str] = mapped_column(String(256), primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    uf: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    qid: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    via: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    dist_km: Mapped[float | None] = mapped_column(Float, nullable=True)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Image(Base):
+    """One archived file. ``sha1`` is of the bytes actually downloaded (the 1920 px thumb
+    or the smaller original); width/height describe those bytes."""
+
+    __tablename__ = "images"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    sha1: Mapped[str] = mapped_column(String(40), nullable=False, unique=True)
+    storage_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    commons_title: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)  # the Commons file page
+    file_url: Mapped[str] = mapped_column(Text, nullable=False)  # the original, no query
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    mime: Mapped[str] = mapped_column(String(64), nullable=False)
+    bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    author: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    license: Mapped[str] = mapped_column(String(64), nullable=False)
+    license_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    credit_line: Mapped[str] = mapped_column(Text, nullable=False)
+    assessment: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    commons_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EntityImage(Base):
+    """Entity ↔ archived image, plus the push outbox (pushed_at / push_error).
+
+    role: cover | gallery. rank: 0 = cover, 1.. = gallery order.
+    lane: p18 | p180 | p373 | geo500 | muni_top | atrativo.
+    """
+
+    __tablename__ = "entity_images"
+    __table_args__ = (
+        UniqueConstraint("canonical_key", "image_id", name="uq_entity_images_key_image"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    canonical_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    image_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("images.id"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    lane: Mapped[str] = mapped_column(String(16), nullable=False)
+    wikidata_qid: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    push_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    image: Mapped["Image"] = relationship("Image")
+
+
+# ---------------------------------------------------------------------------
 # RunHistory — durable engine-sweep run trail (UI-PAINEL-2, Varreduras view)
 # ---------------------------------------------------------------------------
 

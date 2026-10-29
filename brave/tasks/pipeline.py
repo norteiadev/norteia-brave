@@ -542,6 +542,149 @@ def repush_pending_mar() -> int:
     return dispatched
 
 
+_MEDIA_PUSH_BATCH = 100
+
+
+def pending_media_filter() -> list:
+    """entity_images the photo outbox may send now.
+
+    Not sent, not removed, not permanently rejected — and the entity is on norteia-api:
+    an atrativo once its active Mar row was pushed (only validated records reach the
+    platform); a destino once an atrativo of its município was, because that push is what
+    creates the destination (the destino block). The destino rule is a proxy: the API's
+    404 still leaves the row pending.
+    """
+    from sqlalchemy import and_, exists, or_  # noqa: PLC0415
+
+    from brave.core.models import EntityImage, MarRecord  # noqa: PLC0415
+
+    on_api = and_(
+        MarRecord.superseded_by_id.is_(None),
+        MarRecord.pushed_at.is_not(None),
+        MarRecord.retracted_at.is_(None),
+    )
+    atrativo_on_api = exists().where(MarRecord.source_ref == EntityImage.canonical_key, on_api)
+    city_on_api = exists().where(
+        MarRecord.rio_id == RioRecord.id,
+        MarRecord.entity_type == "attraction",
+        on_api,
+        EntityImage.canonical_key == func.concat("ibge:", RioRecord.uf, ":", RioRecord.municipio_id),
+    )
+    return [
+        EntityImage.pushed_at.is_(None),
+        EntityImage.removed_at.is_(None),
+        EntityImage.push_error.is_(None),
+        or_(
+            and_(EntityImage.entity_type == "attraction", atrativo_on_api),
+            and_(EntityImage.entity_type == "destination", or_(atrativo_on_api, city_on_api)),
+        ),
+    ]
+
+
+def media_fields(row: Any, img: Any) -> dict[str, str]:
+    """The media endpoint's form fields for one entity_images row (None values dropped)."""
+    fields = {
+        "entity_type": row.entity_type,
+        "source_ref": row.canonical_key,
+        "role": row.role,
+        "rank": str(row.rank),
+        "sha1": img.sha1,
+        "author": img.author,
+        "license": img.license,
+        "license_url": img.license_url,
+        "credit_line": img.credit_line,
+        "source": "wikimedia_commons",
+        "source_url": img.source_url,
+        "wikidata_qid": row.wikidata_qid,
+    }
+    return {k: v for k, v in fields.items() if v is not None}
+
+
+@shared_task(name="brave.push_pending_media", time_limit=900, soft_time_limit=840)
+def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
+    """Beat (15 min): the photo outbox — POST pending entity_images to norteia-api.
+
+    Bytes come from the Brave archive. 2xx (created or already there by sha1) stamps
+    pushed_at; a destino 404 stays pending with no error; any other 4xx stamps push_error
+    (images-repush clears it). A 5xx (after the client's retries) or a transport error
+    ends the tick — the rest waits for the next one. No-op while externals are off or
+    norteia-api is down. Returns how many were stamped pushed.
+    """
+    from datetime import datetime  # noqa: PLC0415
+
+    import httpx  # noqa: PLC0415
+
+    from sqlalchemy import update  # noqa: PLC0415
+
+    from brave.clients.image_store import image_store_for  # noqa: PLC0415
+    from brave.core.models import EntityImage, Image  # noqa: PLC0415
+
+    if not AppConfig().run_real_externals or _norteia_api_down():
+        return 0
+    session, _ = _get_session()
+    try:
+        effective = _load_config(session)
+        rows = session.execute(
+            select(EntityImage, Image)
+            .join(Image, Image.id == EntityImage.image_id)
+            .where(*pending_media_filter())
+            .order_by(EntityImage.created_at)
+            .limit(limit)
+        ).all()
+        # Plain values, then end the read transaction: nothing sits idle-in-transaction
+        # through the POSTs. Each outcome is its own UPDATE + commit.
+        jobs = [
+            (row.id, row.entity_type, row.canonical_key, media_fields(row, img), img.storage_key, img.mime)
+            for row, img in rows
+        ]
+        session.rollback()
+        if not jobs:
+            return 0
+        store = image_store_for(effective.images)
+        api = clients_for(effective).norteia_api
+
+        def _stamp(row_id: uuid.UUID, **values: Any) -> None:
+            session.execute(update(EntityImage).where(EntityImage.id == row_id).values(**values))
+            session.commit()
+
+        async def _push() -> int:
+            pushed = 0
+            # ponytail: 404 destinos stay first in created_at order; if a whole batch of them
+            # ever piles up it starves the rest — order them last when that shows up.
+            for row_id, entity_type, key, fields, storage_key, mime in jobs:
+                try:
+                    ok = await api.push_media(
+                        fields, store.get(storage_key), storage_key.rsplit("/", 1)[-1], mime
+                    )
+                except httpx.HTTPStatusError as exc:
+                    status = exc.response.status_code
+                    if status >= 500:
+                        logger.warning("push_media_api_error", status=status)
+                        break
+                    if not (status == 404 and entity_type == "destination"):
+                        _stamp(row_id, push_error=f"{status}: {exc.response.text[:500]}")
+                        logger.warning("push_media_rejected", canonical_key=key, status=status)
+                    continue
+                except httpx.TransportError as exc:
+                    logger.warning("push_media_transport_error", error=type(exc).__name__)
+                    break
+                if ok:
+                    _stamp(row_id, pushed_at=datetime.now(UTC))
+                    pushed += 1
+            return pushed
+
+        pushed = asyncio.run(_push())
+    except Exception as exc:
+        _beat_health("brave.push_pending_media", exc)
+        raise
+    finally:
+        session.close()
+    _beat_health("brave.push_pending_media")
+    if pushed:
+        logger.info("push_pending_media_pushed", count=pushed)
+    return pushed
+
+
 @shared_task(
     bind=True,
     max_retries=3,
@@ -1986,6 +2129,159 @@ def describe_uf(
 
 
 # ---------------------------------------------------------------------------
+# Image lane (engine action "images"): Wikidata + Commons photos → the Brave archive.
+# ---------------------------------------------------------------------------
+
+_IMAGES_CHUNK = 25
+
+
+def images_candidates(uf: str, phase: str) -> list:
+    """Rio rows the image lane still owes a final lookup, for one UF and phase.
+
+    attraction: Places-enriched (the name/coords are as good as they get), not discarded,
+    with coordinates. destination: the UF's IBGE municípios. Atrativos run first because
+    the destino cover falls back to the city's atrativo covers.
+    """
+    from sqlalchemy import exists  # noqa: PLC0415
+
+    from brave.core.models import ImageLookup  # noqa: PLC0415
+    from brave.domains.images.agent import FINAL_OUTCOMES  # noqa: PLC0415
+
+    done = exists().where(
+        ImageLookup.canonical_key == RioRecord.canonical_key,
+        ImageLookup.outcome.in_(FINAL_OUTCOMES),
+    )
+    if phase == "destination":
+        return [RioRecord.canonical_key.like(f"ibge:{uf}:%"), ~done]
+    return [
+        RioRecord.uf == uf,
+        RioRecord.entity_type == "attraction",
+        RioRecord.routing != "descarte",
+        RioRecord.normalized["google_enriched"].as_boolean().is_(True),
+        RioRecord.normalized["lat"].as_string().is_not(None),
+        RioRecord.normalized["lon"].as_string().is_not(None),
+        ~done,
+    ]
+
+
+async def _images_chunk(session: Session, agent: Any, clients: Any, ids: list, stop: Any, uf: str) -> int:
+    """Run the lane over ``ids`` serially, one commit per entity. Returns how many it got
+    through before ``stop()`` (a failed entity counts: it is logged and rolled back)."""
+    import time as _time  # noqa: PLC0415
+
+    async with clients:
+        for n, rio_id in enumerate(ids):
+            if stop():
+                return n
+            t0 = _time.monotonic()
+            try:
+                rio = session.get(RioRecord, rio_id)
+                if rio is None:
+                    continue
+                result = await agent.run(rio)
+                session.commit()
+            except Exception:  # noqa: BLE001 — one bad entity must not abort the chunk
+                session.rollback()
+                logger.warning("images_entity_failed", uf=uf, rio_id=str(rio_id), exc_info=True)
+                continue
+            if result is not None:
+                logger.info(
+                    "images_entity_done", uf=uf, canonical_key=rio.canonical_key,
+                    entity_type=rio.entity_type, outcome=result.outcome,
+                    picks=[f"{p.role}:{p.lane}" for p in result.picks],
+                    rejected=dict(result.rejected), downloaded=result.downloaded,
+                    elapsed_s=round(_time.monotonic() - t0, 2),
+                )
+    return len(ids)
+
+
+@shared_task(
+    bind=True,
+    name="brave.images_uf",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=3600,
+    soft_time_limit=3540,
+    priority=_LONG_TASK_PRIORITY,
+)
+def images_uf(
+    self: Any,
+    uf: str,
+    max_n: int | None = None,
+    after_id: str | None = None,
+    *,
+    phase: str = "attraction",
+    run_id: str | None = None,
+) -> None:
+    """Find photos for one UF's entities (engine action "images"): atrativos, then destinos.
+
+    Chunked + keyset cursor (_IMAGES_CHUNK ids > after_id): a full chunk hands over to the
+    next one; an exhausted (or max_n-capped) atrativo phase hands over to the destino
+    phase; the end of the destino phase is terminal (_producer_done exactly once). Stop /
+    pause halts; so does the time budget, handing the rest of the UF on. Wikimedia is paced
+    by its client, so the entities run serially. max_n caps the atrativos only.
+
+    Writes only image_lookups / images / entity_images (never ``normalized``); the photos
+    reach norteia-api through push_pending_media.
+    """
+    import time as _time  # noqa: PLC0415
+
+    import redis as _redis_lib  # noqa: PLC0415
+
+    from brave.clients.image_store import image_store_for  # noqa: PLC0415
+    from brave.core import engine as collection_engine  # noqa: PLC0415
+    from brave.domains.images.agent import ImageLaneAgent  # noqa: PLC0415
+
+    rc = _redis_lib.from_url(os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0"))
+    session, _engine = _get_session()
+    handed = ok = False
+    try:
+        effective = _load_config(session)
+        if not (effective.run_real_externals and effective.images_enrichment_enabled):
+            logger.warning("images_uf_disabled", uf=uf)
+            return
+        attraction = phase == "attraction"
+        limit = _IMAGES_CHUNK if max_n is None or not attraction else min(_IMAGES_CHUNK, max_n)
+        stmt = select(RioRecord.id).where(*images_candidates(uf, phase))
+        if after_id:
+            stmt = stmt.where(RioRecord.id > uuid.UUID(after_id))
+        ids = list(session.scalars(stmt.order_by(RioRecord.id).limit(limit)).all()) if limit > 0 else []
+        session.rollback()  # no read transaction left open through the I/O
+
+        budget = _time_budget(self)
+        t0 = _time.monotonic()
+        halted = False
+
+        def _stop() -> bool:
+            nonlocal halted
+            if collection_engine.should_halt_producer(rc):
+                halted = True
+            return halted or (budget is not None and _time.monotonic() - t0 > budget)
+
+        done = 0
+        if ids:
+            clients = clients_for(effective)
+            agent = ImageLaneAgent(session, clients.wikimedia, image_store_for(effective.images), effective.images)
+            done = asyncio.run(_images_chunk(session, agent, clients, ids, _stop, uf))
+        if halted:
+            logger.info("images_uf_halted", uf=uf, phase=phase)
+        else:
+            # Cut by the time budget: resume right after the last entity it got through.
+            cursor = str(ids[done - 1]) if done else after_id
+            remaining = None if max_n is None or not attraction else max_n - done
+            if ids and (done < len(ids) or len(ids) == limit) and (remaining is None or remaining > 0):
+                handed = _hand_over(images_uf, uf, remaining if attraction else max_n,
+                                    cursor, phase=phase, run_id=run_id)
+            elif attraction:
+                handed = _hand_over(images_uf, uf, max_n, None, phase="destination", run_id=run_id)
+        ok = True
+    finally:
+        if not handed:
+            _producer_done(run_id, failed=not ok)
+        session.close()
+
+
+# ---------------------------------------------------------------------------
 # TripAdvisor backfill (C3): completes the records the bulk national listing left
 # without geo, review recency and Places — in batches, inside an engine run.
 # ---------------------------------------------------------------------------
@@ -3050,7 +3346,8 @@ def engine_sweep_run(
     same producer/chain tasks the beat and /sweep endpoint already use.
 
     action="describe" swaps the per-UF producer for describe_uf (descriptions for the
-    UF's already-swept atrativos, capped by max_per_uf); depth/source are unused then.
+    UF's already-swept atrativos, capped by max_per_uf); action="images" for images_uf
+    (the image lane); depth/source are unused then.
     The state/mode gates and the inflight lifecycle are identical.
     """
     import time as _time
@@ -3103,6 +3400,8 @@ def engine_sweep_run(
             # onto the single 'celery' queue; behavior is byte-identical per source.
             if action == "describe":
                 producers = [(describe_uf, (uf, max_per_uf), {})]
+            elif action == "images":
+                producers = [(images_uf, (uf, max_per_uf), {})]
             else:
                 producers = [
                     (

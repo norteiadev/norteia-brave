@@ -62,7 +62,11 @@ PROTECTED_TABLES = {"alembic_version"}
 # register — re-downloading ~500k rows after every wipe would be absurd).
 # atrativo_buscas holds PAID Parallel searches (docs/poc/gemini-viability.md §29), keyed by
 # canonical_key with no FK: descriptions are regenerated from it, so a wipe must not re-bill.
-REFERENCE_TABLES = {"municipios", "distritos", "uf_geoids", "local_businesses", "atrativo_buscas"}
+REFERENCE_TABLES = {
+    "municipios", "distritos", "uf_geoids", "local_businesses", "atrativo_buscas",
+    # Image archive + its lookups (0021): a reset rebuilds Rio, the photos stay.
+    "image_lookups", "images", "entity_images",
+}
 
 # brave:* keys that are NOT pipeline data and survive the Redis flush.
 # - redbeat (celery_app.py redbeat_key_prefix="brave"): deleting brave:lock makes the

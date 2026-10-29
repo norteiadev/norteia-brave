@@ -179,6 +179,28 @@ def _run_backfill_ta() -> int:
     return 0
 
 
+def _run_images_repush() -> int:
+    """Clear pushed_at / push_error on every live entity_images row, so the photo outbox
+    (brave.push_pending_media) sends them all again — after norteia-api was wiped."""
+    from sqlalchemy import update
+
+    from brave.core.models import EntityImage
+    from brave.tasks.pipeline import _get_session
+
+    session, _ = _get_session()
+    try:
+        n = session.execute(
+            update(EntityImage)
+            .where(EntityImage.removed_at.is_(None))
+            .values(pushed_at=None, push_error=None)
+        ).rowcount  # type: ignore[attr-defined]  # a DML Result is a CursorResult
+        session.commit()
+    finally:
+        session.close()
+    print(f"images-repush: {n} photo(s) queued for the next push-pending-media tick")
+    return 0
+
+
 def _parse_lane(args: list[str]) -> str:
     """Parse an optional `--lane <value>` from the remaining argv (plain slicing, D-05).
 
@@ -211,6 +233,7 @@ def main() -> None:
         print("  run-fixture   Run a synthetic fixture through the full pipeline (offline)")
         print("  sweep <UF> [--lane destinos|atrativos|both]   Kick an on-demand UF sweep")
         print("  backfill-ta   Start/resume the TripAdvisor backfill engine run")
+        print("  images-repush Re-send every archived photo to norteia-api (after an API wipe)")
         sys.exit(1)
 
     command = args[0]
@@ -218,6 +241,8 @@ def main() -> None:
         _run_fixture()
     elif command == "backfill-ta":
         sys.exit(_run_backfill_ta())
+    elif command == "images-repush":
+        sys.exit(_run_images_repush())
     elif command == "sweep":
         rest = args[1:]
         # The UF is the first non-flag positional after the command.
