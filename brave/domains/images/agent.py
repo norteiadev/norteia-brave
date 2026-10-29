@@ -87,11 +87,18 @@ class ImageLaneAgent:
 
     async def _attraction(self, rio: RioRecord) -> tuple[LaneResult, WdItem | None, str | None]:
         norm = rio.normalized or {}
-        match, via = await self._resolve(norm.get("name") or "", float(norm["lat"]), float(norm["lon"]))
+        lat, lon = float(norm["lat"]), float(norm["lon"])
+        match, via = await self._resolve(norm.get("name") or "", lat, lon)
         if match is None:
             return LaneResult("no_match"), None, None
-        lanes = {"p18": list(match.p18)}
-        files = await self._wm.image_info([t for ts in lanes.values() for t in ts]) if match.p18 else {}
+        lanes = {
+            "p18": list(match.p18),
+            "p180": await self._wm.depicts(match.qid),
+            "p373": await self._wm.category_files(match.p373) if match.p373 else [],
+            "geo500": await self._wm.geosearch(lat, lon, self._cfg.geo_m),
+        }
+        titles = [t for ts in lanes.values() for t in ts]
+        files = await self._wm.image_info(titles) if titles else {}
         picks, rejected = pick_attraction(lanes, files, self._cfg.gallery_max)
         result = LaneResult("matched", picks, rejected)
         await self._save(rio, picks, files, match.qid, result)

@@ -54,3 +54,28 @@ def test_attraction_cover_is_the_first_usable_p18() -> None:
 
 def test_attraction_without_any_lane_gets_nothing() -> None:
     assert pick_attraction({}, {}, gallery_max=5) == ([], {})
+
+
+def test_attraction_gallery_order_and_limit() -> None:
+    lanes = {
+        "p18": [],
+        "p180": ["File:D1.jpg", "File:D2.jpg"],
+        "p373": ["File:C1.jpg", "File:D2.jpg", "File:C2.jpg"],
+        "geo500": ["File:G1.jpg", "File:G2.jpg", "File:G3.jpg"],
+    }
+    files = {t: _f(t) for ts in lanes.values() for t in ts}
+    picks, _ = pick_attraction(lanes, files, gallery_max=5)
+    assert [(p.title, p.role, p.rank, p.lane) for p in picks] == [
+        ("File:D1.jpg", "cover", 0, "p180"),  # no P18 → first P180
+        ("File:D2.jpg", "gallery", 1, "p180"),
+        ("File:C1.jpg", "gallery", 2, "p373"),
+        ("File:C2.jpg", "gallery", 3, "p373"),  # D2 already used
+        ("File:G1.jpg", "gallery", 4, "geo500"),
+        ("File:G2.jpg", "gallery", 5, "geo500"),
+    ]
+
+
+def test_geo500_and_p373_never_become_the_cover() -> None:
+    lanes = {"p373": ["File:C1.jpg"], "geo500": ["File:G1.jpg"]}
+    picks, _ = pick_attraction(lanes, {t: _f(t) for ts in lanes.values() for t in ts}, gallery_max=5)
+    assert [p.role for p in picks] == ["gallery", "gallery"]

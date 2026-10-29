@@ -121,3 +121,20 @@ async def test_external_error_is_not_a_final_marker(db_session, tmp_path) -> Non
 
     fake = FakeWikimediaClient(around=[SACO], files={"File:Saco.jpg": photo("File:Saco.jpg")})
     assert (await _agent(db_session, fake, tmp_path).run(_atrativo())).outcome == "matched"
+
+
+async def test_gallery_from_depicts_category_and_nearby(db_session, tmp_path) -> None:
+    item = WdItem("Q1", frozenset({"Praia do Saco"}), ("File:Saco.jpg",), p373="Praia do Saco")
+    titles = ["File:Saco.jpg", "File:D1.jpg", "File:C1.jpg", "File:G1.jpg"]
+    fake = FakeWikimediaClient(
+        around=[item], files={t: photo(t) for t in titles},
+        depicts={"Q1": ["File:D1.jpg"]}, category={"Praia do Saco": ["File:C1.jpg"]},
+        geo=["File:G1.jpg", "File:Saco.jpg"],
+    )
+
+    await _agent(db_session, fake, tmp_path).run(_atrativo())
+
+    rows = sorted(_rows(db_session, "tripadvisor:attraction:1"), key=lambda r: r.rank)
+    assert [(r.role, r.lane) for r in rows] == [
+        ("cover", "p18"), ("gallery", "p180"), ("gallery", "p373"), ("gallery", "geo500"),
+    ]

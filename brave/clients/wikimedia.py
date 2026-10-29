@@ -307,6 +307,31 @@ class WikimediaClient:
                 )
         return out
 
+    async def depicts(self, qid: str, limit: int = 30) -> list[str]:
+        """File titles whose structured data says they depict ``qid`` (P180)."""
+        data = await self._api({
+            "action": "query", "list": "search", "srsearch": f"haswbstatement:P180={qid}",
+            "srnamespace": "6", "srlimit": str(limit),
+        })
+        return [r["title"] for r in data.get("query", {}).get("search", [])]
+
+    async def category_files(self, category: str, limit: int = 30) -> list[str]:
+        """The first ``limit`` File: members of a Commons category (P373; one page only)."""
+        data = await self._api({
+            "action": "query", "list": "categorymembers", "cmtitle": f"Category:{category}",
+            "cmnamespace": "6", "cmlimit": str(limit),
+        })
+        return [r["title"] for r in data.get("query", {}).get("categorymembers", [])]
+
+    async def geosearch(self, lat: float, lon: float, radius_m: int, limit: int = 30) -> list[str]:
+        """File titles geotagged within ``radius_m`` (gsnamespace=6 — the default 0 is articles)."""
+        data = await self._api({
+            "action": "query", "list": "geosearch", "gscoord": f"{lat}|{lon}",
+            "gsradius": str(max(10, min(radius_m, 10000))), "gslimit": str(limit),
+            "gsnamespace": "6",
+        })
+        return [r["title"] for r in data.get("query", {}).get("geosearch", [])]
+
     def download_url(self, f: CommonsFile) -> str:
         """Standard-width thumbnail, or the original when it is not wider; never a query."""
         url = f.url.split("?", 1)[0]

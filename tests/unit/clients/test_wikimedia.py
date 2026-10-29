@@ -150,3 +150,20 @@ async def test_items_around_parses_sparql(client) -> None:
         "Q1", frozenset({"Praia do Saco", "Saco beach"}), ("File:Praia do Saco.jpg",),
         "Praia do Saco", 1.25,
     )
+
+
+async def test_gallery_lanes_query_the_file_namespace(client) -> None:
+    with respx.mock:
+        route = respx.get(API).mock(side_effect=[
+            httpx.Response(200, json={"query": {"search": [{"title": "File:D1.jpg"}]}}),
+            httpx.Response(200, json={"query": {"categorymembers": [{"title": "File:C1.jpg"}]}}),
+            httpx.Response(200, json={"query": {"geosearch": [{"title": "File:G1.jpg", "dist": 12.0}]}}),
+        ])
+        assert await client.depicts("Q1") == ["File:D1.jpg"]
+        assert await client.category_files("Praia do Saco") == ["File:C1.jpg"]
+        assert await client.geosearch(-11.2, -37.3, 500) == ["File:G1.jpg"]
+
+    depicts, category, geo = (c.request.url.params for c in route.calls)
+    assert (depicts["srsearch"], depicts["srnamespace"]) == ("haswbstatement:P180=Q1", "6")
+    assert (category["cmtitle"], category["cmnamespace"]) == ("Category:Praia do Saco", "6")
+    assert (geo["gsradius"], geo["gsnamespace"]) == ("500", "6")

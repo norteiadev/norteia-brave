@@ -21,7 +21,7 @@ class FakeWikimediaClient:
         files: dict[str, CommonsFile] | None = None,
         same_bytes: dict[str, bytes] | None = None,
         fail: Exception | None = None,
-        **lanes: dict[str, list[str]],
+        **lanes: Any,
     ) -> None:
         self.around = around or []
         self.by_name = by_name or []
@@ -51,6 +51,18 @@ class FakeWikimediaClient:
     async def download(self, f: CommonsFile) -> tuple[bytes, str]:
         self._call("download", f.title)
         return self.same_bytes.get(f.title, b"img:" + f.title.encode()), "image/jpeg"
+
+    async def depicts(self, qid: str) -> list[str]:
+        self._call("depicts", qid)
+        return self.lanes.get("depicts", {}).get(qid, [])
+
+    async def category_files(self, category: str) -> list[str]:
+        self._call("category_files", category)
+        return self.lanes.get("category", {}).get(category, [])
+
+    async def geosearch(self, lat: float, lon: float, radius_m: int) -> list[str]:
+        self._call("geosearch", (lat, lon, radius_m))
+        return list(self.lanes.get("geo", []))
 
     def count(self, name: str) -> int:
         return sum(1 for n, _ in self.calls if n == name)
