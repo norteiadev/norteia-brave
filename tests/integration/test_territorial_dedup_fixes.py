@@ -154,7 +154,7 @@ def test_brave_fix_moves_the_municipio_sets_coords_clears_the_place_and_repushes
         "Morro do Pai Inácio (Palmeiras)",
     )
     assert n["google_place_id"] is None and n["place_id_cache"] is None
-    assert n["parent_source_ref"] is None
+    assert n["parent_source_ref"] == "ibge:BA:2923506"
     assert n["distrito_name"] is n["subdistrito_name"] is n["distrito_source"] is None
     assert rio.id in _pending(db)
     payload = build_push_payload(upsert_mar_snapshot(db, rio), rio)
@@ -162,6 +162,93 @@ def test_brave_fix_moves_the_municipio_sets_coords_clears_the_place_and_repushes
     assert payload["destino"]["source_ref"] == "ibge:BA:2923506"
     assert payload["place"]["place_id"] is None  # sent as null: the API drops the wrong place
     assert fixes.run(db, _manifest(brave_fixes=[fix]), apply=True)["fix"] == 0
+
+
+def _destino_rio(db, ref: str) -> RioRecord:
+    return db.scalars(select(RioRecord).where(RioRecord.canonical_key == ref)).one()
+
+
+def test_fix_links_the_new_municipio_destino_and_a_resweep_keeps_it(db):
+    """A TA re-sweep of the card still listed in the old município must not move it back."""
+    db.add(Municipio(ibge_code="2923506", nome="Palmeiras", uf="BA", lat=-12.5, lng=-41.6))
+    rio = _ta(db, name="Morro do Pai Inácio", municipio_id="2901601", municipio="Andaraí")
+    fix = {"source_ref": rio.canonical_key, "municipio_ibge": "2923506"}
+
+    fixes.run(db, _manifest(brave_fixes=[fix]), apply=True)
+
+    db.expire_all()
+    destino = _destino_rio(db, "ibge:BA:2923506")
+    n = rio.normalized or {}
+    assert (n["parent_source_ref"], n["parent_rio_id"]) == ("ibge:BA:2923506", str(destino.id))
+    # Re-sweep: TA still lists the card under Andaraí, parent and all.
+    v2 = store_raw(
+        db,
+        "tripadvisor",
+        rio.canonical_key or "",
+        "attraction",
+        "BA",
+        {
+            "name": "Morro do Pai Inácio",
+            "municipio_id": "2901601",
+            "uf": "BA",
+            "review_count": 31,
+            "parent_rio_id": str(uuid.uuid4()),
+            "parent_source_ref": "ibge:BA:2901601",
+        },
+    )
+    db.flush()
+    process_nascente_record(db, v2, ScoreConfig())
+    db.expire_all()
+    n = rio.normalized or {}
+    assert rio.municipio_id == n["municipio_id"] == "2923506"
+    assert (n["parent_source_ref"], n["parent_rio_id"]) == ("ibge:BA:2923506", str(destino.id))
+    payload = build_push_payload(upsert_mar_snapshot(db, rio), rio)
+    assert payload["municipio_ibge"] == "2923506"
+    assert payload["destino"]["source_ref"] == "ibge:BA:2923506"
+
+
+def test_fix_dry_run_writes_no_destino(db):
+    """The dry run only looks the new município's destino up; --apply creates it."""
+    code = "29" + uuid.uuid4().hex[:5]
+    db.add(Municipio(ibge_code=code, nome="Nova", uf="BA", lat=-12.5, lng=-41.6))
+    rio = _ta(db, municipio_id="2901601")
+    fix = {"source_ref": rio.canonical_key, "municipio_ibge": code}
+    ref = f"ibge:BA:{code}"
+
+    assert fixes.run(db, _manifest(brave_fixes=[fix]), apply=False)["fix"] == 1
+    assert db.scalar(select(RioRecord.id).where(RioRecord.canonical_key == ref)) is None
+
+    fixes.run(db, _manifest(brave_fixes=[fix]), apply=True)
+    assert (rio.normalized or {})["parent_rio_id"] == str(_destino_rio(db, ref).id)
+
+
+def test_merge_audits_the_loser_routing_and_skips_drop_equal_to_keep(db):
+    keep = _ta(db, name="Lagoa Azul")
+    drop = _ta(db, name="Lagoa Azul ", in_mar=False)
+    drop.routing = "dlq"
+    db.flush()
+    same = {"drop": {"source_ref": keep.canonical_key}, "keep": {"source_ref": keep.canonical_key}}
+    entry = {"drop": {"source_ref": drop.canonical_key}, "keep": {"source_ref": keep.canonical_key}}
+
+    report = fixes.run(db, _manifest(attractions=[same, entry]), apply=True)
+
+    assert (report["merge"], report["skipped"]) == (1, 1)
+    assert keep.routing == "mar"
+    audit = db.scalars(select(AuditLog).where(AuditLog.record_id == drop.id)).one()
+    assert audit.before_state == {"routing": "dlq"}
+
+
+def test_merge_does_not_record_a_source_ref_twice(db):
+    keep = _ta(db, name="Cachoeira")
+    drop = _ta(db, name="Cachoeira ", in_mar=False)
+    mar = _mar(db, keep)
+    mar.provenance = {**(mar.provenance or {}), "merged_source_refs": [drop.canonical_key]}
+    db.flush()
+    entry = {"drop": {"source_ref": drop.canonical_key}, "keep": {"source_ref": keep.canonical_key}}
+
+    fixes.run(db, _manifest(attractions=[entry]), apply=True)
+
+    assert _mar(db, keep).provenance["merged_source_refs"] == [drop.canonical_key]
 
 
 def test_clear_place_without_coords_is_skipped(db):
@@ -225,11 +312,22 @@ def test_same_place_id_dry_run_sees_the_state_after_merges_and_fixes(db, capsys)
     kept_twin = _ta(db, google_place_id="ChIJcleared", in_mar=False)  # the place's true card
     moved = _ta(db, google_place_id="ChIJmoved")
     new_twin = _ta(db, google_place_id="ChIJmoved", municipio_id="2923506", in_mar=False)
+    # Candidates (no active Mar) touched by this run: one merged away, one moved onto a place.
+    merged_twin = _ta(db, google_place_id="ChIJmoved", municipio_id="2923506", in_mar=False)
+    moved_twin = _ta(db, google_place_id="ChIJpalm", in_mar=False)
+    _ta(db, google_place_id="ChIJpalm", municipio_id="2923506")
     manifest = _manifest(
+        attractions=[
+            {
+                "drop": {"source_ref": merged_twin.canonical_key},
+                "keep": {"source_ref": moved.canonical_key},
+            }
+        ],
         brave_fixes=[
             {"source_ref": cleared.canonical_key, "lat": -12.1, "lng": -41.1, "clear_place": True},
             {"source_ref": moved.canonical_key, "municipio_ibge": "2923506"},
-        ]
+            {"source_ref": moved_twin.canonical_key, "municipio_ibge": "2923506"},
+        ],
     )
 
     fixes.run(db, manifest, apply=False)
@@ -240,6 +338,8 @@ def test_same_place_id_dry_run_sees_the_state_after_merges_and_fixes(db, capsys)
     for out in (dry, applied):
         assert f"[same_place_id] {new_twin.canonical_key}:" in out
         assert f"[same_place_id] {kept_twin.canonical_key}:" not in out
+        assert f"[same_place_id] {merged_twin.canonical_key}:" not in out
+        assert f"[same_place_id] {moved_twin.canonical_key}:" in out
     assert (new_twin.routing, kept_twin.routing) == ("descarte", "mar")
 
 

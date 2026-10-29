@@ -6,9 +6,10 @@ Four actions, each idempotent (a record already in the target state is skipped):
                  Duplicados merge (PATCH /api/v1/dedup/pairs/{rio_id}/resolve) — loser Rio →
                  descarte, its source_ref recorded on the kept Mar. The outbox then pushes
                  the loser as visibility=hidden and stamps retracted_at.
-  fix            manifest.brave_fixes: município (IBGE code), lat/lng, name; clear_place
-                 nulls the cached Google Places data (pushed as null, so the API drops it)
-                 and needs lat/lng: Places had moved the pin to the wrong place.
+  fix            manifest.brave_fixes: município (IBGE code, re-linked to its destino),
+                 lat/lng, name; clear_place nulls the cached Google Places data (pushed as
+                 null, so the API drops it) and needs lat/lng: Places had moved the pin to
+                 the wrong place.
   rename         manifest.renames: the display name. A TA re-sweep keeps it — the Nascente
                  version merge only takes a key nobody changed since the previous version.
   same_place_id  every Rio routed 'mar' with no active Mar whose google_place_id is already
@@ -36,9 +37,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brave.api.routers.dedup import merge_into_mar
+from brave.config.settings import ScoreConfig
 from brave.core.models import MarRecord, Municipio, RioRecord
 from brave.core.rio.persist import persist_normalized
 from brave.observability.audit import write_audit
+from brave.shared.destino import ensure_destino
 from brave.tasks.pipeline import _get_session
 
 ACTOR = "territorial_dedup_fixes"
@@ -65,8 +68,6 @@ _DISTRITO_KEYS = (
     "subdistrito_code",
     "distrito_source",
 )
-# The parent destino of the old município: without it the push falls back to ibge:<UF>:<new>.
-_PARENT_KEYS = ("parent_rio_id", "parent_source_ref", "parent_mar_id")
 # rio_id → (municipio_id, google_place_id) once this run's merges/fixes land; None = out of Mar.
 Planned = dict[uuid.UUID, tuple[str | None, str | None] | None]
 
@@ -88,19 +89,22 @@ def _merge(session: Session, entry: dict[str, Any], planned: Planned, apply: boo
     loser, mar = _rio(session, drop), _active_mar(session, keep)
     if loser is None or mar is None:
         return f"skip: {'drop' if loser is None else 'keep Mar'} not found"
+    if loser.id == mar.rio_id:
+        return "skip: drop and keep are the same record"
     if loser.routing == "descarte":
         return "skip: already descarte"
     if mar.rio.routing != "mar":
         return f"skip: keep is routed {mar.rio.routing!r}"
     planned[loser.id] = None
     if apply:
+        before_routing = loser.routing
         merge_into_mar(loser, mar)
         write_audit(
             session,
             action="dedup_merged",
             entity_type=loser.entity_type,
             record_id=loser.id,
-            before_state={"routing": "mar"},
+            before_state={"routing": before_routing},
             after_state={"routing": "descarte", "mar_id": str(mar.id)},
             actor=ACTOR,
         )
@@ -111,6 +115,32 @@ def _null(after: dict[str, Any], keys: tuple[str, ...]) -> None:
     for key in keys:
         if after.get(key) is not None:
             after[key] = None
+
+
+def _parent(session: Session, municipio: Municipio, apply: bool) -> dict[str, str | None]:
+    """The new município's destino linkage, set explicitly: a key left None would let a TA
+    re-sweep of the card (still listed in the old município) restore the old parent, since
+    the Nascente version merge takes a key whose current value equals the previous version's.
+    --apply ensures the destino (as the TA lane does); the dry run only looks it up.
+    """
+    ref = f"ibge:{municipio.uf}:{municipio.ibge_code}"
+    if apply:
+        rio_id, ref, mar_id = ensure_destino(
+            session,
+            ScoreConfig(),
+            ibge_code=municipio.ibge_code,
+            nome=municipio.nome,
+            uf=municipio.uf,
+        )
+    else:
+        rio_id = session.scalar(select(RioRecord.id).where(RioRecord.canonical_key == ref))
+        mar = _active_mar(session, ref)
+        mar_id = mar.id if mar else None
+    return {
+        "parent_rio_id": str(rio_id) if rio_id else None,
+        "parent_source_ref": ref,
+        "parent_mar_id": str(mar_id) if mar_id else None,
+    }
 
 
 def _edit(
@@ -161,7 +191,8 @@ def _fix(session: Session, fix: dict[str, Any], planned: Planned, apply: bool) -
         if municipio is None:
             return f"skip: município {fix['municipio_ibge']} not in municipios"
         if rio.municipio_id != municipio.ibge_code:
-            _null(after, _DISTRITO_KEYS + _PARENT_KEYS)
+            _null(after, _DISTRITO_KEYS)
+            after.update(_parent(session, municipio, apply))
         after.update(municipio=municipio.nome, municipio_id=municipio.ibge_code)
     if coords:
         after.update(lat=fix["lat"], lon=fix["lng"])
@@ -215,7 +246,12 @@ def _same_place_id(session: Session, planned: Planned, apply: bool) -> list[RioR
                 pid.isnot(None),
             )
         ).all()
-        if all(key := (rio.municipio_id, (rio.normalized or {}).get("google_place_id")))
+        if (
+            key := planned.get(
+                rio.id, (rio.municipio_id, (rio.normalized or {}).get("google_place_id"))
+            )
+        )
+        and all(key)
         and key in in_mar
     ]
     if apply:

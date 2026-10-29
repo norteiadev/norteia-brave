@@ -139,9 +139,7 @@ def _compute_field_diff(
     return matched, diverged
 
 
-def _token_similarity(
-    normalized: dict[str, Any], canonical: dict[str, Any]
-) -> float:
+def _token_similarity(normalized: dict[str, Any], canonical: dict[str, Any]) -> float:
     """Labeled placeholder similarity from name/município/UF token overlap.
 
     Jaccard over the lowercased tokens of the name/municipio/uf fields. This is a
@@ -257,9 +255,7 @@ def list_dedup_pairs(
             )
         )
 
-    return DedupPairsResponse(
-        items=items, total=total, offset=offset, limit=limit
-    ).model_dump()
+    return DedupPairsResponse(items=items, total=total, offset=offset, limit=limit).model_dump()
 
 
 def merge_into_mar(rio: RioRecord, mar: MarRecord) -> None:
@@ -270,7 +266,8 @@ def merge_into_mar(rio: RioRecord, mar: MarRecord) -> None:
     candidate_source_ref = rio.canonical_key or str(rio.id)
     provenance = dict(mar.provenance or {})
     merged = list(provenance.get("merged_source_refs", []))
-    merged.append(candidate_source_ref)
+    if candidate_source_ref not in merged:
+        merged.append(candidate_source_ref)
     # Reassign a fresh dict so SQLAlchemy detects the JSON change.
     mar.provenance = {**provenance, "merged_source_refs": merged}
     # Discard the candidate Rio from the pending dedup pool — do NOT create a
