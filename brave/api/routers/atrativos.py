@@ -40,6 +40,7 @@ from brave.config.runtime import load_effective_config
 from brave.core.mar.publication import promote
 from brave.core.mar.service import _attraction_review_recent
 from brave.core.models import MarRecord, RioRecord
+from brave.core.rio.normalize import name_key
 from brave.core.rio.routing import STICKY_DLQ_REASONS
 from brave.observability.audit import write_audit
 
@@ -208,15 +209,29 @@ def _query_promote_bulk_candidates(db: Session, uf: str | None) -> list[RioRecor
 _BULK_EXCLUDED_REASONS = STICKY_DLQ_REASONS - {"no_recent_reviews"}
 
 
-def _active_mar_place_ids(db: Session) -> set[str]:
-    """google_place_id of every atrativo with an active Mar row (published or pending)."""
-    pid = RioRecord.normalized["google_place_id"].as_string()
+def _active_mar_keys(db: Session) -> tuple[set[str], set[tuple[str, str]]]:
+    """google_place_id and (municipio_id, name_key) of every atrativo with an active Mar row."""
     stmt = (
-        select(pid)
+        select(
+            RioRecord.normalized["google_place_id"].as_string(),
+            RioRecord.municipio_id,
+            RioRecord.normalized["name"].as_string(),
+        )
         .join(MarRecord, MarRecord.rio_id == RioRecord.id)
-        .where(MarRecord.superseded_by_id.is_(None), RioRecord.routing == "mar", pid.isnot(None))
+        .where(
+            MarRecord.superseded_by_id.is_(None),
+            RioRecord.routing == "mar",
+            RioRecord.entity_type == "attraction",
+        )
     )
-    return set(db.scalars(stmt))
+    place_ids: set[str] = set()
+    name_keys: set[tuple[str, str]] = set()
+    for pid, municipio_id, name in db.execute(stmt).all():
+        if pid:
+            place_ids.add(pid)
+        if municipio_id and name_key(name):
+            name_keys.add((municipio_id, name_key(name)))
+    return place_ids, name_keys
 
 
 def _bucket_promote_bulk_candidates(
@@ -224,6 +239,7 @@ def _bucket_promote_bulk_candidates(
     min_score: float,
     require_description: bool,
     taken_place_ids: set[str] | None = None,
+    taken_name_keys: set[tuple[str, str]] | None = None,
 ) -> tuple[list[RioRecord], dict[str, int]]:
     """Split DLQ rows into promotable candidates + excluded-by-reason counts.
 
@@ -232,13 +248,16 @@ def _bucket_promote_bulk_candidates(
     sent to review, error report) is never bulk-promoted: promote() would re-score past it
     and push it — those need the steward's per-card call. A row whose google_place_id is
     already in Mar (or taken by a higher-scored candidate — rows come score-desc) is a
-    duplicate TA card of the same place and stays out.
+    duplicate TA card of the same place and stays out; so is one whose name_key is taken
+    in the same município (a twin card with another place_id, or none).
     """
     taken = set(taken_place_ids or ())
+    taken_names: set[tuple[str | None, str]] = set(taken_name_keys or ())
     candidates: list[RioRecord] = []
     excluded = {"verdict": 0, "below_score": 0, "no_description": 0, "recency": 0, "duplicate": 0}
     for rio in rows:
         normalized = rio.normalized or {}
+        key = (rio.municipio_id, name_key(normalized.get("name")))
         if rio.dlq_reason in _BULK_EXCLUDED_REASONS:
             excluded["verdict"] += 1
         elif float(rio.score or 0.0) < min_score:
@@ -247,12 +266,14 @@ def _bucket_promote_bulk_candidates(
             excluded["no_description"] += 1
         elif not _attraction_review_recent(normalized):
             excluded["recency"] += 1
-        elif normalized.get("google_place_id") in taken:
+        elif normalized.get("google_place_id") in taken or key in taken_names:
             excluded["duplicate"] += 1
         else:
             candidates.append(rio)
             if normalized.get("google_place_id"):
                 taken.add(normalized["google_place_id"])
+            if all(key):
+                taken_names.add(key)
     return candidates, excluded
 
 
@@ -279,7 +300,7 @@ def promote_bulk_atrativos(
         min_score = config.threshold_mar - config.weight_validacao_humana
     rows = _query_promote_bulk_candidates(db, body.uf)
     candidates, excluded = _bucket_promote_bulk_candidates(
-        rows, min_score, body.require_description, _active_mar_place_ids(db)
+        rows, min_score, body.require_description, *_active_mar_keys(db)
     )
     if body.dry_run:
         return {

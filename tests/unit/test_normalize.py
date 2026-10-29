@@ -2,7 +2,7 @@
 
 import pytest
 
-from brave.core.rio.normalize import normalize_address, normalize_name
+from brave.core.rio.normalize import name_key, normalize_address, normalize_name
 
 
 @pytest.mark.parametrize(
@@ -58,3 +58,13 @@ def test_backfill_rewrites_only_untouched_title_cased_names():
     assert mod.renamed("Igreja Matriz De Santana", "IGREJA MATRIZ DE SANTANA") == (
         "Igreja Matriz de Santana"
     )
+
+
+def test_name_key_folds_accents_connectors_punctuation_and_spaces():
+    """Two TA cards of one place differ only in accents, connectors or punctuation."""
+    assert name_key("Praia do Francês") == name_key("praia  frances") == "praiafrances"
+    assert name_key("Parque Estadual de Ibitipoca") == name_key("Parque Estadual do Ibitipoca")
+    assert name_key("Museu da Cidade.") == name_key("Museu-Cidade") == "museucidade"
+    assert name_key("Igreja e Convento") == "igrejaconvento"
+    assert name_key("Gruta Lapão") != name_key("Gruta Lapinha")
+    assert name_key(None) == name_key("") == ""

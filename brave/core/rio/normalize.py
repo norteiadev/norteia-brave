@@ -5,6 +5,7 @@ before scoring and dedup comparison.
 """
 
 import re
+import unicodedata
 
 # Lowercase PT-BR connectors inside a name ("Praia do Forte", "São João del-Rei").
 _CONNECTORS = frozenset(
@@ -79,6 +80,20 @@ def normalize_name(name: str) -> str:
         if i < len(seps):
             out.append(seps[i])
     return "".join(out)
+
+
+# Connectors a second TA card of the same place drops or swaps ("Praia Itaúnas").
+_NAME_KEY_STOPWORDS = frozenset({"de", "do", "da", "dos", "das", "e"})
+
+
+def name_key(name: str | None) -> str:
+    """Comparison key of a name: accent-folded, lowercase, no connectors/punctuation/spaces.
+
+    "Praia do Francês" and "Praia Frances" → "praiafrances". Only for matching two records
+    of one place inside a município — never stored, never a source_ref.
+    """
+    folded = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode().lower()
+    return "".join(w for w in re.findall(r"[a-z0-9]+", folded) if w not in _NAME_KEY_STOPWORDS)
 
 
 def normalize_coordinates(
