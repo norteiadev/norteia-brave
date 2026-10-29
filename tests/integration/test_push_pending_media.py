@@ -44,6 +44,18 @@ async def test_push_media_is_multipart_with_bearer() -> None:
     assert b'name="role"' in body and b"cover" in body and b'filename="a.jpg"' in body and b"img" in body
 
 
+async def test_own_client_gives_an_upload_more_than_the_httpx_default_timeout() -> None:
+    client = NorteiaApiClient(base_url=BASE, service_token="tok")
+    async with client:
+        assert client._client.timeout == httpx.Timeout(30.0, connect=5.0)
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        await client.push_media({"role": "cover", "sha1": "a" * 40}, b"img", "a.jpg", "image/jpeg")
+    assert route.calls.last.request.extensions["timeout"] == {
+        "connect": 5.0, "read": 30.0, "write": 30.0, "pool": 30.0,
+    }
+
+
 @pytest.fixture
 def h(db_engine, monkeypatch, tmp_path):
     conn = db_engine.connect()
