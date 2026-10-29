@@ -176,16 +176,37 @@ def test_permanent_4xx_is_recorded_and_repush_clears_it(h) -> None:
 
 
 @pytest.mark.parametrize("status", [401, 403, 408, 429])
-def test_transient_4xx_ends_the_tick_and_leaves_rows_pending(h, status) -> None:
+def test_auth_or_transient_4xx_ends_the_tick_and_leaves_rows_pending(h, status) -> None:
     for key in ("ta:1", "ta:2"):
         _mar(h, _rio(h, key, "attraction"))
     rows = [_photo(h, k, "attraction") for k in ("ta:1", "ta:2")]
 
     with respx.mock:
         route = respx.post(MEDIA).mock(return_value=httpx.Response(status, json={"message": "nope"}))
-        assert pipeline.push_pending_media.run() == 0
+        if status in (401, 403):  # the token, not the photo: the task fails (beat_errors)
+            with pytest.raises(httpx.HTTPStatusError):
+                pipeline.push_pending_media.run()
+        else:
+            assert pipeline.push_pending_media.run() == 0
 
     assert route.call_count == 1  # the tick stopped at the first one
+    h.session.expire_all()
+    assert [(r.pushed_at, r.push_error) for r in rows] == [(None, None), (None, None)]
+
+
+def test_no_photo_in_the_archive_fails_the_tick_and_marks_nothing(h) -> None:
+    for key in ("ta:1", "ta:2"):
+        _mar(h, _rio(h, key, "attraction"))
+    rows = [_photo(h, k, "attraction") for k in ("ta:1", "ta:2")]
+    for r in rows:  # e.g. BRAVE_IMAGES_STORE switched to a bucket the archive was never copied to
+        (h.store._root / h.session.get(Image, r.image_id).storage_key).unlink()
+
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        with pytest.raises(FileNotFoundError, match="wrong store or bucket"):
+            pipeline.push_pending_media.run()
+
+    assert route.call_count == 0
     h.session.expire_all()
     assert [(r.pushed_at, r.push_error) for r in rows] == [(None, None), (None, None)]
 
