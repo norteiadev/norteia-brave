@@ -95,6 +95,15 @@ class NorteiaApiClientProtocol(Protocol):
         """
         ...
 
+    async def push_media(
+        self, fields: dict[str, str], data: bytes, filename: str, mime: str
+    ) -> bool:
+        """POST one photo + its credit metadata (multipart) to the media endpoint.
+
+        True after a 2xx; False when nothing was sent (offline Null adapter).
+        """
+        ...
+
 
 class PlacesClientProtocol(Protocol):
     """Google Places (New API) client — Discovery and Signal agents (Phase 3).

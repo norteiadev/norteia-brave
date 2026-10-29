@@ -542,6 +542,137 @@ def repush_pending_mar() -> int:
     return dispatched
 
 
+_MEDIA_PUSH_BATCH = 100
+
+
+def pending_media_filter() -> list:
+    """entity_images the photo outbox may send now.
+
+    Not sent, not removed, not permanently rejected — and the entity is on norteia-api:
+    an atrativo once its active Mar row was pushed (only validated records reach the
+    platform); a destino once an atrativo of its município was, because that push is what
+    creates the destination (the destino block). The destino rule is a proxy: the API's
+    404 still leaves the row pending.
+    """
+    from sqlalchemy import and_, exists, or_  # noqa: PLC0415
+
+    from brave.core.models import EntityImage, MarRecord  # noqa: PLC0415
+
+    on_api = and_(
+        MarRecord.superseded_by_id.is_(None),
+        MarRecord.pushed_at.is_not(None),
+        MarRecord.retracted_at.is_(None),
+    )
+    atrativo_on_api = exists().where(MarRecord.source_ref == EntityImage.canonical_key, on_api)
+    city_on_api = exists().where(
+        MarRecord.rio_id == RioRecord.id,
+        MarRecord.entity_type == "attraction",
+        on_api,
+        EntityImage.canonical_key == func.concat("ibge:", RioRecord.uf, ":", RioRecord.municipio_id),
+    )
+    return [
+        EntityImage.pushed_at.is_(None),
+        EntityImage.removed_at.is_(None),
+        EntityImage.push_error.is_(None),
+        or_(
+            and_(EntityImage.entity_type == "attraction", atrativo_on_api),
+            and_(EntityImage.entity_type == "destination", or_(atrativo_on_api, city_on_api)),
+        ),
+    ]
+
+
+def media_fields(row: Any, img: Any) -> dict[str, str]:
+    """The media endpoint's form fields for one entity_images row (None values dropped)."""
+    fields = {
+        "entity_type": row.entity_type,
+        "source_ref": row.canonical_key,
+        "role": row.role,
+        "rank": str(row.rank),
+        "sha1": img.sha1,
+        "author": img.author,
+        "license": img.license,
+        "license_url": img.license_url,
+        "credit_line": img.credit_line,
+        "source": "wikimedia_commons",
+        "source_url": img.source_url,
+        "wikidata_qid": row.wikidata_qid,
+    }
+    return {k: v for k, v in fields.items() if v is not None}
+
+
+@shared_task(name="brave.push_pending_media", time_limit=900, soft_time_limit=840)
+def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
+    """Beat (15 min): the photo outbox — POST pending entity_images to norteia-api.
+
+    Bytes come from the Brave archive. 2xx (created or already there by sha1) stamps
+    pushed_at; a destino 404 stays pending with no error; any other 4xx stamps push_error
+    (images-repush clears it). A 5xx (after the client's retries) or a transport error
+    ends the tick — the rest waits for the next one. No-op while externals are off or
+    norteia-api is down. Returns how many were stamped pushed.
+    """
+    from datetime import datetime  # noqa: PLC0415
+
+    import httpx  # noqa: PLC0415
+
+    from brave.clients.image_store import image_store_for  # noqa: PLC0415
+    from brave.core.models import EntityImage, Image  # noqa: PLC0415
+
+    if not AppConfig().run_real_externals or _norteia_api_down():
+        return 0
+    session, _ = _get_session()
+    try:
+        effective = _load_config(session)
+        rows = session.execute(
+            select(EntityImage, Image)
+            .join(Image, Image.id == EntityImage.image_id)
+            .where(*pending_media_filter())
+            .order_by(EntityImage.created_at)
+            .limit(limit)
+        ).all()
+        if not rows:
+            return 0
+        store = image_store_for(effective.images)
+        api = clients_for(effective).norteia_api
+
+        async def _push() -> int:
+            pushed = 0
+            for row, img in rows:
+                try:
+                    ok = await api.push_media(
+                        media_fields(row, img), store.get(img.storage_key),
+                        img.storage_key.rsplit("/", 1)[-1], img.mime,
+                    )
+                except httpx.HTTPStatusError as exc:
+                    status = exc.response.status_code
+                    if status >= 500:
+                        logger.warning("push_media_api_error", status=status)
+                        break
+                    if not (status == 404 and row.entity_type == "destination"):
+                        row.push_error = f"{status}: {exc.response.text[:500]}"
+                        session.commit()
+                        logger.warning("push_media_rejected", canonical_key=row.canonical_key, status=status)
+                    continue
+                except httpx.TransportError as exc:
+                    logger.warning("push_media_transport_error", error=type(exc).__name__)
+                    break
+                if ok:
+                    row.pushed_at = datetime.now(UTC)
+                    session.commit()
+                    pushed += 1
+            return pushed
+
+        pushed = asyncio.run(_push())
+    except Exception as exc:
+        _beat_health("brave.push_pending_media", exc)
+        raise
+    finally:
+        session.close()
+    _beat_health("brave.push_pending_media")
+    if pushed:
+        logger.info("push_pending_media_pushed", count=pushed)
+    return pushed
+
+
 @shared_task(
     bind=True,
     max_retries=3,
@@ -2033,7 +2164,9 @@ async def _images_chunk(session: Session, agent: Any, clients: Any, ids: list, s
             t0 = _time.monotonic()
             try:
                 rio = session.get(RioRecord, rio_id)
-                result = await agent.run(rio) if rio is not None else None
+                if rio is None:
+                    continue
+                result = await agent.run(rio)
                 session.commit()
             except Exception:  # noqa: BLE001 — one bad entity must not abort the chunk
                 session.rollback()

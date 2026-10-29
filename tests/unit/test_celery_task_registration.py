@@ -22,6 +22,7 @@ EXPECTED_TASKS = [
     "brave.publish_mar",
     "brave.describe_uf",
     "brave.images_uf",
+    "brave.push_pending_media",
 ]
 
 

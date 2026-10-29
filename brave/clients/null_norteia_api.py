@@ -23,3 +23,9 @@ class NullNorteiaApiClient:
         """Send nothing and return False — the caller never stamps pushed_at, so the
         first real push (externals turned on later) is not a silent no-op."""
         return False
+
+    async def push_media(
+        self, fields: dict[str, str], data: bytes, filename: str, mime: str
+    ) -> bool:
+        """Send nothing and return False — the photo stays pending (pushed_at NULL)."""
+        return False

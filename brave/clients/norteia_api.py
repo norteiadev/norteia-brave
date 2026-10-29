@@ -37,6 +37,7 @@ from brave.shared.exceptions import ApiDown
 _PATHS = {
     "destination": "/api/internal/territorial/destinations",
     "attraction": "/api/internal/territorial/attractions",
+    "media": "/api/internal/territorial/media",
 }
 
 
@@ -95,11 +96,14 @@ class NorteiaApiClient:
             "Accept": "application/json",
         }
 
-    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post(
+        self, path: str, payload: dict[str, Any] | None = None, *, multipart: Any = None
+    ) -> dict[str, Any]:
         """POST to {base_url}/{path} with retry on 5xx.
 
         Uses tenacity retry: up to 3 attempts, exponential backoff (min=2s, max=10s).
-        Retries only on 5xx (T-03-05). Raises immediately on 4xx.
+        Retries only on 5xx (T-03-05). Raises immediately on 4xx. ``multipart`` =
+        ``(fields, files)`` sends a multipart form instead of the JSON ``payload``.
         """
         if self._client is None:
             raise RuntimeError(
@@ -116,11 +120,17 @@ class NorteiaApiClient:
             reraise=True,
         )
         async def _attempt() -> dict[str, Any]:
-            response = await client.post(
-                f"{self._base_url}{path}",
-                json=payload,
-                headers=self._headers(),
-            )
+            if multipart is None:
+                response = await client.post(
+                    f"{self._base_url}{path}", json=payload, headers=self._headers()
+                )
+            else:
+                # httpx sets the multipart Content-Type (with its boundary) itself.
+                headers = {k: v for k, v in self._headers().items() if k != "Content-Type"}
+                fields, files = multipart
+                response = await client.post(
+                    f"{self._base_url}{path}", data=fields, files=files, headers=headers
+                )
             response.raise_for_status()
             return response.json()
 
@@ -184,4 +194,13 @@ class NorteiaApiClient:
             raise ApiDown(f"norteia-api down; {entity_type} push stays pending")
         async with self:
             await self._post(_PATHS[entity_type], payload)
+        return True
+
+    async def push_media(
+        self, fields: dict[str, str], data: bytes, filename: str, mime: str
+    ) -> bool:
+        """POST one photo (multipart: credit metadata + ``file``) to the media endpoint;
+        True after a 2xx. HTTP errors propagate (a 404 = the entity is not on the API)."""
+        async with self:
+            await self._post(_PATHS["media"], multipart=(fields, {"file": (filename, data, mime)}))
         return True

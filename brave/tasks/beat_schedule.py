@@ -150,6 +150,8 @@ def maintenance_beat_entries() -> dict:
       - ``repush-pending-mar-15min`` → re-dispatches the norteia-api push for Mar rows
         with pushed_at NULL (API/broker was down, retries exhausted). No-op while
         externals are off or norteia-api's health ping fails.
+      - ``push-pending-media-15min`` → the photo outbox (brave.push_pending_media): sends
+        entity_images whose entity is already on norteia-api. No-op offline / API down.
       - ``refresh-places-daily`` → re-fetches Place Details (by cached place_id, never a
         Text Search) for atrativos whose Places data is older than 60 days, capped by
         places_refresh_daily_limit. No-op while externals or Places enrichment are off.
@@ -199,6 +201,12 @@ def maintenance_beat_entries() -> dict:
         },
         "repush-pending-mar-15min": {
             "task": "brave.repush_pending_mar",
+            "schedule": crontab(minute="*/15"),
+            "args": (),
+            "kwargs": {},
+        },
+        "push-pending-media-15min": {
+            "task": "brave.push_pending_media",
             "schedule": crontab(minute="*/15"),
             "args": (),
             "kwargs": {},
