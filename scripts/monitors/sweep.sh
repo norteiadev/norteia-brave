@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sweep monitor — the one to arm in Claude Code (also the describe run: MONITOR_SOURCE=descricao) (the other seven stay for tmux/debug).
+# Sweep monitor — the one to arm in Claude Code (also the describe and image runs: MONITOR_SOURCE=descricao|imagens) (the other seven stay for tmux/debug).
 # Quiet by design: a RELATÓRIO line every MONITOR_REPORT seconds (default 600) and when
 # the run ends, plus one FALHA line per NEW failure. Exits after the final report, so the
 # Monitor stream ends with the run.
@@ -9,7 +9,9 @@
 TAG=sweep; . "$(dirname "$0")/_lib.sh"
 INTERVAL="${MONITOR_INTERVAL:-30}"
 REPORT="${MONITOR_REPORT:-600}"
-SOURCE="${MONITOR_SOURCE:-tripadvisor}"  # descricao = the describe run
+SOURCE="${MONITOR_SOURCE:-tripadvisor}"  # descricao = the describe run, imagens = the image lane
+# Runs that never touch TripAdvisor: no listing pages to report, no TA session to watch.
+case "$SOURCE" in descricao|imagens) NO_TA=1 ;; *) NO_TA= ;; esac
 START_EPOCH=$(date +%s)
 START_SQL=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 LOG_PATTERN='\[(error|critical) *\]|: (ERROR|CRITICAL)/|Traceback|WorkerLostError|SIGKILL|TimeLimitExceeded|exited with'
@@ -30,7 +32,7 @@ counts() { # "<atrativos>|<destinos>" for the run's UFs
 report() { # report [final]
   local p pages="" uf c a d
   p=$(rds HGETALL brave:ta:sweep:uf_pages | paste - -)
-  [ "$SOURCE" = descricao ] || for uf in $UFS; do  # pages are the sweep's, stale for describe
+  [ -n "$NO_TA" ] || for uf in $UFS; do  # pages are the sweep's, stale for describe/images
     pages="$pages · $uf pág $(awk -v u="$uf" '$1==u{print $2}' <<<"$p" | grep . || echo '-')"
   done
   c=$(counts); a=${c%|*}; d=${c#*|}
@@ -70,7 +72,7 @@ while true; do
   pf=$(rds GET brave:engine:producers_failed); pf=${pf:-0}
   [ "$pf" -gt "$PF0" ] && { fail "produtor falhou (producers_failed $PF0 → $pf)"; PF0=$pf; }
 
-  if [ "$SOURCE" != descricao ]; then  # describe runs need no TA session
+  if [ -z "$NO_TA" ]; then  # describe/image runs need no TA session
     ttl=$(rds TTL brave:ta:session); nb=$(rds GET brave:ta:needs_bootstrap)
     dead=""; { [ "$ttl" = -2 ] || [ -z "$ttl" ]; } && dead="sessão TA ausente${nb:+ (needs_bootstrap=$nb)} — reinjetar cURL"
     fail_once sess "$dead" "$dead"

@@ -2,8 +2,8 @@
 name: run-uf-sync
 description: >-
   Run a UF sync through the Brave in production mode: pre-flight, the sweep
-  monitor armed, TripAdvisor sweep, backfill gap check, describe,
-  promote-bulk and the push to norteia-api, ending with the UF summary. A failure is fixed while the sweep runs: capture, analyze, fix, review by another agent, PR, merge, pull, restart only what needs it (a fix to the sweep path: short pause, worker restart, resume the same UF). Use
+  monitor armed, TripAdvisor sweep, backfill gap check, describe, images,
+  promote-bulk and the push to norteia-api (records and photos), ending with the UF summary. A failure is fixed while the sweep runs: capture, analyze, fix, review by another agent, PR, merge, pull, restart only what needs it (a fix to the sweep path: short pause, worker restart, resume the same UF). Use
   whenever the user wants to sync, sweep, collect or "rodar" one or more UFs
   (e.g. "roda a sync de BA", "faz o sweep de PE e AL", "popula a API com RN",
   "próxima UF"), or to monitor/resume a UF run that is already going.
@@ -11,7 +11,7 @@ description: >-
 
 # Run a UF sync
 
-One UF = sweep → backfill gap check → describe → promote → push, watched by the quiet sweep monitor `scripts/monitors/sweep.sh`. The detailed operations manual is `docs/RUNBOOK-EXECUCAO.md`; this skill is the order of operations and the done-criteria. Scripts below are relative to this skill's folder; run them from the repo root.
+One UF = sweep → backfill gap check → describe → images → promote → push, watched by the quiet sweep monitor `scripts/monitors/sweep.sh`. The detailed operations manual is `docs/RUNBOOK-EXECUCAO.md`; this skill is the order of operations and the done-criteria. Scripts below are relative to this skill's folder; run them from the repo root.
 
 **Reference baseline (SE, 19/10/2026, 288 atrativos):** sweep 24 min (~2.5 min per TA page of 30 cards), describe ~US$0.002 per atrativo and ~12 s per chunk of 25, 84% described, 10% reach score 65. **Enrichment cost (hybrid Apify + Places Essentials lane, since 21/10; RO→SC, 3,587 atrativos):** ~US$0.007 Places + ~US$0.007 Apify per atrativo (SC alone: Places US$11.26 for 1,901). SE's US$0.048 is the old Places-only cost. Use these to size a UF before starting and to spot an outlier while it runs.
 
@@ -69,7 +69,15 @@ Done when it returns 0. Otherwise run `scripts/api.sh POST /api/v1/tripadvisor/b
 
 Watch it with `MONITOR_SOURCE=descricao scripts/monitors/sweep.sh` (same reports and failures). Done when it prints `FIM run … status=concluido`. A 409 means a description flag or the search key is off: pre-flight shows which.
 
-## 6. Promote
+## 6. Images
+
+```bash
+.claude/skills/run-uf-sync/scripts/api.sh POST /api/v1/engine/start '{"action":"images","ufs":["<UF>"]}'
+```
+
+Cover and gallery from Wikidata + Wikimedia Commons into the Brave archive (`entity_images`), atrativos first, then the UF's destinos. Free, but serial: about 15 s per atrativo (paced Wikimedia calls). Watch it with `MONITOR_SOURCE=imagens scripts/monitors/sweep.sh`. Done when it prints `FIM run … status=concluido`. A 409 means `images_enrichment_enabled` (Painel config) or real externals is off: the lane is optional, so tell the user and go on to Promote. The photos are pushed later by the `push-pending-media-15min` beat, only for entities already on norteia-api (step 8).
+
+## 7. Promote
 
 Dry-run first and show the numbers to the user:
 
@@ -79,11 +87,19 @@ Dry-run first and show the numbers to the user:
 
 Leave `min_score` out: it defaults to `threshold_mar` minus the human-validation weight (15), the lowest score promotion can still lift into Mar — the dry-run echoes it. The cut is moved with `score.threshold_mar` on the Painel, never with a `min_score` below that floor (those rows are only held). Pass `min_score` only when the user asks for a stricter cut. Then run it with `"dry_run":false`, repeating while `remaining > 0`. Done when `promoted` equals the dry-run `would_promote` and `failed` is empty; report any `held` with its reason.
 
-## 7. Push check
+## 8. Push check
 
 Done when `select count(*) filter (where pushed_at is null), count(*) filter (where push_error is not null) from mar_records` returns `0|0` and the norteia-api `attractions` count (one-off: `timeout 20 scripts/monitors/api-ingest.sh`) rose by the number promoted (destinations rise by the distinct parent municípios). Pushes take ~1 s each; a `pending` that stays above 0 for more than a few minutes, or any `REJECTED`, is an action row in `references/events.md`.
 
-## 8. Summary
+Photos (only when step 6 ran): within 15 min of the last Mar push the beat sends the photos of the pushed atrativos. Done when this returns `0|0` (pending | rejected):
+
+```bash
+docker compose exec -T postgres psql -U brave -d norteia_brave -Atc "select count(*) filter (where e.pushed_at is null and e.push_error is null), count(*) filter (where e.push_error is not null) from entity_images e join rio_records r on r.canonical_key=e.canonical_key where r.uf='<UF>' and e.entity_type='attraction' and e.removed_at is null and exists (select 1 from mar_records m where m.source_ref=e.canonical_key and m.superseded_by_id is null and m.pushed_at is not null)"
+```
+
+A rejected photo keeps the API's answer in `entity_images.push_error`; after a fix, `docker compose exec -T worker /app/.venv/bin/python -m brave.cli images-repush` re-sends them. Destino photos stay pending until norteia-api has the destination.
+
+## 9. Summary
 
 ```bash
 .claude/skills/run-uf-sync/scripts/uf_summary.sh <UF>
