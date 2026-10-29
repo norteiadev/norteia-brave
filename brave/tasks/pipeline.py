@@ -543,6 +543,8 @@ def repush_pending_mar() -> int:
 
 
 _MEDIA_PUSH_BATCH = 100
+# Auth / timeout / rate limit: about the API, not the photo — end the tick, keep it pending.
+_TRANSIENT_4XX = frozenset({401, 403, 408, 429})
 
 
 def pending_media_filter() -> list:
@@ -605,9 +607,10 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
     """Beat (15 min): the photo outbox — POST pending entity_images to norteia-api.
 
     Bytes come from the Brave archive. 2xx (created or already there by sha1) stamps
-    pushed_at; a destino 404 stays pending with no error; any other 4xx stamps push_error
-    (images-repush clears it). A 5xx (after the client's retries) or a transport error
-    ends the tick — the rest waits for the next one. No-op while externals are off or
+    pushed_at; a destino 404 stays pending with no error; a photo missing from the archive
+    or any other 4xx stamps push_error (images-repush clears it). A 5xx (after the client's
+    retries), a 401/403/408/429 or a transport error ends the tick — the rest waits for the
+    next one. No-op while externals are off or
     norteia-api is down. Returns how many were stamped pushed.
     """
     from datetime import datetime  # noqa: PLC0415
@@ -653,12 +656,16 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
             # ever piles up it starves the rest — order them last when that shows up.
             for row_id, entity_type, key, fields, storage_key, mime in jobs:
                 try:
-                    ok = await api.push_media(
-                        fields, store.get(storage_key), storage_key.rsplit("/", 1)[-1], mime
-                    )
+                    data = store.get(storage_key)
+                except FileNotFoundError:
+                    _stamp(row_id, push_error=f"archive: {storage_key} missing")
+                    logger.warning("push_media_archive_missing", canonical_key=key, storage_key=storage_key)
+                    continue
+                try:
+                    ok = await api.push_media(fields, data, storage_key.rsplit("/", 1)[-1], mime)
                 except httpx.HTTPStatusError as exc:
                     status = exc.response.status_code
-                    if status >= 500:
+                    if status >= 500 or status in _TRANSIENT_4XX:
                         logger.warning("push_media_api_error", status=status)
                         break
                     if not (status == 404 and entity_type == "destination"):

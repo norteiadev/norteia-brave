@@ -175,6 +175,37 @@ def test_permanent_4xx_is_recorded_and_repush_clears_it(h) -> None:
     assert row.pushed_at is not None
 
 
+@pytest.mark.parametrize("status", [401, 403, 408, 429])
+def test_transient_4xx_ends_the_tick_and_leaves_rows_pending(h, status) -> None:
+    for key in ("ta:1", "ta:2"):
+        _mar(h, _rio(h, key, "attraction"))
+    rows = [_photo(h, k, "attraction") for k in ("ta:1", "ta:2")]
+
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(status, json={"message": "nope"}))
+        assert pipeline.push_pending_media.run() == 0
+
+    assert route.call_count == 1  # the tick stopped at the first one
+    h.session.expire_all()
+    assert [(r.pushed_at, r.push_error) for r in rows] == [(None, None), (None, None)]
+
+
+def test_a_missing_archive_file_is_recorded_and_the_rest_still_go(h) -> None:
+    for key in ("ta:1", "ta:2"):
+        _mar(h, _rio(h, key, "attraction"))
+    gone, ok = (_photo(h, k, "attraction") for k in ("ta:1", "ta:2"))
+    (h.store._root / h.session.get(Image, gone.image_id).storage_key).unlink()
+
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        assert pipeline.push_pending_media.run() == 1
+
+    assert route.call_count == 1
+    h.session.expire_all()
+    assert gone.push_error.startswith("archive:") and gone.pushed_at is None
+    assert ok.pushed_at is not None
+
+
 def test_removed_or_already_pushed_rows_are_skipped(h) -> None:
     rio = _rio(h, "ta:1", "attraction")
     _mar(h, rio)

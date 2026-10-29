@@ -84,7 +84,10 @@ class R2ImageStore:
                 raise
 
     def get(self, key: str) -> bytes:
-        return self._s3.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+        try:
+            return self._s3.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+        except self._s3.exceptions.NoSuchKey as exc:  # the same signal LocalImageStore gives
+            raise FileNotFoundError(key) from exc
 
 
 def image_store_for(config: ImagesConfig) -> ImageStoreProtocol:
