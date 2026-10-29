@@ -828,3 +828,26 @@ async def test_canary_rejects_a_session_whose_attraction_pages_are_blocked(
         await ts_module._run_canary({"cookies": {}}, TripAdvisorConfig(), fake_redis)
 
     assert ei.value.status_code == 422 and ei.value.detail == "invalid_session"
+
+
+@pytest.mark.parametrize("status", [422, 503])
+def test_failed_inject_keeps_keepalive_streak_and_bootstrap_marker(
+    authed_client, fake_redis, monkeypatch, status
+):
+    """The markers reset only after the canary approves: a refused inject keeps the
+    live session's streak and the needs_bootstrap marker the status endpoint reports."""
+    from fastapi import HTTPException
+
+    import brave.api.routers.tripadvisor_session as ts_module
+
+    async def _failing_canary(session, ta_config, redis):
+        raise HTTPException(status_code=status, detail="x")
+
+    monkeypatch.setattr(ts_module, "_run_canary", _failing_canary)
+    fake_redis.set("brave:ta:keepalive_failures", 2)
+    fake_redis.set("brave:ta:needs_bootstrap", "1")
+
+    resp = authed_client.post("/api/v1/tripadvisor/session", json=_VALID_BODY)
+    assert resp.status_code == status
+    assert fake_redis.get("brave:ta:keepalive_failures") == b"2"
+    assert fake_redis.get("brave:ta:needs_bootstrap") == b"1"

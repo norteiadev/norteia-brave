@@ -78,7 +78,7 @@ Done when you see `Session injected — canary result: ready`, then a pre-flight
 
 That same day an orphaned `ta_keepalive.py` from an old session had been pinging TA from the host every 5 min for 11 days: same IP, its own cookies. Pre-flight now WARNs on any such process. Kill it before a sweep.
 
-The canary checks the listing only. On 24/10 a 14 h-old cURL passed it while DataDome 403'd every attraction page, and the sweep stopped 5 min in. The first-page load batch of the listing is telemetry only and fails the canary.
+The canary checks the listing and one attraction page (`probe_page`). A 422 `invalid_session` with the listing fine therefore means DataDome is blocking the pages: check for a pending CAPTCHA, or inject the fallback cURL. A batch of telemetry/ad qids only fails before the canary, with a 422 on empty `query_ids`. Pre-flight's `check_curls` catches it first. Pre-flight's `TA probe` re-checks the live session right before the sweep.
 
 ## Token
 
