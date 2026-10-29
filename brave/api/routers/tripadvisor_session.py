@@ -39,6 +39,8 @@ router = APIRouter()
 
 # Redis key for the bootstrap marker (set by sweep on SessionMissingError)
 _TA_NEEDS_BOOTSTRAP_KEY: str = "brave:ta:needs_bootstrap"
+# Mirrors brave.tasks.pipeline: the keepalive's consecutive-failure streak.
+_TA_KEEPALIVE_FAILURES_KEY: str = "brave:ta:keepalive_failures"
 
 # Maximum allowed POST body size: 64 KB
 _MAX_BODY_BYTES: int = 65536
@@ -320,6 +322,14 @@ async def inject_session(
     except HTTPException as exc:
         _restore_session(redis, previous, previous_pttl, keep_candidate=exc.status_code == 503)
         raise
+
+    # A session that passed the canary starts clean: the old one's keepalive streak and
+    # needs_bootstrap marker would otherwise flag it after a single blip (28/10: streak 2
+    # survived the inject). Best-effort, like the markers themselves.
+    try:
+        redis.delete(_TA_KEEPALIVE_FAILURES_KEY, _TA_NEEDS_BOOTSTRAP_KEY)
+    except Exception:
+        logger.warning("ta_session_markers_reset_failed")
 
     # Audit log (T-12-02-01: only metadata, NEVER cookie values)
     #

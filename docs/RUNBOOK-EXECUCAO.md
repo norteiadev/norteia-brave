@@ -108,12 +108,15 @@ set -a; . ./.env; set +a
 H="Authorization: Bearer $BRAVE_DASHBOARD_BEARER_TOKEN"; API=http://localhost:8000
 
 # 4.1 Sessão TripAdvisor: o pre-flight exige DOIS cURLs em scripts/single_attraction/ (gitignored).
-#     a) ta_paginacao.curl: lista de atrações da UF › DevTools › Network (limpar) › PRÓXIMA PÁGINA ›
+#     a) ta_paginacao.curl (ESTE se injeta): lista da UF numa categoria (ex. ...-Activities-c42-State_of_...html;
+#        a página do estado sem filtro não pagina) › DevTools › Network (limpar) › PRÓXIMA PÁGINA ›
 #        Cmd+F "pagee" › o POST /data/graphql/ids com request.routeParameters.pagee › Copy as cURL (bash)
 #     b) ta_brazil.curl: carregar Attractions-g294280-Activities-Brazil.html › qualquer POST
-#        /data/graphql/ids › Copy as cURL (bash). Cookie datadome novo: é ESTE que se injeta.
+#        /data/graphql/ids › Copy as cURL (bash). Reserva: injete se o da paginação falhar no canary ou no probe.
+#     Antes de capturar, resolva qualquer captcha do TA no navegador (cookie capturado com captcha
+#     pendente morre em minutos).
 #     Detalhes: .claude/skills/run-uf-sync/references/events.md › TA session
-.venv/bin/python scripts/ta_bootstrap.py --curl scripts/single_attraction/ta_brazil.curl \
+.venv/bin/python scripts/ta_bootstrap.py --curl scripts/single_attraction/ta_paginacao.curl \
   --endpoint $API --bearer "$BRAVE_DASHBOARD_BEARER_TOKEN"
 
 # 4.2 Sweep da UF (sem teto; para testar com teto, acrescente "max_atrativos_per_uf": 20)

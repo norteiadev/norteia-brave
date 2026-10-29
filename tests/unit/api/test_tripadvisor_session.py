@@ -104,6 +104,26 @@ def test_inject_valid_session_returns_ready(authed_client, fake_redis, monkeypat
     assert fake_redis.exists(BRAVE_TA_SESSION_KEY), "Redis key must be set after valid inject"
 
 
+def test_inject_resets_keepalive_streak_and_bootstrap_marker(
+    authed_client, fake_redis, monkeypatch
+):
+    """A canary-approved session starts clean: the old session's keepalive streak and
+    needs_bootstrap marker must not carry over (28/10: streak 2 survived the inject)."""
+    import brave.api.routers.tripadvisor_session as ts_module
+
+    async def _noop_canary(session, ta_config, redis):
+        pass
+
+    monkeypatch.setattr(ts_module, "_run_canary", _noop_canary)
+    fake_redis.set("brave:ta:keepalive_failures", 2)
+    fake_redis.set("brave:ta:needs_bootstrap", "1")
+
+    resp = authed_client.post("/api/v1/tripadvisor/session", json=_VALID_BODY)
+    assert resp.status_code == 200
+    assert not fake_redis.exists("brave:ta:keepalive_failures")
+    assert not fake_redis.exists("brave:ta:needs_bootstrap")
+
+
 # ---------------------------------------------------------------------------
 # Malformed body → 422, no Redis write
 # ---------------------------------------------------------------------------

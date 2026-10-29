@@ -63,11 +63,12 @@ def check(name: str, label: str, test) -> None:
         problem, note = f"ilegível ({type(exc).__name__})", ""
     if problem:
         print(f"FAIL  cURL {label}: {problem} (references/events.md › TA session)")
-    elif note:
+        return
+    if note:
         print(f"WARN  cURL {label}: {note}")
-    elif age_h > MAX_AGE_H:
+    if age_h > MAX_AGE_H:
         print(f"WARN  cURL {label} tem {age_h:.0f} h: capture de novo antes de uma UF grande")
-    else:
+    elif not note:
         print(f"OK    cURL {label} ({age_h:.1f} h)")
 
 
