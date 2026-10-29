@@ -37,6 +37,7 @@ dependencies = [
     # Observability
     "structlog==26.1.0",
     "google-maps-places>=0.9.0",
+    "boto3>=1.40",
 ]
 
 [project.optional-dependencies]
