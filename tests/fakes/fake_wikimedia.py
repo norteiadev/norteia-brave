@@ -28,7 +28,7 @@ class FakeWikimediaClient:
         self.files = files or {}
         self.same_bytes = same_bytes or {}
         self.fail = fail
-        self.lanes = lanes  # e.g. depicts={"Q1": [...]}, category={...}, geo=[...]
+        self.lanes = lanes  # depicts={qid: [...]}, category={cat: [...]}, geo=[...], municipio={ibge: item}, top={qid: [...]}
         self.calls: list[tuple[str, Any]] = []
 
     def _call(self, name: str, arg: Any) -> None:
@@ -63,6 +63,14 @@ class FakeWikimediaClient:
     async def geosearch(self, lat: float, lon: float, radius_m: int) -> list[str]:
         self._call("geosearch", (lat, lon, radius_m))
         return list(self.lanes.get("geo", []))
+
+    async def municipio(self, ibge: str) -> WdItem | None:
+        self._call("municipio", ibge)
+        return self.lanes.get("municipio", {}).get(ibge)
+
+    async def items_in_municipio(self, qid: str) -> list[WdItem]:
+        self._call("items_in_municipio", qid)
+        return self.lanes.get("top", {}).get(qid, [])
 
     def count(self, name: str) -> int:
         return sum(1 for n, _ in self.calls if n == name)

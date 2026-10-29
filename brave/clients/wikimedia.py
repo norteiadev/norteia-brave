@@ -273,6 +273,26 @@ class WikimediaClient:
               FILTER(?dist <= {km})
             }} LIMIT 200"""))
 
+    async def municipio(self, ibge: str) -> WdItem | None:
+        """The municipality item for an IBGE code (P1585) with its P18, or None."""
+        items = _items(await self._sparql(f"""
+            SELECT ?item ?p18 WHERE {{
+              ?item wdt:P1585 {json.dumps(ibge)} .
+              OPTIONAL {{ ?item wdt:P18 ?p18 }}
+            }}"""))
+        return items[0] if items else None
+
+    async def items_in_municipio(self, qid: str, limit: int = 8) -> list[WdItem]:
+        """Items located in the municipality (P131) that have a P18, most sitelinks first
+        (the proxy for "best known")."""
+        if not re.fullmatch(r"Q\d+", qid):
+            raise ValueError(f"not a QID: {qid!r}")
+        return _items(await self._sparql(f"""
+            SELECT ?item ?p18 ?sl WHERE {{
+              ?item wdt:P131 wd:{qid} ; wdt:P18 ?p18 ; wikibase:sitelinks ?sl .
+              {_NOT_A_PLACE}
+            }} ORDER BY DESC(?sl) LIMIT {int(limit)}"""))
+
     # -- Commons --------------------------------------------------------------------
 
     async def image_info(self, titles: list[str]) -> dict[str, CommonsFile]:

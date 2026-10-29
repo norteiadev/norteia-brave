@@ -33,7 +33,7 @@ from brave.clients.wikimedia import CommonsFile, WdItem, WikimediaError
 from brave.config.settings import ImagesConfig
 from brave.core.models import EntityImage, Image, ImageLookup, RioRecord
 from brave.domains.images.matching import best_match
-from brave.domains.images.policy import Pick, pick_attraction
+from brave.domains.images.policy import Pick, cover_reject, pick_attraction, pick_destination
 
 logger = structlog.get_logger(__name__)
 
@@ -68,7 +68,10 @@ class ImageLaneAgent:
         if lookup is not None and lookup.outcome in FINAL_OUTCOMES:
             return None
         try:
-            result, match, via = await self._attraction(rio)
+            if rio.entity_type == "destination":
+                result, match, via = await self._destination(rio)
+            else:
+                result, match, via = await self._attraction(rio)
         except _EXTERNAL_ERRORS as exc:
             logger.warning("images_external_error", canonical_key=key, error=f"{type(exc).__name__}: {exc}")
             self._mark(rio, "error")
@@ -104,6 +107,49 @@ class ImageLaneAgent:
         await self._save(rio, picks, files, match.qid, result)
         return result, match, via
 
+    # -- destino --------------------------------------------------------------------
+
+    async def _destination(self, rio: RioRecord) -> tuple[LaneResult, WdItem | None, str | None]:
+        """Cover only: the municipality's P18 → the cover of the city's most-reviewed
+        atrativo (already in the archive) → the P18 of its best-known P131 items. Each
+        candidate must pass cover_reject (landscape, ≥1280 px, no collage)."""
+        code = rio.municipio_id or (rio.canonical_key or "").rsplit(":", 1)[-1]
+        muni = await self._wm.municipio(code)
+        if muni is None:
+            return LaneResult("no_match"), None, None
+        files = await self._wm.image_info(list(muni.p18)) if muni.p18 else {}
+        picks, rejected = pick_destination("p18", list(muni.p18), files)
+        result = LaneResult("matched", picks, rejected)
+        if not picks:
+            img = self._atrativo_cover(code)
+            if img is not None:
+                result.picks = [Pick(img.commons_title, "cover", 0, "atrativo")]
+                self._link(rio, [(result.picks[0], img)], muni.qid)
+                return result, muni, "ibge"
+            titles = [t for it in await self._wm.items_in_municipio(muni.qid) for t in it.p18]
+            files = await self._wm.image_info(titles) if titles else {}
+            result.picks, more = pick_destination("muni_top", titles, files)
+            result.rejected += more
+        await self._save(rio, result.picks, files, muni.qid, result)
+        return result, muni, "ibge"
+
+    def _atrativo_cover(self, code: str) -> Image | None:
+        """The archived cover of the municipality's most-reviewed atrativo that is also a
+        good destino cover, or None."""
+        rows = self._s.scalars(
+            select(Image)
+            .join(EntityImage, EntityImage.image_id == Image.id)
+            .join(RioRecord, RioRecord.canonical_key == EntityImage.canonical_key)
+            .where(
+                EntityImage.role == "cover",
+                EntityImage.entity_type == "attraction",
+                EntityImage.removed_at.is_(None),
+                RioRecord.municipio_id == code,
+            )
+            .order_by(RioRecord.normalized["review_count"].as_integer().desc().nulls_last())
+        )
+        return next((i for i in rows if cover_reject(i.commons_title, i.width, i.height) is None), None)
+
     # -- persistence ----------------------------------------------------------------
 
     async def _archive(self, f: CommonsFile, result: LaneResult) -> Image:
@@ -137,8 +183,11 @@ class ImageLaneAgent:
     ) -> None:
         # All downloads first: an error mid-way leaves no entity_images half-set.
         images = [await self._archive(files[p.title], result) for p in picks]
+        self._link(rio, list(zip(picks, images, strict=True)), qid)
+
+    def _link(self, rio: RioRecord, pairs: list[tuple[Pick, Image]], qid: str | None) -> None:
         key = rio.canonical_key or ""
-        for pick, img in zip(picks, images, strict=True):
+        for pick, img in pairs:
             row = self._s.scalar(
                 select(EntityImage).where(EntityImage.canonical_key == key, EntityImage.image_id == img.id)
             )

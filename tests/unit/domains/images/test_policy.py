@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from brave.clients.wikimedia import CommonsFile, WdItem
 from brave.domains.images.matching import best_match, name_score
-from brave.domains.images.policy import Pick, cover_reject, pick_attraction, reject_reason
+from brave.domains.images.policy import (
+    Pick,
+    cover_reject,
+    pick_attraction,
+    pick_destination,
+    reject_reason,
+)
 
 
 def _f(title: str, w: int = 3000, h: int = 2000, lic: str = "cc-by-sa-4.0", **kw) -> CommonsFile:
@@ -38,10 +44,21 @@ def test_reject_reason() -> None:
 
 
 def test_cover_reject_for_destino() -> None:
-    assert cover_reject(_f("File:Aracaju.jpg")) is None
-    assert cover_reject(_f("File:Montagem Aracaju.jpg")) == "collage"
-    assert cover_reject(_f("File:Aracaju.jpg", w=1000, h=600)) == "narrow"
-    assert cover_reject(_f("File:Aracaju.jpg", w=2000, h=2000)) == "portrait"
+    assert cover_reject("File:Aracaju.jpg", 3000, 2000) is None
+    assert cover_reject("File:Montagem Aracaju.jpg", 3000, 2000) == "collage"
+    assert cover_reject("File:Aracaju.jpg", 1000, 600) == "narrow"
+    assert cover_reject("File:Aracaju.jpg", 2000, 2000) == "portrait"
+
+
+def test_destination_cover_skips_rejected_and_collage() -> None:
+    files = {
+        "File:Montagem.jpg": _f("File:Montagem.jpg"),
+        "File:Retrato.jpg": _f("File:Retrato.jpg", w=1500, h=2000),
+        "File:Orla.jpg": _f("File:Orla.jpg"),
+    }
+    picks, rejected = pick_destination("p18", list(files), files)
+    assert picks == [Pick("File:Orla.jpg", "cover", 0, "p18")]
+    assert rejected == {"cover:collage": 1, "cover:portrait": 1}
 
 
 def test_attraction_cover_is_the_first_usable_p18() -> None:

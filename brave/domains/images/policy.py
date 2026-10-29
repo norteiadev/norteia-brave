@@ -69,13 +69,13 @@ def reject_reason(f: CommonsFile | None) -> str | None:
     return None
 
 
-def cover_reject(f: CommonsFile) -> str | None:
+def cover_reject(title: str, width: int, height: int) -> str | None:
     """A destino cover is a wide landscape photo, not a collage."""
-    if any(c in f.title.lower() for c in COLLAGE):
+    if any(c in title.lower() for c in COLLAGE):
         return "collage"
-    if f.width < COVER_MIN_WIDTH:
+    if width < COVER_MIN_WIDTH:
         return "narrow"
-    if not f.height or f.width / f.height < COVER_MIN_ASPECT:
+    if not height or width / height < COVER_MIN_ASPECT:
         return "portrait"
     return None
 
@@ -114,3 +114,18 @@ def pick_attraction(
                 used.add(t)
                 gallery.append(Pick(t, "gallery", len(gallery) + 1, lane))
     return ([cover] if cover else []) + gallery, rejected
+
+
+def pick_destination(
+    lane: str, titles: Sequence[str], files: Mapping[str, CommonsFile]
+) -> tuple[list[Pick], Counter[str]]:
+    """The destino cover from one lane: the first title that is usable AND passes
+    cover_reject. Rejections by reason ("cover:<why>" for cover_reject)."""
+    rejected: Counter[str] = Counter()
+    for t in _usable({lane: titles}, files, rejected)[lane]:
+        f = files[t]
+        why = cover_reject(t, f.width, f.height)
+        if why is None:
+            return [Pick(t, "cover", 0, lane)], rejected
+        rejected["cover:" + why] += 1
+    return [], rejected

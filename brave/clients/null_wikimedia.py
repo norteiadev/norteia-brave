@@ -18,6 +18,12 @@ class NullWikimediaClient:
     async def items_by_name(self, name: str, lat: float, lon: float, km: float) -> list[Any]:
         return []
 
+    async def municipio(self, ibge: str) -> Any | None:
+        return None
+
+    async def items_in_municipio(self, qid: str) -> list[Any]:
+        return []
+
     async def depicts(self, qid: str) -> list[str]:
         return []
 

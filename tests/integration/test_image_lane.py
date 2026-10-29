@@ -138,3 +138,84 @@ async def test_gallery_from_depicts_category_and_nearby(db_session, tmp_path) ->
     assert [(r.role, r.lane) for r in rows] == [
         ("cover", "p18"), ("gallery", "p180"), ("gallery", "p373"), ("gallery", "geo500"),
     ]
+
+
+# -- destino ----------------------------------------------------------------------
+
+ARACAJU = WdItem("Q186", frozenset(), ("File:Aracaju montagem.jpg",))
+
+
+def _destino(code: str = "2800308") -> RioRecord:
+    return RioRecord(
+        canonical_key=f"ibge:SE:{code}", entity_type="destination", uf="SE", municipio_id=code,
+        normalized={"name": "Aracaju", "municipio_id": code},
+    )
+
+
+def _seed_atrativo(db_session, key: str, reviews: int, code: str = "2800308") -> None:
+    """A persisted atrativo of the city (the destino fallback reads Rio)."""
+    import uuid
+
+    from brave.core.models import NascenteRecord
+
+    nascente = NascenteRecord(
+        id=uuid.uuid4(), source="tripadvisor", source_ref=key, entity_type="attraction", uf="SE",
+        payload={}, content_hash=f"hash:{key}", version=1,
+    )
+    db_session.add(nascente)
+    db_session.flush()
+    db_session.add(RioRecord(
+        nascente_id=nascente.id, canonical_key=key, entity_type="attraction", uf="SE",
+        municipio_id=code, routing="mar",
+        normalized={"name": key, "lat": -10.9, "lon": -37.0, "review_count": reviews},
+    ))
+    db_session.flush()
+
+
+async def test_destino_cover_is_the_municipio_p18(db_session, tmp_path) -> None:
+    good = WdItem("Q186", frozenset(), ("File:Orla de Aracaju.jpg",))
+    fake = FakeWikimediaClient(files={"File:Orla de Aracaju.jpg": photo("File:Orla de Aracaju.jpg")},
+                               municipio={"2800308": good})
+
+    result = await _agent(db_session, fake, tmp_path).run(_destino())
+
+    assert result.outcome == "matched"
+    [row] = _rows(db_session, "ibge:SE:2800308")
+    assert (row.role, row.lane, row.entity_type, row.wikidata_qid) == ("cover", "p18", "destination", "Q186")
+    lookup = db_session.get(ImageLookup, "ibge:SE:2800308")
+    assert (lookup.via, lookup.qid, lookup.dist_km) == ("ibge", "Q186", None)
+
+
+async def test_destino_falls_back_to_the_most_reviewed_atrativo_cover(db_session, tmp_path) -> None:
+    files = {t: photo(t) for t in ("File:Aracaju montagem.jpg", "File:Popular.jpg", "File:Menos.jpg")}
+    for key, reviews, title in (("ta:1", 10, "File:Menos.jpg"), ("ta:2", 900, "File:Popular.jpg")):
+        _seed_atrativo(db_session, key, reviews)
+        item = WdItem("Q" + key[-1], frozenset({key}), (title,))
+        await _agent(db_session, FakeWikimediaClient(around=[item], files=files), tmp_path).run(
+            _atrativo(key, name=key)
+        )
+    fake = FakeWikimediaClient(files=files, municipio={"2800308": ARACAJU})
+
+    await _agent(db_session, fake, tmp_path).run(_destino())
+
+    [row] = _rows(db_session, "ibge:SE:2800308")
+    assert (row.lane, row.image.commons_title) == ("atrativo", "File:Popular.jpg")
+    assert fake.count("download") == 0  # the atrativo's file is reused
+
+
+async def test_destino_last_resort_is_the_top_item_of_the_municipio(db_session, tmp_path) -> None:
+    files = {t: photo(t) for t in ("File:Aracaju montagem.jpg", "File:Orla.jpg")}
+    fake = FakeWikimediaClient(
+        files=files, municipio={"2800308": ARACAJU},
+        top={"Q186": [WdItem("Q7", frozenset(), ("File:Orla.jpg",), sitelinks=9)]},
+    )
+
+    await _agent(db_session, fake, tmp_path).run(_destino())
+
+    [row] = _rows(db_session, "ibge:SE:2800308")
+    assert (row.lane, row.image.commons_title) == ("muni_top", "File:Orla.jpg")
+
+
+async def test_destino_without_wikidata_item_is_no_match(db_session, tmp_path) -> None:
+    result = await _agent(db_session, FakeWikimediaClient(), tmp_path).run(_destino())
+    assert result.outcome == "no_match"

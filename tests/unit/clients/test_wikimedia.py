@@ -167,3 +167,27 @@ async def test_gallery_lanes_query_the_file_namespace(client) -> None:
     assert (depicts["srsearch"], depicts["srnamespace"]) == ("haswbstatement:P180=Q1", "6")
     assert (category["cmtitle"], category["cmnamespace"]) == ("Category:Praia do Saco", "6")
     assert (geo["gsradius"], geo["gsnamespace"]) == ("500", "6")
+
+
+async def test_municipio_and_its_top_items(client) -> None:
+    fp = "http://commons.wikimedia.org/wiki/Special:FilePath/"
+    with respx.mock:
+        route = respx.post(WDQS).mock(side_effect=[
+            httpx.Response(200, json={"results": {"bindings": [
+                {"item": {"value": "http://www.wikidata.org/entity/Q186"}, "p18": {"value": fp + "Aracaju.jpg"}},
+            ]}}),
+            httpx.Response(200, json={"results": {"bindings": [
+                {"item": {"value": "http://www.wikidata.org/entity/Q7"}, "p18": {"value": fp + "Orla.jpg"}, "sl": {"value": "9"}},
+                {"item": {"value": "http://www.wikidata.org/entity/Q8"}, "p18": {"value": fp + "Ponte.jpg"}, "sl": {"value": "4"}},
+            ]}}),
+            httpx.Response(200, json={"results": {"bindings": []}}),
+        ])
+        muni = await client.municipio("2800308")
+        top = await client.items_in_municipio("Q186")
+        assert await client.municipio("0000000") is None
+
+    assert (muni.qid, muni.p18) == ("Q186", ("File:Aracaju.jpg",))
+    assert [(i.qid, i.p18, i.sitelinks) for i in top] == [
+        ("Q7", ("File:Orla.jpg",), 9), ("Q8", ("File:Ponte.jpg",), 4),
+    ]
+    assert '"2800308"' in route.calls[0].request.content.decode().replace("%22", '"')
