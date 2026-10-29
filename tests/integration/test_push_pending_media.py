@@ -44,6 +44,18 @@ async def test_push_media_is_multipart_with_bearer() -> None:
     assert b'name="role"' in body and b"cover" in body and b'filename="a.jpg"' in body and b"img" in body
 
 
+async def test_own_client_gives_an_upload_more_than_the_httpx_default_timeout() -> None:
+    client = NorteiaApiClient(base_url=BASE, service_token="tok")
+    async with client:
+        assert client._client.timeout == httpx.Timeout(30.0, connect=5.0)
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        await client.push_media({"role": "cover", "sha1": "a" * 40}, b"img", "a.jpg", "image/jpeg")
+    assert route.calls.last.request.extensions["timeout"] == {
+        "connect": 5.0, "read": 30.0, "write": 30.0, "pool": 30.0,
+    }
+
+
 @pytest.fixture
 def h(db_engine, monkeypatch, tmp_path):
     conn = db_engine.connect()
@@ -71,6 +83,14 @@ def h(db_engine, monkeypatch, tmp_path):
     session.close()
     outer.rollback()
     conn.close()
+
+
+@pytest.fixture
+def beat(monkeypatch):
+    """The beat-health calls (task, exc) the outbox makes — what the Painel's beat_errors shows."""
+    calls: list = []
+    monkeypatch.setattr(pipeline, "_beat_health", lambda task, exc=None: calls.append((task, exc)))
+    return calls
 
 
 def _rio(h, key: str, entity_type: str, municipio: str = "9999999") -> RioRecord:
@@ -173,6 +193,142 @@ def test_permanent_4xx_is_recorded_and_repush_clears_it(h) -> None:
         assert pipeline.push_pending_media.run() == 1
     h.session.expire_all()
     assert row.pushed_at is not None
+
+
+@pytest.mark.parametrize("status", [401, 403, 408, 429])
+def test_auth_or_transient_4xx_ends_the_tick_and_leaves_rows_pending(h, beat, status) -> None:
+    for key in ("ta:1", "ta:2"):
+        _mar(h, _rio(h, key, "attraction"))
+    rows = [_photo(h, k, "attraction") for k in ("ta:1", "ta:2")]
+
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(status, json={"message": "nope"}))
+        if status in (401, 403):  # the token, not the photo: the task fails (beat_errors)
+            with pytest.raises(httpx.HTTPStatusError):
+                pipeline.push_pending_media.run()
+        else:
+            assert pipeline.push_pending_media.run() == 0
+
+    assert route.call_count == 1  # the tick stopped at the first one
+    h.session.expire_all()
+    assert [(r.pushed_at, r.push_error) for r in rows] == [(None, None), (None, None)]
+    failed = isinstance(beat[-1][1], httpx.HTTPStatusError)
+    assert beat[-1][0] == "brave.push_pending_media" and failed == (status in (401, 403))
+
+
+def test_no_photo_in_the_archive_fails_the_tick_and_marks_nothing(h, beat) -> None:
+    for key in ("ta:1", "ta:2"):
+        _mar(h, _rio(h, key, "attraction"))
+    rows = [_photo(h, k, "attraction") for k in ("ta:1", "ta:2")]
+    for r in rows:  # e.g. BRAVE_IMAGES_STORE switched to a bucket the archive was never copied to
+        (h.store._root / h.session.get(Image, r.image_id).storage_key).unlink()
+
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        with pytest.raises(FileNotFoundError, match="wrong store or bucket"):
+            pipeline.push_pending_media.run()
+
+    assert route.call_count == 0
+    h.session.expire_all()
+    assert [(r.pushed_at, r.push_error) for r in rows] == [(None, None), (None, None)]
+    assert isinstance(beat[-1][1], FileNotFoundError)
+
+
+def test_lost_photos_alone_in_a_tick_are_recorded_when_the_archive_holds_a_pushed_one(h) -> None:
+    for key in ("ta:1", "ta:2"):
+        _mar(h, _rio(h, key, "attraction"))
+    sent, gone = (_photo(h, k, "attraction") for k in ("ta:1", "ta:2"))
+    sent.pushed_at = datetime.now(UTC)  # an earlier tick: its file proves this is the right archive
+    h.session.commit()
+    (h.store._root / h.session.get(Image, gone.image_id).storage_key).unlink()
+
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        assert pipeline.push_pending_media.run() == 0
+
+    assert route.call_count == 0
+    h.session.expire_all()
+    assert gone.push_error.startswith("archive:") and gone.pushed_at is None
+
+
+def test_lost_pushed_files_do_not_decide_the_archive_proof(h) -> None:
+    keys = [f"ta:{n}" for n in range(6)]
+    for key in keys:
+        _mar(h, _rio(h, key, "attraction"))
+    *lost, kept, gone = (_photo(h, k, "attraction") for k in keys)
+    for day, r in enumerate(lost, start=20):  # the latest pushes, their files since lost
+        r.pushed_at = datetime(2026, 10, day, tzinfo=UTC)
+    kept.pushed_at = datetime(2026, 10, 1, tzinfo=UTC)  # an older push, still in the archive
+    h.session.commit()
+    for r in (*lost, gone):
+        (h.store._root / h.session.get(Image, r.image_id).storage_key).unlink()
+
+    with respx.mock:
+        respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        assert pipeline.push_pending_media.run() == 0
+
+    h.session.expire_all()
+    assert gone.push_error.startswith("archive:") and gone.pushed_at is None
+
+
+@pytest.mark.parametrize("reply", [503, httpx.ConnectError("down")], ids=["5xx", "transport"])
+def test_a_5xx_or_transport_error_ends_the_tick_and_leaves_rows_pending(h, beat, monkeypatch, reply) -> None:
+    from tenacity import wait_none
+
+    from brave.clients import norteia_api
+
+    monkeypatch.setattr(norteia_api, "wait_exponential", lambda **_: wait_none())  # retries kept, no backoff
+    for key in ("ta:1", "ta:2"):
+        _mar(h, _rio(h, key, "attraction"))
+    rows = [_photo(h, k, "attraction") for k in ("ta:1", "ta:2")]
+
+    with respx.mock:
+        if isinstance(reply, int):
+            route = respx.post(MEDIA).mock(return_value=httpx.Response(reply, json={"message": "busy"}))
+        else:
+            route = respx.post(MEDIA).mock(side_effect=reply)
+        assert pipeline.push_pending_media.run() == 0
+
+    assert route.call_count >= 1
+    assert all(b"ta:1" in c.request.content for c in route.calls)  # the tick never reached ta:2
+    h.session.expire_all()
+    assert [(r.pushed_at, r.push_error) for r in rows] == [(None, None), (None, None)]
+    assert beat[-1] == ("brave.push_pending_media", None)
+
+
+def test_a_store_error_other_than_a_missing_key_fails_the_tick_and_marks_nothing(h, beat, monkeypatch) -> None:
+    _mar(h, _rio(h, "ta:1", "attraction"))
+    row = _photo(h, "ta:1", "attraction")
+
+    def denied(self, key: str) -> bytes:  # e.g. R2 AccessDenied: the archive, not the photo
+        raise PermissionError(key)
+
+    monkeypatch.setattr(LocalImageStore, "get", denied)
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        with pytest.raises(PermissionError):
+            pipeline.push_pending_media.run()
+
+    assert route.call_count == 0
+    h.session.expire_all()
+    assert (row.pushed_at, row.push_error) == (None, None)
+    assert isinstance(beat[-1][1], PermissionError)
+
+
+def test_a_missing_archive_file_is_recorded_and_the_rest_still_go(h) -> None:
+    for key in ("ta:1", "ta:2"):
+        _mar(h, _rio(h, key, "attraction"))
+    gone, ok = (_photo(h, k, "attraction") for k in ("ta:1", "ta:2"))
+    (h.store._root / h.session.get(Image, gone.image_id).storage_key).unlink()
+
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        assert pipeline.push_pending_media.run() == 1
+
+    assert route.call_count == 1
+    h.session.expire_all()
+    assert gone.push_error.startswith("archive:") and gone.pushed_at is None
+    assert ok.pushed_at is not None
 
 
 def test_removed_or_already_pushed_rows_are_skipped(h) -> None:

@@ -39,6 +39,9 @@ _PATHS = {
     "attraction": "/api/internal/territorial/attractions",
     "media": "/api/internal/territorial/media",
 }
+# httpx's 5 s default is shorter than a photo upload can take (the API waits up to 3 s on a
+# busy entity, then stores the file); a ReadTimeout would end the whole media tick.
+_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
 
 
 def _is_5xx(exc: BaseException) -> bool:
@@ -80,7 +83,7 @@ class NorteiaApiClient:
         if self._injected_client is not None:
             self._client = self._injected_client
         else:
-            self._client = httpx.AsyncClient()
+            self._client = httpx.AsyncClient(timeout=_TIMEOUT)
         return self
 
     async def __aexit__(self, *args: Any) -> None:

@@ -63,6 +63,24 @@ def test_r2_other_errors_raise() -> None:
         store.put("images/ab/x.jpg", b"img", "image/jpeg")
 
 
+def test_a_missing_key_is_file_not_found_on_both_backends(tmp_path) -> None:
+    with pytest.raises(FileNotFoundError):
+        LocalImageStore(tmp_path).get("images/ab/gone.jpg")
+    store, stub = _r2()
+    stub.add_client_error("get_object", "NoSuchKey", http_status_code=404)
+    with stub, pytest.raises(FileNotFoundError):
+        store.get("images/ab/gone.jpg")
+
+
+def test_r2_get_other_errors_are_not_a_missing_key() -> None:
+    from botocore.exceptions import ClientError
+
+    store, stub = _r2()
+    stub.add_client_error("get_object", "AccessDenied", http_status_code=403)
+    with stub, pytest.raises(ClientError):
+        store.get("images/ab/x.jpg")
+
+
 def test_store_for_r2_needs_its_settings(tmp_path) -> None:
     assert isinstance(image_store_for(ImagesConfig(local_dir=str(tmp_path))), LocalImageStore)
     with pytest.raises(ValueError, match="BRAVE_IMAGES_R2_BUCKET"):
