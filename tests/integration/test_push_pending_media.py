@@ -73,6 +73,14 @@ def h(db_engine, monkeypatch, tmp_path):
     conn.close()
 
 
+@pytest.fixture
+def beat(monkeypatch):
+    """The beat-health calls (task, exc) the outbox makes — what the Painel's beat_errors shows."""
+    calls: list = []
+    monkeypatch.setattr(pipeline, "_beat_health", lambda task, exc=None: calls.append((task, exc)))
+    return calls
+
+
 def _rio(h, key: str, entity_type: str, municipio: str = "9999999") -> RioRecord:
     n = NascenteRecord(id=uuid.uuid4(), source="t", source_ref=key, entity_type=entity_type,
                        uf="ZZ", payload={}, content_hash=f"h:{key}", version=1)
@@ -176,7 +184,7 @@ def test_permanent_4xx_is_recorded_and_repush_clears_it(h) -> None:
 
 
 @pytest.mark.parametrize("status", [401, 403, 408, 429])
-def test_auth_or_transient_4xx_ends_the_tick_and_leaves_rows_pending(h, status) -> None:
+def test_auth_or_transient_4xx_ends_the_tick_and_leaves_rows_pending(h, beat, status) -> None:
     for key in ("ta:1", "ta:2"):
         _mar(h, _rio(h, key, "attraction"))
     rows = [_photo(h, k, "attraction") for k in ("ta:1", "ta:2")]
@@ -192,9 +200,11 @@ def test_auth_or_transient_4xx_ends_the_tick_and_leaves_rows_pending(h, status) 
     assert route.call_count == 1  # the tick stopped at the first one
     h.session.expire_all()
     assert [(r.pushed_at, r.push_error) for r in rows] == [(None, None), (None, None)]
+    failed = isinstance(beat[-1][1], httpx.HTTPStatusError)
+    assert beat[-1][0] == "brave.push_pending_media" and failed == (status in (401, 403))
 
 
-def test_no_photo_in_the_archive_fails_the_tick_and_marks_nothing(h) -> None:
+def test_no_photo_in_the_archive_fails_the_tick_and_marks_nothing(h, beat) -> None:
     for key in ("ta:1", "ta:2"):
         _mar(h, _rio(h, key, "attraction"))
     rows = [_photo(h, k, "attraction") for k in ("ta:1", "ta:2")]
@@ -209,6 +219,43 @@ def test_no_photo_in_the_archive_fails_the_tick_and_marks_nothing(h) -> None:
     assert route.call_count == 0
     h.session.expire_all()
     assert [(r.pushed_at, r.push_error) for r in rows] == [(None, None), (None, None)]
+    assert isinstance(beat[-1][1], FileNotFoundError)
+
+
+def test_lost_photos_alone_in_a_tick_are_recorded_when_the_archive_holds_a_pushed_one(h) -> None:
+    for key in ("ta:1", "ta:2"):
+        _mar(h, _rio(h, key, "attraction"))
+    sent, gone = (_photo(h, k, "attraction") for k in ("ta:1", "ta:2"))
+    sent.pushed_at = datetime.now(UTC)  # an earlier tick: its file proves this is the right archive
+    h.session.commit()
+    (h.store._root / h.session.get(Image, gone.image_id).storage_key).unlink()
+
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        assert pipeline.push_pending_media.run() == 0
+
+    assert route.call_count == 0
+    h.session.expire_all()
+    assert gone.push_error.startswith("archive:") and gone.pushed_at is None
+
+
+def test_a_store_error_other_than_a_missing_key_fails_the_tick_and_marks_nothing(h, beat, monkeypatch) -> None:
+    _mar(h, _rio(h, "ta:1", "attraction"))
+    row = _photo(h, "ta:1", "attraction")
+
+    def denied(self, key: str) -> bytes:  # e.g. R2 AccessDenied: the archive, not the photo
+        raise PermissionError(key)
+
+    monkeypatch.setattr(LocalImageStore, "get", denied)
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        with pytest.raises(PermissionError):
+            pipeline.push_pending_media.run()
+
+    assert route.call_count == 0
+    h.session.expire_all()
+    assert (row.pushed_at, row.push_error) == (None, None)
+    assert isinstance(beat[-1][1], PermissionError)
 
 
 def test_a_missing_archive_file_is_recorded_and_the_rest_still_go(h) -> None:

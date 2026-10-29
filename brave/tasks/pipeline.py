@@ -610,10 +610,11 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
 
     Bytes come from the Brave archive. 2xx (created or already there by sha1) stamps
     pushed_at; a destino 404 stays pending with no error; a photo missing from the archive
-    (while others in the tick are there) or any other 4xx stamps push_error (images-repush
-    clears it). A 5xx (after the client's retries), a 408/429 or a transport error ends the
-    tick — the rest waits for the next one. A 401/403, or a tick where no photo is in the
-    archive, fails the task (beat_errors) and marks nothing. No-op while externals are off or
+    (while the archive holds another one of this tick, or one already pushed) or any other
+    4xx stamps push_error (images-repush clears it). A 5xx (after the client's retries), a
+    408/429 or a transport error ends the tick — the rest waits for the next one. A 401/403,
+    or misses with no proof that this is the right archive, fail the task (beat_errors) and
+    mark nothing. No-op while externals are off or
     norteia-api is down. Returns how many were stamped pushed.
     """
     from datetime import datetime  # noqa: PLC0415
@@ -653,6 +654,19 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
             session.execute(update(EntityImage).where(EntityImage.id == row_id).values(**values))
             session.commit()
 
+        def _archive_holds_a_pushed_photo(missing_keys: list[str]) -> bool:
+            probe = session.scalar(
+                select(Image.storage_key)
+                .join(EntityImage, EntityImage.image_id == Image.id)
+                .where(EntityImage.pushed_at.is_not(None), Image.storage_key.not_in(missing_keys))
+                .limit(1)
+            )
+            session.rollback()
+            try:
+                return probe is not None and bool(store.get(probe))
+            except FileNotFoundError:
+                return False
+
         async def _push() -> int:
             pushed, found, missing = 0, False, []
             # ponytail: 404 destinos stay first in created_at order; if a whole batch of them
@@ -683,9 +697,10 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
                 if ok:
                     _stamp(row_id, pushed_at=datetime.now(UTC))
                     pushed += 1
-            # No key found at all = the wrong store or bucket, not lost photos: fail the tick
-            # and mark nothing. A miss next to a hit is a lost photo.
-            if missing and not found:
+            # A miss is a lost photo once the archive proves itself: a hit in this tick, or a
+            # photo already pushed still there. Neither = the wrong store or bucket: fail the
+            # tick and mark nothing.
+            if missing and not found and not _archive_holds_a_pushed_photo([m[2] for m in missing]):
                 raise FileNotFoundError(f"{len(missing)} photos, none in the archive: wrong store or bucket?")
             for row_id, key, storage_key in missing:
                 _stamp(row_id, push_error=f"archive: {storage_key} missing")
