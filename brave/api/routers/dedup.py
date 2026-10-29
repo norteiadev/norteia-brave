@@ -262,6 +262,23 @@ def list_dedup_pairs(
     ).model_dump()
 
 
+def merge_into_mar(rio: RioRecord, mar: MarRecord) -> None:
+    """The merge of a dedup pair, no audit and no commit (scripts/territorial_dedup_fixes.py)."""
+    # UNION the candidate's source_ref into the existing Mar provenance.
+    # RioRecord has no source_ref column, so derive it the same way the Mar
+    # promotion service does (mar/service.py:41): canonical_key or the row id.
+    candidate_source_ref = rio.canonical_key or str(rio.id)
+    provenance = dict(mar.provenance or {})
+    merged = list(provenance.get("merged_source_refs", []))
+    merged.append(candidate_source_ref)
+    # Reassign a fresh dict so SQLAlchemy detects the JSON change.
+    mar.provenance = {**provenance, "merged_source_refs": merged}
+    # Discard the candidate Rio from the pending dedup pool — do NOT create a
+    # 2nd active Mar, do NOT touch mar.source_ref, do NOT run the Mar
+    # promotion/supersession path.
+    rio.routing = "descarte"
+
+
 @router.patch(
     "/api/v1/dedup/pairs/{candidate_rio_id}/resolve",
     status_code=200,
@@ -298,19 +315,7 @@ def resolve_pair(
         mar = db.get(MarRecord, body.mar_id)
         if mar is None:
             raise HTTPException(status_code=404, detail="MarRecord not found")
-        # UNION the candidate's source_ref into the existing Mar provenance.
-        # RioRecord has no source_ref column, so derive it the same way the Mar
-        # promotion service does (mar/service.py:41): canonical_key or the row id.
-        candidate_source_ref = rio.canonical_key or str(rio.id)
-        provenance = dict(mar.provenance or {})
-        merged = list(provenance.get("merged_source_refs", []))
-        merged.append(candidate_source_ref)
-        # Reassign a fresh dict so SQLAlchemy detects the JSON change.
-        mar.provenance = {**provenance, "merged_source_refs": merged}
-        # Discard the candidate Rio from the pending dedup pool — do NOT create a
-        # 2nd active Mar, do NOT touch mar.source_ref, do NOT run the Mar
-        # promotion/supersession path.
-        rio.routing = "descarte"
+        merge_into_mar(rio, mar)
         action = "dedup_merged"
     else:  # keep
         action = "dedup_kept"

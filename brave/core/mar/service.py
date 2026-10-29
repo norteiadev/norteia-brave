@@ -269,6 +269,9 @@ def upsert_mar_snapshot(session: Session, rio_record: RioRecord) -> MarRecord:
 
     # Check for existing active MarRecord (D-15)
     existing = _mar_repo.get_active_by_source_ref(session, source_ref)
+    # A dedup merge (resolve_pair) writes merged_source_refs on the Mar only, never the Rio.
+    if existing is not None and "merged_source_refs" in (existing.provenance or {}):
+        provenance["merged_source_refs"] = existing.provenance["merged_source_refs"]
 
     if existing is not None:
         # Idempotent no-op (D-15): re-promoting unchanged data (e.g. a CLI
