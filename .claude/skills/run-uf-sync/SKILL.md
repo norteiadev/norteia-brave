@@ -75,7 +75,7 @@ Watch it with `MONITOR_SOURCE=descricao scripts/monitors/sweep.sh` (same reports
 .claude/skills/run-uf-sync/scripts/api.sh POST /api/v1/engine/start '{"action":"images","ufs":["<UF>"]}'
 ```
 
-Cover and gallery from Wikidata + Wikimedia Commons into the Brave archive (`entity_images`), atrativos first, then the UF's destinos. Free, but serial: about 15 s per atrativo (paced Wikimedia calls). Watch it with `MONITOR_SOURCE=imagens scripts/monitors/sweep.sh`. Done when it prints `FIM run … status=concluido`. A 409 means `images_enrichment_enabled` (Painel config) or real externals is off: the lane is optional, so tell the user and go on to Promote. The photos are pushed later by the `push-pending-media-15min` beat, only for entities already on norteia-api (step 8).
+Cover and gallery from Wikidata + Wikimedia Commons into the Brave archive (`entity_images`), atrativos first, then the UF's destinos. Free, but serial (paced Wikimedia calls). SE pilot, 29/10 (20 atrativos + 32 destinos): median 13 s per atrativo (p90 27 s), 7 s per destino; 25% of atrativos and 50% of destinos got a photo. Watch it with `MONITOR_SOURCE=imagens scripts/monitors/sweep.sh`. Done when it prints `FIM run … status=concluido`. A 409 means `images_enrichment_enabled` (Painel config) or real externals is off: the lane is optional, so tell the user and go on to Promote. The photos are pushed later by the `push-pending-media-15min` beat, only for entities already on norteia-api (step 8).
 
 ## 7. Promote
 
