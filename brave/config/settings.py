@@ -395,6 +395,7 @@ class ImagesConfig(BaseSettings):
     backoff_s: float = 2.0
     around_km: float = 5.0
     name_km: float = 30.0
+    name_area_km: float = 100.0
     geo_m: int = 500
     gallery_max: int = 5
     # The upload server only renders its standard widths; any other width is a 400.

@@ -24,6 +24,15 @@ def test_generic_word_alone_never_matches_the_city() -> None:
     assert name_score("Igreja Matriz", "Igreja do Carmo") == 0
 
 
+def test_same_place_in_other_words() -> None:
+    """The e2e misses of 30/10 (Ouro Preto) match; the near-misses around them don't."""
+    assert name_score("Basílica de Nossa Senhora do Pilar", "Igreja Matriz de Nossa Senhora do Pilar") == 1.0
+    assert name_score("Centro Histórico de Ouro Preto", "Cidade Histórica de Ouro Preto") == 1.0
+    assert name_score("Recife Antigo", "Antigo Hotel Central de Recife") == 0
+    assert name_score("Igreja de Nossa Senhora do Rosário", "Igreja de Nossa Senhora do Pilar") == 0
+    assert name_score("Igreja São Francisco", "Igreja de São Francisco de Assis (Ouro Preto)") > 0
+
+
 def test_best_match_prefers_score_then_distance() -> None:
     far = WdItem("Q1", frozenset({"Praia do Saco"}), dist_km=4.0)
     near = WdItem("Q2", frozenset({"Praia do Saco"}), dist_km=1.0)

@@ -3,7 +3,7 @@
 ``run(rio)``:
   1. ``image_lookups`` row with a final outcome (matched / no_match) → nothing to do (None).
   2. Resolve the Wikidata QID (atrativo: items within around_km name-matched, else entity
-     search by name within name_km). No QID → no photo at all: "a photo from nearby"
+     search by name within name_km, name_area_km for an item with an area). No QID → no photo at all: "a photo from nearby"
      misleads (the Jolimont case).
   3. Candidate titles per lane → imageinfo → policy picks.
   4. Each pick reuses its ``images`` row by commons_title (then by sha1 of the bytes);
@@ -87,7 +87,9 @@ class ImageLaneAgent:
         match = best_match(name, await self._wm.items_around(lat, lon, self._cfg.around_km))
         if match is not None:
             return match, "around5km"
-        match = best_match(name, await self._wm.items_by_name(name, lat, lon, self._cfg.name_km))
+        match = best_match(name, await self._wm.items_by_name(
+            name, lat, lon, self._cfg.name_km, self._cfg.name_area_km
+        ))
         return match, ("name30km" if match else None)
 
     async def _attraction(self, rio: RioRecord) -> tuple[LaneResult, WdItem | None, str | None]:

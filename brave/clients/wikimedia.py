@@ -253,11 +253,16 @@ class WikimediaClient:
               OPTIONAL {{ ?item wdt:P373 ?p373 }}
             }} LIMIT 3000"""))
 
-    async def items_by_name(self, name: str, lat: float, lon: float, km: float) -> list[WdItem]:
-        """Entity search for ``name`` (pt), kept when its coordinates are within ``km``.
+    async def items_by_name(
+        self, name: str, lat: float, lon: float, km: float, area_km: float | None = None
+    ) -> list[WdItem]:
+        """Entity search for ``name`` (pt), kept when its coordinates are within ``km`` —
+        or ``area_km`` for an item with an area (P2046): a national park's coordinates are
+        its centroid, tens of km from the gate the attraction points at.
 
         The fallback for drifted coordinates: the caller still has to name-match the labels.
         """
+        area_km = km if area_km is None else area_km
         return _items(await self._sparql(f"""
             SELECT ?item ?label ?p18 ?p373 ?dist WHERE {{
               SERVICE wikibase:mwapi {{
@@ -269,8 +274,9 @@ class WikimediaClient:
               FILTER NOT EXISTS {{ ?item wdt:P1585 [] }}
               OPTIONAL {{ ?item wdt:P18 ?p18 }}
               OPTIONAL {{ ?item wdt:P373 ?p373 }}
+              OPTIONAL {{ ?item wdt:P2046 ?area }}
               BIND(geof:distance(?loc, "Point({lon} {lat})"^^geo:wktLiteral) AS ?dist)
-              FILTER(?dist <= {km})
+              FILTER(?dist <= {km} || (BOUND(?area) && ?dist <= {area_km}))
             }} LIMIT 200"""))
 
     async def municipio(self, ibge: str) -> WdItem | None:
