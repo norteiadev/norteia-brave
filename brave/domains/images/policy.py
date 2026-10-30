@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from brave.clients.wikimedia import CommonsFile
+from brave.domains.images.matching import GENERIC, norm
 
 # File names that look like page chrome rather than photographs (en + pt).
 CHROME = (
@@ -26,10 +27,10 @@ COLLAGE = ("collage", "montagem", "montage", "mosaico", "composicao", "composiç
 COVER_MIN_WIDTH = 1280
 COVER_MIN_ASPECT = 1.2
 
-# Attraction: a cover is a photo OF the item (P18, then P180); proximity (geo500) and the
-# item's category (P373) are gallery-only.
-ATTRACTION_COVER_LANES = ("p18", "p180")
-ATTRACTION_GALLERY_LANES = ("p180", "p373", "geo500")
+# Attraction: a cover is a photo OF the item: P18, then P180, then the item's own Commons
+# category (P373). Proximity (geo500) is gallery-only.
+ATTRACTION_COVER_LANES = ("p18", "p180", "p373")
+ATTRACTION_GALLERY_LANES = ("p18", "p180", "p373", "geo500")  # p18: one that lost the cover
 
 
 @dataclass(frozen=True)
@@ -100,14 +101,31 @@ def _usable(
     return out
 
 
+def _names_it(title: str, name: str) -> bool:
+    """The file title carries every specific word of the entity's name. P180 and P373 are
+    noisy: the church next door also "depicts" the square."""
+    want = set(norm(name)) - GENERIC
+    return bool(want) and want <= set(norm(title))
+
+
 def pick_attraction(
-    lanes: Mapping[str, Sequence[str]], files: Mapping[str, CommonsFile], gallery_max: int
+    lanes: Mapping[str, Sequence[str]], files: Mapping[str, CommonsFile], gallery_max: int,
+    name: str = "",
 ) -> tuple[list[Pick], Counter[str]]:
-    """Cover = first usable P18, else P180. Gallery = the rest of P180, then P373, then
-    geo500, up to ``gallery_max``. Returns the picks and the rejection counts by reason."""
+    """Cover = the first usable photo at least COVER_MIN_WIDTH wide that is P18, or P180 /
+    P373 titled with ``name``; with none, the first usable P18, else P180, else P373.
+    Gallery = the rest of P18, P180, P373, then geo500, up to ``gallery_max``. Returns the
+    picks and the rejection counts by reason."""
     rejected: Counter[str] = Counter()
     ok = _usable(lanes, files, rejected)
-    cover = next((Pick(ok[lane][0], "cover", 0, lane) for lane in ATTRACTION_COVER_LANES if ok.get(lane)), None)
+    cands = [(lane, t) for lane in ATTRACTION_COVER_LANES for t in ok.get(lane, [])]
+    wide = (
+        c for c in cands
+        if files[c[1]].width >= COVER_MIN_WIDTH and (c[0] == "p18" or _names_it(c[1], name))
+    )
+    # ponytail: a small photo stays small; automatic resizing is a later decision (30/10).
+    best = next(wide, None) or (cands[0] if cands else None)
+    cover = Pick(best[1], "cover", 0, best[0]) if best else None
     used = {cover.title} if cover else set()
     gallery: list[Pick] = []
     for lane in ATTRACTION_GALLERY_LANES:

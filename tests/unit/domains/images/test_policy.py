@@ -104,7 +104,33 @@ def test_attraction_gallery_order_and_limit() -> None:
     ]
 
 
-def test_geo500_and_p373_never_become_the_cover() -> None:
-    lanes = {"p373": ["File:C1.jpg"], "geo500": ["File:G1.jpg"]}
+def test_geo500_never_becomes_the_cover() -> None:
+    lanes = {"geo500": ["File:G1.jpg"]}
+    picks, _ = pick_attraction(lanes, {"File:G1.jpg": _f("File:G1.jpg")}, gallery_max=5)
+    assert [p.role for p in picks] == ["gallery"]
+
+
+def test_p373_is_the_last_resort_cover() -> None:
+    """Praia de Boa Viagem: no P18, no P180, only its Commons category."""
+    lanes = {"p18": [], "p180": [], "p373": ["File:C1.jpg", "File:C2.jpg"], "geo500": ["File:G1.jpg"]}
     picks, _ = pick_attraction(lanes, {t: _f(t) for ts in lanes.values() for t in ts}, gallery_max=5)
-    assert [p.role for p in picks] == ["gallery", "gallery"]
+    assert [(p.title, p.role, p.lane) for p in picks] == [
+        ("File:C1.jpg", "cover", "p373"), ("File:C2.jpg", "gallery", "p373"), ("File:G1.jpg", "gallery", "geo500"),
+    ]
+
+
+def test_a_wide_photo_titled_with_the_name_beats_a_small_p18() -> None:
+    """Museu da Inconfidência: P18 is 864 px; a 1800 px P180 named after the museum wins.
+    A wide P180 of something else (the church next door) never does."""
+    name = "Museu da Inconfidência"
+    lanes = {"p18": ["File:Small.jpg"], "p180": ["File:Igreja das Mercês.jpg", "File:Casa, atual Museu da Inconfidência.jpg"]}
+    files = {"File:Small.jpg": _f("File:Small.jpg", w=864, h=665),
+             "File:Igreja das Mercês.jpg": _f("File:Igreja das Mercês.jpg", w=4000, h=3000),
+             "File:Casa, atual Museu da Inconfidência.jpg": _f("File:Casa, atual Museu da Inconfidência.jpg", w=1800, h=1200)}
+    picks, _ = pick_attraction(lanes, files, gallery_max=5, name=name)
+    assert picks[0] == Pick("File:Casa, atual Museu da Inconfidência.jpg", "cover", 0, "p180")
+    assert picks[1] == Pick("File:Small.jpg", "gallery", 1, "p18")  # the P18 that lost the cover
+
+    del files["File:Casa, atual Museu da Inconfidência.jpg"]
+    picks, _ = pick_attraction(lanes, files, gallery_max=5, name=name)
+    assert picks[0] == Pick("File:Small.jpg", "cover", 0, "p18")  # nothing better: what there is
