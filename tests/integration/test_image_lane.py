@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from brave.clients.image_store import LocalImageStore
 from brave.clients.wikimedia import WdItem, WikimediaError
@@ -22,6 +23,19 @@ from tests.fakes.fake_wikimedia import FakeWikimediaClient, photo
 pytestmark = pytest.mark.integration
 
 SACO = WdItem("Q1", frozenset({"Praia do Saco"}), ("File:Saco.jpg",), dist_km=1.2)
+
+
+@pytest.fixture
+def db_session(db_engine):
+    """The agent commits each archived Image: its commits become SAVEPOINT releases of an
+    outer transaction rolled back after the test."""
+    conn = db_engine.connect()
+    outer = conn.begin()
+    session = Session(bind=conn, join_transaction_mode="create_savepoint")
+    yield session
+    session.close()
+    outer.rollback()
+    conn.close()
 
 
 def _atrativo(key: str = "tripadvisor:attraction:1", name: str = "Praia do Saco") -> RioRecord:

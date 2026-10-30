@@ -5,8 +5,11 @@ poc_db_images.py and poc_gallery.py), shaped like brave/clients/nominatim.py.
 
 House rules, all verified against the live services:
   - A descriptive User-Agent is MANDATORY (no UA or a library UA → 403).
-  - Requests go out in SERIES (API:Etiquette, WDQS limits): one gap between ANY two
-    Wikimedia calls, local gate + a Redis slot shared by every worker process.
+  - Requests go out in SERIES per service (Robot policy: Action API concurrency 1, upload
+    server ≤2, WDQS ≤5 per IP): WDQS, the Commons API and the upload server each get their
+    own lane — a local lock held through the request plus a Redis slot shared by every
+    worker process, ``min_interval_s`` apart. Different services overlap. A Commons API
+    request that took >1 s holds that lane for 5 s (Robot policy, Action API rule 4).
   - Commons answers HTTP 200 with ``{"error": {"code": "cirrussearch-too-busy-error"}}``
     (also ``maxlag``, ``ratelimited``). Read as an empty result it silently wipes a lane,
     so those codes are retried like a 429; any other error code raises at once.
@@ -42,6 +45,10 @@ WIKIMEDIA_SLOT_KEY: str = "brave:wikimedia:slot"
 
 # Commons API error codes that mean "come back later", not "no result".
 _BUSY_CODES = frozenset({"cirrussearch-too-busy-error", "maxlag", "ratelimited"})
+
+# Robot policy (wikitech.wikimedia.org/wiki/Robot_policy), Action API rule 4.
+_SLOW_API_S = 1.0
+_SLOW_API_WAIT_S = 5.0
 
 _EXT_KEYS = ("License", "LicenseShortName", "LicenseUrl", "Artist", "Restrictions", "Assessments")
 
@@ -137,7 +144,7 @@ _NOT_A_PLACE = """
 
 
 class WikimediaClient:
-    """Real Wikimedia client — async httpx, tenacity retry, serial pacing.
+    """Real Wikimedia client — async httpx, tenacity retry, serial pacing per service.
 
     Args:
         config: ImagesConfig (URLs, UA, pacing, retry, thumb width).
@@ -154,7 +161,8 @@ class WikimediaClient:
             )
         self._config = config
         self._redis = redis
-        self._last_request_ts = 0.0
+        self._not_before: dict[str, float] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
         self._hc: httpx.AsyncClient | None = None
 
     def _new_http(self) -> httpx.AsyncClient:
@@ -181,27 +189,46 @@ class WikimediaClient:
         async with self._new_http() as hc:
             yield hc
 
-    async def _pace(self) -> None:
-        """Local gap, then the cross-process slot (best-effort, as in nominatim.py)."""
-        gap = self._config.min_interval_s - (time.monotonic() - self._last_request_ts)
+    async def _pace(self, lane: str) -> None:
+        """Wait out the lane's local gap, then take its cross-process slot (best-effort, as
+        in nominatim.py)."""
+        gap = self._not_before.get(lane, 0.0) - time.monotonic()
         if gap > 0:
             await asyncio.sleep(gap)
-        self._last_request_ts = time.monotonic()
+        self._not_before[lane] = time.monotonic() + self._config.min_interval_s
         px = int(self._config.min_interval_s * 1000)
         if px <= 0:
             return
+        key = f"{WIKIMEDIA_SLOT_KEY}:{lane}"
         # ponytail: SET NX PX spin on one key, no fairness; a queue if many workers contend.
+        # The slot spaces request STARTS across processes but is not held through the
+        # request, so two worker processes can each have one in flight on a service (the
+        # Action API asks for 1). Fine with today's single worker pool; hold the key until
+        # the response (SET NX + DEL) if several workers ever run the image lane.
         try:
             for _ in range(100):
-                if self._redis.set(WIKIMEDIA_SLOT_KEY, "1", nx=True, px=px):
+                if self._redis.set(key, "1", nx=True, px=px):
                     return
-                await asyncio.sleep(max(self._redis.pttl(WIKIMEDIA_SLOT_KEY), 10) / 1000)
+                await asyncio.sleep(max(self._redis.pttl(key), 10) / 1000)
         except Exception as exc:  # noqa: BLE001
             logger.warning("wikimedia_slot_error", error=type(exc).__name__)
 
-    async def _send(self, method: str, url: str, *, api: bool = False, **kw: Any) -> httpx.Response:
-        """One paced request with retry. ``api=True`` also checks Commons' 200-with-error."""
+    def _hold(self, lane: str, seconds: float) -> None:
+        """No request on ``lane`` for ``seconds``, in this process and (via the slot) in
+        every other one."""
+        self._not_before[lane] = time.monotonic() + seconds
+        try:
+            self._redis.set(f"{WIKIMEDIA_SLOT_KEY}:{lane}", "1", px=int(seconds * 1000))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("wikimedia_slot_error", error=type(exc).__name__)
+
+    async def _send(self, lane: str, method: str, url: str, *, api: bool = False, **kw: Any) -> httpx.Response:
+        """One paced request with retry, in series within ``lane`` (wdqs / api / upload):
+        the lane's lock is held through the request (never through the retry backoff), so
+        this process never has two in flight on one service. ``api=True`` also checks
+        Commons' 200-with-error."""
         cfg = self._config
+        lock = self._locks.setdefault(lane, asyncio.Lock())
         async for attempt in AsyncRetrying(
             retry=retry_if_exception(_retryable),
             stop=stop_after_attempt(cfg.max_attempts),
@@ -209,9 +236,17 @@ class WikimediaClient:
             reraise=True,
         ):
             with attempt:
-                await self._pace()
-                async with self._http() as hc:
-                    resp = await hc.request(method, url, **kw)
+                async with lock:
+                    await self._pace(lane)
+                    t0 = time.monotonic()
+                    try:
+                        async with self._http() as hc:
+                            resp = await hc.request(method, url, **kw)
+                    finally:
+                        # Robot policy, Action API: a request that took more than 1 s to
+                        # serve → wait 5 s before the next one.
+                        if lane == "api" and time.monotonic() - t0 > _SLOW_API_S:
+                            self._hold(lane, _SLOW_API_WAIT_S)
                 resp.raise_for_status()
                 if api:
                     err = resp.json().get("error")
@@ -223,14 +258,14 @@ class WikimediaClient:
 
     async def _api(self, params: dict[str, Any]) -> dict[str, Any]:
         resp = await self._send(
-            "GET", self._config.commons_api, api=True,
+            "api", "GET", self._config.commons_api, api=True,
             params={**params, "format": "json", "formatversion": "2"},
         )
         return resp.json()
 
     async def _sparql(self, query: str) -> list[dict[str, Any]]:
         resp = await self._send(
-            "POST", self._config.wdqs_url, data={"query": query},
+            "wdqs", "POST", self._config.wdqs_url, data={"query": query},
             headers={"Accept": "application/sparql-results+json"},
         )
         return resp.json()["results"]["bindings"]
@@ -369,7 +404,7 @@ class WikimediaClient:
 
     async def download(self, f: CommonsFile) -> tuple[bytes, str]:
         """The file's bytes and Content-Type (see download_url)."""
-        resp = await self._send("GET", self.download_url(f))
+        resp = await self._send("upload", "GET", self.download_url(f))
         return resp.content, resp.headers.get("content-type", f.mime).split(";")[0]
 
 

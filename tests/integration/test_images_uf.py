@@ -119,6 +119,30 @@ def test_max_n_caps_the_atrativos(h) -> None:
     assert h.chain.call_args.kwargs["phase"] == "destination"
 
 
+def test_each_entity_gets_a_fresh_session(h, db_engine, monkeypatch) -> None:
+    # The fixture hands one shared session to every _get_session() call, so this wiring is
+    # pinned here: what images_uf passes as new_session must open a new session per call.
+    _rio(h, "ta:1", "attraction", name="Praia Um", lat=-1.0, lon=-2.0, google_enriched=True)
+    opened: list = []
+
+    def get_session():
+        s = h.session if not opened else MagicMock(name=f"entity-session-{len(opened)}")
+        opened.append(s)
+        return s, db_engine
+
+    seen: list = []
+
+    async def chunk(new_session, *_a, **_k) -> int:
+        seen.extend([new_session(), new_session()])
+        return 1
+
+    monkeypatch.setattr(pipeline, "_get_session", get_session)
+    monkeypatch.setattr(pipeline, "_images_chunk", chunk)
+    pipeline.images_uf.run(UF, run_id=h.run_id)
+
+    assert len(seen) == 2 and seen[0] is not seen[1] and h.session not in seen
+
+
 def test_lane_off_does_nothing(h) -> None:
     h.cfg.images_enrichment_enabled = False
     _rio(h, "ta:1", "attraction", name="Praia Um", lat=-1.0, lon=-2.0, google_enriched=True)

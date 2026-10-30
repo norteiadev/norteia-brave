@@ -10,7 +10,8 @@
      otherwise the file is downloaded and written to the archive.
   5. Upsert ``entity_images`` and the lookup.
 
-Writes only the lane's own tables — never ``normalized``. The caller commits. An external
+Writes only the lane's own tables — never ``normalized``. Each archived Image is committed
+as soon as it is written (see _archive); the caller commits the rest. An external
 failure (HTTP / Commons error after retries) records ``outcome=error``, which is not a final
 marker, so the next run tries again (like _PROPAGATE in places_enrichment).
 """
@@ -25,7 +26,8 @@ from typing import Any
 
 import httpx
 import structlog
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from brave.clients.image_store import ImageStoreProtocol, storage_key
@@ -159,6 +161,9 @@ class ImageLaneAgent:
     # -- persistence ----------------------------------------------------------------
 
     async def _archive(self, f: CommonsFile, result: LaneResult) -> Image:
+        # ponytail: two entities in flight that pick the same file both download it (the
+        # upload lane keeps them serial; the second reuses the row by sha1). An in-flight
+        # title registry shared by the chunk's agents if duplicate downloads ever matter.
         img = self._s.scalar(select(Image).where(Image.commons_title == f.title))
         if img is not None:
             return img
@@ -168,8 +173,7 @@ class ImageLaneAgent:
         if img is not None:
             return img
         key = storage_key(sha1, mime)
-        self._store.put(key, data, mime)
-        result.downloaded += 1
+        self._store.put(key, data, mime)  # write-once by sha1: a lost race rewrites the same bytes
         tw = self._cfg.thumb_width
         w, h = (tw, round(f.height * tw / f.width)) if f.width > tw else (f.width, f.height)
         img = Image(
@@ -180,7 +184,21 @@ class ImageLaneAgent:
             assessment=f.assessment[:64] or None, commons_status="ok",
         )
         self._s.add(img)
-        self._s.flush()
+        # Committed at once, with no await in between: an Image row left uncommitted across
+        # the next download would make a concurrent entity (its own session) inserting the
+        # same file block on the unique key — synchronously, on the event loop both share.
+        # Only Image rows are pending here (links and the lookup come after the downloads).
+        try:
+            self._s.commit()
+        except IntegrityError:  # another session archived the same file first
+            self._s.rollback()
+            existing = self._s.scalar(
+                select(Image).where(or_(Image.commons_title == f.title, Image.sha1 == sha1))
+            )
+            if existing is None:
+                raise
+            return existing
+        result.downloaded += 1  # a new file in the archive, not a lost race
         return img
 
     async def _save(
