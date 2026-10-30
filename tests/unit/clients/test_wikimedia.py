@@ -228,3 +228,48 @@ async def test_series_per_service_overlap_across_services(client) -> None:
 
     assert peak == {"api": 1, "wdqs": 1, "upload": 1}
     assert overlapped.is_set()
+
+
+async def test_slow_api_request_holds_the_api_lane_5s(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Robot policy, Action API: a request that took >1 s to serve → wait 5 s before the
+    next one — here and, through the Redis slot, in every other process. Other services
+    keep their own gap."""
+    import asyncio
+
+    from brave.clients import wikimedia
+    from brave.clients.wikimedia import WIKIMEDIA_SLOT_KEY, WikimediaClient
+
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    clock = [1000.0]
+    slept: list[float] = []
+
+    class Clock:
+        @staticmethod
+        def monotonic() -> float:
+            return clock[0]
+
+    async def sleep(s: float) -> None:
+        slept.append(round(s, 3))
+        clock[0] += s
+
+    monkeypatch.setattr(wikimedia, "time", Clock)
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+    redis = fakeredis.FakeRedis()
+    client = WikimediaClient(config=ImagesConfig(min_interval_s=1.0, backoff_s=0), redis=redis)
+    api_ttls: list[int] = []
+
+    def slow(request: httpx.Request) -> httpx.Response:
+        clock[0] += 1.5  # the server took 1.5 s
+        return httpx.Response(200, json={"query": {"search": []}})
+
+    with respx.mock:
+        respx.get(API).mock(side_effect=slow)
+        respx.post(WDQS).mock(return_value=httpx.Response(200, json={"results": {"bindings": []}}))
+        await client.depicts("Q1")
+        api_ttls.append(redis.pttl(f"{WIKIMEDIA_SLOT_KEY}:api"))
+        redis.delete(f"{WIKIMEDIA_SLOT_KEY}:api")  # the fake clock does not age Redis keys
+        await client.items_around(0, 0, 1)  # another service: not held
+        await client.depicts("Q2")
+
+    assert api_ttls[0] > 1000  # the cross-process slot now holds for 5 s, not 1 s
+    assert slept == [5.0]  # only the second API call waited, the full 5 s

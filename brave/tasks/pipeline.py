@@ -2204,39 +2204,42 @@ def images_candidates(uf: str, phase: str) -> list:
 
 
 async def _images_chunk(
-    session: Session, agent: Any, clients: Any, ids: list, stop: Any, uf: str, concurrency: int = 1
+    new_session: Any, make_agent: Any, clients: Any, ids: list, stop: Any, uf: str,
+    concurrency: int = 1,
 ) -> int:
-    """Run the lane over ``ids``, ``concurrency`` entities in flight, one commit per entity.
-    Returns how many it took before ``stop()``: entities are taken in order and each one
-    taken finishes, so that is a prefix of ``ids`` (the keyset cursor). A failed entity
-    counts: it is logged and rolled back.
+    """Run the lane over ``ids``, ``concurrency`` entities in flight. Each entity gets its
+    own session (``new_session()``, closed after it) and agent (``make_agent(session)``),
+    so one entity's commit / rollback / autoflush never touches another's rows. Only the
+    network overlaps: the DB calls are sync.
 
-    The entities share ``session``: the DB calls are sync, so they never interleave, and a
-    finished entity's run → commit has no await in between. Only the network overlaps.
+    Returns the keyset cursor: how many leading ``ids`` are finished. Entities are taken in
+    order until ``stop()``; a failed entity counts as finished (it is logged and rolled back).
     """
     import time as _time  # noqa: PLC0415
 
     taken = 0
+    finished = [False] * len(ids)
 
-    async def one(rio_id: Any) -> None:
+    async def one(i: int) -> None:
         t0 = _time.monotonic()
-        try:
-            rio = session.get(RioRecord, rio_id)
-            if rio is None:
+        with new_session() as session:
+            try:
+                rio = session.get(RioRecord, ids[i])
+                if rio is None:
+                    return
+                key, etype = rio.canonical_key, rio.entity_type
+                result = await make_agent(session).run(rio)
+                session.commit()
+            except Exception:  # noqa: BLE001 — one bad entity must not abort the chunk
+                session.rollback()
+                logger.warning("images_entity_failed", uf=uf, rio_id=str(ids[i]), exc_info=True)
                 return
-            result = await agent.run(rio)
-            session.commit()
-        except Exception:  # noqa: BLE001 — one bad entity must not abort the chunk
-            # ponytail: the shared session's rollback also drops the other in-flight
-            # entities' uncommitted rows; they fail on it and the next run retries them.
-            session.rollback()
-            logger.warning("images_entity_failed", uf=uf, rio_id=str(rio_id), exc_info=True)
-            return
+            finally:
+                finished[i] = True
         if result is not None:
             logger.info(
-                "images_entity_done", uf=uf, canonical_key=rio.canonical_key,
-                entity_type=rio.entity_type, outcome=result.outcome,
-                picks=[f"{p.role}:{p.lane}" for p in result.picks],
+                "images_entity_done", uf=uf, canonical_key=key, entity_type=etype,
+                outcome=result.outcome, picks=[f"{p.role}:{p.lane}" for p in result.picks],
                 rejected=dict(result.rejected), downloaded=result.downloaded,
                 elapsed_s=round(_time.monotonic() - t0, 2),
             )
@@ -2245,11 +2248,12 @@ async def _images_chunk(
         nonlocal taken
         while taken < len(ids) and not stop():
             taken += 1
-            await one(ids[taken - 1])
+            await one(taken - 1)
 
     async with clients:
         await asyncio.gather(*(worker() for _ in range(max(1, concurrency))))
-    return taken
+    # Never past an unfinished entity, whatever order they completed in.
+    return next((i for i, f in enumerate(finished) if not f), len(ids))
 
 
 @shared_task(
@@ -2319,9 +2323,13 @@ def images_uf(
         done = 0
         if ids:
             clients = clients_for(effective)
-            agent = ImageLaneAgent(session, clients.wikimedia, image_store_for(effective.images), effective.images)
-            done = asyncio.run(_images_chunk(session, agent, clients, ids, _stop, uf,
-                                             effective.images.concurrency))
+            store = image_store_for(effective.images)
+
+            def _agent(s: Session) -> ImageLaneAgent:
+                return ImageLaneAgent(s, clients.wikimedia, store, effective.images)
+
+            done = asyncio.run(_images_chunk(lambda: _get_session()[0], _agent, clients, ids, _stop,
+                                             uf, effective.images.concurrency))
         if halted:
             logger.info("images_uf_halted", uf=uf, phase=phase)
         else:

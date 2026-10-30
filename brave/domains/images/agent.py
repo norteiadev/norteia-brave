@@ -10,7 +10,8 @@
      otherwise the file is downloaded and written to the archive.
   5. Upsert ``entity_images`` and the lookup.
 
-Writes only the lane's own tables — never ``normalized``. The caller commits. An external
+Writes only the lane's own tables — never ``normalized``. Each archived Image is committed
+as soon as it is written (see _archive); the caller commits the rest. An external
 failure (HTTP / Commons error after retries) records ``outcome=error``, which is not a final
 marker, so the next run tries again (like _PROPAGATE in places_enrichment).
 """
@@ -25,7 +26,8 @@ from typing import Any
 
 import httpx
 import structlog
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from brave.clients.image_store import ImageStoreProtocol, storage_key
@@ -180,7 +182,20 @@ class ImageLaneAgent:
             assessment=f.assessment[:64] or None, commons_status="ok",
         )
         self._s.add(img)
-        self._s.flush()
+        # Committed at once, with no await in between: an Image row left uncommitted across
+        # the next download would make a concurrent entity (its own session) inserting the
+        # same file block on the unique key — synchronously, on the event loop both share.
+        # Only Image rows are pending here (links and the lookup come after the downloads).
+        try:
+            self._s.commit()
+        except IntegrityError:  # another session archived the same file first
+            self._s.rollback()
+            existing = self._s.scalar(
+                select(Image).where(or_(Image.commons_title == f.title, Image.sha1 == sha1))
+            )
+            if existing is None:
+                raise
+            return existing
         return img
 
     async def _save(

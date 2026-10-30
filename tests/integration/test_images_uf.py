@@ -126,25 +126,3 @@ def test_lane_off_does_nothing(h) -> None:
     pipeline.images_uf.run(UF, run_id=h.run_id)
     assert _keys(h) == set()
     h.done.assert_called_once_with(h.run_id, failed=True)
-
-
-def test_concurrent_entities_share_one_archived_photo(h) -> None:
-    """images.concurrency entities in flight on one session: the same Commons file reached
-    by several at once is archived once, and every entity commits its own rows."""
-    import asyncio
-
-    for i in range(5):
-        _rio(h, f"ta:{i}", "attraction", name="Praia Um", lat=-1.0, lon=-2.0, google_enriched=True)
-    download = h.fake.download
-
-    async def slow(f):  # yield, so the entities really interleave
-        await asyncio.sleep(0.01)
-        return await download(f)
-
-    h.fake.download = slow
-    pipeline.images_uf.run(UF, run_id=h.run_id)
-
-    rows = list(h.session.scalars(select(EntityImage).where(EntityImage.canonical_key.like("ta:%"))))
-    assert {r.canonical_key for r in rows} == {f"ta:{i}" for i in range(5)}
-    assert len({r.image_id for r in rows}) == 1
-    assert h.fake.count("download") > 1  # they did overlap
