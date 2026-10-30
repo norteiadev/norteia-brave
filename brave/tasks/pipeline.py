@@ -634,6 +634,7 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
         effective = _load_config(session)
         if not effective.images_push_enabled:
             logger.info("push_pending_media_held")
+            _beat_health("brave.push_pending_media")  # a hold is not a failure: clear a stale one
             return 0
         rows = session.execute(
             select(EntityImage, Image)

@@ -97,6 +97,8 @@ Checklist:
       Opcionais, sem uso hoje: `BRAVE_LLM_DEEPSEEK_API_KEY`, `TAVILY_API_KEY`, `SERPER_API_KEY` (POCs), WhatsApp (`BRAVE_WA_*`, lane parada).
 - [ ] **Config efetiva** (`GET /api/v1/config` ou Painel › Config): `places_enrichment_enabled=true`,
       `description_enrichment_enabled=true`, `atrativo_description_cascade_enabled=true`, `atrativo_description_batch_enabled=false`.
+      Imagens: `images_enrichment_enabled=true` liga a lane; `images_push_enabled` fica `false` até a revisão das fotos
+      (desligado, nenhuma foto vai à norteia-api; veja o passo 8 da skill `run-uf-sync`).
       Essas flags vivem em `config_settings`, não no `.env`.
 - [ ] **Referências populadas**: `municipios=5571`, `distritos=10751`, `uf_geoids=27`.
 - [ ] **Monitores abertos** (seção 5).

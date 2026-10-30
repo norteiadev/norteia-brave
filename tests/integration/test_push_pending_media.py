@@ -151,18 +151,23 @@ def test_atrativo_photos_wait_for_its_mar_push(h) -> None:
     assert [r.pushed_at is not None for r in rows] == [True, False, False]
 
 
-def test_switch_off_holds_every_photo_untouched_until_it_is_turned_on(h) -> None:
+def test_switch_off_holds_every_photo_untouched_until_it_is_turned_on(h, beat) -> None:
     rio = _rio(h, "ta:1", "attraction")
     _mar(h, rio)
     row = _photo(h, "ta:1", "attraction")
+    failed = _photo(h, "ta:1", "attraction", role="gallery")
+    failed.push_error = "HTTP 422: bad"
+    h.session.commit()
     h.cfg.images_push_enabled = False
 
     with respx.mock:
         route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
         assert pipeline.push_pending_media.run() == 0
     assert route.call_count == 0
+    assert beat == [("brave.push_pending_media", None)]  # a hold clears a stale beat error
     h.session.expire_all()
     assert (row.pushed_at, row.push_error) == (None, None)
+    assert (failed.pushed_at, failed.push_error) == (None, "HTTP 422: bad")
 
     h.cfg.images_push_enabled = True
     with respx.mock:

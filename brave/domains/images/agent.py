@@ -200,8 +200,8 @@ class ImageLaneAgent:
             if row is None:
                 row = EntityImage(canonical_key=key, entity_type=rio.entity_type, image_id=img.id)
                 self._s.add(row)
+            # removed_at is left alone: a photo a reviewer rejected stays rejected on a re-run.
             row.role, row.rank, row.lane, row.wikidata_qid = pick.role, pick.rank, pick.lane, qid
-            row.removed_at = None
         self._s.flush()
 
     def _mark(self, rio: RioRecord, outcome: str, match: WdItem | None = None, via: str | None = None) -> None:

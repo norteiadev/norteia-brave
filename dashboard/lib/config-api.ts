@@ -72,6 +72,10 @@ export interface AppConfigSnapshot {
   sources: Record<string, boolean>;
   /** Gates the LLM description-enrichment lane (off → local sweeps run without cost). */
   description_enrichment_enabled: boolean;
+  /** Gates the image lane (Wikidata + Commons photos into the Brave archive). */
+  images_enrichment_enabled: boolean;
+  /** Gates the photo push to norteia-api (off → photos wait for review). */
+  images_push_enabled: boolean;
   [key: string]: unknown;
 }
 
