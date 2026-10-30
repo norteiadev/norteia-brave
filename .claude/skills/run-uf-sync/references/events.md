@@ -18,6 +18,18 @@
 | `api: engine/status inacessível` | API container down or bearer wrong: `docker compose ps`, `scripts/monitors/stack.sh`. |
 | `postgres: runs_history ilegível` | Postgres (or `docker compose exec`) unreachable. The monitor keeps watching instead of ending: `docker compose ps postgres`. |
 
+## 429 monitor
+
+`429 <host> ×N` lines from `scripts/monitors/throttle.sh`. The clients retry on their own. A scattered line is **benign**: say so in one line. **Persistent** means the same host in 3 lines in a row (3 min).
+
+| Host | Persistent → action |
+|---|---|
+| `query.wikidata.org` | The WDQS budget is 60 s of query time per minute per UA+IP, and the lane runs at its edge even serially. The client still ignores `Retry-After`. Pause with `POST /api/v1/engine/mode {"mode":"PAUSADO"}`, wait 5 min, resume the same UF. Tell the user that the `Retry-After` fix is due. |
+| `commons.wikimedia.org`, `upload.wikimedia.org` | Raise `BRAVE_IMAGES_MIN_INTERVAL_S`, for example to 2.0. Restart the worker, then resume the same UF. |
+| `www.tripadvisor.com.br` | The sweep re-enqueues itself after `Retry-After`. Act only when the sweep monitor shows no new pages: see **TA session** below. |
+| `places.googleapis.com` | Places quota. Check the cost monitor and the Google Cloud quota page. Tell the user. |
+| `openrouter.ai`, `generativelanguage.googleapis.com`, `api.anthropic.com` | LLM rate limit in describe. Gemini caps input at 1M tokens/min. Lower the describe batch, or wait and resume. |
+
 The tables below match lines from the seven stage monitors, used to dig into a `FALHA`.
 
 Read the line, find its row, act. Rows marked **benign** need no action; say so to the user in one line and keep watching.

@@ -25,11 +25,14 @@ Done when it prints `PREFLIGHT PASSED`. A `FAIL` stops the sync: fix it via `ref
 
 ## 2. Arm the monitor
 
-Arm **one** Monitor, `timeout_ms: 1800000`, before starting the run:
+Arm **two** Monitors, `timeout_ms: 1800000`, before starting the run:
 
 | description | command |
 |---|---|
 | Brave sweep <UF> | `cd <repo> && scripts/monitors/sweep.sh` |
+| Brave 429 <UF> | `cd <repo> && scripts/monitors/throttle.sh` |
+
+The 429 monitor reads the worker's HTTP request log and prints `429 <host> ×N (total T)` once per minute that saw rate limits from any provider (TripAdvisor, Wikidata, Commons, Places, LLMs), and a `RELATÓRIO 429 total T` every 10 min. It does not exit with the run: stop it at the end of the UF, and re-arm it when it expires (30 min). Each `429` line is looked up in `references/events.md` (**429 monitor**).
 
 It stays quiet on purpose, to keep the context small. It prints a `RELATÓRIO` line every 10 min (`MONITOR_REPORT`, in seconds) and one when the run ends, then exits:
 
