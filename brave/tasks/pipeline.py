@@ -2212,13 +2212,13 @@ async def _images_chunk(
     so one entity's commit / rollback / autoflush never touches another's rows. Only the
     network overlaps: the DB calls are sync.
 
-    Returns the keyset cursor: how many leading ``ids`` are finished. Entities are taken in
-    order until ``stop()``; a failed entity counts as finished (it is logged and rolled back).
+    Returns the keyset cursor: how many leading ``ids`` were taken. Entities are taken in
+    order until ``stop()`` and every taken one is awaited (gather), so the taken ids are all
+    finished; a failed entity counts as finished (it is logged and rolled back).
     """
     import time as _time  # noqa: PLC0415
 
     taken = 0
-    finished = [False] * len(ids)
 
     async def one(i: int) -> None:
         t0 = _time.monotonic()
@@ -2234,8 +2234,6 @@ async def _images_chunk(
                 session.rollback()
                 logger.warning("images_entity_failed", uf=uf, rio_id=str(ids[i]), exc_info=True)
                 return
-            finally:
-                finished[i] = True
         if result is not None:
             logger.info(
                 "images_entity_done", uf=uf, canonical_key=key, entity_type=etype,
@@ -2252,8 +2250,7 @@ async def _images_chunk(
 
     async with clients:
         await asyncio.gather(*(worker() for _ in range(max(1, concurrency))))
-    # Never past an unfinished entity, whatever order they completed in.
-    return next((i for i, f in enumerate(finished) if not f), len(ids))
+    return taken
 
 
 @shared_task(

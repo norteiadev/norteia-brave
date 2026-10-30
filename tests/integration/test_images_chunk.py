@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import uuid
 
 import pytest
@@ -54,7 +55,7 @@ def lane(db_engine, tmp_path):
         pass
 
     x = L()
-    x.prefix, x.run, x.factory = prefix, run, factory
+    x.prefix, x.run, x.factory, x.tmp = prefix, run, factory, tmp_path
     x.title = lambda name: f"File:TC {run} {name}.jpg"
 
     def seed(n: int) -> list:
@@ -74,9 +75,9 @@ def lane(db_engine, tmp_path):
             s.commit()
             return [r.id for r in rios]
 
-    def chunk(fake, ids, *, stop=lambda: False, concurrency=3) -> int:
+    def chunk(fake, ids, *, stop=lambda: False, concurrency=3, store=None) -> int:
         def agent(s: Session) -> ImageLaneAgent:
-            return ImageLaneAgent(s, fake, LocalImageStore(tmp_path), ImagesConfig())
+            return ImageLaneAgent(s, fake, store or LocalImageStore(tmp_path), ImagesConfig())
 
         return asyncio.run(_images_chunk(factory, agent, contextlib.nullcontext(), ids, stop, "ZY", concurrency))
 
@@ -116,6 +117,28 @@ def test_same_file_reached_by_concurrent_entities_is_archived_once(lane) -> None
     assert fake.count("download") > 1  # they did overlap: the later ones reused the row
 
 
+def test_a_file_another_process_archived_mid_entity_is_reused(lane) -> None:
+    ids = lane.seed(1)
+    title = lane.title("race")
+    racer: dict = {}
+
+    class Racing(LocalImageStore):
+        def put(self, key: str, data: bytes, mime: str) -> None:
+            super().put(key, data, mime)
+            with lane.factory() as s:  # another worker commits the same file in between
+                img = Image(sha1=hashlib.sha1(data).hexdigest(), storage_key=key, commons_title=title,
+                            source_url="https://c/x", file_url="https://u/x.jpg", width=1, height=1,
+                            mime=mime, bytes=len(data), license="CC BY-SA 4.0", credit_line="x",
+                            commons_status="ok")
+                s.add(img)
+                s.commit()
+                racer["id"] = img.id
+
+    assert lane.chunk(PerEntity([title]), ids, store=Racing(lane.tmp)) == 1
+
+    assert lane.linked() == {f"{lane.prefix}0": [racer["id"]]}  # IntegrityError → the winner's row
+
+
 def test_a_failing_entity_does_not_touch_the_others(lane) -> None:
     ids = lane.seed(5)
     # Entity 2 fails after the others have started (its download is the slowest).
@@ -129,7 +152,7 @@ def test_a_failing_entity_does_not_touch_the_others(lane) -> None:
     assert lane.lookups() == ok  # entity 2 rolled back alone: no lookup, retried next run
 
 
-def test_cursor_stops_at_the_finished_prefix(lane) -> None:
+def test_cursor_is_the_taken_prefix_all_finished(lane) -> None:
     ids = lane.seed(5)
     # Entity 0 is the slowest: 1 and 2 finish before it.
     fake = PerEntity([lane.title(str(i)) for i in range(5)], delay={lane.title("0"): 0.1})

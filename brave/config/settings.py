@@ -392,8 +392,9 @@ class ImagesConfig(BaseSettings):
     # far apart; the three services overlap.
     min_interval_s: float = 1.0
     # Entities in flight at once in a chunk: enough to keep the three services busy (each
-    # stays serial in WikimediaClient, so more only queues).
-    concurrency: int = Field(default=3, ge=1)
+    # stays serial in WikimediaClient, so more only queues). Each one holds a pooled DB
+    # connection through its downloads, so it stays under the engine pool (5 + 10 overflow).
+    concurrency: int = Field(default=3, ge=1, le=10)
     timeout_seconds: float = 60.0
     max_attempts: int = 5
     backoff_s: float = 2.0

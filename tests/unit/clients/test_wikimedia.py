@@ -271,5 +271,5 @@ async def test_slow_api_request_holds_the_api_lane_5s(monkeypatch: pytest.Monkey
         await client.items_around(0, 0, 1)  # another service: not held
         await client.depicts("Q2")
 
-    assert api_ttls[0] > 1000  # the cross-process slot now holds for 5 s, not 1 s
+    assert api_ttls[0] > 4900  # the cross-process slot now holds for 5 s, not 1 s
     assert slept == [5.0]  # only the second API call waited, the full 5 s

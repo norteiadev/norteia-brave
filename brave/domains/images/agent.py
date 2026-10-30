@@ -161,6 +161,9 @@ class ImageLaneAgent:
     # -- persistence ----------------------------------------------------------------
 
     async def _archive(self, f: CommonsFile, result: LaneResult) -> Image:
+        # ponytail: two entities in flight that pick the same file both download it (the
+        # upload lane keeps them serial; the second reuses the row by sha1). An in-flight
+        # title registry shared by the chunk's agents if duplicate downloads ever matter.
         img = self._s.scalar(select(Image).where(Image.commons_title == f.title))
         if img is not None:
             return img
@@ -170,8 +173,7 @@ class ImageLaneAgent:
         if img is not None:
             return img
         key = storage_key(sha1, mime)
-        self._store.put(key, data, mime)
-        result.downloaded += 1
+        self._store.put(key, data, mime)  # write-once by sha1: a lost race rewrites the same bytes
         tw = self._cfg.thumb_width
         w, h = (tw, round(f.height * tw / f.width)) if f.width > tw else (f.width, f.height)
         img = Image(
@@ -196,6 +198,7 @@ class ImageLaneAgent:
             if existing is None:
                 raise
             return existing
+        result.downloaded += 1  # a new file in the archive, not a lost race
         return img
 
     async def _save(
