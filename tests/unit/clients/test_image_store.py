@@ -30,6 +30,15 @@ def test_local_store_is_write_once(tmp_path) -> None:
     assert store.get("images/ab/x.jpg") == b"one"
 
 
+def test_local_delete_is_idempotent(tmp_path) -> None:
+    store = LocalImageStore(tmp_path)
+    store.put("images/ab/x.jpg", b"one", "image/jpeg")
+    store.delete("images/ab/x.jpg")
+    store.delete("images/ab/x.jpg")
+    with pytest.raises(FileNotFoundError):
+        store.get("images/ab/x.jpg")
+
+
 def _r2() -> tuple[R2ImageStore, Stubber]:
     store = R2ImageStore(endpoint="https://acc.r2.cloudflarestorage.com", bucket="acervo",
                          access_key_id="k", secret_access_key="s")

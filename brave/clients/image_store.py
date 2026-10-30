@@ -27,6 +27,8 @@ class ImageStoreProtocol(Protocol):
 
     def get(self, key: str) -> bytes: ...
 
+    def delete(self, key: str) -> None: ...
+
 
 class LocalImageStore:
     """Files under ``root`` (the Mac and the tests). Writes go through a temp file + rename,
@@ -46,6 +48,9 @@ class LocalImageStore:
 
     def get(self, key: str) -> bytes:
         return (self._root / key).read_bytes()
+
+    def delete(self, key: str) -> None:
+        (self._root / key).unlink(missing_ok=True)
 
 
 class R2ImageStore:
@@ -88,6 +93,9 @@ class R2ImageStore:
             return self._s3.get_object(Bucket=self._bucket, Key=key)["Body"].read()
         except self._s3.exceptions.NoSuchKey as exc:  # the same signal LocalImageStore gives
             raise FileNotFoundError(key) from exc
+
+    def delete(self, key: str) -> None:
+        self._s3.delete_object(Bucket=self._bucket, Key=key)  # S3 delete: a missing key is a 204
 
 
 def image_store_for(config: ImagesConfig) -> ImageStoreProtocol:
