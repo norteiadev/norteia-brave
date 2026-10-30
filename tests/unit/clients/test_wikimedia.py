@@ -191,3 +191,40 @@ async def test_municipio_and_its_top_items(client) -> None:
         ("Q7", ("File:Orla.jpg",), 9), ("Q8", ("File:Ponte.jpg",), 4),
     ]
     assert '"2800308"' in route.calls[0].request.content.decode().replace("%22", '"')
+
+
+async def test_series_per_service_overlap_across_services(client) -> None:
+    """Two calls to one service never overlap; WDQS, the Commons API and the upload server
+    do (Robot policy: Action API concurrency 1)."""
+    import asyncio
+
+    from brave.clients.wikimedia import CommonsFile
+
+    live: dict[str, int] = {}
+    peak: dict[str, int] = {}
+    overlapped = asyncio.Event()
+
+    def busy(host: str, resp: httpx.Response):
+        async def side_effect(request: httpx.Request) -> httpx.Response:
+            live[host] = live.get(host, 0) + 1
+            peak[host] = max(peak.get(host, 0), live[host])
+            if sum(live.values()) == 3:
+                overlapped.set()
+            await asyncio.sleep(0.02)
+            live[host] -= 1
+            return resp
+        return side_effect
+
+    f = CommonsFile(title="File:M.jpg", url=f"{UPLOAD}/c/cd/M.jpg", page="", width=10, height=10, mime="image/jpeg")
+    with respx.mock:
+        respx.get(API).mock(side_effect=busy("api", httpx.Response(200, json={"query": {"search": []}})))
+        respx.post(WDQS).mock(side_effect=busy("wdqs", httpx.Response(200, json={"results": {"bindings": []}})))
+        respx.get(f"{UPLOAD}/c/cd/M.jpg").mock(side_effect=busy("upload", httpx.Response(200, content=b"x")))
+        await asyncio.gather(
+            *(client.depicts(f"Q{i}") for i in range(3)),
+            *(client.items_around(0, 0, 1) for _ in range(3)),
+            *(client.download(f) for _ in range(3)),
+        )
+
+    assert peak == {"api": 1, "wdqs": 1, "upload": 1}
+    assert overlapped.is_set()

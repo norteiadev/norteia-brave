@@ -2203,35 +2203,53 @@ def images_candidates(uf: str, phase: str) -> list:
     ]
 
 
-async def _images_chunk(session: Session, agent: Any, clients: Any, ids: list, stop: Any, uf: str) -> int:
-    """Run the lane over ``ids`` serially, one commit per entity. Returns how many it got
-    through before ``stop()`` (a failed entity counts: it is logged and rolled back)."""
+async def _images_chunk(
+    session: Session, agent: Any, clients: Any, ids: list, stop: Any, uf: str, concurrency: int = 1
+) -> int:
+    """Run the lane over ``ids``, ``concurrency`` entities in flight, one commit per entity.
+    Returns how many it took before ``stop()``: entities are taken in order and each one
+    taken finishes, so that is a prefix of ``ids`` (the keyset cursor). A failed entity
+    counts: it is logged and rolled back.
+
+    The entities share ``session``: the DB calls are sync, so they never interleave, and a
+    finished entity's run → commit has no await in between. Only the network overlaps.
+    """
     import time as _time  # noqa: PLC0415
 
+    taken = 0
+
+    async def one(rio_id: Any) -> None:
+        t0 = _time.monotonic()
+        try:
+            rio = session.get(RioRecord, rio_id)
+            if rio is None:
+                return
+            result = await agent.run(rio)
+            session.commit()
+        except Exception:  # noqa: BLE001 — one bad entity must not abort the chunk
+            # ponytail: the shared session's rollback also drops the other in-flight
+            # entities' uncommitted rows; they fail on it and the next run retries them.
+            session.rollback()
+            logger.warning("images_entity_failed", uf=uf, rio_id=str(rio_id), exc_info=True)
+            return
+        if result is not None:
+            logger.info(
+                "images_entity_done", uf=uf, canonical_key=rio.canonical_key,
+                entity_type=rio.entity_type, outcome=result.outcome,
+                picks=[f"{p.role}:{p.lane}" for p in result.picks],
+                rejected=dict(result.rejected), downloaded=result.downloaded,
+                elapsed_s=round(_time.monotonic() - t0, 2),
+            )
+
+    async def worker() -> None:
+        nonlocal taken
+        while taken < len(ids) and not stop():
+            taken += 1
+            await one(ids[taken - 1])
+
     async with clients:
-        for n, rio_id in enumerate(ids):
-            if stop():
-                return n
-            t0 = _time.monotonic()
-            try:
-                rio = session.get(RioRecord, rio_id)
-                if rio is None:
-                    continue
-                result = await agent.run(rio)
-                session.commit()
-            except Exception:  # noqa: BLE001 — one bad entity must not abort the chunk
-                session.rollback()
-                logger.warning("images_entity_failed", uf=uf, rio_id=str(rio_id), exc_info=True)
-                continue
-            if result is not None:
-                logger.info(
-                    "images_entity_done", uf=uf, canonical_key=rio.canonical_key,
-                    entity_type=rio.entity_type, outcome=result.outcome,
-                    picks=[f"{p.role}:{p.lane}" for p in result.picks],
-                    rejected=dict(result.rejected), downloaded=result.downloaded,
-                    elapsed_s=round(_time.monotonic() - t0, 2),
-                )
-    return len(ids)
+        await asyncio.gather(*(worker() for _ in range(max(1, concurrency))))
+    return taken
 
 
 @shared_task(
@@ -2258,7 +2276,8 @@ def images_uf(
     next one; an exhausted (or max_n-capped) atrativo phase hands over to the destino
     phase; the end of the destino phase is terminal (_producer_done exactly once). Stop /
     pause halts; so does the time budget, handing the rest of the UF on. Wikimedia is paced
-    by its client, so the entities run serially. max_n caps the atrativos only.
+    per service by its client; images.concurrency entities run at once so the services
+    overlap. max_n caps the atrativos only.
 
     Writes only image_lookups / images / entity_images (never ``normalized``); the photos
     reach norteia-api through push_pending_media.
@@ -2301,7 +2320,8 @@ def images_uf(
         if ids:
             clients = clients_for(effective)
             agent = ImageLaneAgent(session, clients.wikimedia, image_store_for(effective.images), effective.images)
-            done = asyncio.run(_images_chunk(session, agent, clients, ids, _stop, uf))
+            done = asyncio.run(_images_chunk(session, agent, clients, ids, _stop, uf,
+                                             effective.images.concurrency))
         if halted:
             logger.info("images_uf_halted", uf=uf, phase=phase)
         else:

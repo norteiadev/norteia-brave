@@ -388,8 +388,12 @@ class ImagesConfig(BaseSettings):
     user_agent: str = "norteia-brave/1.0 (https://norteia.com.br; leandro.freire08@gmail.com)"
     wdqs_url: str = "https://query.wikidata.org/sparql"
     commons_api: str = "https://commons.wikimedia.org/w/api.php"
-    # Every Wikimedia request (WDQS, Commons API, upload) goes out in series, this far apart.
+    # Requests to each Wikimedia service (WDQS, Commons API, upload) go out in series, this
+    # far apart; the three services overlap.
     min_interval_s: float = 1.0
+    # Entities in flight at once in a chunk: enough to keep the three services busy (each
+    # stays serial in WikimediaClient, so more only queues).
+    concurrency: int = Field(default=3, ge=1)
     timeout_seconds: float = 60.0
     max_attempts: int = 5
     backoff_s: float = 2.0
