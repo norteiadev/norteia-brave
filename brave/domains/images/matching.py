@@ -14,12 +14,18 @@ GENERIC = {
     "praia", "igreja", "museu", "parque", "cachoeira", "mirante", "trilha", "centro",
     "historico", "teatro", "praca", "mercado", "catedral", "capela", "lagoa", "rio",
     "serra", "morro", "ilha", "municipal", "nacional", "estadual", "casa", "memorial",
+    # "Recife Antigo" is not "Antigo Hotel Central de Recife"; "Nossa Senhora do Rosário"
+    # is not "Nossa Senhora do Pilar".
+    "antigo", "antiga", "velho", "velha", "nossa", "senhora",
 }
+# Different words, same place: "Basílica do Pilar" is Wikidata's "Igreja Matriz do Pilar",
+# "Centro Histórico de Ouro Preto" its "Cidade Histórica de Ouro Preto".
+SAME = {"basilica": "igreja", "matriz": "igreja", "cidade": "centro", "historica": "historico"}
 
 
 def norm(s: str) -> list[str]:
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
-    return [t for t in re.findall(r"[a-z0-9]+", s) if t not in STOP]
+    return [SAME.get(t, t) for t in re.findall(r"[a-z0-9]+", s) if t not in STOP]
 
 
 def name_score(a: str, b: str) -> float:

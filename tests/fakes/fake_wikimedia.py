@@ -40,7 +40,9 @@ class FakeWikimediaClient:
         self._call("items_around", (lat, lon, km))
         return self.around
 
-    async def items_by_name(self, name: str, lat: float, lon: float, km: float) -> list[WdItem]:
+    async def items_by_name(
+        self, name: str, lat: float, lon: float, km: float, area_km: float | None = None
+    ) -> list[WdItem]:
         self._call("items_by_name", name)
         return self.by_name
 
