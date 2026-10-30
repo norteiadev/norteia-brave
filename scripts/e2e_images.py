@@ -62,8 +62,9 @@ def run() -> int:
     session, _ = _get_session()
     try:
         effective = _load_config(session)
-        if not (effective.run_real_externals and effective.images_enrichment_enabled):
-            print("lane desligada: precisa de RUN_REAL_EXTERNALS e images_enrichment_enabled")
+        if not (effective.run_real_externals and effective.images_enrichment_enabled
+                and effective.images_push_enabled):
+            print("lane desligada: precisa de RUN_REAL_EXTERNALS, images_enrichment_enabled e images_push_enabled")
             return 1
         clients = clients_for(effective)
         agent = ImageLaneAgent(session, clients.wikimedia, image_store_for(effective.images), effective.images)
