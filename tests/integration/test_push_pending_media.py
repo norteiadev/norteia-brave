@@ -68,7 +68,7 @@ def h(db_engine, monkeypatch, tmp_path):
     )
     monkeypatch.setattr(pipeline, "_norteia_api_down", lambda: False)
     monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
-    cfg = AppConfig().model_copy(update={"run_real_externals": True})
+    cfg = AppConfig().model_copy(update={"run_real_externals": True, "images_push_enabled": True})
     cfg.images.local_dir = str(tmp_path)
     monkeypatch.setattr(pipeline, "_load_config", lambda s: cfg)
     api = NorteiaApiClient(base_url=BASE, service_token="tok")
@@ -78,7 +78,7 @@ def h(db_engine, monkeypatch, tmp_path):
         pass
 
     x = H()
-    x.session, x.store = session, LocalImageStore(tmp_path)
+    x.session, x.store, x.cfg = session, LocalImageStore(tmp_path), cfg
     yield x
     session.close()
     outer.rollback()
@@ -149,6 +149,28 @@ def test_atrativo_photos_wait_for_its_mar_push(h) -> None:
     assert b"ta:pushed" in body and b"attraction" in body and b"Fulano" in body
     h.session.expire_all()
     assert [r.pushed_at is not None for r in rows] == [True, False, False]
+
+
+def test_switch_off_holds_every_photo_untouched_until_it_is_turned_on(h) -> None:
+    rio = _rio(h, "ta:1", "attraction")
+    _mar(h, rio)
+    row = _photo(h, "ta:1", "attraction")
+    h.cfg.images_push_enabled = False
+
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        assert pipeline.push_pending_media.run() == 0
+    assert route.call_count == 0
+    h.session.expire_all()
+    assert (row.pushed_at, row.push_error) == (None, None)
+
+    h.cfg.images_push_enabled = True
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        assert pipeline.push_pending_media.run() == 1
+    assert route.call_count == 1
+    h.session.expire_all()
+    assert row.pushed_at is not None
 
 
 def test_destino_waits_for_an_atrativo_of_its_municipio_and_404_stays_pending(h) -> None:

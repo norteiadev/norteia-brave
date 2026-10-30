@@ -487,9 +487,15 @@ class AppConfig(BaseSettings):
     places_enrichment_enabled: bool = True
 
     # images_enrichment_enabled gates the image lane (engine action "images", brave.images_uf):
-    # Wikidata + Commons photos into the Brave archive, pushed to norteia-api by
-    # push_pending_media. Off by default. Overlay key ``images_enrichment_enabled``.
+    # Wikidata + Commons photos into the Brave archive. It does not gate the push (that is
+    # images_push_enabled). Off by default. Overlay key ``images_enrichment_enabled``.
     images_enrichment_enabled: bool = False
+
+    # images_push_enabled gates push_pending_media, the photo outbox to norteia-api: while
+    # False the archived photos stay pending (no POST) until someone reviews them and turns
+    # it on — the next 15-min beat then sends them. Off by default. Overlay key
+    # ``images_push_enabled``.
+    images_push_enabled: bool = False
 
     # atrativo_description_batch_enabled moves description writing off the synchronous
     # path: when True the INLINE copywriter is switched off and descriptions are instead

@@ -614,8 +614,9 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
     4xx stamps push_error (images-repush clears it). A 5xx (after the client's retries), a
     408/429 or a transport error ends the tick — the rest waits for the next one. A 401/403,
     or misses with no proof that this is the right archive, fail the task (beat_errors) and
-    mark nothing. No-op while externals are off or
-    norteia-api is down. Returns how many were stamped pushed.
+    mark nothing. No-op while externals are off, norteia-api is down or
+    images_push_enabled is off (the photos wait, still pending, for a human review).
+    Returns how many were stamped pushed.
     """
     from datetime import datetime  # noqa: PLC0415
 
@@ -631,6 +632,9 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
     session, _ = _get_session()
     try:
         effective = _load_config(session)
+        if not effective.images_push_enabled:
+            logger.info("push_pending_media_held")
+            return 0
         rows = session.execute(
             select(EntityImage, Image)
             .join(Image, Image.id == EntityImage.image_id)
