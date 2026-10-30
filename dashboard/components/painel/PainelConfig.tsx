@@ -74,6 +74,18 @@ const LANES: Lane[] = [
     desc: "Rota Claude em lote: 50% mais barata, assíncrona (até 24 h).",
     read: (c) => c.atrativo_description_batch_enabled,
   },
+  {
+    key: "images_enrichment_enabled",
+    label: "Lane de imagens",
+    desc: "Capa e galeria do Wikidata e do Commons para o acervo do Brave.",
+    read: (c) => c.images_enrichment_enabled,
+  },
+  {
+    key: "images_push_enabled",
+    label: "Enviar fotos para a API",
+    desc: "Envia as fotos do acervo para a norteia-api. Desligado, elas esperam a revisão.",
+    read: (c) => c.images_push_enabled,
+  },
 ];
 
 const ENV_LIMITS: { label: string; env: string; read: (c: AppConfigSnapshot) => unknown }[] = [

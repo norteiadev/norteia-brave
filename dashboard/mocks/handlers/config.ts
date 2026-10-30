@@ -32,6 +32,8 @@ export const sampleConfig: AppConfigSnapshot = {
   places_enrichment_enabled: true,
   atrativo_description_cascade_enabled: true,
   atrativo_description_batch_enabled: false,
+  images_enrichment_enabled: true,
+  images_push_enabled: false,
   // Env-only spend limits (read-only on the Configuração screen).
   llm: { usd_daily_budget: 50 },
   places_total_usd_cap: 300,

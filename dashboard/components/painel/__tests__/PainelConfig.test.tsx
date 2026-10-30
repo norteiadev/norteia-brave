@@ -71,6 +71,10 @@ describe("PainelConfig", () => {
     expect(
       screen.getByRole("switch", { name: "Descrição em lote (Batch API)" }),
     ).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: "Lane de imagens" })).toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "Enviar fotos para a API" }),
+    ).not.toBeChecked();
     // The dormant Places collection source is not a lane on this screen.
     expect(screen.queryByText(/source\.default/)).toBeNull();
     expect(screen.queryByTestId("config-save-bar")).toBeNull();

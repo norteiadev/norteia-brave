@@ -7,6 +7,7 @@ added): the lane reads them and writes only its own tables.
 from __future__ import annotations
 
 import hashlib
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -65,6 +66,21 @@ async def test_second_run_is_a_no_op(db_session, tmp_path) -> None:
     assert await agent.run(_atrativo()) is None
     assert len(fake.calls) == calls
     assert len(_rows(db_session, "tripadvisor:attraction:1")) == 1
+
+
+async def test_a_rejected_photo_stays_rejected_on_a_rerun(db_session, tmp_path) -> None:
+    fake = FakeWikimediaClient(around=[SACO], files={"File:Saco.jpg": photo("File:Saco.jpg")})
+    agent = _agent(db_session, fake, tmp_path)
+    await agent.run(_atrativo())
+    [row] = _rows(db_session, "tripadvisor:attraction:1")
+    row.removed_at = datetime.now(UTC)  # the reviewer's rejection
+    db_session.delete(db_session.get(ImageLookup, "tripadvisor:attraction:1"))  # forces a re-run
+    db_session.flush()
+
+    await agent.run(_atrativo())
+
+    [row] = _rows(db_session, "tripadvisor:attraction:1")
+    assert row.removed_at is not None
 
 
 async def test_same_file_is_archived_once(db_session, tmp_path) -> None:

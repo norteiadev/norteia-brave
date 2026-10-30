@@ -18,4 +18,4 @@
 
 **Acervo** — os arquivos de imagem do Brave, endereçados pelo sha1 dos bytes (`images/{sha1[:2]}/{sha1}.{ext}`), num diretório local ou no bucket R2 privado. É uma cópia reconstruível do Commons.
 
-**Foto pendente** — linha de `entity_images` com `pushed_at` NULL, sem `push_error` e não removida: o outbox das fotos, separado do outbox do Mar. O beat de 15 min (`brave.push_pending_media`) envia só fotos de entidades que já estão na norteia-api; `brave.cli images-repush` reenfileira todas.
+**Foto pendente** — linha de `entity_images` com `pushed_at` NULL, sem `push_error` e não removida: o outbox das fotos, separado do outbox do Mar. O beat de 15 min (`brave.push_pending_media`) envia só fotos de entidades que já estão na norteia-api, e só com `images_push_enabled` ligado (desligado por padrão: as fotos esperam a revisão humana); `brave.cli images-repush` reenfileira todas (com a chave desligada, elas continuam retidas). Foto com `removed_at` está rejeitada e não volta numa nova rodada.

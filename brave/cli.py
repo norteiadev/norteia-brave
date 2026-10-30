@@ -185,7 +185,7 @@ def _run_images_repush() -> int:
     from sqlalchemy import update
 
     from brave.core.models import EntityImage
-    from brave.tasks.pipeline import _get_session
+    from brave.tasks.pipeline import _get_session, _load_config
 
     session, _ = _get_session()
     try:
@@ -195,9 +195,12 @@ def _run_images_repush() -> int:
             .values(pushed_at=None, push_error=None)
         ).rowcount  # type: ignore[attr-defined]  # a DML Result is a CursorResult
         session.commit()
+        held = not _load_config(session).images_push_enabled
     finally:
         session.close()
     print(f"images-repush: {n} photo(s) queued for the next push-pending-media tick")
+    if held:
+        print("images-repush: images_push_enabled is off, so nothing is sent until it is turned on")
     return 0
 
 
