@@ -106,7 +106,7 @@ class ImageLaneAgent:
         }
         titles = [t for ts in lanes.values() for t in ts]
         files = await self._wm.image_info(titles) if titles else {}
-        picks, rejected = pick_attraction(lanes, files, self._cfg.gallery_max)
+        picks, rejected = pick_attraction(lanes, files, self._cfg.gallery_max, norm.get("name") or "")
         result = LaneResult("matched", picks, rejected)
         await self._save(rio, picks, files, match.qid, result)
         return result, match, via
