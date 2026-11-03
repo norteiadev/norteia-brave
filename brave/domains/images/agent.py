@@ -3,8 +3,10 @@
 ``run(rio)``:
   1. ``image_lookups`` row with a final outcome (matched / no_match) → nothing to do (None).
   2. Resolve the Wikidata QID (atrativo: items within around_km name-matched, else entity
-     search by name within name_km, name_area_km for an item with an area). No QID → no photo at all: "a photo from nearby"
-     misleads (the Jolimont case).
+     search by name in the same municipality within name_km, name_area_km for an item with
+     an area, skipping a QID another atrativo holds by proximity). No QID → no photo at all:
+     "a photo from nearby" misleads (the Jolimont case; the geo500 lane is gone for that
+     reason, 10% of its photos showed the attraction).
   3. Candidate titles per lane → imageinfo → policy picks.
   4. Each pick reuses its ``images`` row by commons_title (then by sha1 of the bytes);
      otherwise the file is downloaded and written to the archive.
@@ -19,6 +21,7 @@ marker, so the next run tries again (like _PROPAGATE in places_enrichment).
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -42,7 +45,7 @@ logger = structlog.get_logger(__name__)
 # no_photo (a destino whose cover can still come from atrativos collected later) and error
 # are not final: the next run tries again.
 FINAL_OUTCOMES = ("matched", "no_match")
-_EXTERNAL_ERRORS = (httpx.HTTPError, WikimediaError)
+_EXTERNAL_ERRORS = (httpx.HTTPError, WikimediaError, json.JSONDecodeError)
 
 
 @dataclass
@@ -85,26 +88,35 @@ class ImageLaneAgent:
 
     # -- atrativo -------------------------------------------------------------------
 
-    async def _resolve(self, name: str, lat: float, lon: float) -> tuple[WdItem | None, str | None]:
+    async def _resolve(self, rio: RioRecord, name: str, lat: float, lon: float) -> tuple[WdItem | None, str | None]:
         match = best_match(name, await self._wm.items_around(lat, lon, self._cfg.around_km))
         if match is not None:
             return match, "around5km"
-        match = best_match(name, await self._wm.items_by_name(
-            name, lat, lon, self._cfg.name_km, self._cfg.name_area_km
-        ))
+        ibge = rio.municipio_id or (rio.normalized or {}).get("municipio_id")
+        if not ibge:
+            return None, None
+        items = await self._wm.items_by_name(
+            name, ibge, lat, lon, self._cfg.name_km, self._cfg.name_area_km
+        )
+        # A QID another atrativo holds by proximity is that place, not this namesake.
+        # ponytail: only catches the holder looked up first; the municipality filter does the rest.
+        taken = set(self._s.scalars(select(ImageLookup.qid).where(
+            ImageLookup.qid.in_([i.qid for i in items]), ImageLookup.via == "around5km",
+            ImageLookup.canonical_key != rio.canonical_key,
+        ))) if items else set()
+        match = best_match(name, [i for i in items if i.qid not in taken])
         return match, ("name30km" if match else None)
 
     async def _attraction(self, rio: RioRecord) -> tuple[LaneResult, WdItem | None, str | None]:
         norm = rio.normalized or {}
         lat, lon = float(norm["lat"]), float(norm["lon"])
-        match, via = await self._resolve(norm.get("name") or "", lat, lon)
+        match, via = await self._resolve(rio, norm.get("name") or "", lat, lon)
         if match is None:
             return LaneResult("no_match"), None, None
         lanes = {
             "p18": list(match.p18),
             "p180": await self._wm.depicts(match.qid),
             "p373": await self._wm.category_files(match.p373) if match.p373 else [],
-            "geo500": await self._wm.geosearch(lat, lon, self._cfg.geo_m),
         }
         titles = [t for ts in lanes.values() for t in ts]
         files = await self._wm.image_info(titles) if titles else {}

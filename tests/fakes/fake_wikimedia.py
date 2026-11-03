@@ -28,7 +28,7 @@ class FakeWikimediaClient:
         self.files = files or {}
         self.same_bytes = same_bytes or {}
         self.fail = fail
-        self.lanes = lanes  # depicts={qid: [...]}, category={cat: [...]}, geo=[...], municipio={ibge: item}, top={qid: [...]}
+        self.lanes = lanes  # depicts={qid: [...]}, category={cat: [...]}, municipio={ibge: item}, top={qid: [...]}
         self.calls: list[tuple[str, Any]] = []
 
     def _call(self, name: str, arg: Any) -> None:
@@ -41,9 +41,9 @@ class FakeWikimediaClient:
         return self.around
 
     async def items_by_name(
-        self, name: str, lat: float, lon: float, km: float, area_km: float | None = None
+        self, name: str, ibge: str, lat: float, lon: float, km: float, area_km: float | None = None
     ) -> list[WdItem]:
-        self._call("items_by_name", name)
+        self._call("items_by_name", (name, ibge))
         return self.by_name
 
     async def image_info(self, titles: list[str]) -> dict[str, CommonsFile]:
@@ -61,10 +61,6 @@ class FakeWikimediaClient:
     async def category_files(self, category: str) -> list[str]:
         self._call("category_files", category)
         return self.lanes.get("category", {}).get(category, [])
-
-    async def geosearch(self, lat: float, lon: float, radius_m: int) -> list[str]:
-        self._call("geosearch", (lat, lon, radius_m))
-        return list(self.lanes.get("geo", []))
 
     async def municipio(self, ibge: str) -> WdItem | None:
         self._call("municipio", ibge)

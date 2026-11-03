@@ -15,7 +15,9 @@ class NullWikimediaClient:
     async def items_around(self, lat: float, lon: float, km: float) -> list[Any]:
         return []
 
-    async def items_by_name(self, name: str, lat: float, lon: float, km: float) -> list[Any]:
+    async def items_by_name(
+        self, name: str, ibge: str, lat: float, lon: float, km: float, area_km: float | None = None
+    ) -> list[Any]:
         return []
 
     async def municipio(self, ibge: str) -> Any | None:
@@ -28,9 +30,6 @@ class NullWikimediaClient:
         return []
 
     async def category_files(self, category: str) -> list[str]:
-        return []
-
-    async def geosearch(self, lat: float, lon: float, radius_m: int) -> list[str]:
         return []
 
     async def image_info(self, titles: list[str]) -> dict[str, Any]:

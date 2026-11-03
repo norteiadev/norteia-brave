@@ -89,33 +89,25 @@ def test_attraction_gallery_order_and_limit() -> None:
     lanes = {
         "p18": [],
         "p180": ["File:D1.jpg", "File:D2.jpg"],
-        "p373": ["File:C1.jpg", "File:D2.jpg", "File:C2.jpg"],
-        "geo500": ["File:G1.jpg", "File:G2.jpg", "File:G3.jpg"],
+        "p373": ["File:C1.jpg", "File:D2.jpg", "File:C2.jpg", "File:C3.jpg", "File:C4.jpg"],
     }
     files = {t: _f(t) for ts in lanes.values() for t in ts}
-    picks, _ = pick_attraction(lanes, files, gallery_max=5)
+    picks, _ = pick_attraction(lanes, files, gallery_max=4)
     assert [(p.title, p.role, p.rank, p.lane) for p in picks] == [
         ("File:D1.jpg", "cover", 0, "p180"),  # no P18 → first P180
         ("File:D2.jpg", "gallery", 1, "p180"),
         ("File:C1.jpg", "gallery", 2, "p373"),
         ("File:C2.jpg", "gallery", 3, "p373"),  # D2 already used
-        ("File:G1.jpg", "gallery", 4, "geo500"),
-        ("File:G2.jpg", "gallery", 5, "geo500"),
+        ("File:C3.jpg", "gallery", 4, "p373"),
     ]
-
-
-def test_geo500_never_becomes_the_cover() -> None:
-    lanes = {"geo500": ["File:G1.jpg"]}
-    picks, _ = pick_attraction(lanes, {"File:G1.jpg": _f("File:G1.jpg")}, gallery_max=5)
-    assert [p.role for p in picks] == ["gallery"]
 
 
 def test_p373_is_the_last_resort_cover() -> None:
     """Praia de Boa Viagem: no P18, no P180, only its Commons category."""
-    lanes = {"p18": [], "p180": [], "p373": ["File:C1.jpg", "File:C2.jpg"], "geo500": ["File:G1.jpg"]}
+    lanes = {"p18": [], "p180": [], "p373": ["File:C1.jpg", "File:C2.jpg"]}
     picks, _ = pick_attraction(lanes, {t: _f(t) for ts in lanes.values() for t in ts}, gallery_max=5)
     assert [(p.title, p.role, p.lane) for p in picks] == [
-        ("File:C1.jpg", "cover", "p373"), ("File:C2.jpg", "gallery", "p373"), ("File:G1.jpg", "gallery", "geo500"),
+        ("File:C1.jpg", "cover", "p373"), ("File:C2.jpg", "gallery", "p373"),
     ]
 
 

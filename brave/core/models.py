@@ -433,7 +433,7 @@ class EntityImage(Base):
     """Entity ↔ archived image, plus the push outbox (pushed_at / push_error).
 
     role: cover | gallery. rank: 0 = cover, 1.. = gallery order.
-    lane: p18 | p180 | p373 | geo500 | muni_top | atrativo.
+    lane: p18 | p180 | p373 | muni_top | atrativo (geo500 only on rows from before 11/2026).
     """
 
     __tablename__ = "entity_images"

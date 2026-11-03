@@ -157,16 +157,54 @@ async def test_gallery_lanes_query_the_file_namespace(client) -> None:
         route = respx.get(API).mock(side_effect=[
             httpx.Response(200, json={"query": {"search": [{"title": "File:D1.jpg"}]}}),
             httpx.Response(200, json={"query": {"categorymembers": [{"title": "File:C1.jpg"}]}}),
-            httpx.Response(200, json={"query": {"geosearch": [{"title": "File:G1.jpg", "dist": 12.0}]}}),
         ])
         assert await client.depicts("Q1") == ["File:D1.jpg"]
         assert await client.category_files("Praia do Saco") == ["File:C1.jpg"]
-        assert await client.geosearch(-11.2, -37.3, 500) == ["File:G1.jpg"]
 
-    depicts, category, geo = (c.request.url.params for c in route.calls)
+    depicts, category = (c.request.url.params for c in route.calls)
     assert (depicts["srsearch"], depicts["srnamespace"]) == ("haswbstatement:P180=Q1", "6")
     assert (category["cmtitle"], category["cmnamespace"]) == ("Category:Praia do Saco", "6")
-    assert (geo["gsradius"], geo["gsnamespace"]) == ("500", "6")
+
+
+def _query(call) -> str:
+    from urllib.parse import parse_qs
+
+    return parse_qs(call.request.content.decode())["query"][0]
+
+
+TRUNCATED = b'{"head": {"vars": ["item"]}, "results": {"bindings": [{"item": {"type": "uri", "value": "http://www.wiki'
+
+
+async def test_truncated_wdqs_answer_is_retried(client) -> None:
+    with respx.mock:
+        route = respx.post(WDQS).mock(side_effect=[
+            httpx.Response(200, content=TRUNCATED),
+            httpx.Response(200, json={"results": {"bindings": []}}),
+        ])
+        assert await client.items_around(-22.9, -43.2, 5) == []
+    assert route.call_count == 2
+
+
+async def test_items_around_still_truncated_asks_again_within_2km(client) -> None:
+    attempts = ImagesConfig().max_attempts
+    with respx.mock:
+        route = respx.post(WDQS).mock(side_effect=[httpx.Response(200, content=TRUNCATED)] * attempts + [
+            httpx.Response(200, json={"results": {"bindings": []}}),
+        ])
+        assert await client.items_around(-22.9, -43.2, 5) == []
+    assert route.call_count == attempts + 1
+    assert '"5"' in _query(route.calls[0]) and '"2.0"' in _query(route.calls[-1])
+
+
+async def test_items_by_name_keeps_only_the_same_municipality(client) -> None:
+    with respx.mock:
+        route = respx.post(WDQS).mock(return_value=httpx.Response(200, json={"results": {"bindings": []}}))
+        await client.items_by_name("Igreja Nossa Senhora da Conceição", "3303302", -22.9, -43.1, 30)
+    query = _query(route.calls[0])
+    # OPTIONAL + BOUND, never FILTER EXISTS: WDQS evaluates the EXISTS path unbound (timeout).
+    assert 'OPTIONAL { ?item wdt:P131+ ?muni . ?muni wdt:P1585 "3303302" }' in query
+    assert "FILTER(BOUND(?muni) || BOUND(?area))" in query
+    assert "EXISTS { ?item wdt:P131" not in query
 
 
 async def test_municipio_and_its_top_items(client) -> None:

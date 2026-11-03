@@ -13,6 +13,8 @@ House rules, all verified against the live services:
   - Commons answers HTTP 200 with ``{"error": {"code": "cirrussearch-too-busy-error"}}``
     (also ``maxlag``, ``ratelimited``). Read as an empty result it silently wipes a lane,
     so those codes are retried like a 429; any other error code raises at once.
+  - A WDQS query that runs out of time can cut the JSON stream mid-body (seen on items_around
+    in dense city centres): the decode error is retried like a 5xx.
   - The upload server renders only its standard thumbnail widths (250/330/960/1280/1920);
     any other width is a 400. The original URL carries a ``?utm_`` query that must be
     stripped before the ``/thumb/`` URL is built.
@@ -49,6 +51,9 @@ _BUSY_CODES = frozenset({"cirrussearch-too-busy-error", "maxlag", "ratelimited"}
 # Robot policy (wikitech.wikimedia.org/wiki/Robot_policy), Action API rule 4.
 _SLOW_API_S = 1.0
 _SLOW_API_WAIT_S = 5.0
+
+# items_around radius asked again when the answer keeps coming back truncated.
+_DENSE_KM = 2.0
 
 _EXT_KEYS = ("License", "LicenseShortName", "LicenseUrl", "Artist", "Restrictions", "Assessments")
 
@@ -93,6 +98,8 @@ class CommonsFile:
 
 
 def _retryable(exc: BaseException) -> bool:
+    if isinstance(exc, json.JSONDecodeError):  # WDQS cut the stream mid-body
+        return True
     if isinstance(exc, WikimediaError):
         return exc.code in _BUSY_CODES
     if isinstance(exc, httpx.HTTPStatusError):
@@ -248,8 +255,9 @@ class WikimediaClient:
                         if lane == "api" and time.monotonic() - t0 > _SLOW_API_S:
                             self._hold(lane, _SLOW_API_WAIT_S)
                 resp.raise_for_status()
-                if api:
-                    err = resp.json().get("error")
+                if api or lane == "wdqs":
+                    body = resp.json()  # inside the retry: a truncated body is retried
+                    err = body.get("error") if api else None
                     if err:
                         logger.info("wikimedia_api_error", code=err.get("code"))
                         raise WikimediaError(str(err.get("code")))
@@ -273,8 +281,19 @@ class WikimediaClient:
     # -- Wikidata -------------------------------------------------------------------
 
     async def items_around(self, lat: float, lon: float, km: float) -> list[WdItem]:
-        """Items with coordinates within ``km`` of the point (no municipalities)."""
-        return _items(await self._sparql(f"""
+        """Items with coordinates within ``km`` of the point (no municipalities). An answer
+        still truncated after the retries is asked again within _DENSE_KM."""
+        try:
+            return _items(await self._sparql(self._around_query(lat, lon, km)))
+        except json.JSONDecodeError:
+            if km <= _DENSE_KM:
+                raise
+            logger.warning("wikidata_around_truncated", km=km, retry_km=_DENSE_KM)
+            return _items(await self._sparql(self._around_query(lat, lon, _DENSE_KM)))
+
+    @staticmethod
+    def _around_query(lat: float, lon: float, km: float) -> str:
+        return f"""
             SELECT ?item ?label ?p18 ?p373 ?dist WHERE {{
               SERVICE wikibase:around {{
                 ?item wdt:P625 ?loc .
@@ -286,14 +305,19 @@ class WikimediaClient:
               {_NOT_A_PLACE}
               OPTIONAL {{ ?item wdt:P18 ?p18 }}
               OPTIONAL {{ ?item wdt:P373 ?p373 }}
-            }} LIMIT 3000"""))
+            }} LIMIT 3000"""
 
     async def items_by_name(
-        self, name: str, lat: float, lon: float, km: float, area_km: float | None = None
+        self, name: str, ibge: str, lat: float, lon: float, km: float, area_km: float | None = None
     ) -> list[WdItem]:
-        """Entity search for ``name`` (pt), kept when its coordinates are within ``km`` —
-        or ``area_km`` for an item with an area (P2046): a national park's coordinates are
-        its centroid, tens of km from the gate the attraction points at.
+        """Entity search for ``name`` (pt), kept when the item lies in the municipality with
+        IBGE code ``ibge`` (P131 chain) and its coordinates are within ``km`` — or, with no
+        municipality check, ``area_km`` for an item with an area (P2046): a national park's
+        coordinates are its centroid, tens of km from the gate the attraction points at, and
+        its P131 often stops at the state or names one of the municipalities it spans. The
+        municipality check stops a namesake in the next city (the Gávea church matched for
+        Niterói's). It is an OPTIONAL, not a FILTER EXISTS: WDQS runs the EXISTS path
+        unbound and times out (measured 11/2026: 65 s vs 1 s).
 
         The fallback for drifted coordinates: the caller still has to name-match the labels.
         """
@@ -310,6 +334,8 @@ class WikimediaClient:
               OPTIONAL {{ ?item wdt:P18 ?p18 }}
               OPTIONAL {{ ?item wdt:P373 ?p373 }}
               OPTIONAL {{ ?item wdt:P2046 ?area }}
+              OPTIONAL {{ ?item wdt:P131+ ?muni . ?muni wdt:P1585 {json.dumps(ibge)} }}
+              FILTER(BOUND(?muni) || BOUND(?area))
               BIND(geof:distance(?loc, "Point({lon} {lat})"^^geo:wktLiteral) AS ?dist)
               FILTER(?dist <= {km} || (BOUND(?area) && ?dist <= {area_km}))
             }} LIMIT 200"""))
@@ -384,14 +410,6 @@ class WikimediaClient:
         })
         return [r["title"] for r in data.get("query", {}).get("categorymembers", [])]
 
-    async def geosearch(self, lat: float, lon: float, radius_m: int, limit: int = 30) -> list[str]:
-        """File titles geotagged within ``radius_m`` (gsnamespace=6 — the default 0 is articles)."""
-        data = await self._api({
-            "action": "query", "list": "geosearch", "gscoord": f"{lat}|{lon}",
-            "gsradius": str(max(10, min(radius_m, 10000))), "gslimit": str(limit),
-            "gsnamespace": "6",
-        })
-        return [r["title"] for r in data.get("query", {}).get("geosearch", [])]
 
     def download_url(self, f: CommonsFile) -> str:
         """Standard-width thumbnail, or the original when it is not wider; never a query."""
