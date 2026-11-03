@@ -311,10 +311,13 @@ class WikimediaClient:
         self, name: str, ibge: str, lat: float, lon: float, km: float, area_km: float | None = None
     ) -> list[WdItem]:
         """Entity search for ``name`` (pt), kept when the item lies in the municipality with
-        IBGE code ``ibge`` (P131 chain) and its coordinates are within ``km`` — or
-        ``area_km`` for an item with an area (P2046): a national park's coordinates are
-        its centroid, tens of km from the gate the attraction points at. The municipality
-        check stops a namesake in the next city (the Gávea church matched for Niterói's).
+        IBGE code ``ibge`` (P131 chain) and its coordinates are within ``km`` — or, with no
+        municipality check, ``area_km`` for an item with an area (P2046): a national park's
+        coordinates are its centroid, tens of km from the gate the attraction points at, and
+        its P131 often stops at the state or names one of the municipalities it spans. The
+        municipality check stops a namesake in the next city (the Gávea church matched for
+        Niterói's). It is an OPTIONAL, not a FILTER EXISTS: WDQS runs the EXISTS path
+        unbound and times out (measured 11/2026: 65 s vs 1 s).
 
         The fallback for drifted coordinates: the caller still has to name-match the labels.
         """
@@ -328,10 +331,11 @@ class WikimediaClient:
               }}
               ?item wdt:P625 ?loc ; rdfs:label ?label . FILTER(LANG(?label) IN ("pt", "en"))
               FILTER NOT EXISTS {{ ?item wdt:P1585 [] }}
-              FILTER EXISTS {{ ?item wdt:P131+ ?m . ?m wdt:P1585 {json.dumps(ibge)} }}
               OPTIONAL {{ ?item wdt:P18 ?p18 }}
               OPTIONAL {{ ?item wdt:P373 ?p373 }}
               OPTIONAL {{ ?item wdt:P2046 ?area }}
+              OPTIONAL {{ ?item wdt:P131+ ?muni . ?muni wdt:P1585 {json.dumps(ibge)} }}
+              FILTER(BOUND(?muni) || BOUND(?area))
               BIND(geof:distance(?loc, "Point({lon} {lat})"^^geo:wktLiteral) AS ?dist)
               FILTER(?dist <= {km} || (BOUND(?area) && ?dist <= {area_km}))
             }} LIMIT 200"""))

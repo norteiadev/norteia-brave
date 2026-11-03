@@ -200,7 +200,11 @@ async def test_items_by_name_keeps_only_the_same_municipality(client) -> None:
     with respx.mock:
         route = respx.post(WDQS).mock(return_value=httpx.Response(200, json={"results": {"bindings": []}}))
         await client.items_by_name("Igreja Nossa Senhora da Conceição", "3303302", -22.9, -43.1, 30)
-    assert '?item wdt:P131+ ?m . ?m wdt:P1585 "3303302"' in _query(route.calls[0])
+    query = _query(route.calls[0])
+    # OPTIONAL + BOUND, never FILTER EXISTS: WDQS evaluates the EXISTS path unbound (timeout).
+    assert 'OPTIONAL { ?item wdt:P131+ ?muni . ?muni wdt:P1585 "3303302" }' in query
+    assert "FILTER(BOUND(?muni) || BOUND(?area))" in query
+    assert "EXISTS { ?item wdt:P131" not in query
 
 
 async def test_municipio_and_its_top_items(client) -> None:
