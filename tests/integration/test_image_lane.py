@@ -140,6 +140,30 @@ async def test_name_fallback_within_30km(db_session, tmp_path) -> None:
 
     lookup = db_session.get(ImageLookup, "tripadvisor:attraction:1")
     assert (lookup.via, lookup.dist_km) == ("name30km", 12.0)
+    assert ("items_by_name", ("Praia do Saco", "2807105")) in fake.calls
+
+
+async def test_name_fallback_skips_a_qid_another_atrativo_holds_by_proximity(db_session, tmp_path) -> None:
+    """Niterói's Igreja N. Sra. da Conceição took the Gávea church's QID by name (14 km)."""
+    gavea = WdItem("Q106264683", frozenset({"Praia do Saco"}), ("File:Saco.jpg",), dist_km=0.01)
+    files = {"File:Saco.jpg": photo("File:Saco.jpg")}
+    holder = _atrativo("tripadvisor:attraction:2")
+    await _agent(db_session, FakeWikimediaClient(around=[gavea], files=files), tmp_path).run(holder)
+
+    far = WdItem("Q106264683", frozenset({"Praia do Saco"}), ("File:Saco.jpg",), dist_km=14.3)
+    result = await _agent(db_session, FakeWikimediaClient(by_name=[far], files=files), tmp_path).run(_atrativo())
+
+    assert result.outcome == "no_match"
+    assert _rows(db_session, "tripadvisor:attraction:1") == []
+
+
+async def test_no_name_fallback_without_a_municipality(db_session, tmp_path) -> None:
+    rio = _atrativo()
+    rio.normalized = {**rio.normalized, "municipio_id": None}
+    fake = FakeWikimediaClient(by_name=[WdItem("Q1", frozenset({"Praia do Saco"}), dist_km=1.0)])
+
+    assert (await _agent(db_session, fake, tmp_path).run(rio)).outcome == "no_match"
+    assert fake.count("items_by_name") == 0
 
 
 async def test_external_error_is_not_a_final_marker(db_session, tmp_path) -> None:
@@ -153,20 +177,19 @@ async def test_external_error_is_not_a_final_marker(db_session, tmp_path) -> Non
     assert (await _agent(db_session, fake, tmp_path).run(_atrativo())).outcome == "matched"
 
 
-async def test_gallery_from_depicts_category_and_nearby(db_session, tmp_path) -> None:
+async def test_gallery_from_depicts_and_category(db_session, tmp_path) -> None:
     item = WdItem("Q1", frozenset({"Praia do Saco"}), ("File:Saco.jpg",), p373="Praia do Saco")
-    titles = ["File:Saco.jpg", "File:D1.jpg", "File:C1.jpg", "File:G1.jpg"]
+    titles = ["File:Saco.jpg", "File:D1.jpg", "File:C1.jpg"]
     fake = FakeWikimediaClient(
         around=[item], files={t: photo(t) for t in titles},
         depicts={"Q1": ["File:D1.jpg"]}, category={"Praia do Saco": ["File:C1.jpg"]},
-        geo=["File:G1.jpg", "File:Saco.jpg"],
     )
 
     await _agent(db_session, fake, tmp_path).run(_atrativo())
 
     rows = sorted(_rows(db_session, "tripadvisor:attraction:1"), key=lambda r: r.rank)
     assert [(r.role, r.lane) for r in rows] == [
-        ("cover", "p18"), ("gallery", "p180"), ("gallery", "p373"), ("gallery", "geo500"),
+        ("cover", "p18"), ("gallery", "p180"), ("gallery", "p373"),
     ]
 
 

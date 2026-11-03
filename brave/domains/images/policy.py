@@ -28,9 +28,9 @@ COVER_MIN_WIDTH = 1280
 COVER_MIN_ASPECT = 1.2
 
 # Attraction: a cover is a photo OF the item: P18, then P180, then the item's own Commons
-# category (P373). Proximity (geo500) is gallery-only.
+# category (P373).
 ATTRACTION_COVER_LANES = ("p18", "p180", "p373")
-ATTRACTION_GALLERY_LANES = ("p18", "p180", "p373", "geo500")  # p18: one that lost the cover
+ATTRACTION_GALLERY_LANES = ATTRACTION_COVER_LANES  # p18: one that lost the cover
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ class Pick:
     title: str
     role: str  # cover | gallery
     rank: int  # 0 = cover, 1.. = gallery order
-    lane: str  # p18 | p180 | p373 | geo500 | muni_top | atrativo
+    lane: str  # p18 | p180 | p373 | muni_top | atrativo (geo500: rows archived before 11/2026)
 
 
 def license_verdict(f: CommonsFile) -> str:
@@ -114,7 +114,7 @@ def pick_attraction(
 ) -> tuple[list[Pick], Counter[str]]:
     """Cover = the first usable photo at least COVER_MIN_WIDTH wide that is P18, or P180 /
     P373 titled with ``name``; with none, the first usable P18, else P180, else P373.
-    Gallery = the rest of P18, P180, P373, then geo500, up to ``gallery_max``. Returns the
+    Gallery = the rest of P18, P180, P373, up to ``gallery_max``. Returns the
     picks and the rejection counts by reason."""
     rejected: Counter[str] = Counter()
     ok = _usable(lanes, files, rejected)
