@@ -171,6 +171,17 @@ def record_uf_page(redis: Any, uf: str, page: int, pages_total: int | None) -> N
     redis.expire(_UF_PAGES_KEY, 7 * 86400)
 
 
+def get_uf_resume_page(redis: Any, uf: str) -> int | None:
+    """The page an unfinished per-UF sweep was on (its committed cards skip as synced)."""
+    page = _decode(redis.hget(_UF_PAGES_KEY, uf)).split("/")[0]
+    return int(page) if page.isdigit() and int(page) > 1 else None
+
+
+def clear_uf_page(redis: Any, uf: str) -> None:
+    """The UF's sweep ran out of pages: the next one starts at page 1."""
+    redis.hdel(_UF_PAGES_KEY, uf)
+
+
 def get_progress(redis: Any) -> dict[str, Any]:
     """Snapshot for the endpoint — EXACTLY the serialized field set.
 

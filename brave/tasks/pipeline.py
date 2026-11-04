@@ -965,10 +965,12 @@ def sweep_tripadvisor(
                        instead of the per-UF atrativos path.
         start_page:    1-based page to start a FRESH bulk run at (offset = (start_page-1)*30).
                        Ignored when a prior run recorded progress (resume takes precedence).
-                       Per-UF: the page a time-budget continuation resumes at.
+                       Per-UF: the page a continuation resumes at; 1 (a new start)
+                       resumes at the UF's stored page cursor when a run left one.
         max_pages:     Cap on pages to fetch this bulk run (slice-first). None → full 334.
         geo_id:        TripAdvisor integer geoId for the bulk run (294280 = all Brazil).
-        fresh:         Bulk only: ignore a stored unfinished run and start at start_page.
+        fresh:         Ignore a stored unfinished run (bulk hash / per-UF uf_pages cursor)
+                       and start at start_page.
         backoffs:      Consecutive 429 back-offs this chain already took (internal).
 
     A TA 429 (SourceRateLimitError) is not a dead session: the producer re-enqueues itself
@@ -1190,6 +1192,10 @@ def sweep_tripadvisor(
                 places_agent=places_agent,
                 distritos=_distritos,
             )
+            # A parcial run (pause, dead session, crash) left its page in uf_pages: a new
+            # start resumes there instead of re-listing the UF. Continuations pass theirs.
+            if start_page == 1 and not fresh and max_per_uf is None:
+                start_page = sweep_progress.get_uf_resume_page(engine_rc, uf) or 1
             # Per-UF path enriches review recency (fetch_recent_review per card) so
             # atualidade lifts the reliability score. The bulk_national branch above leaves
             # enrichment OFF (no per-card review calls at 10k scale).
@@ -1231,6 +1237,8 @@ def sweep_tripadvisor(
 
             session.commit()
             ok = True
+            if not getattr(atrativos_ingest, "halted", False):
+                sweep_progress.clear_uf_page(engine_rc, uf)
 
             # Enrichment now runs INLINE inside produce() (per record, via places_agent) — no
             # post-produce dispatch. This survives a task-kill (per-record commit) where the old

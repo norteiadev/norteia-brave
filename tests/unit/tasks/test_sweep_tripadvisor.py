@@ -1443,6 +1443,30 @@ class TestPerUfPlacesOffAndBudget:
         # The continuation holds the token: without the hand-over the run would be done.
         assert collection_engine.get_status(rc)["state"] == collection_engine.RUNNING
 
+    def test_per_uf_start_resumes_at_the_stored_cursor(self, monkeypatch):
+        """A parcial run (pause, dead session, DB outage) left its page: a new engine/start
+        resumes there instead of re-listing the UF from page 1."""
+        rc = fakeredis.FakeRedis()
+        sweep_progress.record_uf_page(rc, "ES", 57, 120)
+        captured, _ = self._run(monkeypatch, places_on=False, rc=rc)
+        assert captured["start_page"] == 57
+
+    def test_per_uf_done_clears_the_cursor(self, monkeypatch):
+        rc = fakeredis.FakeRedis()
+        sweep_progress.record_uf_page(rc, "ES", 120, 120)
+        self._run(monkeypatch, places_on=False, rc=rc)
+        assert sweep_progress.get_uf_resume_page(rc, "ES") is None
+
+    def test_per_uf_halt_keeps_the_cursor(self, monkeypatch):
+        async def _halted(ingest):
+            ingest.halted = True
+            return []
+
+        rc = fakeredis.FakeRedis()
+        sweep_progress.record_uf_page(rc, "ES", 57, 120)
+        self._run(monkeypatch, places_on=False, produce=_halted, rc=rc)
+        assert sweep_progress.get_uf_resume_page(rc, "ES") == 57
+
     def test_per_uf_429_resumes_at_the_page_it_hit(self, monkeypatch):
         from brave.shared.exceptions import SourceRateLimitError
         from brave.tasks import pipeline
