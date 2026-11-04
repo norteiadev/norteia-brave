@@ -417,6 +417,7 @@ class TripAdvisorAtrativosIngest:
         hybrid = run_rio and getattr(self._places_agent, "prefetches", False) is True
 
         self.resume_page = start_page
+        self.halted = False  # a pause/off/stop cut the sweep: its page cursor must survive
         async for _offset, cards in self._client.fetch_attractions_paginated_gql(
             geo_id, start_page=start_page
         ):
@@ -435,6 +436,7 @@ class TripAdvisorAtrativosIngest:
             # tests call produce() directly) — behavior then unchanged.
             if redis is not None and collection_engine.should_halt_producer(redis):
                 logger.info("ta_atrativos_producer_halt", uf=uf, offset=_offset)
+                self.halted = True
                 break
             reached_cap = False
             synced = self._already_synced(cards, run_rio=run_rio)
