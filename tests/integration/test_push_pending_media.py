@@ -222,6 +222,22 @@ def test_permanent_4xx_is_recorded_and_repush_clears_it(h) -> None:
     assert row.pushed_at is not None
 
 
+
+def test_a_plain_text_404_from_the_proxy_ends_the_tick_and_leaves_rows_pending(h, beat) -> None:
+    # During a norteia-api deploy the proxy answers "404 page not found" (text, not JSON).
+    for key in ("ta:1", "ta:2"):
+        _mar(h, _rio(h, key, "attraction"))
+    rows = [_photo(h, k, "attraction") for k in ("ta:1", "ta:2")]
+
+    with respx.mock:
+        route = respx.post(MEDIA).mock(return_value=httpx.Response(404, text="404 page not found\n"))
+        assert pipeline.push_pending_media.run() == 0
+
+    assert route.call_count == 1
+    h.session.expire_all()
+    assert [(r.pushed_at, r.push_error) for r in rows] == [(None, None), (None, None)]
+    assert beat[-1] == ("brave.push_pending_media", None)
+
 @pytest.mark.parametrize("status", [401, 403, 408, 429])
 def test_auth_or_transient_4xx_ends_the_tick_and_leaves_rows_pending(h, beat, status) -> None:
     for key in ("ta:1", "ta:2"):
