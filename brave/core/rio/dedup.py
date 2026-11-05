@@ -12,13 +12,15 @@ Stage 2: Territorial-key block + pgvector HNSW fuzzy search.
 Phase 1 note: compute_embedding returns a zero stub. Real embeddings via LLMClient in Phase 2.
 """
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brave.core.models import RioRecord
+from brave.core.models import MarRecord, RioRecord
 from brave.core.repositories import (
     SqlAlchemyNascenteRepository,
     SqlAlchemyRioRepository,
 )
+from brave.observability.audit import write_audit
 
 # Cosine similarity threshold for dedup candidate acceptance
 DEDUP_THRESHOLD = 0.95
@@ -138,3 +140,86 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
     return dot / (norm_a * norm_b)
+
+
+def merge_into_mar(rio: RioRecord, mar: MarRecord) -> None:
+    """The merge of a dedup pair, no audit and no commit (scripts/territorial_dedup_fixes.py)."""
+    # UNION the candidate's source_ref into the existing Mar provenance.
+    # RioRecord has no source_ref column, so derive it the same way the Mar
+    # promotion service does (mar/service.py:41): canonical_key or the row id.
+    candidate_source_ref = rio.canonical_key or str(rio.id)
+    provenance = dict(mar.provenance or {})
+    merged = list(provenance.get("merged_source_refs", []))
+    if candidate_source_ref not in merged:
+        merged.append(candidate_source_ref)
+    # Reassign a fresh dict so SQLAlchemy detects the JSON change.
+    mar.provenance = {**provenance, "merged_source_refs": merged}
+    # Discard the candidate Rio from the pending dedup pool — do NOT create a
+    # 2nd active Mar, do NOT touch mar.source_ref, do NOT run the Mar
+    # promotion/supersession path.
+    rio.routing = "descarte"
+
+
+PLACE_TWIN_REASON = "dedup_same_place_id"
+
+
+def resolve_place_twins(session: Session, rio: RioRecord, actor: str) -> list[RioRecord]:
+    """Keep one atrativo per (município, google_place_id); discard the rest. Caller commits.
+
+    TripAdvisor lists one place under several locationIds (twin cards, tours named after
+    the place), and Places matches them all to the same place_id. The keeper is the one
+    already on norteia-api, then in Mar, then the best scored/reviewed; a loser with an
+    active Mar is merged into the keeper's (publish then hides it on the API). Scoped to
+    the município: one place_id across municípios is a Places mismatch, not a twin.
+    """
+    place_id = (rio.normalized or {}).get("google_place_id")
+    if rio.entity_type != "attraction" or not place_id or rio.municipio_id is None:
+        return []
+    group = list(
+        session.scalars(
+            select(RioRecord).where(
+                RioRecord.entity_type == "attraction",
+                RioRecord.routing != "descarte",
+                RioRecord.municipio_id == rio.municipio_id,
+                RioRecord.normalized["google_place_id"].as_string() == place_id,
+            )
+        ).all()
+    )
+    if len(group) < 2:
+        return []
+    mars = {
+        m.rio_id: m
+        for m in session.scalars(
+            select(MarRecord).where(
+                MarRecord.rio_id.in_([r.id for r in group]),
+                MarRecord.superseded_by_id.is_(None),
+            )
+        ).all()
+    }
+
+    def rank(r: RioRecord) -> tuple:
+        mar = mars.get(r.id)
+        on_api = mar is not None and mar.pushed_at is not None and mar.retracted_at is None
+        reviews = (r.normalized or {}).get("review_count") or 0
+        return (on_api, r.routing == "mar", float(r.score or 0), reviews, r.canonical_key or "")
+
+    keeper = max(group, key=rank)
+    keeper_mar = mars.get(keeper.id)
+    losers = [r for r in group if r is not keeper]
+    for loser in losers:
+        before = {"routing": loser.routing, "dlq_reason": loser.dlq_reason}
+        if keeper_mar is not None and loser.id in mars:
+            merge_into_mar(loser, keeper_mar)
+        loser.routing, loser.dlq_reason = "descarte", PLACE_TWIN_REASON
+        write_audit(
+            session,
+            action=PLACE_TWIN_REASON,
+            entity_type="attraction",
+            record_id=loser.id,
+            before_state=before,
+            after_state={"routing": "descarte", "keeper": keeper.canonical_key,
+                         "google_place_id": place_id},
+            actor=actor,
+        )
+    session.flush()
+    return losers

@@ -2190,8 +2190,9 @@ _IMAGES_CHUNK = 25
 def images_candidates(uf: str, phase: str) -> list:
     """Rio rows the image lane still owes a final lookup, for one UF and phase.
 
-    attraction: Places-enriched (the name/coords are as good as they get), not discarded,
-    with coordinates. destination: the UF's IBGE municípios. Atrativos run first because
+    attraction: in Mar (a DLQ row may never ship — and its photos only go out once it is on
+    norteia-api — so it is looked up after promotion), Places-enriched (the name/coords are
+    as good as they get), with coordinates. destination: the UF's IBGE municípios. Atrativos run first because
     the destino cover falls back to the city's atrativo covers.
     """
     from sqlalchemy import exists  # noqa: PLC0415
@@ -2208,7 +2209,7 @@ def images_candidates(uf: str, phase: str) -> list:
     return [
         RioRecord.uf == uf,
         RioRecord.entity_type == "attraction",
-        RioRecord.routing != "descarte",
+        RioRecord.routing == "mar",
         RioRecord.normalized["google_enriched"].as_boolean().is_(True),
         RioRecord.normalized["lat"].as_string().is_not(None),
         RioRecord.normalized["lon"].as_string().is_not(None),

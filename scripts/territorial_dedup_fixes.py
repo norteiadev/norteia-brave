@@ -36,9 +36,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brave.api.routers.dedup import merge_into_mar
 from brave.config.settings import ScoreConfig
 from brave.core.models import MarRecord, Municipio, RioRecord
+from brave.core.rio.dedup import merge_into_mar
 from brave.core.rio.persist import persist_normalized
 from brave.observability.audit import write_audit
 from brave.shared.destino import ensure_destino

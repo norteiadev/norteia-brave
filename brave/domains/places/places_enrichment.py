@@ -61,6 +61,7 @@ from brave.clients.places import (
 )
 from brave.config.settings import ScoreConfig
 from brave.core.models import AtrativoBusca, Municipio
+from brave.core.rio.dedup import resolve_place_twins
 from brave.core.rio.normalize import normalize_name
 from brave.core.rio.persist import persist_normalized
 from brave.core.rio.routing import STICKY_DLQ_REASONS, route_by_score
@@ -1329,6 +1330,9 @@ class PlacesEnrichmentAgent:
             rio.routing = "dlq"
             rio.dlq_reason = TEMPORARILY_CLOSED_REASON
         self._session.flush()
+        # One atrativo per place: a TA twin card (or a tour named after the place) that
+        # Places matched to a place_id another atrativo of the município holds is discarded.
+        resolve_place_twins(self._session, rio, actor="places_enrichment_agent")
 
         # Append-only Log-tab timeline event (keyed by canonical_key — the drawer key).
         # LGPD: public-geo / engineering fields only — never review text.
