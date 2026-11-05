@@ -694,7 +694,10 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
                     status = exc.response.status_code
                     if status in _AUTH_4XX:
                         raise
-                    if status >= 500 or status in _TRANSIENT_4XX:
+                    # norteia-api answers JSON; a plain-text error is the proxy in front of it
+                    # (a deploy), not a verdict on this photo.
+                    from_api = "json" in exc.response.headers.get("content-type", "")
+                    if status >= 500 or status in _TRANSIENT_4XX or not from_api:
                         logger.warning("push_media_api_error", status=status, canonical_key=key, left=len(jobs) - i)
                         break
                     if not (status == 404 and entity_type == "destination"):
