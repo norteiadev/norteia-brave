@@ -193,4 +193,4 @@ Os 5 rótulos padrão: needs-triage, needs-info, ready-for-agent, ready-for-huma
 
 ### Domain docs
 
-Single-context: glossário em `CONTEXT.md` na raiz + ADRs em `docs/adr/`. See `docs/agents/domain.md`.
+Single-context: glossário em `GLOSSARY.md` na raiz + ADRs em `docs/adr/`. See `docs/agents/domain.md`.
