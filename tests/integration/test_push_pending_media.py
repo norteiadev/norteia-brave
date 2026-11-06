@@ -114,7 +114,7 @@ def _mar(h, rio: RioRecord, pushed: bool = True) -> None:
     h.session.flush()
 
 
-def _photo(h, key: str, entity_type: str, role: str = "cover") -> EntityImage:
+def _photo(h, key: str, entity_type: str, role: str = "cover", reviewed: bool = True) -> EntityImage:
     data = f"img:{key}:{role}".encode()
     sha1 = hashlib.sha1(data).hexdigest()
     h.store.put(f"images/{sha1[:2]}/{sha1}.jpg", data, "image/jpeg")
@@ -126,7 +126,8 @@ def _photo(h, key: str, entity_type: str, role: str = "cover") -> EntityImage:
     h.session.add(img)
     h.session.flush()
     row = EntityImage(canonical_key=key, entity_type=entity_type, image_id=img.id, role=role,
-                      rank=0 if role == "cover" else 1, lane="p18", wikidata_qid="Q1")
+                      rank=0 if role == "cover" else 1, lane="p18", wikidata_qid="Q1",
+                      reviewed_at=datetime.now(UTC) if reviewed else None)
     h.session.add(row)
     h.session.commit()
     return row
@@ -149,6 +150,20 @@ def test_atrativo_photos_wait_for_its_mar_push(h) -> None:
     assert b"ta:pushed" in body and b"attraction" in body and b"Fulano" in body
     h.session.expire_all()
     assert [r.pushed_at is not None for r in rows] == [True, False, False]
+
+
+def test_a_photo_waits_for_its_review(h) -> None:
+    rio = _rio(h, "ta:1", "attraction")
+    _mar(h, rio)
+    reviewed = _photo(h, "ta:1", "attraction")
+    pending = _photo(h, "ta:1", "attraction", role="gallery", reviewed=False)
+
+    with respx.mock:
+        respx.post(MEDIA).mock(return_value=httpx.Response(201, json={"created": True}))
+        assert pipeline.push_pending_media.run() == 1
+
+    h.session.expire_all()
+    assert reviewed.pushed_at is not None and pending.pushed_at is None
 
 
 def test_switch_off_holds_every_photo_untouched_until_it_is_turned_on(h, beat) -> None:

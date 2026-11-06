@@ -430,7 +430,7 @@ class Image(Base):
 
 
 class EntityImage(Base):
-    """Entity ↔ archived image, plus the push outbox (pushed_at / push_error).
+    """Entity ↔ archived image, plus the push outbox (reviewed_at / pushed_at / push_error).
 
     role: cover | gallery. rank: 0 = cover, 1.. = gallery order.
     lane: p18 | p180 | p373 | muni_top | atrativo (geo500 only on rows from before 11/2026).
@@ -454,6 +454,8 @@ class EntityImage(Base):
     pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     push_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # A person (or the review pipeline) confirmed the photo; the outbox sends only these.
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

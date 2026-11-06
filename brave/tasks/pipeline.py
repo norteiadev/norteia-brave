@@ -552,7 +552,8 @@ _AUTH_4XX = frozenset({401, 403})
 def pending_media_filter() -> list:
     """entity_images the photo outbox may send now.
 
-    Not sent, not removed, not permanently rejected — and the entity is on norteia-api:
+    Reviewed, not sent, not removed, not permanently rejected — and the entity is on
+    norteia-api:
     an atrativo once its active Mar row was pushed (only validated records reach the
     platform); a destino once an atrativo of its município was, because that push is what
     creates the destination (the destino block). The destino rule is a proxy: the API's
@@ -575,6 +576,7 @@ def pending_media_filter() -> list:
         EntityImage.canonical_key == func.concat("ibge:", RioRecord.uf, ":", RioRecord.municipio_id),
     )
     return [
+        EntityImage.reviewed_at.is_not(None),
         EntityImage.pushed_at.is_(None),
         EntityImage.removed_at.is_(None),
         EntityImage.push_error.is_(None),
@@ -649,9 +651,18 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
             (row.id, row.entity_type, row.canonical_key, media_fields(row, img), img.storage_key, img.mime)
             for row, img in rows
         ]
-        session.rollback()
         if not jobs:
+            # A photo waits for its review in silence otherwise: say how many are waiting.
+            unreviewed = session.scalar(
+                select(func.count()).select_from(EntityImage).where(
+                    EntityImage.reviewed_at.is_(None), EntityImage.removed_at.is_(None)
+                )
+            )
+            session.rollback()
+            if unreviewed:
+                logger.info("push_pending_media_awaiting_review", count=unreviewed)
             return 0
+        session.rollback()
         store = image_store_for(effective.images)
         api = clients_for(effective).norteia_api
 

@@ -3,7 +3,7 @@
 What these pin down, each paid for in the image POCs:
   - Commons answers HTTP 200 with {"error": {"code": "cirrussearch-too-busy-error"}}: that is
     retried, never read as an empty lane.
-  - 429 / 5xx are retried.
+  - 429 / 5xx are retried; a 429 holds the whole lane for Retry-After (else 30 s).
   - The original URL's ?utm_ query is stripped before the /thumb/ URL is built, and only the
     configured standard width is asked for (other widths are a 400 on the upload server).
   - The descriptive User-Agent goes on every request.
@@ -63,7 +63,7 @@ async def test_busy_error_in_200_is_retried(client) -> None:
     with respx.mock:
         route = respx.get(API).mock(side_effect=[
             httpx.Response(200, json={"error": {"code": "cirrussearch-too-busy-error"}}),
-            httpx.Response(429),
+            httpx.Response(429, headers={"retry-after": "0"}),  # a 429 holds the lane (1 s floor)
             httpx.Response(200, json={"query": {"pages": [page]}}),
         ])
         info = await client.image_info(["File:Praia.jpg"])
@@ -311,3 +311,43 @@ async def test_slow_api_request_holds_the_api_lane_5s(monkeypatch: pytest.Monkey
 
     assert api_ttls[0] > 4900  # the cross-process slot now holds for 5 s, not 1 s
     assert slept == [5.0]  # only the second API call waited, the full 5 s
+
+
+@pytest.mark.parametrize(
+    ("headers", "hold"), [({"retry-after": "20"}, 20.0), ({}, 30.0), ({"retry-after": "0"}, 1.0)]
+)
+async def test_a_429_holds_the_whole_lane(monkeypatch: pytest.MonkeyPatch, headers, hold) -> None:
+    """The upload server's 429 ("your bot is making too many requests") came back on every
+    retry of the leva 3 run: the backoff of the one request was shorter than the server's
+    window, and the other worker processes kept asking. A 429 now holds the lane — here and,
+    through the Redis slot, in every process — for Retry-After (else 30 s)."""
+    import asyncio
+
+    monkeypatch.setenv("RUN_REAL_EXTERNALS", "true")
+    from brave.clients.wikimedia import WIKIMEDIA_SLOT_KEY, CommonsFile, WikimediaClient
+
+    slept: list[float] = []
+
+    async def sleep(s: float) -> None:
+        slept.append(s)
+
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+    redis = fakeredis.FakeRedis()
+    client = WikimediaClient(config=ImagesConfig(min_interval_s=0, backoff_s=0), redis=redis)
+    ttls: list[int] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if not ttls:
+            ttls.append(-1)
+            return httpx.Response(429, headers=headers)
+        ttls.append(redis.pttl(f"{WIKIMEDIA_SLOT_KEY}:upload"))
+        return httpx.Response(200, content=b"jpg", headers={"content-type": "image/jpeg"})
+
+    f = CommonsFile(title="File:A.jpg", url=f"{UPLOAD}/a/ab/A.jpg", page="p", width=100, height=80,
+                    mime="image/jpeg")
+    with respx.mock:
+        respx.get(f"{UPLOAD}/a/ab/A.jpg").mock(side_effect=answer)
+        assert await client.download(f) == (b"jpg", "image/jpeg")
+
+    assert ttls[1] > (hold - 1) * 1000  # the other processes see the hold
+    assert max(slept) > hold - 1  # and this one waited it out
