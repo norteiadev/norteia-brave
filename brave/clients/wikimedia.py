@@ -10,6 +10,8 @@ House rules, all verified against the live services:
     own lane — a local lock held through the request plus a Redis slot shared by every
     worker process, ``min_interval_s`` apart. Different services overlap. A Commons API
     request that took >1 s holds that lane for 5 s (Robot policy, Action API rule 4).
+  - A 429 holds the service's lane for Retry-After (else 30 s) in every worker process, so
+    the other processes stop asking while the server's window runs out.
   - Commons answers HTTP 200 with ``{"error": {"code": "cirrussearch-too-busy-error"}}``
     (also ``maxlag``, ``ratelimited``). Read as an empty result it silently wipes a lane,
     so those codes are retried like a 429; any other error code raises at once.
@@ -51,6 +53,12 @@ _BUSY_CODES = frozenset({"cirrussearch-too-busy-error", "maxlag", "ratelimited"}
 # Robot policy (wikitech.wikimedia.org/wiki/Robot_policy), Action API rule 4.
 _SLOW_API_S = 1.0
 _SLOW_API_WAIT_S = 5.0
+
+# A 429 holds the lane, in every process, for Retry-After — else this long. The upload
+# server's "your bot is making too many requests" outlasted the plain backoff on every retry
+# (all 767 lane errors of leva 3, 11/2026).
+_RATE_LIMIT_HOLD_S = 30.0
+_MAX_RATE_LIMIT_HOLD_S = 120.0
 
 # items_around radius asked again when the answer keeps coming back truncated.
 _DENSE_KM = 2.0
@@ -105,6 +113,15 @@ def _retryable(exc: BaseException) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code in (429, 500, 502, 503, 504)
     return isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError))
+
+
+def _retry_after(resp: httpx.Response) -> float:
+    """Seconds to hold the lane after a 429: Retry-After (seconds form) within 1..120, else 30.
+    ponytail: the HTTP-date form falls back to 30 s; parse it if a Wikimedia service sends one."""
+    try:
+        return min(max(float(resp.headers["retry-after"]), 1.0), _MAX_RATE_LIMIT_HOLD_S)
+    except (KeyError, ValueError):
+        return _RATE_LIMIT_HOLD_S
 
 
 def _strip_html(s: str | None) -> str:
@@ -254,6 +271,8 @@ class WikimediaClient:
                         # serve → wait 5 s before the next one.
                         if lane == "api" and time.monotonic() - t0 > _SLOW_API_S:
                             self._hold(lane, _SLOW_API_WAIT_S)
+                if resp.status_code == 429:
+                    self._hold(lane, _retry_after(resp))
                 resp.raise_for_status()
                 if api or lane == "wdqs":
                     body = resp.json()  # inside the retry: a truncated body is retried
