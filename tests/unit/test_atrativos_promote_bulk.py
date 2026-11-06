@@ -33,7 +33,7 @@ from tests.unit.api.test_editing_lock import (  # noqa: E402, F401
 )
 
 MOD = "brave.api.routers.atrativos"
-# Default ScoreConfig: threshold_mar 80 - validação weight 15 → derived min_score 65.
+# Default ScoreConfig: threshold_mar 70 - validação weight 15 → derived min_score 55.
 _CFG = MagicMock(score=ScoreConfig())
 URL = "/api/v1/atrativos/promote-bulk"
 
@@ -214,7 +214,7 @@ def test_dry_run_reports_counts_and_never_mutates():
     ):
         out = promote_bulk_atrativos(PromoteBulkBody(uf="ba", limit=1), db, queued.append)
     assert out == {
-        "min_score": 65.0,
+        "min_score": 55.0,
         "candidates": 2,
         "excluded": {
             "verdict": 0, "below_score": 1, "no_description": 0, "recency": 0, "duplicate": 0

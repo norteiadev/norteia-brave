@@ -14,7 +14,7 @@ The score formula weights five criteria (reliability):
   total:           100%
 
 Routing is binary (configurable via ScoreConfig, D-14):
-  ≥ threshold_mar  (default 80.0) → "mar"
+  ≥ threshold_mar  (default 70.0) → "mar"
   < threshold_mar                  → "dlq"
 """
 

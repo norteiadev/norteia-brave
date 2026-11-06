@@ -11,7 +11,8 @@ Brasil, pontua confiabilidade (conforme o doc de MVP), e publica apenas itens **
 ## Componentes (ver plano)
 
 - **Núcleo Brave** (entity-agnostic): Nascente (ingest bruto) → Rio (dedup/normalização/score) →
-  Mar (≥85% → push) / DLQ (51–84.9% revisão humana) / descarte (≤50%).
+  Mar (score ≥70 → push) / DLQ (score <70, revisão humana) / descarte (sinal duro, ex.: Places
+  CLOSED_PERMANENTLY — o score nunca descarta).
 - **Lanes de coleta**: Destinos (Mtur + NotebookLM + desmembramento LLM+humano) e Atrativos
   (Google Places + sinais + outreach WhatsApp com gate humano).
 - **Dashboard** (Next.js): monitor Brave + fila DLQ + gate WhatsApp + funis + custo.

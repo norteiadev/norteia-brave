@@ -105,8 +105,8 @@ def test_harness_boost_does_not_touch_settings() -> None:
     )
 
     # Routing threshold (binary Mar/DLQ gate)
-    assert config.threshold_mar == 80.0, (
-        f"threshold_mar changed: expected 80.0, got {config.threshold_mar}"
+    assert config.threshold_mar == 70.0, (
+        f"threshold_mar changed: expected 70.0, got {config.threshold_mar}"
     )
 
     # Sanity: weights sum to 100

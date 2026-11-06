@@ -3,7 +3,7 @@
 
 **norteia-brave — Pipeline Brave (Collector)**
 
-`norteia-brave` is a standalone Python service that **is** the Norteia **Pipeline Brave** — a 24/7 data-collection and reliability-scoring engine that populates Norteia's territorial base (every Brazilian state, from a cold "carga inicial" start). It ingests raw territorial data from many sources, cleans/dedups/normalizes/scores it (reliability framework), and only publishes high-confidence canonical records ("Mar", ≥85%) to the consuming `norteia-api` (Laravel). It ships with a Next.js operations dashboard that is the **territorial CMS**: Brave monitor, DLQ human-review queue, WhatsApp gate, funnels, and cost/LLM observability.
+`norteia-brave` is a standalone Python service that **is** the Norteia **Pipeline Brave** — a 24/7 data-collection and reliability-scoring engine that populates Norteia's territorial base (every Brazilian state, from a cold "carga inicial" start). It ingests raw territorial data from many sources, cleans/dedups/normalizes/scores it (reliability framework), and only publishes high-confidence canonical records ("Mar", score ≥70) to the consuming `norteia-api` (Laravel). It ships with a Next.js operations dashboard that is the **territorial CMS**: Brave monitor, DLQ human-review queue, WhatsApp gate, funnels, and cost/LLM observability.
 
 This milestone delivers the **entity-agnostic Brave core** plus its **first two collection lanes: Destinos (destinations) and Atrativos (attractions)**.
 

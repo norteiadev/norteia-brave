@@ -42,7 +42,7 @@ class ScoreConfig(BaseSettings):
     # score >= threshold_mar → "mar"; everything below → "dlq" (no descarte band).
     # Re-calibrate on real BA data before national fan-out.
     # Env override: BRAVE_SCORE_THRESHOLD_MAR
-    threshold_mar: float = 80.0
+    threshold_mar: float = 70.0
 
     # Env override: BRAVE_SCORE_SCORE_VERSION
     score_version: str = "v1.1"

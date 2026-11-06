@@ -110,9 +110,9 @@ flowchart TD
     NAPI["norteia-api (plataforma)"]
 
     SRC --> N -->|1 Rio por Nascente| RIO
-    D6 -->|score ≥ 85| MAR
-    D6 -->|40 ≤ score < 85| DLQ
-    D6 -->|score < 40| DESC
+    D6 -->|score ≥ 70| MAR
+    D6 -->|score < 70| DLQ
+    D6 -.->|"sinal duro, sem score"| DESC
 
     DLQ -->|humano valida / edita / reprocessa| D5
     DESC -.->|novo sinal chega| D5
@@ -126,16 +126,16 @@ flowchart TD
 
 - **Rio ("o rio"):** área de trabalho mutável. Um registro Rio por registro Nascente. Roda a esteira: dedup exato → dedup fuzzy → normaliza → rotula → **score** → **roteamento**. O campo `routing` é a decisão central:
   - `in_progress` — em processamento
-  - `mar` — score ≥ 85% → elegível para publicação
-  - `dlq` — score 40–84,9% → fila de revisão humana (com `dlq_reason`)
-  - `descarte` — score < 40% → rejeitado
+  - `mar` — score ≥ 70 → elegível para publicação
+  - `dlq` — score < 70 → fila de revisão humana (com `dlq_reason`)
+  - `descarte` — rejeitado por sinal duro (ex.: Places CLOSED_PERMANENTLY); o score nunca descarta
   - Atrativos ainda carregam um `sub_state` (máquina de estados, ver §6).
 
 - **Mar ("o mar"):** único que sai do Brave. Recebe registros Rio com `routing='mar'`. Upsert idempotente por referência de fonte; unicidade só em linhas ativas; atualização por supersessão (linha nova ativa, aponta a antiga). Guarda o canônico + a proveniência completa (breakdown do score + linhagem).
 
-- **DLQ (revisão de confiabilidade):** **não é tabela** — é `routing='dlq'` no Rio. Registros na fronteira (40–84,9%) que precisam de validação humana. Revisados em lote por estado no dashboard. Validação humana = boost no score → re-score → Mar.
+- **DLQ (revisão de confiabilidade):** **não é tabela** — é `routing='dlq'` no Rio. Registros abaixo do gate (score < 70) que precisam de validação humana. Revisados em lote por estado no dashboard. Validação humana = boost no score → re-score → Mar.
 
-- **Descarte:** `routing='descarte'` (score < 40%). Rejeitado; pode ser reprocessado se surgir sinal novo.
+- **Descarte:** `routing='descarte'` (sinal duro, não score). Rejeitado; pode ser reprocessado se surgir sinal novo.
 
 - **Quarentena Poison:** trilha **separada** — tarefas/registros que falharam permanentemente (payload malformado, retries esgotados, geocode não resolvido, destino-pai ausente). É problema de **engenharia**, não de curadoria territorial. Guarda tarefa + mensagem de erro + payload.
 
@@ -161,23 +161,22 @@ O score é uma **função pura** (sem I/O). Cinco critérios ponderados, cada um
 |---|---:|---|
 | Mtur (governo) | **100** | Semente autoritativa de municípios |
 | NotebookLM | 80 | Relatório estruturado (manual) |
-| TripAdvisor | 65 | Atrativos |
+| TripAdvisor | 80 | Atrativos |
 | Google Places | 60 | Descoberta de atrativos |
 | Desmembramento (LLM) | 40 | Sub-destinos descobertos por LLM — "firewall": nunca auto-promove |
 
-**Limiares de roteamento (configuráveis):**
-- score ≥ **85,0** → `mar`
-- score ≥ **40,0** → `dlq`
-- score < **40,0** → `descarte`
+**Gate de roteamento (binário, configurável — `ScoreConfig.threshold_mar`, env `BRAVE_SCORE_THRESHOLD_MAR`, overlay `score.threshold_mar`):**
+- score ≥ **70,0** → `mar`
+- score < **70,0** → `dlq` (sem piso: o score nunca manda para `descarte`)
 
-**Por que o piso do DLQ é 40 e não 51:** registros de Desmembramento entram frios em origem=40, corroboração=0, sem validação humana → teto ≈47. Com piso 51 cairiam todos no descarte (um "buraco negro"). Baixar para 40 os manda pro DLQ, onde um steward pode revisar. (Versão do score marcada `v1.1` por essa recalibração. Limiares ainda **provisórios** — recalibrar sobre dados reais da BA antes do fan-out nacional.)
+O DLQ não tem limite inferior: um registro frio de Desmembramento (origem=40, corroboração=0, sem validação humana) cai no DLQ, onde um steward pode revisar, em vez de sumir num "buraco negro". `descarte` vem só de sinal duro (ex.: Places CLOSED_PERMANENTLY) e é pegajoso num re-score. (Score `v1.1`. Limiar ainda **provisório** — recalibrar sobre dados reais antes do fan-out nacional.)
 
 **Override `mar_ready` (só atrativos TripAdvisor):** um atrativo pode ser marcado promovível mesmo fora do caminho normal quando é atração TA **e** atualidade ≥ 70 **e** corroboração ≥ 60. Nunca vale para Mtur/Places.
 
 **Significado de negócio do roteamento:**
-- **Mar (≥85):** confiável para publicar. Na prática, dado frio raramente bate 85 sem validação humana — então normalmente chega ao Mar *depois* do DLQ (ou via override `mar_ready`).
-- **DLQ (40–84,9):** "temos candidato, um humano precisa confirmar/completar." Validação humana (=100 nesse critério) re-pontua acima de 85 → Mar.
-- **Descarte (<40):** ainda não vale revisar.
+- **Mar (≥70):** confiável para publicar. Um atrativo TripAdvisor (origem 80) pode chegar a até 79 sem validação humana, então pode cruzar o gate direto; o resto normalmente chega ao Mar *depois* do DLQ.
+- **DLQ (<70):** "temos candidato, um humano precisa confirmar/completar." Validação humana (=100 nesse critério, +15 pontos) re-pontua → Mar se cruzar 70.
+- **Descarte (sinal duro):** rejeitado sem score; não volta num re-score.
 
 ---
 
@@ -262,8 +261,8 @@ Máquina de estados (`sub_state`):
 ```mermaid
 flowchart LR
     S0["discovered"] --> S1["contacts_found"] --> S2["signals_gathered"]
-    S2 -->|score ≥ 85| MAR["→ Mar"]
-    S2 -->|borderline<br/>40–84,9| S3["aguardando_consulta_whatsapp"]
+    S2 -->|score ≥ 70| MAR["→ Mar"]
+    S2 -->|borderline<br/>< 70| S3["aguardando_consulta_whatsapp"]
     S3 -->|operador aprova contato| S4["whatsapp_in_progress"]
     S4 -->|dono confirma → boost| RS["re-score"]
     RS --> MAR
@@ -277,7 +276,7 @@ flowchart LR
   - Estabelecimento `CLOSED_PERMANENTLY`/`CLOSED_TEMPORARILY` → **descarte duro** antes de qualquer score.
   - atualidade pela recência das reviews Places (≤30d → 100; 1–6m → 50; >180d → 0).
   - corroboração via Apify (ex.: atividade no Instagram) → 40 se confirmado.
-  - Se borderline (<85%) → `aguardando_consulta_whatsapp` (gate humano).
+  - Se borderline (<70) → `aguardando_consulta_whatsapp` (gate humano).
 - **Gate WhatsApp (LangGraph):** conversa de validação com o dono (existe? funciona? horário? preço?). Confirmação = boost de validação → re-score → Mar/DLQ. Sob compliance BSP (templates, janela 24h, opt-out, consentimento consultado antes de cada envio).
 
 ### Lane TripAdvisor (só atrativos)
@@ -442,13 +441,13 @@ sequenceDiagram
     OP->>P: liga motor (source=default/tripadvisor, lane=atrativos)
     P->>API: POST /engine/start
     WK->>PG: descobre → contatos → sinais → score
-    alt score ≥ 85
+    alt score ≥ 70
         WK->>PG: Rio → Mar
         WK->>NAPI: push do atrativo
     else borderline
         WK->>PG: sub_state=aguardando_consulta_whatsapp
         OP->>P: /gate aprova contato → conversa com dono → re-score
-    else score < 40 ou fechado
+    else fechado (sinal duro)
         WK->>PG: descarte
     end
 

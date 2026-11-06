@@ -161,7 +161,7 @@ Cada critério vira uma chave `*_value` no payload Nascente, consumida por `comp
 | validação humana | 15% | 0.0 no Nascente | 0 |
 
 **Consequência de design**: um atrativo TA single-source satura ~55–67 e cai em **DLQ** — não
-cruza o threshold binário `threshold_mar=80` sem corroboração multi-source. Promoção a Mar exige
+cruza o threshold binário `threshold_mar=70` sem corroboração multi-source. Promoção a Mar exige
 transição auditada por um steward humano; não há push automático para Mar neste lane.
 
 ## 5. Ingestão (`atrativos.py::TripAdvisorAtrativosIngest`)
