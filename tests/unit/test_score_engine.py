@@ -20,17 +20,17 @@ from brave.core.score.schemas import ScoreInput, ScoreResult
     [
         # All 100 → Mar
         (100, 100, 100, 100, 100, 100.0, "mar"),
-        # Mixed → DLQ: 30+16+12+6+0 = 64.0 (< 80)
+        # Mixed → DLQ: 30+16+12+6+0 = 64.0 (< 70)
         (100, 80, 60, 40, 0, 64.0, "dlq"),
         # Low values → DLQ (binary gate, no descarte band): 12+4+0+0+0 = 16.0
         (40, 20, 0, 0, 0, 16.0, "dlq"),
-        # Above the gate: 30+20+20+15+0 = 85.0 ≥ 80 → mar
+        # Above the gate: 30+20+20+15+0 = 85.0 ≥ 70 → mar
         (100, 100, 100, 100, 0, 85.0, "mar"),
-        # Boundary: exactly 80.0 → mar (30+20+15+15+0)
-        (100, 100, 75, 100, 0, 80.0, "mar"),
-        # Boundary: exactly 79.9 → dlq (30+20+14.9+15+0)
-        (100, 100, 74.5, 100, 0, 79.9, "dlq"),
-        # Mid → DLQ: 30+20+1+0+0 = 51.0 (< 80)
+        # Boundary: exactly 70.0 → mar (30+20+5+15+0)
+        (100, 100, 25, 100, 0, 70.0, "mar"),
+        # Boundary: exactly 69.9 → dlq (30+20+4.9+15+0)
+        (100, 100, 24.5, 100, 0, 69.9, "dlq"),
+        # Mid → DLQ: 30+20+1+0+0 = 51.0 (< 70)
         (100, 100, 5, 0, 0, 51.0, "dlq"),
     ],
 )
@@ -90,7 +90,7 @@ def test_compute_score_mixed_returns_dlq():
 
 
 def test_compute_score_low_returns_dlq():
-    """Explicit test: low values → 16.0, routing='dlq' (binary gate, < 80)."""
+    """Explicit test: low values → 16.0, routing='dlq' (binary gate, < 70)."""
     config = ScoreConfig()
     inp = ScoreInput(
         origem_value=40,
@@ -202,7 +202,7 @@ def test_boundary_just_below_85_is_dlq():
 
 
 def test_boundary_51_is_dlq():
-    """Score of exactly 51.0 routes to 'dlq' (< threshold_mar=80)."""
+    """Score of exactly 51.0 routes to 'dlq' (< threshold_mar=70)."""
     config = ScoreConfig()
     # 100*30/100 + 100*20/100 + 5*20/100 = 30 + 20 + 1 = 51
     inp = ScoreInput(
@@ -217,35 +217,35 @@ def test_boundary_51_is_dlq():
     assert result.routing == "dlq"
 
 
-def test_boundary_80_is_mar():
-    """Score of exactly 80.0 (default threshold_mar) routes to 'mar'."""
-    config = ScoreConfig()  # threshold_mar defaults to 80.0
-    # 30 + 20 + 15 + 15 + 0 = 80.0
+def test_boundary_70_is_mar():
+    """Score of exactly 70.0 (default threshold_mar) routes to 'mar'."""
+    config = ScoreConfig()  # threshold_mar defaults to 70.0
+    # 30 + 20 + 5 + 15 + 0 = 70.0
     inp = ScoreInput(
         origem_value=100,
         completude_value=100,
-        corroboracao_value=75,
+        corroboracao_value=25,
         atualidade_value=100,
         validacao_humana_value=0,
     )
     result = compute_score(inp, config)
-    assert result.score == 80.0
+    assert result.score == 70.0
     assert result.routing == "mar"
 
 
-def test_boundary_just_below_80_is_dlq():
-    """Score of exactly 79.9 routes to 'dlq' (binary gate)."""
-    config = ScoreConfig()  # threshold_mar defaults to 80.0
-    # 30 + 20 + 14.9 + 15 + 0 = 79.9
+def test_boundary_just_below_70_is_dlq():
+    """Score of exactly 69.9 routes to 'dlq' (binary gate)."""
+    config = ScoreConfig()  # threshold_mar defaults to 70.0
+    # 30 + 20 + 4.9 + 15 + 0 = 69.9
     inp = ScoreInput(
         origem_value=100,
         completude_value=100,
-        corroboracao_value=74.5,
+        corroboracao_value=24.5,
         atualidade_value=100,
         validacao_humana_value=0,
     )
     result = compute_score(inp, config)
-    assert result.score == pytest.approx(79.9, abs=0.05)
+    assert result.score == pytest.approx(69.9, abs=0.05)
     assert result.routing == "dlq"
 
 
@@ -281,25 +281,25 @@ def test_compute_score_breakdown_values():
     "origem,completude,corroboracao,atualidade,validacao_humana,expected_routing",
     [
         # D-06 firewall: origem=40 + validacao=0 → NEVER Mar (max score = 67.0)
-        # 12+20+20+15+0 = 67.0 → dlq (below threshold_mar=80)
+        # 12+20+20+15+0 = 67.0 → dlq (below threshold_mar=70)
         (40, 100, 100, 100, 0, "dlq"),
         # Mtur cold-start: origem=100, completude=70, atualidade=50
-        # 30+14+0+7.5+0 = 51.5 → dlq (below threshold_mar=80)
+        # 30+14+0+7.5+0 = 51.5 → dlq (below threshold_mar=70)
         (100, 70, 0, 50, 0, "dlq"),
         # Mtur cold-start, thin completude/atualidade
-        # 30+4+0+0+0 = 34.0 → dlq (below threshold_mar=80)
+        # 30+4+0+0+0 = 34.0 → dlq (below threshold_mar=70)
         (100, 20, 0, 0, 0, "dlq"),
         # origem=80 source, full completude, atualidade=50 → DLQ
-        # 24+20+0+7.5+0 = 51.5 → dlq (below threshold_mar=80)
+        # 24+20+0+7.5+0 = 51.5 → dlq (below threshold_mar=70)
         (80, 100, 0, 50, 0, "dlq"),
         # After human validation, Mtur + corroboração boost → Mar
-        # 30+20+10+10.5+15 = 85.5 → mar (≥ threshold_mar=80)
+        # 30+20+10+10.5+15 = 85.5 → mar (≥ threshold_mar=70)
         (100, 100, 50, 70, 100, "mar"),
-        # After human validation, a perfect Mtur record reaches the gate exactly
-        # even without corroboração: 30+20+0+15+15 = 80.0 → mar (== threshold_mar=80)
+        # After human validation, a perfect Mtur record clears the gate
+        # even without corroboração: 30+20+0+15+15 = 80.0 → mar (≥ threshold_mar=70)
         (100, 100, 0, 100, 100, "mar"),
         # origem=40 firewall, good completude/atualidade → DLQ even post-validate
-        # 12+20+0+10.5+15 = 57.5 → dlq (origin=40 firewall: max possible is 57.5 < 80)
+        # 12+20+0+10.5+15 = 57.5 → dlq (origin=40 firewall: max possible is 57.5 < 70)
         (40, 100, 0, 70, 100, "dlq"),
     ],
 )
@@ -313,16 +313,16 @@ def test_producer_score_boundaries(
 ):
     """Producer score boundary cases for Phase 2 (D-06, TEST-02).
 
-    All scores computed with the binary threshold_mar=80 gate (Phase B).
+    All scores computed with the binary threshold_mar=70 gate (Phase B).
 
     Key invariants proven:
     - D-06 firewall: origem=40 + validacao_humana=0 can never reach Mar
-      (max score with origin=40 and no human validation = 67.0 < threshold_mar=80)
+      (max score with origin=40 and no human validation = 67.0 < threshold_mar=70)
     - Mtur cold-start records land in DLQ with adequate completude/atualidade
-    - After human validation, a perfect Mtur record reaches Mar exactly at 80.0 even
-      without corroboração; anything short of full completude/atualidade stays in DLQ
+    - After human validation, a perfect Mtur record reaches Mar (80.0) even
+      without corroboração
     - origem=40 records stay in DLQ even after human validation (origin=40 caps
-      the score at 57.5 < 80)
+      the score at 57.5 < 70)
     """
     config = ScoreConfig()
     inp = ScoreInput(

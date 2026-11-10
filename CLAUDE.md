@@ -3,7 +3,7 @@
 
 **norteia-brave — Pipeline Brave (Collector)**
 
-`norteia-brave` is a standalone Python service that **is** the Norteia **Pipeline Brave** — a 24/7 data-collection and reliability-scoring engine that populates Norteia's territorial base (every Brazilian state, from a cold "carga inicial" start). It ingests raw territorial data from many sources, cleans/dedups/normalizes/scores it (reliability framework), and only publishes high-confidence canonical records ("Mar", ≥85%) to the consuming `norteia-api` (Laravel). It ships with a Next.js operations dashboard that is the **territorial CMS**: Brave monitor, DLQ human-review queue, WhatsApp gate, funnels, and cost/LLM observability.
+`norteia-brave` is a standalone Python service that **is** the Norteia **Pipeline Brave** — a 24/7 data-collection and reliability-scoring engine that populates Norteia's territorial base (every Brazilian state, from a cold "carga inicial" start). It ingests raw territorial data from many sources, cleans/dedups/normalizes/scores it (reliability framework), and only publishes high-confidence canonical records ("Mar", score ≥70) to the consuming `norteia-api` (Laravel). It ships with a Next.js operations dashboard that is the **territorial CMS**: Brave monitor, DLQ human-review queue, WhatsApp gate, funnels, and cost/LLM observability.
 
 This milestone delivers the **entity-agnostic Brave core** plus its **first two collection lanes: Destinos (destinations) and Atrativos (attractions)**.
 
@@ -34,7 +34,7 @@ This milestone delivers the **entity-agnostic Brave core** plus its **first two 
 | **pgvector** (extension) | 0.8.x server-side / `pgvector` 0.4.x Python | Embedding-based fuzzy dedup in Rio | Keeps dedup in the same transaction as the canonical record. Adequate at all-Brazil scale (see Pitfalls). **HIGH** |
 | **Celery** | 5.6.x | 24/7 orchestration, beat scheduling, fan-out by UF | Mature, battle-tested task queue. Fan-out-by-state and tolerant-of-day-scale-latency outreach fit Celery's model. Keep for this milestone. **HIGH** |
 | **Redis** | 7.x or 8.x server / `redis` 8.0 Python client | Celery broker + result backend + rate-limit/cost-guard counters | Standard Celery broker; doubles as the cheap shared counter store for the USD cost guard and WhatsApp ramp limiter. **HIGH** |
-| **LangGraph** | 1.2.x (+ `langchain-core` 1.4.x) | LLM agent orchestration (Desmembramento, Discovery/Contact/Signal, WhatsApp conversation graph) | Graph/state-machine model maps directly onto your explicit sub-state machines (`discovered → contacts_found → …`) and the multi-turn WhatsApp flow. v1.x is GA/stable. **HIGH** |
+| **LangGraph** | 1.2.5 (+ `langgraph-checkpoint-postgres` 3.1.0; `langchain-core` 1.4.7 transitive) | LLM agent orchestration (Desmembramento, Discovery/Contact/Signal, WhatsApp conversation graph) | Graph/state-machine model maps directly onto your explicit sub-state machines (`discovered → contacts_found → …`) and the multi-turn WhatsApp flow. v1.x is GA/stable. **HIGH** |
 | **OpenAI SDK** | `openai` 2.41.x | Client for OpenRouter (rollback route for the Gemini cascade, `vendor/model` slugs) | OpenRouter is OpenAI-compatible — point the OpenAI SDK at `https://openrouter.ai/api/v1`. Not the primary path: Gemini goes to Google AI Studio direct. **HIGH** |
 | **Anthropic SDK** | `anthropic` 0.109.x (Python) | Claude Sonnet 5.5 (atrativo voice + WhatsApp conversation) | Quality PT-BR text. Native SDK (not via OpenRouter) for first-class streaming/tool-use + direct quota control. **HIGH** |
 | **instructor** | 1.15.x | Structured LLM output (2nd-layer validation) | Wraps the clients; retries with validation errors fed back to the model. Use **Mode.Tools** (see gotchas). **HIGH** |
@@ -51,8 +51,8 @@ This milestone delivers the **entity-agnostic Brave core** plus its **first two 
 | **httpx** | 0.28.x | Async HTTP for custom clients | The client layer behind your network boundary (Places New, Apify, OTA, NotebookLM, norteia-api push). |
 | **structlog** | 26.x | Structured logging → audit logs | Feeds the §15.7 audit-log requirement; JSON logs correlate with `llm_generations`. |
 | **google-maps-places** | 0.9.x | Google Places API (New) client | Discovery/ContactFinder/Signal agents. This is the **New** Places client (Place Details / Text Search / Nearby). See gotcha re: legacy `googlemaps`. |
-| **apify-client** | 3.0.x | IG/X scraping (best-effort signal) | SignalAgent only; behind the network boundary, always mockable. |
-| **twilio** | 9.10.x | WhatsApp BSP (launch) | WhatsAppAgent transport if launching on Twilio (recommended launch path). |
+| **apify-client** | — (not installed) | IG/X scraping (best-effort signal) | Not in `pyproject.toml`/`uv.lock`; `brave/clients/apify_places.py` calls Apify over httpx. |
+| **twilio** | — (not installed) | WhatsApp BSP (launch) | Lazily imported by `brave/clients/whatsapp.py` but not in `pyproject.toml`/`uv.lock` — add it before enabling the real WhatsApp client. |
 ### Development Tools
 | Tool | Purpose | Notes |
 |------|---------|-------|
@@ -62,16 +62,16 @@ This milestone delivers the **entity-agnostic Brave core** plus its **first two 
 | **fakeredis** | In-process Redis for unit tests | 2.36.x. Lets score/queue logic test without a Redis container in pure unit scope. |
 | **pact-python** | Consumer-driven contract with norteia-api | Verifies the `POST /api/internal/territorial/...` ingestion contract per PLANO Part C. |
 | **ruff** | Lint + format | Single fast tool; replaces flake8+isort+black. |
-| **mypy** or **pyright** | Static typing | Enforce on score engine + client interfaces. `celery-types` 0.26.x adds Celery stubs. |
+| **pyright** | Static typing | Configured in `pyproject.toml` (`[tool.pyright]`, standard mode). `celery-types` 0.26.0 adds Celery stubs. |
 | **docker-compose** | Local Postgres+Redis for offline suite | Per Part C: CI runs keyless, externals opt-in by flag. |
 ### Dashboard (separate Next.js app)
 | Technology | Version | Purpose | Notes |
 |------------|---------|---------|-------|
-| **Next.js** | 16.x | Territorial CMS / ops dashboard | App Router. Mirrors `norteia-frontend`. |
+| **Next.js** | 16.0.1 | Territorial CMS / ops dashboard | App Router. Mirrors `norteia-frontend`. |
 | **Node** | 22 LTS | Runtime target | Per constraint. |
-| **Bun** | 1.3.x | Package manager / test runner / dev | `bun run test`, `bun install`. Fast; Node-22-compatible. |
-| **Vitest** | 4.1.x | Unit/component tests | Per constraint. |
-| **MSW** | 2.14.x | Mock the FastAPI surface (offline dashboard tests) | Per constraint; Bearer-header auth mocked at the network layer. |
+| **Bun** | 1.3.13 | Package manager / test runner / dev | `bun run test`, `bun install`. Fast; Node-22-compatible. |
+| **Vitest** | 4.0.4 | Unit/component tests | Per constraint. |
+| **MSW** | 2.11.5 | Mock the FastAPI surface (offline dashboard tests) | Per constraint; Bearer-header auth mocked at the network layer. |
 ## Installation
 # Core (collector)
 # Dev dependencies (collector)
@@ -108,16 +108,16 @@ This milestone delivers the **entity-agnostic Brave core** plus its **first two 
 ## Version Compatibility
 | Package A | Compatible With | Notes |
 |-----------|-----------------|-------|
-| `langgraph` 1.2.x | `langchain-core` 1.4.x | Both on the 1.x GA line — install together; pin both. |
+| `langgraph` 1.2.5 | `langchain-core` 1.4.7 | Both on the 1.x GA line — install together; pin both. |
 | `instructor` 1.15.x | `openai` 2.x, `anthropic` 0.10x, `pydantic` 2.x | instructor wraps both SDKs; all on current majors. For OpenRouter slugs, set base_url manually. |
 | `pgvector` (Python) 0.4.x | `pgvector` server extension 0.8.x, `sqlalchemy` 2.0.x, `psycopg` 3.x | Server extension version ≥ 0.5 required for HNSW. Confirm your Postgres image ships pgvector ≥ 0.8. |
 | `celery` 5.6.x | `redis` 8.0 client, `celery-redbeat` 2.3.x | Redis client 8.x is fine as broker lib; ensure server is Redis 7+. |
 | `psycopg` 3.3.x | Python 3.12/3.13 | Confirm binary wheels for your Python minor before pinning 3.13. |
-| `next` 16.x | Node 22, Bun 1.3.x | Bun as PM/test runner; Node 22 as runtime target. |
-| `vitest` 4.x | `msw` 2.x | Both current majors; standard pairing. |
+| `next` 16.0.1 | Node 22, Bun 1.3.13 | Bun as PM/test runner; Node 22 as runtime target. |
+| `vitest` 4.0.4 | `msw` 2.11.5 | Both current majors; standard pairing. |
 ## Sources
-- PyPI version index (`pip index versions`) — fastapi 0.136.3, celery 5.6.3, redis 8.0.0, langgraph 1.2.4, langchain-core 1.4.6, openai 2.41.1, anthropic 0.109.1, instructor 1.15.1, pydantic 2.13.4, pgvector 0.4.2, psycopg 3.3.4, sqlalchemy 2.0.50, alembic 1.18.4, respx 0.23.1, vcrpy 8.1.1, pytest 9.0.3, twilio 9.10.9, apify-client 3.0.2, temporalio 1.28.0, google-maps-places 0.9.0, celery-redbeat 2.3.3, tenacity 9.1.4, structlog 26.1.0, pydantic-settings 2.14.1, fakeredis 2.36.1 — **HIGH**
-- npm (`npm view`) — next 16.2.9, vitest 4.1.8, msw 2.14.6, @anthropic-ai/sdk 0.104.1, temporalio (JS) 1.9.3, n8n 2.25.7; local: node v22.22.3, bun 1.3.13 — **HIGH**
+- PyPI version index (`pip index versions`) — fastapi 0.136.3, celery 5.6.3, redis 8.0.0, langgraph 1.2.5 (pinned), langchain-core 1.4.7 (uv.lock), openai 2.41.1, anthropic 0.109.1, instructor 1.15.1, pydantic 2.13.4, pgvector 0.4.2, psycopg 3.3.4, sqlalchemy 2.0.50, alembic 1.18.4, respx 0.23.1, vcrpy 8.1.1, pytest 9.0.3, twilio 9.10.9, apify-client 3.0.2, temporalio 1.28.0, google-maps-places 0.9.0, celery-redbeat 2.3.3, tenacity 9.1.4, structlog 26.1.0, pydantic-settings 2.14.1, fakeredis 2.36.1 — **HIGH**
+- `dashboard/package.json` (pinned) — next 16.0.1, react 19.2.0, vitest 4.0.4, msw 2.11.5, typescript 5.9.3; `dashboard/Dockerfile` — node 22, bun 1.3.13 — **HIGH**
 - Context7 `/fastapi/fastapi` (versions list incl. 0.128.0) — **HIGH**
 - python.useinstructor.com/integrations/openrouter/ — instructor↔OpenRouter integration confirmed — **HIGH**
 - pgvector HNSW vs IVFFlat analyses (GitHub pgvector, BigData Boutique, Instaclustr) — HNSW default for active-write workloads <~10M vectors — **MEDIUM/HIGH**
@@ -157,13 +157,24 @@ head-of-line-blocking is observed (long sweeps starving outreach/push under a si
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
 ## Architecture
 
-Architecture not yet mapped. Follow existing patterns found in the codebase.
+- `brave/core/` — entity-agnostic pipeline: `nascente/` → `rio/` (dedup/normalize/route) → `score/` → `mar/` / `dlq/`, plus `engine.py`, `models.py`, `repositories/`.
+- `brave/domains/` — collection lanes: `tripadvisor/` (sweep, destinos, atrativos, scoring), `places/` (Google Places discovery/enrichment, copywriter), `images/`, `manual/` (steward-authored CRUD records); shared `base.py`.
+- `brave/clients/` — external boundary (LLM, Places, Apify, Tavily, Wikimedia, Nominatim, WhatsApp, norteia-api), most with a `null_*` offline twin; `factory.py` is the one seam picking real vs null (`run_real_externals`).
+- `brave/api/` (FastAPI routers) · `brave/tasks/` (Celery app, beat schedule, pipeline tasks) · `brave/config/` (settings + DB runtime overlay) · `brave/observability/` (audit, cost guard, LLM tracker) · `brave/compliance/` (LGPD/BSP gate before every WhatsApp send, consent log) · `brave/shared/` (DTOs, helpers).
+- `alembic/` migrations · `tests/` (unit, contract, integration, observability) + co-located `brave/domains/*/tests` · `scripts/` (`app.sh`, `seed_config.py`/`seed_reference_data.py`, TA sweeps, imports, POCs).
+- `dashboard/` — Painel Next.js (territorial CMS), served at `/painel`.
 <!-- GSD:architecture-end -->
 
 <!-- GSD:skills-start source:skills/ -->
 ## Project Skills
 
-No project skills found. Add skills to any of: `.claude/skills/`, `.agents/skills/`, `.cursor/skills/`, `.github/skills/`, or `.codex/skills/` with a `SKILL.md` index file.
+In `.claude/skills/` (each has a `SKILL.md`):
+
+- `run-application` — start/stop/restart the local stack (Docker default, `scripts/app.sh` fallback) and check health.
+- `reset-brave-db` — reset the DB to a clean "carga inicial" (truncate data tables, keep schema/Alembic head, flush `brave:*`).
+- `run-uf-sync` — run a full UF sync in production mode (sweep → backfill → describe → images → promote → push).
+- `sync-test-atrativo` — end-to-end Brave→norteia-api sync test for one atrativo, one completude step at a time.
+- Design kit (generic, not Brave-specific): `design`, `design-system`, `brand`, `banner-design`, `slides`, `ui-styling`, `ui-ux-pro-max`.
 <!-- GSD:skills-end -->
 
 <!-- GSD:workflow-start source:GSD defaults -->
@@ -193,4 +204,8 @@ Os 5 rótulos padrão: needs-triage, needs-info, ready-for-agent, ready-for-huma
 
 ### Domain docs
 
-Single-context: glossário em `CONTEXT.md` na raiz + ADRs em `docs/adr/`. See `docs/agents/domain.md`.
+Single-context: glossário em `GLOSSARY.md` na raiz (ainda não há `docs/adr/`). See `docs/agents/domain.md`.
+
+### Pipeline
+
+Fluxo de agentes e gates. See `docs/agents/pipeline.md`.

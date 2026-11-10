@@ -48,7 +48,7 @@ class TestScoreConfig:
     def test_threshold_mar(self) -> None:
         from brave.config.settings import ScoreConfig
 
-        assert ScoreConfig().threshold_mar == 80.0  # binary Mar/DLQ gate (Phase B)
+        assert ScoreConfig().threshold_mar == 70.0  # binary Mar/DLQ gate (Phase B)
 
     def test_weights_sum_to_100(self) -> None:
         from brave.config.settings import ScoreConfig

@@ -15,16 +15,16 @@ primeiras lanes de coleta: Destinos e Atrativos**.
 ### Fronteira (decisões do usuário)
 
 > **O collector (app Python novo) É o Brave.** Motor completo — Nascente, Rio (limpeza/dedup/
-> normalização/scoring de confiabilidade), Mar (canônico ≥85%), DLQ (51–84.9% revisão humana), descarte (≤50%)
+> normalização/scoring de confiabilidade), Mar (canônico, score ≥70), DLQ (score <70, revisão humana), descarte (sinal duro, sem score)
 > — + as lanes de coleta + dashboard de operação. **Apenas itens Mar vão para a norteia-api.**
 
 ```
 ┌──────────────────────────────────────────────────────────┐         POST itens MAR        ┌────────────────────────┐
 │  norteia-brave (Python)  =  PIPELINE BRAVE                │  ─────────────────────────▶   │  norteia-api (Laravel) │
 │  Lanes: DESTINOS + ATRATIVOS (+ futuras)                 │   /api/internal/territorial   │                        │
-│      → NASCENTE → RIO(score de confiabilidade) → MAR ─────────────────┼──▶ só MAR (≥85% ou DLQ-aprov)  │  destinations/attractions│
-│                              ├─ DLQ (51–84.9%, humano)    │                               │  (consumo: UI + IA)    │
-│                              └─ descarte (≤50%)           │  ◀── flag de erro p/ reprocess│  + botão "reportar erro"│
+│      → NASCENTE → RIO(score de confiabilidade) → MAR ─────────────────┼──▶ só MAR (≥70 ou DLQ-aprov)   │  destinations/attractions│
+│                              ├─ DLQ (<70, humano)         │                               │  (consumo: UI + IA)    │
+│                              └─ descarte (sinal duro)     │  ◀── flag de erro p/ reprocess│  + botão "reportar erro"│
 │  Dashboard Next.js: monitor Brave + DLQ + ops + gates    │   /webhook (community report) │                        │
 └──────────────────────────────────────────────────────────┘                               └────────────────────────┘
 ```
@@ -78,9 +78,9 @@ Não hospeda Brave. Recebe **só Mar** e serve UI + assistentes.
 - **Rio (processamento + scoring)** — explode payloads: dedup (hash exato + fuzzy/embedding),
   normalização (nomes/coords/endereços), rotulação (taxonomia Norteia), **score de confiabilidade**. Regras
   determinísticas + NLP (DeepSeek).
-- **Mar (canônico ≥85%)** — publicável → **push p/ norteia-api**. Versionado; invalidação/atualização.
-- **DLQ (51–84.9%)** — revisão humana no dashboard (aprovar/rejeitar/editar/reprocessar).
-  **Descarte/reprocesso (≤50%)**.
+- **Mar (canônico, score ≥70)** — publicável → **push p/ norteia-api**. Versionado; invalidação/atualização.
+- **DLQ (score <70)** — revisão humana no dashboard (aprovar/rejeitar/editar/reprocessar).
+  **Descarte** só por sinal duro (ex.: Places CLOSED_PERMANENTLY), nunca pelo score; reprocesso via DLQ.
 - **Score engine de confiabilidade** — origem 30% · completude 20% · corroboração 20% · atualidade 15% ·
   validação humana 15%; **pesos calibráveis** via config. Mesmo motor p/ destino e atrativo.
 
@@ -115,7 +115,7 @@ Sub-estados: `discovered` → `contacts_found` → `signals_gathered` → *(Rio 
 3. **SignalAgent** — **Places**: `business_status` (CLOSED_* → descarte), `weekday_text` (horários),
    **`reviews[].publishTime` ≤ 30 dias ⇒ funcionando** (Atualidade). **IG/X via Apify**
    (best-effort). **OTA** opcional (preço cross-check; só ticketado).
-4. **Gate WhatsApp (humano, dashboard) — só borderline** (score < 85% por falta de validação
+4. **Gate WhatsApp (humano, dashboard) — só borderline** (score < 70 por falta de validação
    direta). Humano aprova quais contatar (controle de volume = mitigação de ban/custo; ramp).
 5. **WhatsAppAgent (100% automatizado)** — **WhatsApp Business API** (Twilio/Meta Cloud), **n8n
    thin** + lógica **LangGraph**. Sonnet pergunta PT-BR (identifica Norteia + opt-out); DeepSeek

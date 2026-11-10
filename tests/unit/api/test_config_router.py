@@ -101,7 +101,7 @@ def redis():
 
 def test_get_returns_effective_snapshot(db, redis):
     snap = get_config_snapshot(db=db, redis=redis)
-    assert snap["score"]["threshold_mar"] == 80.0
+    assert snap["score"]["threshold_mar"] == 70.0
     assert snap["score"]["weight_origem"] == 30.0
     # 'default' (Google Places) ships DORMANT — enabled=false by default (re-enablable
     # via config); tripadvisor is the live lane.
@@ -152,7 +152,7 @@ def test_patch_writes_audit_row(db, redis):
     assert audit.actor == "steward"
     assert audit.after_state == {"score.threshold_mar": 82.0}
     # before_state captures the prior effective value (the env default).
-    assert audit.before_state == {"score.threshold_mar": 80.0}
+    assert audit.before_state == {"score.threshold_mar": 70.0}
     assert db.commits == 1
 
 
@@ -305,7 +305,7 @@ def test_http_get_returns_snapshot(client):
     tc, _ = client
     r = tc.get("/api/v1/config", headers=BEARER_HEADERS)
     assert r.status_code == 200, r.text
-    assert r.json()["score"]["threshold_mar"] == 80.0
+    assert r.json()["score"]["threshold_mar"] == 70.0
 
 
 def test_http_patch_requires_auth(client):

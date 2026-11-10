@@ -16,8 +16,8 @@ em que ele entra na **Nascente** até ser roteado para o **Mar** (publicado) ou 
   Nascente            Rio (processamento)                 Destino
  ─────────      ─────────────────────────────       ──────────────────
   store_raw  →  normaliza → dedup → SCORE  →  routing = "mar"  → push_mar → norteia-api
- (payload      (rio/routing.py)  (confiabilidade)  ├─ score >= 80 ────→ MAR (publicado)
-  imutável)                                 └─ score <  80 ────→ DLQ (revisão humana)
+ (payload      (rio/routing.py)  (confiabilidade)  ├─ score >= 70 ────→ MAR (publicado)
+  imutável)                                 └─ score <  70 ────→ DLQ (revisão humana)
 ```
 
 O score é calculado em **duas etapas**:
@@ -86,12 +86,12 @@ rio_record.dlq_reason = f"score={result.score:.2f} below threshold_mar={config.t
 | validação humana | **15%** |
 | **soma** | **100%** |
 
-- `threshold_mar` (default **80.0**) — limiar único e binário. Override via env
+- `threshold_mar` (default **70.0**) — limiar único e binário. Override via env
   `BRAVE_SCORE_THRESHOLD_MAR` ou via config no banco (`score.threshold_mar`).
 - `score_version` (default `"v1.1"`).
 
 > **Nota sobre "85%":** o número 85 aparece só como alvo de projeto/calibração nos comentários
-> (`tripadvisor/scoring.py`, `destinos.py`). O **default enviado no código é 80.0**, ajustável.
+> (`tripadvisor/scoring.py`, `destinos.py`). O **default enviado no código é 70.0**, ajustável.
 
 ### A fórmula — `brave/core/score/engine.py`
 
@@ -128,7 +128,7 @@ fonte sozinha consegue cruzar o limiar do Mar.
 | TripAdvisor (destino e atrativo) | 65 |
 | Google Places | 60 |
 
-Exemplo: TripAdvisor 65 × 30% = **19,5 pontos**. Sozinho nunca chega a 80 → precisa dos outros
+Exemplo: TripAdvisor 65 × 30% = **19,5 pontos**. Sozinho nunca chega a 70 → precisa dos outros
 critérios para ser promovido. Isso impede monopólio de uma única fonte.
 
 Locais: `brave/domains/manual/repositories.py:23`, `tripadvisor/destinos.py:62`,

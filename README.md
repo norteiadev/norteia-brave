@@ -11,15 +11,17 @@ Brasil, pontua confiabilidade (conforme o doc de MVP), e publica apenas itens **
 ## Componentes (ver plano)
 
 - **Núcleo Brave** (entity-agnostic): Nascente (ingest bruto) → Rio (dedup/normalização/score) →
-  Mar (≥85% → push) / DLQ (51–84.9% revisão humana) / descarte (≤50%).
+  Mar (score ≥70 → push) / DLQ (score <70, revisão humana) / descarte (sinal duro, ex.: Places
+  CLOSED_PERMANENTLY — o score nunca descarta).
 - **Lanes de coleta**: Destinos (Mtur + NotebookLM + desmembramento LLM+humano) e Atrativos
   (Google Places + sinais + outreach WhatsApp com gate humano).
 - **Dashboard** (Next.js): monitor Brave + fila DLQ + gate WhatsApp + funis + custo.
 
 ## Stack
 
-Python · FastAPI · Celery/Redis · LangGraph · PostgreSQL · DeepSeek (OpenRouter) + Claude Sonnet ·
-Next.js (dashboard). Testes 100% offline (pytest + mocks; sem chamadas a APIs reais por padrão).
+Python · FastAPI · Celery/Redis · LangGraph · PostgreSQL · Gemini 2.5 Flash (Google AI Studio direto,
+tier Flex; `google/gemini-2.5-flash` via OpenRouter é o rollback) + Claude Sonnet · Next.js (dashboard).
+Testes 100% offline (pytest + mocks; sem chamadas a APIs reais por padrão).
 
 ## Rodando localmente
 
@@ -47,7 +49,8 @@ docker compose down          # para (mantém dados);  down -v também apaga os v
 
 - API: http://localhost:8000/api/v1/health · Dashboard: http://localhost:3000/painel
 - Sem `.env` a stack sobe com defaults de dev (bearer `dev-local-token`, `RUN_REAL_EXTERNALS=0`).
-  Pra chamadas reais: `RUN_REAL_EXTERNALS=1 OPENROUTER_API_KEY=... ANTHROPIC_API_KEY=... docker compose up`.
+  Pra chamadas reais: preencha no `.env` as chaves `BRAVE_LLM_GEMINI_API_KEY`, `BRAVE_LLM_ANTHROPIC_API_KEY`
+  (e `BRAVE_LLM_OPENROUTER_API_KEY` pro rollback) e rode `RUN_REAL_EXTERNALS=1 docker compose up`.
 - Portas configuráveis: `BRAVE_API_PORT`, `BRAVE_DASH_PORT`, `BRAVE_PG_PORT`, `BRAVE_REDIS_PORT`
   (útil se já houver Postgres/Redis no host — ex.: `BRAVE_PG_PORT=5433 docker compose up`).
 - Reset da base no Docker: `docker compose exec api /app/.venv/bin/python .claude/skills/reset-brave-db/scripts/reset_db.py --yes`

@@ -1,9 +1,9 @@
 """Tests for TripAdvisor reliability scoring helpers — calibration proof (TA-04).
 
-Three mandatory scoring proof tests (binary threshold_mar=80):
+Three mandatory scoring proof tests (binary threshold_mar=70):
   1. typical → score in [66.5, 67.6] → routing=="dlq"
   2. sparse/no-review → score in [27.0, 28.0] → routing=="dlq"
-  3. val=100 → score ≈ 82.05 ≥ 80 → routing=="mar" (a validated TA attraction reaches
+  3. val=100 → score ≈ 82.05 ≥ 70 → routing=="mar" (a validated TA attraction reaches
      Mar directly under the binary gate — the old promote-override bypass is obsolete)
 
 Calibration spec (CONTEXT.md TA-04):
@@ -17,7 +17,7 @@ Score formula (reliability weights): origin×0.30 + completude×0.20 + corrobora
 
 Typical: 65×0.30 + 100×0.20 + 85.25×0.20 + 70×0.15 + 0×0.15 ≈ 67.05 → dlq (✓ in [66.5, 67.6])
 Sparse:  65×0.30 + 40×0.20 + 0×0.20 + 0×0.15 + 0×0.15 = 27.50 → dlq (✓ in [27.0, 28.0])
-Val100:  65×0.30 + 100×0.20 + 85.25×0.20 + 70×0.15 + 100×0.15 ≈ 82.05 ≥ 80 → mar
+Val100:  65×0.30 + 100×0.20 + 85.25×0.20 + 70×0.15 + 100×0.15 ≈ 82.05 ≥ 70 → mar
 """
 
 from datetime import datetime, timedelta, timezone
@@ -42,7 +42,7 @@ def _default_config() -> ScoreConfig:
         weight_corroboracao=20.0,
         weight_atualidade=15.0,
         weight_validacao_humana=15.0,
-        threshold_mar=80.0,
+        threshold_mar=70.0,
         score_version="v1.1",
     )
 
@@ -148,7 +148,7 @@ class TestScoringProofTests:
     """Mandatory calibration proof tests (CONTEXT.md TA-04).
 
     These tests assert the reliability score formula produces values in the
-    acceptance ranges under the binary threshold_mar=80 gate.
+    acceptance ranges under the binary threshold_mar=70 gate.
 
     Calibration math (for documentation):
       origin=65, weight_origin=30%  → 65×0.30 = 19.50
@@ -159,7 +159,7 @@ class TestScoringProofTests:
       val=0, weight=15%             → 0×0.15 = 0
       → typical: 19.5+20+17.05+10.5+0 ≈ 67.05 → dlq
       → sparse:  19.5+8+0+0+0 = 27.50 → dlq
-      → val=100: 19.5+20+17.05+10.5+15 ≈ 82.05 → mar (≥ 80)
+      → val=100: 19.5+20+17.05+10.5+15 ≈ 82.05 → mar (≥ 70)
     """
 
     def test_scoring_typical_routes_dlq(self) -> None:
@@ -199,9 +199,9 @@ class TestScoringProofTests:
         assert result.routing == "dlq", f"Expected dlq, got {result.routing}"
 
     def test_scoring_val100_reaches_mar(self) -> None:
-        """val=100 + typical TA → score ≈ 82.05 ≥ 80 → routing == 'mar'.
+        """val=100 + typical TA → score ≈ 82.05 ≥ 70 → routing == 'mar'.
 
-        Under the binary threshold_mar=80 gate a fully steward-validated TA
+        Under the binary threshold_mar=70 gate a fully steward-validated TA
         attraction crosses into Mar directly through validate_and_promote_rio —
         the former mar_ready promote-override bypass is obsolete.
         """
@@ -215,8 +215,8 @@ class TestScoringProofTests:
             validacao_humana_value=100.0,  # full steward validation
         )
         result = compute_score(score_input, config)
-        assert result.score >= 80.0, (
-            f"Expected score >= 80.0 (crosses the binary gate), got {result.score:.2f}"
+        assert result.score >= 70.0, (
+            f"Expected score >= 70.0 (crosses the binary gate), got {result.score:.2f}"
         )
         assert result.routing == "mar", (
             f"Expected routing == 'mar', got {result.routing}"

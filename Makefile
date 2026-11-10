@@ -1,6 +1,13 @@
-.PHONY: pipeline/up pipeline/down pipeline/migrate pipeline/run pipeline/test pipeline/test-unit
+.PHONY: pipeline/up pipeline/down pipeline/migrate pipeline/run pipeline/test pipeline/test-unit install lint fmt
 
-# Boot Postgres (pgvector) and Redis for local dev and offline test suite
+# Offline test env: test DB + Redis db 15, never real externals.
+TEST_ENV = env -u RUN_REAL_EXTERNALS \
+	BRAVE_DB_URL=postgresql+psycopg://brave:brave@localhost:5432/norteia_brave_test \
+	BRAVE_DB_REDIS_URL=redis://localhost:6379/15
+
+# Start the whole docker-compose stack: postgres (pgvector), redis, migrate (one-shot:
+# alembic upgrade + seed reference data + seed config), api (:8000), worker, beat and
+# dashboard (:3000)
 pipeline/up:
 	docker compose up -d
 
@@ -10,30 +17,30 @@ pipeline/down:
 
 # Apply Alembic migrations to the local database
 pipeline/migrate:
-	alembic upgrade head
+	.venv/bin/alembic upgrade head
 
 # Run the fixture pipeline CLI (exercises Nascente → Rio → score → route → Mar push)
 pipeline/run:
-	python -m brave.cli run-fixture
+	.venv/bin/python -m brave.cli run-fixture
 
-# Run full test suite (requires docker-compose services running)
+# Run full test suite against the test DB (requires postgres + redis running)
 pipeline/test:
-	pytest -q
+	$(TEST_ENV) .venv/bin/pytest -q
 
-# Run only unit tests (no external services required)
+# Run only unit tests (test env exported; no real externals)
 pipeline/test-unit:
-	pytest tests/unit -q
+	$(TEST_ENV) .venv/bin/pytest tests/unit -q
 
-# Install the project in editable mode with dev dependencies
+# Sync the venv from uv.lock, with dev dependencies
 install:
-	uv pip install -e ".[dev]"
+	uv sync --extra dev
 
 # Lint and format check
 lint:
-	ruff check brave/ tests/
-	ruff format --check brave/ tests/
+	.venv/bin/ruff check brave/ tests/
+	.venv/bin/ruff format --check brave/ tests/
 
 # Apply formatting fixes
 fmt:
-	ruff format brave/ tests/
-	ruff check --fix brave/ tests/
+	.venv/bin/ruff format brave/ tests/
+	.venv/bin/ruff check --fix brave/ tests/
