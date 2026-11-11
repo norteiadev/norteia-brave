@@ -534,4 +534,13 @@ def build_push_payload(
     elif "opening_hours" in cleared:
         payload["opening_hours"] = {}  # the cleared hours overwrite the API's map
 
+    # Editorial columns (blog lane, canonical["editorial"]): only the filled STABLE ones, so
+    # an attraction with no editorial data keeps today's payload — and push_hash — exactly.
+    editorial = canonical.get("editorial")
+    if isinstance(editorial, dict):
+        for column in EDITORIAL_ATTRACTION_FIELDS:
+            text = editorial.get(column)
+            if isinstance(text, str) and text.strip():
+                payload[column] = text
+
     return payload
