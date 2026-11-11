@@ -521,10 +521,12 @@ class AppConfig(BaseSettings):
     # them from here). Sizing: a post body is ~3k tokens; with the system prompt + tool schema
     # ~6k in and up to ~4k out ≈ $0.026 at batch rates on claude-sonnet-5-5 ($2/$10 per MTok).
     # 0.06 rounds UP on purpose (under-reserving lets a batch commit past the daily budget);
-    # 50 posts reserve $3.00, well inside a default-budget day.
+    # 50 posts reserve $3.00, well inside a default-budget day. editorial_expected_usd_per_post
+    # is that ~$0.026 expectation, shown by editorial-status next to the reservation ceiling.
     editorial_model_slug: str = "claude-sonnet-5-5"
     editorial_batch_size: int = 50
     editorial_est_usd_per_post: float = 0.06
+    editorial_expected_usd_per_post: float = 0.026
 
     # atrativo_description_batch_enabled moves description writing off the synchronous
     # path: when True the INLINE copywriter is switched off and descriptions are instead

@@ -295,8 +295,12 @@ def _run_editorial_status(uf: str | None) -> int:
 
     session, _ = _get_session()
     try:
-        est = _load_config(session).editorial_est_usd_per_post
-        print(format_funnel(funnel(session, uf, est_usd_per_post=est)))
+        cfg = _load_config(session)
+        f = funnel(
+            session, uf, est_usd_per_post=cfg.editorial_est_usd_per_post,
+            expected_usd_per_post=cfg.editorial_expected_usd_per_post,
+        )  # fmt: skip
+        print(format_funnel(f))
     finally:
         session.close()
     return 0

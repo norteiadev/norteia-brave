@@ -45,8 +45,12 @@ _ATTRACTION_PUSH = text(
 )
 
 
-def funnel(session: Session, uf: str | None, *, est_usd_per_post: float) -> dict[str, Any]:
-    """``est_usd_per_post`` is settings.editorial_est_usd_per_post (the single source)."""
+def funnel(
+    session: Session, uf: str | None, *, est_usd_per_post: float, expected_usd_per_post: float
+) -> dict[str, Any]:
+    """Both per-post figures come from settings (the single source):
+    ``editorial_est_usd_per_post`` is the reservation ceiling submit books per post,
+    ``editorial_expected_usd_per_post`` what a post is expected to cost."""
     uf = uf.upper() if uf else None
     docs = EditorialDocument
     in_uf = [docs.uf == uf] if uf else []
@@ -106,7 +110,9 @@ def funnel(session: Session, uf: str | None, *, est_usd_per_post: float) -> dict
             "not_in_mar": with_editorial - in_mar,
         },
         "llm_cost_usd": float(cost or 0),
-        "pending_estimate_usd": round(pending * est_usd_per_post, 4),
+        "pending_expected_usd": round(pending * expected_usd_per_post, 4),
+        "pending_ceiling_usd": round(pending * est_usd_per_post, 4),
+        "expected_usd_per_post": expected_usd_per_post,
         "est_usd_per_post": est_usd_per_post,
     }
 
@@ -120,8 +126,10 @@ def format_funnel(f: dict[str, Any]) -> str:
             f"editorial-status {f['uf'] or 'ALL'}",
             f"  posts        fetched {d['fetched']} | extracted {d['extracted']} | error {d['error']}"
             f" | pending {d['pending']} | in flight {d['in_flight']}",
-            f"  to extract   {d['pending']} post(s): estimated ${f['pending_estimate_usd']:.2f}"
-            f" (${f['est_usd_per_post']:.2f}/post, batch rates) — the cost gate before --submit-only",
+            f"  to extract   {d['pending']} post(s): expected ${f['pending_expected_usd']:.2f}"
+            f" (${f['expected_usd_per_post']:.3f}/post) | ceiling/reserva"
+            f" ${f['pending_ceiling_usd']:.2f} (${f['est_usd_per_post']:.2f}/post) booked at submit"
+            " — the cost gate before --submit-only (batch rates)",
             f"  claims       {claims}",
             f"  attractions  matched {f['attractions_matched']}"
             f" | with editorial {e['attractions']} ({e['fields']} fields written)",

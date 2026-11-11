@@ -23,7 +23,12 @@ from brave.domains.editorial.status import format_funnel, funnel
 pytestmark = pytest.mark.integration
 
 NOW = datetime.now(UTC)
-EST = AppConfig().editorial_est_usd_per_post  # the single source of the per-post estimate
+EST = AppConfig().editorial_est_usd_per_post  # reservation ceiling per post (settings)
+EXPECTED = AppConfig().editorial_expected_usd_per_post  # expected cost per post (settings)
+
+
+def _funnel(session, uf):
+    return funnel(session, uf, est_usd_per_post=EST, expected_usd_per_post=EXPECTED)
 
 
 @pytest.fixture
@@ -103,7 +108,7 @@ def _seed(s):
 
 def test_funnel_counts_each_stage_of_the_uf(session) -> None:
     _seed(session)
-    f = funnel(session, "ZZ", est_usd_per_post=EST)
+    f = _funnel(session, "ZZ")
     assert f["documents"] == {
         "fetched": 4,
         "extracted": 1,
@@ -116,12 +121,15 @@ def test_funnel_counts_each_stage_of_the_uf(session) -> None:
     assert f["editorial"] == {"attractions": 2, "fields": 3}
     assert f["destinations"] == {"pending": 1, "pushed": 1, "error": 1}
     assert f["llm_cost_usd"] >= 0.25
-    assert f["pending_estimate_usd"] == pytest.approx(EST)  # one post still to extract
+    # one post still to extract: what it should cost, and what submit reserves for it
+    assert f["pending_expected_usd"] == pytest.approx(EXPECTED)
+    assert f["pending_ceiling_usd"] == pytest.approx(EST)
+    assert EXPECTED < EST
 
 
 def test_without_a_uf_it_spans_every_uf(session) -> None:
     _seed(session)
-    f = funnel(session, None, est_usd_per_post=EST)
+    f = _funnel(session, None)
     assert f["documents"]["fetched"] >= 5 and f["documents"]["extracted"] >= 2
 
 
@@ -143,13 +151,17 @@ def test_format_is_a_readable_funnel() -> None:
                 "not_in_mar": 10,
             },  # fmt: skip
             "llm_cost_usd": 0.81,
-            "pending_estimate_usd": 0.18,
+            "pending_expected_usd": 0.078,
+            "pending_ceiling_usd": 0.18,
+            "expected_usd_per_post": 0.026,
             "est_usd_per_post": 0.06,
         }
     )
     for needle in ("ES", "17", "74", "190", "held_volatile", "0.81", "pending"):
         assert needle in text
-    assert "$0.18" in text and "$0.06/post" in text  # the cost gate of Passo 7
+    # the cost gate of Passo 7: the expected cost AND the reservation ceiling, both labelled
+    assert "expected $0.08 ($0.026/post)" in text
+    assert "ceiling/reserva $0.18 ($0.06/post)" in text
     assert "pushed with editorial 50" in text and "push_error 1" in text and "not in Mar 10" in text
 
 
@@ -198,7 +210,7 @@ def test_funnel_shows_the_attraction_push_of_the_editorial_write(session) -> Non
     _mar(session, rejected, push_error="422: bad")
     _rio(session, "p5", {"tips": "a"}, routing="dlq", processed_at=written)  # waits for Promoção
     _rio(session, "p6", None, processed_at=written)  # no editorial: not counted
-    f = funnel(session, "ZZ", est_usd_per_post=EST)
+    f = _funnel(session, "ZZ")
     assert f["attraction_push"] == {
         "with_editorial": 5,
         "in_mar": 4,
