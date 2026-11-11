@@ -32,7 +32,6 @@ from brave.clients.llm import (
     _CACHE_WRITE_MULTIPLIER,
     _usage_int,
     anthropic_prices,
-    anthropic_thinking,
 )
 from brave.core.models import EditorialClaim, EditorialDocument, LLMGeneration
 from brave.domains.editorial.schema import Extraction, claim_drafts, parse_extraction
@@ -54,13 +53,8 @@ AMBIGUOUS_BATCH_ID = "claim_ambiguous_create"
 _BATCH_REAP_AFTER = timedelta(hours=25)
 
 _BATCH_TOKEN_DISCOUNT = 0.5
-# Batch-rate USD reserved per post. Measured shape (ES spike): a post body is ~3k tokens;
-# with the system prompt + tool schema ~6k in and up to ~4k out ≈ $0.026 at batch rates on
-# claude-sonnet-5-5 ($2/$10 per MTok). Rounded UP on purpose: under-reserving is the
-# dangerous direction (it lets a batch commit past the daily budget).
-EST_USD_PER_POST = 0.06
-# 50 posts reserve $3.00, well inside a default-budget day.
-EXTRACT_BATCH_SIZE = 50
+# The batch cap and the USD reserved per post come from settings (editorial_batch_size /
+# editorial_est_usd_per_post — the single source, reasoning there): callers pass them in.
 _MAX_TOKENS = 16000
 
 EXTRACT_SYSTEM = """\
@@ -136,9 +130,8 @@ def build_request(doc: EditorialDocument, model: str) -> dict[str, Any]:
         "tools": [extraction_tool()],
         "tool_choice": {"type": "tool", "name": TOOL_NAME},
     }
-    thinking = anthropic_thinking(model)
-    if thinking is not None:
-        params["thinking"] = thinking
+    # NO thinking param: the API answers 400 to a forced tool_choice next to one (every
+    # request of the batch would error), and a deterministic extraction does not need it.
     return {"custom_id": custom_id(doc.url), "params": params}
 
 
@@ -193,8 +186,8 @@ def submit_batch(
     llm_config: LLMConfig,
     model: str,
     uf: str | None = None,
-    limit: int = EXTRACT_BATCH_SIZE,
-    est_usd: float = EST_USD_PER_POST,
+    limit: int,
+    est_usd: float,
 ) -> str | None:
     """Submit one extraction batch; returns its id, or None when nothing was sent.
 
@@ -339,6 +332,31 @@ def _record_generation(session: Session, message: Any, model: str) -> float:
     return usd
 
 
+def _error_text(result: Any) -> str:
+    """``<type>: <message>`` of an errored batch line (MessageBatchErroredResult →
+    ErrorResponse → ErrorObject), so the operator sees WHY before retrying it."""
+    err = getattr(getattr(result, "error", None), "error", None)
+    kind, message = getattr(err, "type", None), getattr(err, "message", None)
+    if not kind and not message:
+        return "the batch request errored (no detail returned)"
+    return f"{kind or 'error'}: {message or ''}".strip()[:1000]
+
+
+def retry_errored(session: Session, uf: str | None = None) -> int:
+    """Make the errored posts of ``uf`` (every UF when None) eligible for extraction again.
+    Returns how many. A claim placeholder / ambiguous stamp is never touched: an ambiguous
+    create may be billing, and only an operator who checked Anthropic may free it."""
+    where = [EditorialDocument.error.isnot(None), EditorialDocument.batch_id.is_(None)]
+    if uf:
+        where.append(EditorialDocument.uf == uf.upper())
+    docs = session.scalars(select(EditorialDocument).where(*where)).all()
+    for d in docs:
+        d.error = None
+    session.commit()
+    logger.info("editorial_retry_errored", uf=uf, posts=len(docs))
+    return len(docs)
+
+
 def _tool_input(message: Any) -> Any:
     for block in getattr(message, "content", None) or []:
         if getattr(block, "type", None) == "tool_use" and getattr(block, "name", "") == TOOL_NAME:
@@ -354,7 +372,7 @@ def apply_result(
     batch_id: str,
     model: str,
     redis_client: Any = None,
-    est_usd: float = EST_USD_PER_POST,
+    est_usd: float,
 ) -> bool:
     """Apply one batch result line to ``doc``. Returns True when it wrote claims.
 
@@ -411,8 +429,8 @@ def apply_result(
                         )
                 doc.extracted_at, doc.error, extracted = datetime.now(UTC), None, True
     elif rtype == "errored":
-        doc.error = "the batch request errored"
-        logger.warning("editorial_result_errored", url=doc.url)
+        doc.error = _error_text(result)
+        logger.warning("editorial_result_errored", url=doc.url, error=doc.error)
     else:  # expired / canceled: not billed, eligible again
         # ponytail: unbounded re-submit of a post that keeps expiring; bound it with a counter
         # column the day it shows up (an expiry costs nothing, only latency).
@@ -432,7 +450,7 @@ def collect_batches(
     redis_client: Any = None,
     model: str,
     now: datetime | None = None,
-    est_usd: float = EST_USD_PER_POST,
+    est_usd: float,
 ) -> set[str]:
     """Reap stale claims, then apply every ENDED batch. Returns the UFs that got claims
     (the ones to resolve). One un-retrievable batch never stops the others."""

@@ -18,17 +18,17 @@ from anthropic import BadRequestError, InternalServerError, NotFoundError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from brave.config.settings import LLMConfig
+from brave.config.settings import AppConfig, LLMConfig
 from brave.core.models import EditorialClaim, EditorialDocument, LLMGeneration
 from brave.domains.editorial.extract_batch import (
     AMBIGUOUS_BATCH_ID,
     CLAIM_BATCH_ID,
-    EST_USD_PER_POST,
     TOOL_NAME,
     build_request,
     collect_batches,
     custom_id,
     reap_stale_claims,
+    retry_errored,
     submit_batch,
 )
 from brave.observability.cost_guard import daily_spend
@@ -36,6 +36,9 @@ from brave.observability.cost_guard import daily_spend
 pytestmark = pytest.mark.integration
 
 MODEL = "claude-sonnet-5-5"
+# The defaults live in settings (single source); the lane reads them from there.
+EST = AppConfig().editorial_est_usd_per_post
+LIMIT = AppConfig().editorial_batch_size
 _REQ = httpx.Request("POST", "https://api.anthropic.com/v1/messages/batches")
 
 
@@ -125,6 +128,13 @@ def _ok(doc_url: str, entities: list[dict], *, stop: str = "tool_use", usage=Non
     )
 
 
+def _errored(kind="invalid_request_error", message="tool_choice forced while thinking is enabled"):
+    return SimpleNamespace(
+        type="errored",
+        error=SimpleNamespace(type="error", error=SimpleNamespace(type=kind, message=message)),
+    )
+
+
 def _entity(kind="atrativo", name="Pedra do Frade", municipio="Pancas", **fields):
     return {
         "kind": kind,
@@ -135,9 +145,8 @@ def _entity(kind="atrativo", name="Pedra do Frade", municipio="Pancas", **fields
 
 
 def _submit(session, client, redis, **kw):
-    return submit_batch(
-        session, client, redis_client=redis, llm_config=LLMConfig(), model=MODEL, **kw
-    )
+    kw = {"llm_config": LLMConfig(), "limit": LIMIT, "est_usd": EST, **kw}
+    return submit_batch(session, client, redis_client=redis, model=MODEL, **kw)
 
 
 def _finish(client: FakeClient, bid: str, *entries) -> None:
@@ -146,7 +155,7 @@ def _finish(client: FakeClient, bid: str, *entries) -> None:
 
 
 def _collect(session, client, redis):
-    return collect_batches(session, client, redis_client=redis, model=MODEL)
+    return collect_batches(session, client, redis_client=redis, model=MODEL, est_usd=EST)
 
 
 # -- build_request ------------------------------------------------------------------------
@@ -165,6 +174,15 @@ def test_build_request_contract(session) -> None:
     user = p["messages"][0]["content"]
     assert d.url in user and "Texto do post anchieta-es." in user and "2020-02-17" in user
     assert "evidence" in p["system"] and "reescrev" in p["system"].lower()
+
+
+@pytest.mark.parametrize("model", ["claude-sonnet-5-5", "claude-haiku-5-5", "claude-sonnet-4-5"])
+def test_a_forced_tool_never_rides_with_thinking(session, model) -> None:
+    """The API answers 400 to a forced tool_choice next to a thinking param: every request
+    of the batch would error. Extraction is deterministic and needs no thinking anyway."""
+    p = build_request(_doc(session, "x-es"), model)["params"]
+    assert p["tool_choice"]["type"] == "tool"
+    assert "thinking" not in p
 
 
 # -- submit -------------------------------------------------------------------------------
@@ -189,7 +207,7 @@ def test_submit_claims_the_posts_before_the_paid_create_and_stamps_the_id(sessio
     assert seen["claim"] == CLAIM_BATCH_ID  # visible to a redelivered task BEFORE the spend
     session.refresh(d)
     assert d.batch_id == "msgbatch_1" and d.batch_submitted_at is not None
-    assert daily_spend(redis) == pytest.approx(EST_USD_PER_POST)  # reserved, one post
+    assert daily_spend(redis) == pytest.approx(EST)  # reserved, one post
 
 
 def test_submit_skips_extracted_errored_and_in_flight_posts_and_filters_by_uf(
@@ -215,11 +233,11 @@ def test_submit_without_work_creates_nothing_and_reserves_nothing(session, redis
 def test_submit_is_sized_down_to_the_remaining_budget(session, redis) -> None:
     for i in range(5):
         _doc(session, f"p{i}-es")
-    cfg = LLMConfig(usd_daily_budget=EST_USD_PER_POST * 2.5)
+    cfg = LLMConfig(usd_daily_budget=EST * 2.5)
     client = FakeClient()
-    submit_batch(session, client, redis_client=redis, llm_config=cfg, model=MODEL)
+    _submit(session, client, redis, llm_config=cfg)
     assert len(client.batches.created[0]) == 2
-    assert daily_spend(redis) == pytest.approx(2 * EST_USD_PER_POST)  # the rest was handed back
+    assert daily_spend(redis) == pytest.approx(2 * EST)  # the rest was handed back
 
 
 def test_a_refused_create_frees_the_posts_and_refunds(session, redis) -> None:
@@ -239,7 +257,7 @@ def test_an_ambiguous_create_keeps_the_posts_claimed_for_an_operator(session, re
         _submit(session, client, redis)
     session.refresh(d)
     assert d.batch_id == AMBIGUOUS_BATCH_ID
-    assert daily_spend(redis) == pytest.approx(EST_USD_PER_POST)  # may be billing: not refunded
+    assert daily_spend(redis) == pytest.approx(EST)  # may be billing: not refunded
 
 
 # -- collect ------------------------------------------------------------------------------
@@ -395,15 +413,47 @@ def test_errored_burns_the_post_and_expired_frees_it(session, redis) -> None:
     _finish(
         client,
         bid,
-        SimpleNamespace(custom_id=custom_id(a.url), result=SimpleNamespace(type="errored")),
+        SimpleNamespace(custom_id=custom_id(a.url), result=_errored()),
         SimpleNamespace(custom_id=custom_id(b.url), result=SimpleNamespace(type="expired")),
     )
     _collect(session, client, redis)
     session.refresh(a)
     session.refresh(b)
-    assert a.error and a.extracted_at is None and a.batch_id is None  # not retried automatically
+    assert a.extracted_at is None and a.batch_id is None  # not retried automatically
+    # the API's own reason, so the operator knows what to fix before a retry
+    assert a.error == "invalid_request_error: tool_choice forced while thinking is enabled"
     assert b.error is None and b.extracted_at is None and b.batch_id is None  # eligible again
     assert daily_spend(redis) == pytest.approx(0.0)  # both reservations released
+
+
+def test_an_errored_result_without_details_still_marks_the_post(session, redis) -> None:
+    (d,), client, bid = _submitted(session, redis, "a-es")
+    _finish(
+        client,
+        bid,
+        SimpleNamespace(custom_id=custom_id(d.url), result=SimpleNamespace(type="errored")),
+    )
+    _collect(session, client, redis)
+    session.refresh(d)
+    assert d.error and "errored" in d.error
+
+
+def test_retry_errored_frees_only_the_errored_posts_of_the_uf(session, redis) -> None:
+    bad = _doc(session, "bad-es", error="invalid_request_error: x")
+    other_uf = _doc(session, "bad-mg", uf="MG", error="x")
+    done = _doc(session, "done-es", extracted_at=datetime.now(UTC))
+    ambiguous = _doc(session, "amb-es", batch_id=AMBIGUOUS_BATCH_ID, error=None)
+    assert retry_errored(session, "es") == 1
+    for d in (bad, other_uf, done, ambiguous):
+        session.refresh(d)
+    assert bad.error is None and bad.batch_id is None
+    assert other_uf.error == "x" and done.extracted_at is not None
+    assert ambiguous.batch_id == AMBIGUOUS_BATCH_ID  # never by a retry: may be billing
+    # the freed post is eligible again
+    client = FakeClient()
+    _submit(session, client, redis, uf="ES")
+    assert [r["custom_id"] for r in client.batches.created[0]] == [custom_id(bad.url)]
+    assert retry_errored(session, None) == 1  # every UF: the MG one
 
 
 def test_a_foreign_custom_id_is_ignored(session, redis) -> None:

@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy.orm import Session
 
+from brave.config.settings import AppConfig
 from brave.core.models import (
     EditorialClaim,
     EditorialDestination,
     EditorialDocument,
     LLMGeneration,
+    MarRecord,
     NascenteRecord,
     RioRecord,
 )
@@ -21,6 +23,7 @@ from brave.domains.editorial.status import format_funnel, funnel
 pytestmark = pytest.mark.integration
 
 NOW = datetime.now(UTC)
+EST = AppConfig().editorial_est_usd_per_post  # the single source of the per-post estimate
 
 
 @pytest.fixture
@@ -50,13 +53,24 @@ def _claim(s, d, field, status, key=None, kind="atrativo"):
                          published_time=date(2020, 1, 1)))  # fmt: skip
 
 
-def _rio(s, key, editorial):
+def _rio(s, key, editorial, routing="mar", processed_at=None):
     n = NascenteRecord(id=uuid.uuid4(), source="t", source_ref=key, entity_type="attraction", uf="ZZ",
                        payload={}, content_hash=key, version=1)  # fmt: skip
     s.add(n)
     s.flush()
-    s.add(RioRecord(nascente_id=n.id, canonical_key=key, entity_type="attraction", uf="ZZ", routing="mar",
-                    normalized={"name": key, **({"editorial": editorial} if editorial else {})}))  # fmt: skip
+    r = RioRecord(nascente_id=n.id, canonical_key=key, entity_type="attraction", uf="ZZ", routing=routing,
+                  processed_at=processed_at,
+                  normalized={"name": key, **({"editorial": editorial} if editorial else {})})  # fmt: skip
+    s.add(r)
+    s.flush()
+    return r
+
+
+def _mar(s, rio, pushed_at=None, push_error=None):
+    s.add(MarRecord(rio_id=rio.id, entity_type="attraction", source_ref=rio.canonical_key, canonical={},
+                    provenance={}, reliability_score=90, score_version="v1", pushed_at=pushed_at,
+                    push_error=push_error))  # fmt: skip
+    s.flush()
 
 
 def _seed(s):
@@ -89,7 +103,7 @@ def _seed(s):
 
 def test_funnel_counts_each_stage_of_the_uf(session) -> None:
     _seed(session)
-    f = funnel(session, "ZZ")
+    f = funnel(session, "ZZ", est_usd_per_post=EST)
     assert f["documents"] == {
         "fetched": 4,
         "extracted": 1,
@@ -102,12 +116,12 @@ def test_funnel_counts_each_stage_of_the_uf(session) -> None:
     assert f["editorial"] == {"attractions": 2, "fields": 3}
     assert f["destinations"] == {"pending": 1, "pushed": 1, "error": 1}
     assert f["llm_cost_usd"] >= 0.25
-    assert f["pending_estimate_usd"] == pytest.approx(0.06)  # one post still to extract
+    assert f["pending_estimate_usd"] == pytest.approx(EST)  # one post still to extract
 
 
 def test_without_a_uf_it_spans_every_uf(session) -> None:
     _seed(session)
-    f = funnel(session, None)
+    f = funnel(session, None, est_usd_per_post=EST)
     assert f["documents"]["fetched"] >= 5 and f["documents"]["extracted"] >= 2
 
 
@@ -120,12 +134,23 @@ def test_format_is_a_readable_funnel() -> None:
             "attractions_matched": 74,
             "editorial": {"attractions": 70, "fields": 190},
             "destinations": {"pending": 5, "pushed": 10, "error": 0},
+            "attraction_push": {
+                "with_editorial": 70,
+                "in_mar": 60,
+                "pushed": 50,
+                "pending": 9,
+                "error": 1,
+                "not_in_mar": 10,
+            },  # fmt: skip
             "llm_cost_usd": 0.81,
-            "pending_estimate_usd": 0.06,
+            "pending_estimate_usd": 0.18,
+            "est_usd_per_post": 0.06,
         }
     )
     for needle in ("ES", "17", "74", "190", "held_volatile", "0.81", "pending"):
         assert needle in text
+    assert "$0.18" in text and "$0.06/post" in text  # the cost gate of Passo 7
+    assert "pushed with editorial 50" in text and "push_error 1" in text and "not in Mar 10" in text
 
 
 def test_cli_status_prints_the_funnel(session, monkeypatch, capsys) -> None:
@@ -138,3 +163,47 @@ def test_cli_status_prints_the_funnel(session, monkeypatch, capsys) -> None:
     assert cli._run_editorial_status("ZZ") == 0
     out = capsys.readouterr().out
     assert "ZZ" in out and "matched" in out
+
+
+def test_cli_retry_frees_the_errored_posts_and_says_how_to_resubmit(
+    session, monkeypatch, capsys
+) -> None:
+    import sys
+
+    from brave import cli
+    from brave.tasks import pipeline
+
+    bad = _doc(session, "bad", uf="AC", error="invalid_request_error: x")  # the CLI takes real UFs
+    monkeypatch.setattr(pipeline, "_get_session", lambda: (session, None))
+    session.close = lambda: None
+    monkeypatch.setattr(sys, "argv", ["brave", "editorial-retry", "ac"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 0
+    session.refresh(bad)
+    assert bad.error is None
+    out = capsys.readouterr().out
+    assert "1" in out and "--submit-only" in out
+
+
+def test_funnel_shows_the_attraction_push_of_the_editorial_write(session) -> None:
+    written = NOW - timedelta(hours=1)
+    pushed = _rio(session, "p1", {"tips": "a"}, processed_at=written)
+    _mar(session, pushed, pushed_at=NOW)  # pushed AFTER the editorial write
+    stale = _rio(session, "p2", {"tips": "a"}, processed_at=written)
+    _mar(session, stale, pushed_at=written - timedelta(days=1))  # last push predates it
+    never = _rio(session, "p3", {"tips": "a"}, processed_at=written)
+    _mar(session, never)  # never accepted
+    rejected = _rio(session, "p4", {"tips": "a"}, processed_at=written)
+    _mar(session, rejected, push_error="422: bad")
+    _rio(session, "p5", {"tips": "a"}, routing="dlq", processed_at=written)  # waits for Promoção
+    _rio(session, "p6", None, processed_at=written)  # no editorial: not counted
+    f = funnel(session, "ZZ", est_usd_per_post=EST)
+    assert f["attraction_push"] == {
+        "with_editorial": 5,
+        "in_mar": 4,
+        "pushed": 1,
+        "pending": 2,
+        "error": 1,
+        "not_in_mar": 1,
+    }

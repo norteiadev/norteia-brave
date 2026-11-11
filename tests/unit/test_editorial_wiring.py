@@ -64,8 +64,10 @@ def _cli(monkeypatch, *argv):
     from brave import cli
     from brave.tasks import pipeline
 
-    crawl = MagicMock()
+    crawl, submit = MagicMock(), MagicMock()
     monkeypatch.setattr(pipeline.editorial_crawl_uf, "delay", crawl)
+    monkeypatch.setattr(pipeline.editorial_submit_batches, "delay", submit)
+    _cli.submit = submit
     monkeypatch.setattr(sys, "argv", ["brave", *argv])
     with pytest.raises(SystemExit) as exc:
         cli.main()
@@ -96,3 +98,21 @@ def test_editorial_load_rejects_a_bad_uf_and_missing_target(monkeypatch) -> None
     assert code == 1 and crawl.call_count == 0
     crawl, code = _cli(monkeypatch, "editorial-load")
     assert code == 1 and crawl.call_count == 0
+
+
+def test_editorial_load_submit_only_pays_for_what_is_pending_without_crawling(monkeypatch) -> None:
+    """Passo 7: crawl-only → the operator shows the estimate → submit-only."""
+    crawl, code = _cli(monkeypatch, "editorial-load", "es", "--submit-only")
+    assert code == 0 and crawl.call_count == 0
+    _cli.submit.assert_called_once_with("ES")
+
+
+def test_editorial_load_submit_only_for_every_uf_is_one_submit(monkeypatch) -> None:
+    crawl, code = _cli(monkeypatch, "editorial-load", "--all", "--submit-only")
+    assert code == 0 and crawl.call_count == 0
+    _cli.submit.assert_called_once_with(None)
+
+
+def test_crawl_only_and_submit_only_are_exclusive(monkeypatch) -> None:
+    crawl, code = _cli(monkeypatch, "editorial-load", "ES", "--crawl-only", "--submit-only")
+    assert code == 1 and crawl.call_count == 0 and _cli.submit.call_count == 0

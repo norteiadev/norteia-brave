@@ -18,16 +18,21 @@ Commands:
 
     editorial-load    Editorial lane: crawl the blog posts of a UF (or every UF, one after
                       another) and then submit the paid extraction batch:
-                      editorial-load <UF>|--all [--crawl-only]
-    editorial-status  The editorial funnel (posts → claims → matches → destinations → cost):
-                      editorial-status [UF]
+                      editorial-load <UF>|--all [--crawl-only | --submit-only]
+                      Cost gate: --crawl-only, read the estimate in editorial-status,
+                      then --submit-only.
+    editorial-status  The editorial funnel (posts → claims → matches → attraction push →
+                      destinations → cost): editorial-status [UF]
+    editorial-retry   Make the errored posts eligible again (then --submit-only):
+                      editorial-retry <UF>|--all
 
 Usage:
     python -m brave.cli run-fixture
     python -m brave.cli sweep BA [--lane destinos|atrativos|both]
     python -m brave.cli backfill-ta
-    python -m brave.cli editorial-load ES [--crawl-only]
+    python -m brave.cli editorial-load ES [--crawl-only | --submit-only]
     python -m brave.cli editorial-status [ES]
+    python -m brave.cli editorial-retry ES
 """
 
 import os
@@ -244,6 +249,46 @@ def _run_editorial_load(ufs: list[str], submit: bool) -> int:
     return 0
 
 
+def _run_editorial_submit(uf: str | None) -> int:
+    """Dispatch the paid extraction of the posts already crawled (``uf`` None = every UF)."""
+    from brave.tasks.pipeline import editorial_submit_batches
+
+    try:
+        editorial_submit_batches.delay(uf)
+    except Exception as exc:
+        print(f"editorial-load: could not dispatch the submit (is the Celery broker up?): {exc}")
+        return 2
+    print(f"editorial-load: dispatched the extraction submit of {uf or 'every UF'} (paid)")
+    return 0
+
+
+def _run_editorial_retry(uf: str | None) -> int:
+    from brave.domains.editorial.extract_batch import retry_errored
+    from brave.tasks.pipeline import _get_session
+
+    session, _ = _get_session()
+    try:
+        n = retry_errored(session, uf)
+    finally:
+        session.close()
+    print(f"editorial-retry: {n} errored post(s) of {uf or 'every UF'} are eligible again")
+    if n:
+        print(f"editorial-retry: send them with: brave editorial-load {uf or '--all'} --submit-only")
+    return 0
+
+
+def _editorial_ufs(command: str, rest: list[str]) -> list[str]:
+    """The UFs named after ``command`` (``--all`` = every UF); exits 1 on a bad/missing UF."""
+    from brave.domains.editorial.crawler import UF_SLUGS
+
+    ufs = sorted(UF_SLUGS) if "--all" in rest else [a.upper() for a in rest if not a.startswith("--")]
+    bad = [u for u in ufs if u not in UF_SLUGS]
+    if not ufs or bad:
+        print(f"{command}: {'unknown UF ' + ', '.join(bad) if bad else 'a UF or --all is required'}")
+        sys.exit(1)
+    return ufs
+
+
 def _run_editorial_status(uf: str | None) -> int:
     from brave.domains.editorial.status import format_funnel, funnel
     from brave.tasks.pipeline import _get_session, _load_config
@@ -290,8 +335,9 @@ def main() -> None:
         print("  sweep <UF> [--lane destinos|atrativos|both]   Kick an on-demand UF sweep")
         print("  backfill-ta   Start/resume the TripAdvisor backfill engine run")
         print("  images-repush Re-send every archived photo to norteia-api (after an API wipe)")
-        print("  editorial-load <UF>|--all [--crawl-only]   Crawl the editorial blog, then extract")
+        print("  editorial-load <UF>|--all [--crawl-only|--submit-only]   Crawl the blog, then extract")
         print("  editorial-status [UF]   The editorial lane funnel")
+        print("  editorial-retry <UF>|--all   Make the errored editorial posts eligible again")
         sys.exit(1)
 
     command = args[0]
@@ -303,16 +349,18 @@ def main() -> None:
         sys.exit(_run_images_repush())
     elif command == "editorial-status":
         sys.exit(_run_editorial_status(args[1].upper() if len(args) > 1 else None))
-    elif command == "editorial-load":
-        from brave.domains.editorial.crawler import UF_SLUGS
-
+    elif command == "editorial-retry":
         rest = args[1:]
-        ufs = sorted(UF_SLUGS) if "--all" in rest else [a.upper() for a in rest if not a.startswith("--")]
-        bad = [u for u in ufs if u not in UF_SLUGS]
-        if not ufs or bad:
-            print(f"editorial-load: {'unknown UF ' + ', '.join(bad) if bad else 'a UF or --all is required'}")
-            print("Usage: brave editorial-load <UF>|--all [--crawl-only]")
+        ufs = _editorial_ufs(command, rest)
+        sys.exit(_run_editorial_retry(None if "--all" in rest else ufs[0]))
+    elif command == "editorial-load":
+        rest = args[1:]
+        if "--crawl-only" in rest and "--submit-only" in rest:
+            print("editorial-load: --crawl-only and --submit-only are exclusive")
             sys.exit(1)
+        ufs = _editorial_ufs(command, rest)
+        if "--submit-only" in rest:
+            sys.exit(_run_editorial_submit(None if "--all" in rest else ufs[0]))
         sys.exit(_run_editorial_load(ufs, submit="--crawl-only" not in rest))
     elif command == "sweep":
         rest = args[1:]

@@ -22,10 +22,31 @@ _FIELDS_WRITTEN = text(
     """
 )
 
+# The attraction push of the editorial write: Rio attractions carrying normalized.editorial,
+# and where their ACTIVE Mar row stands. A push at or after processed_at carried the current
+# editorial (publish re-derives the snapshot before it POSTs); an older push or none is the
+# Mar outbox still to drain; push_error is a rejection that waits for a change.
+_ATTRACTION_PUSH = text(
+    """
+    SELECT count(*),
+           count(*) FILTER (WHERE r.routing = 'mar' AND m.id IS NOT NULL),
+           count(*) FILTER (WHERE r.routing = 'mar' AND m.push_error IS NULL
+                              AND m.pushed_at >= coalesce(r.processed_at, '-infinity')),
+           count(*) FILTER (WHERE r.routing = 'mar' AND m.id IS NOT NULL AND m.push_error IS NULL
+                              AND (m.pushed_at IS NULL
+                                   OR m.pushed_at < coalesce(r.processed_at, '-infinity'))),
+           count(*) FILTER (WHERE r.routing = 'mar' AND m.push_error IS NOT NULL)
+      FROM rio_records r
+      LEFT JOIN mar_records m ON m.rio_id = r.id AND m.superseded_by_id IS NULL
+     WHERE r.entity_type = 'attraction'
+       AND jsonb_typeof(CAST(r.normalized AS jsonb) -> 'editorial') = 'object'
+       AND (CAST(:uf AS text) IS NULL OR r.uf = :uf)
+    """
+)
 
-def funnel(
-    session: Session, uf: str | None = None, est_usd_per_post: float = 0.06
-) -> dict[str, Any]:
+
+def funnel(session: Session, uf: str | None, *, est_usd_per_post: float) -> dict[str, Any]:
+    """``est_usd_per_post`` is settings.editorial_est_usd_per_post (the single source)."""
     uf = uf.upper() if uf else None
     docs = EditorialDocument
     in_uf = [docs.uf == uf] if uf else []
@@ -45,6 +66,9 @@ def funnel(
         .where(*in_uf, EditorialClaim.status == "matched", EditorialClaim.entity_kind == "atrativo")
     )
     written_records, written_fields = session.execute(_FIELDS_WRITTEN, {"uf": uf}).one()
+    with_editorial, in_mar, pushed, push_pending, push_error = session.execute(
+        _ATTRACTION_PUSH, {"uf": uf}
+    ).one()
 
     dest = EditorialDestination
     dest_uf = [dest.uf == uf] if uf else []
@@ -73,22 +97,37 @@ def funnel(
             "pushed": dest_count(dest.pushed_at.isnot(None)),
             "error": dest_count(dest.push_error.isnot(None)),
         },
+        "attraction_push": {
+            "with_editorial": with_editorial,
+            "in_mar": in_mar,
+            "pushed": pushed,
+            "pending": push_pending,
+            "error": push_error,
+            "not_in_mar": with_editorial - in_mar,
+        },
         "llm_cost_usd": float(cost or 0),
         "pending_estimate_usd": round(pending * est_usd_per_post, 4),
+        "est_usd_per_post": est_usd_per_post,
     }
 
 
 def format_funnel(f: dict[str, Any]) -> str:
     d, c, e, dst = f["documents"], f["claims"], f["editorial"], f["destinations"]
+    ap = f["attraction_push"]
     claims = ", ".join(f"{k} {v}" for k, v in sorted(c.items())) or "none"
     return "\n".join(
         [
             f"editorial-status {f['uf'] or 'ALL'}",
             f"  posts        fetched {d['fetched']} | extracted {d['extracted']} | error {d['error']}"
-            f" | pending {d['pending']} (~${f['pending_estimate_usd']:.2f}) | in flight {d['in_flight']}",
+            f" | pending {d['pending']} | in flight {d['in_flight']}",
+            f"  to extract   {d['pending']} post(s): estimated ${f['pending_estimate_usd']:.2f}"
+            f" (${f['est_usd_per_post']:.2f}/post, batch rates) — the cost gate before --submit-only",
             f"  claims       {claims}",
             f"  attractions  matched {f['attractions_matched']}"
             f" | with editorial {e['attractions']} ({e['fields']} fields written)",
+            f"  attr. push   with editorial {ap['with_editorial']} | in Mar {ap['in_mar']}"
+            f" | pushed with editorial {ap['pushed']} | pending {ap['pending']}"
+            f" | push_error {ap['error']} | not in Mar {ap['not_in_mar']} (DLQ: waits for Promoção)",
             f"  destinations pending {dst['pending']} | pushed {dst['pushed']} | error {dst['error']}",
             f"  LLM cost     ${f['llm_cost_usd']:.4f} (editorial lane, all UFs)",
         ]
