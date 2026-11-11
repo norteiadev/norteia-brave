@@ -19,13 +19,14 @@ Key design decisions implemented here:
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -460,6 +461,99 @@ class EntityImage(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     image: Mapped["Image"] = relationship("Image")
+
+
+# ---------------------------------------------------------------------------
+# Editorial lane — blog columns for attractions and destinations (brave/domains/editorial)
+# ---------------------------------------------------------------------------
+
+
+class EditorialDocument(Base):
+    """One blog post. Batch state lives in COLUMNS (as rio_records.descricao_batch_id):
+    ``batch_id`` is the claim / Anthropic id, ``extracted_at`` the applied-marker."""
+
+    __tablename__ = "editorial_documents"
+    __table_args__ = (
+        Index(
+            "ix_editorial_documents_batch_id",
+            "batch_id",
+            postgresql_where=text("batch_id IS NOT NULL"),
+        ),
+    )
+
+    url: Mapped[str] = mapped_column(String(512), primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    uf: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    published_time: Mapped[date | None] = mapped_column(Date, nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    body_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # [{"name": ..., "lat": ..., "lon": ...}] from the post's Google My Maps KML.
+    kml_points: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    batch_submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class EditorialClaim(Base):
+    """One extracted fact: (post, entity, column). ``value`` is always a rewrite; ``evidence``
+    is the literal excerpt kept for audit only and NEVER published.
+
+    status: matched | unmatched | ambiguous | held_volatile (volatile columns are stored,
+    never pushed). ``unmatched`` is also the state of a fresh claim before the resolver ran.
+    """
+
+    __tablename__ = "editorial_claims"
+    __table_args__ = (Index("ix_editorial_claims_canonical_key", "canonical_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_url: Mapped[str] = mapped_column(
+        String(512),
+        ForeignKey("editorial_documents.url", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    entity_kind: Mapped[str] = mapped_column(String(16), nullable=False)  # destino | atrativo
+    entity_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    municipio_text: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    canonical_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    match_method: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    field: Mapped[str] = mapped_column(String(48), nullable=False)
+    value: Mapped[Any] = mapped_column(JSON, nullable=False)
+    stability: Mapped[str] = mapped_column(String(8), nullable=False)  # estavel | volatil
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_time: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EditorialDestination(Base):
+    """Outbox of the destination editorial columns. Destinations are not in Mar, so this
+    table plays the Mar row for them: ``pushed_at`` NULL (and no ``push_error``) = pending;
+    ``push_hash`` is the digest of the last payload the API accepted."""
+
+    __tablename__ = "editorial_destinations"
+
+    source_ref: Mapped[str] = mapped_column(String(256), primary_key=True)
+    uf: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    municipio_ibge: Mapped[str] = mapped_column(String(7), nullable=False)
+    tourist_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    fields: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    push_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    push_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 # ---------------------------------------------------------------------------
