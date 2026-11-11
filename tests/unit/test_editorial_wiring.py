@@ -60,10 +60,11 @@ def test_beat_runs_collect_and_the_destination_outbox_every_15_minutes_on_the_de
     )
 
 
-def _cli(monkeypatch, *argv):
+def _cli(monkeypatch, *argv, enabled=True):
     from brave import cli
     from brave.tasks import pipeline
 
+    monkeypatch.setattr(cli, "_editorial_enabled", lambda: enabled)
     crawl, submit = MagicMock(), MagicMock()
     monkeypatch.setattr(pipeline.editorial_crawl_uf, "delay", crawl)
     monkeypatch.setattr(pipeline.editorial_submit_batches, "delay", submit)
@@ -116,3 +117,23 @@ def test_editorial_load_submit_only_for_every_uf_is_one_submit(monkeypatch) -> N
 def test_crawl_only_and_submit_only_are_exclusive(monkeypatch) -> None:
     crawl, code = _cli(monkeypatch, "editorial-load", "ES", "--crawl-only", "--submit-only")
     assert code == 1 and crawl.call_count == 0 and _cli.submit.call_count == 0
+
+
+def test_submit_only_with_several_ufs_submits_each_of_them(monkeypatch) -> None:
+    crawl, code = _cli(monkeypatch, "editorial-load", "es", "mg", "--submit-only")
+    assert code == 0 and crawl.call_count == 0
+    assert [c.args for c in _cli.submit.call_args_list] == [("ES",), ("MG",)]
+
+
+@pytest.mark.parametrize("flags", [(), ("--crawl-only",), ("--submit-only",)])
+def test_load_and_submit_refuse_while_the_lane_is_off(monkeypatch, capsys, flags) -> None:
+    """A dispatch the task would silently skip: say so and exit non-zero instead."""
+    crawl, code = _cli(monkeypatch, "editorial-load", "ES", *flags, enabled=False)
+    assert code != 0 and crawl.call_count == 0 and _cli.submit.call_count == 0
+    assert "editorial_enabled is off" in capsys.readouterr().out
+
+
+def test_an_unreadable_config_does_not_block_the_dispatch(monkeypatch, capsys) -> None:
+    crawl, code = _cli(monkeypatch, "editorial-load", "ES", enabled=None)
+    assert code == 0 and crawl.call_count == 1
+    assert "could not read editorial_enabled" in capsys.readouterr().out

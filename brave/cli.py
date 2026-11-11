@@ -217,15 +217,48 @@ def _run_images_repush() -> int:
     return 0
 
 
+def _editorial_enabled() -> bool | None:
+    """editorial_enabled from the effective config; None when it cannot be read."""
+    try:
+        from brave.tasks.pipeline import _get_session, _load_config
+
+        session, _ = _get_session()
+        try:
+            return bool(_load_config(session).editorial_enabled)
+        finally:
+            session.close()
+    except Exception:  # noqa: BLE001 — unreadable: the caller decides
+        return None
+
+
+# Exit code of a load/submit refused because the lane is off (the task would skip it).
+_LANE_OFF = 3
+
+
+def _lane_open(command: str) -> bool:
+    """False (and why) when editorial_enabled is off: the dispatched task would just skip.
+    An unreadable config only warns — the task re-reads it and decides."""
+    enabled = _editorial_enabled()
+    if enabled is False:
+        print(f"{command}: editorial_enabled is off, so nothing would run — turn it on first")
+        return False
+    if enabled is None:
+        print(f"{command}: could not read editorial_enabled; dispatching (the task checks it)")
+    return True
+
+
 def _run_editorial_load(ufs: list[str], submit: bool) -> int:
     """Dispatch the editorial crawl (then the paid submit unless ``submit`` is False).
 
     The UFs are crawled ONE AT A TIME (each task chains the next): the site is slow and the
     lane caps itself at 3 parallel fetches in total. No inline fallback — a crawl takes
-    minutes to hours; without a broker this says so and exits 2.
+    minutes to hours; without a broker this says so and exits 2. Exits 3 while
+    editorial_enabled is off.
     """
     from brave.tasks.pipeline import editorial_crawl_uf
 
+    if not _lane_open("editorial-load"):
+        return _LANE_OFF
     first, rest = ufs[0], ufs[1:]
     try:
         editorial_crawl_uf.delay(first, submit=submit, rest=rest)
@@ -235,45 +268,41 @@ def _run_editorial_load(ufs: list[str], submit: bool) -> int:
     more = f", then {len(rest)} more UF(s), one at a time" if rest else ""
     paid = "" if submit else " (crawl only: no paid extraction)"
     print(f"editorial-load: dispatched the crawl of {first}{more}{paid}")
-    try:
-        from brave.tasks.pipeline import _get_session, _load_config
-
-        session, _ = _get_session()
-        try:
-            if not _load_config(session).editorial_enabled:
-                print("editorial-load: editorial_enabled is off, so the crawl will be skipped")
-        finally:
-            session.close()
-    except Exception:  # noqa: BLE001 — a hint only
-        pass
     return 0
 
 
-def _run_editorial_submit(uf: str | None) -> int:
-    """Dispatch the paid extraction of the posts already crawled (``uf`` None = every UF)."""
+def _run_editorial_submit(ufs: list[str | None]) -> int:
+    """Dispatch the paid extraction of the posts already crawled, one submit per UF
+    (``[None]`` = every UF in one submit). Exits 3 while editorial_enabled is off."""
     from brave.tasks.pipeline import editorial_submit_batches
 
-    try:
-        editorial_submit_batches.delay(uf)
-    except Exception as exc:
-        print(f"editorial-load: could not dispatch the submit (is the Celery broker up?): {exc}")
-        return 2
-    print(f"editorial-load: dispatched the extraction submit of {uf or 'every UF'} (paid)")
+    if not _lane_open("editorial-load"):
+        return _LANE_OFF
+    for uf in ufs:
+        try:
+            editorial_submit_batches.delay(uf)
+        except Exception as exc:
+            print(f"editorial-load: could not dispatch the submit (is the Celery broker up?): {exc}")
+            return 2
+        print(f"editorial-load: dispatched the extraction submit of {uf or 'every UF'} (paid)")
     return 0
 
 
-def _run_editorial_retry(uf: str | None) -> int:
+def _run_editorial_retry(ufs: list[str | None]) -> int:
+    """Re-arm the errored posts of each UF (``[None]`` = every UF)."""
     from brave.domains.editorial.extract_batch import retry_errored
     from brave.tasks.pipeline import _get_session
 
     session, _ = _get_session()
     try:
-        n = retry_errored(session, uf)
+        n = sum(retry_errored(session, uf) for uf in ufs)
     finally:
         session.close()
-    print(f"editorial-retry: {n} errored post(s) of {uf or 'every UF'} are eligible again")
+    target = " ".join(u for u in ufs if u) or "every UF"
+    print(f"editorial-retry: {n} errored post(s) of {target} are eligible again")
     if n:
-        print(f"editorial-retry: send them with: brave editorial-load {uf or '--all'} --submit-only")
+        again = "--all" if ufs == [None] else target
+        print(f"editorial-retry: send them with: brave editorial-load {again} --submit-only")
     return 0
 
 
@@ -356,7 +385,7 @@ def main() -> None:
     elif command == "editorial-retry":
         rest = args[1:]
         ufs = _editorial_ufs(command, rest)
-        sys.exit(_run_editorial_retry(None if "--all" in rest else ufs[0]))
+        sys.exit(_run_editorial_retry([None] if "--all" in rest else list(ufs)))
     elif command == "editorial-load":
         rest = args[1:]
         if "--crawl-only" in rest and "--submit-only" in rest:
@@ -364,7 +393,7 @@ def main() -> None:
             sys.exit(1)
         ufs = _editorial_ufs(command, rest)
         if "--submit-only" in rest:
-            sys.exit(_run_editorial_submit(None if "--all" in rest else ufs[0]))
+            sys.exit(_run_editorial_submit([None] if "--all" in rest else list(ufs)))
         sys.exit(_run_editorial_load(ufs, submit="--crawl-only" not in rest))
     elif command == "sweep":
         rest = args[1:]

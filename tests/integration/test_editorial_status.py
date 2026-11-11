@@ -198,6 +198,27 @@ def test_cli_retry_frees_the_errored_posts_and_says_how_to_resubmit(
     assert "1" in out and "--submit-only" in out
 
 
+def test_cli_retry_with_several_ufs_frees_each_of_them(session, monkeypatch, capsys) -> None:
+    import sys
+
+    from brave import cli
+    from brave.tasks import pipeline
+
+    ac = _doc(session, "bad-ac", uf="AC", error="x")
+    al = _doc(session, "bad-al", uf="AL", error="x")
+    am = _doc(session, "bad-am", uf="AM", error="x")  # not listed: untouched
+    monkeypatch.setattr(pipeline, "_get_session", lambda: (session, None))
+    session.close = lambda: None
+    monkeypatch.setattr(sys, "argv", ["brave", "editorial-retry", "ac", "al"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 0
+    for d in (ac, al, am):
+        session.refresh(d)
+    assert (ac.error, al.error, am.error) == (None, None, "x")
+    assert "AC AL" in capsys.readouterr().out
+
+
 def test_funnel_shows_the_attraction_push_of_the_editorial_write(session) -> None:
     written = NOW - timedelta(hours=1)
     pushed = _rio(session, "p1", {"tips": "a"}, processed_at=written)
