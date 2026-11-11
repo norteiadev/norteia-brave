@@ -1,0 +1,96 @@
+{
+  "url": "https://www.viagensecaminhos.com/anchieta-es/",
+  "published_time": "2020-02-17",
+  "visit_date_hint": null,
+  "entities": [
+    {"kind": "destino", "name": "Anchieta", "municipio": "Anchieta", "fields": {
+      "best_time_to_visit": {"value": "Para praia, o verão é mais garantido pelo calor, mas o litoral capixaba costuma ter bom clima o ano todo; fora da temporada há menos gente e diárias mais baratas.", "stability": "estavel", "evidence": "Para aproveitar as praias, recomenda-se ir no verão, pelas temperaturas quentes serem mais garantidas."},
+      "seasonality": {"value": "O período chuvoso vai de outubro a janeiro, com novembro e dezembro os mais chuvosos (cerca de 180 mm); maio a agosto é o mais seco (cerca de 60 mm).", "stability": "estavel", "evidence": "os mais secos, de maio a agosto, em torno de 60mm"},
+      "how_to_get_there": {"value": "Do aeroporto de Vitória são cerca de 1h40 pela ES-060 e BR-101; o carro é a melhor forma de circular. Há também a linha Aeroporto Express até o Santuário de Anchieta, com 4 horários diários e passagem de R$ 39,55.", "stability": "estavel", "evidence": "a viagem dura cerca de 1:40 h, através da rodovia do Sol (ES-060) e BR-101"},
+      "tips": {"value": "A cidade se divide em Iriri (mais agitada, com mais hotéis), Centro (comercial, prático; ficar perto da praia de Castelhanos) e Ubu (calma, para descansar). O Mercado dos Peixes tem quiosques com preços acessíveis.", "stability": "estavel", "evidence": "Mercado dos Peixes. Lá é cheio de quiosques com preços acessíveis."},
+      "predominant_audience_profile": {"value": "Atende tanto quem quer curtir praias quanto quem busca atrações históricas e culturais.", "stability": "estavel", "evidence": "belas atrações culturais e históricas e também, com belas praias e atrações naturais"}
+    }, "extras": {}},
+    {"kind": "atrativo", "name": "Santuário de São José de Anchieta", "municipio": "Anchieta", "fields": {
+      "opening_hours": {"value": "Templo aberto diariamente das 7h às 20h; santuário das 8h às 20h; museu fechado para restauração na época do post.", "stability": "volatil", "evidence": "Templo: Abre todos os dias para visitação, das 7 às 20 horas."},
+      "curiosities": {"value": "Conjunto formado pela Igreja de Nossa Senhora da Assunção (século XVI), pelo museu e pela Cela do padre Anchieta, fundador da povoação em 1569.", "stability": "estavel", "evidence": "foi o fundador da povoação, em 1569"}
+    }, "extras": {}},
+    {"kind": "atrativo", "name": "Museu Nacional de Anchieta", "municipio": "Anchieta", "fields": {
+      "opening_hours": {"value": "Funciona de terça a domingo, das 8h às 18h, mas estava fechado para restauração, com reabertura prevista para o segundo semestre de 2020.", "stability": "volatil", "evidence": "O museu é abre de terça a domingo, das 8h às 18h."},
+      "curiosities": {"value": "Guarda móveis e objetos do padre Anchieta, peças arqueológicas e a relíquia de um osso do santo na Cela.", "stability": "estavel", "evidence": "Na Cela de São José de Anchieta se encontra a relíquia de um de seus ossos."}
+    }, "extras": {}},
+    {"kind": "atrativo", "name": "Praça das Garças", "municipio": "Anchieta", "fields": {
+      "local_infrastructure": {"value": "Tem centro de atendimento ao turista, parquinho e academia pública, à margem do rio Benevente.", "stability": "estavel", "evidence": "No local fica o centro de atendimento ao turista, tem parquinho e academia pública."},
+      "how_to_get_there": {"value": "É o ponto de saída dos passeios de barco pelos manguezais.", "stability": "estavel", "evidence": "É da Praça das Garças que saem os passeios de barco"}
+    }, "extras": {}},
+    {"kind": "atrativo", "name": "Casa da Cultura", "municipio": "Anchieta", "fields": {
+      "curiosities": {"value": "Prédio de 1927 que já abrigou prefeitura, câmara e fórum; hoje guarda documentos, fotos e livros sobre a história da cidade.", "stability": "estavel", "evidence": "construído em 1927"}
+    }, "extras": {}},
+    {"kind": "atrativo", "name": "Centro Cultural de Anchieta", "municipio": "Anchieta", "fields": {
+      "curiosities": {"value": "Funciona no antigo Hotel Anchieta, de 1940, o primeiro hotel da região; abriga exposições, aulas de música e dança.", "stability": "estavel", "evidence": "Construído em 1940, foi o primeiro hotel da região"}
+    }, "extras": {}},
+    {"kind": "atrativo", "name": "Passeio de barco pelo Rio Belvedere", "municipio": "Anchieta", "fields": {
+      "how_to_get_there": {"value": "Sai da Praça das Garças, passa pelo manguezal e termina nas Ruínas Históricas.", "stability": "estavel", "evidence": "O ponto final são as Ruínas Históricas"},
+      "tips": {"value": "O passeio é combinado diretamente com os pescadores no cais da Praça das Garças.", "stability": "estavel", "evidence": "deve ser combinado diretamente com os pescadores no cais da Praça das Garças"}
+    }, "extras": {"duracao_visita": "cerca de 2,5 horas"}},
+    {"kind": "atrativo", "name": "Praia da Areia Preta", "municipio": "Anchieta", "fields": {
+      "local_infrastructure": {"value": "Boa estrutura na orla, com restaurantes, quiosques e bares; sombra no lado esquerdo.", "stability": "estavel", "evidence": "restaurantes, quiosques e bares"},
+      "curiosities": {"value": "Areia monazítica, em Iriri.", "stability": "estavel", "evidence": "com areias monazítica"}
+    }, "extras": {"extensao": "670 m"}},
+    {"kind": "atrativo", "name": "Praia da Costa Azul", "municipio": "Anchieta", "fields": {
+      "local_infrastructure": {"value": "Boa estrutura de quiosques, restaurantes e hotéis na orla.", "stability": "estavel", "evidence": "boa estrutura de quiosques, restaurantes e hotéis na orla"},
+      "tips": {"value": "Mar calmo, bom para stand up paddle e outros esportes aquáticos.", "stability": "estavel", "evidence": "favorece pra a prática de stand up paddle"}
+    }, "extras": {"extensao": "350 m"}},
+    {"kind": "atrativo", "name": "Praia dos Namorados", "municipio": "Anchieta", "fields": {
+      "local_infrastructure": {"value": "Menos estrutura que as vizinhas e poucas árvores.", "stability": "estavel", "evidence": "Possui menor estrutura do que as outras e poucas árvores."}
+    }, "extras": {"extensao": "300 m"}},
+    {"kind": "atrativo", "name": "Praia de Santa Helena", "municipio": "Anchieta", "fields": {
+      "local_infrastructure": {"value": "Um único quiosque e algumas casas de veraneio.", "stability": "estavel", "evidence": "Possui apenas um quiosque e algumas casas de veraneio."}
+    }, "extras": {"extensao": "170 m"}},
+    {"kind": "atrativo", "name": "Praia de Inhaúma", "municipio": "Anchieta", "fields": {
+      "local_infrastructure": {"value": "Vila de pescadores com calçadão, pracinha e pequena igreja.", "stability": "estavel", "evidence": "há um calçadão, com uma pracinha e uma pequena igreja"}
+    }, "extras": {"extensao": "120 m"}},
+    {"kind": "atrativo", "name": "Praia do Tombo, Sapê e Juca da Mata", "municipio": "Anchieta", "fields": {
+      "how_to_get_there": {"value": "Acesso por trilhas ou pelo mar.", "stability": "estavel", "evidence": "O acesso é através de trilhas ou pelo mar."},
+      "local_infrastructure": {"value": "Praias virgens, sem estrutura citada.", "stability": "estavel", "evidence": "São 3 pequeninas praias virgens"}
+    }, "extras": {"extensao": "80 a 120 m cada"}},
+    {"kind": "atrativo", "name": "Praia de Marvila e Praia do Balanço", "municipio": "Anchieta", "fields": {
+      "how_to_get_there": {"value": "Acesso por trilhas curtas a partir da Av. Dom Elvécio, perto do centro.", "stability": "estavel", "evidence": "acessíveis por trilhas curtas, a partir da Av. Dom Elvécio"},
+      "local_infrastructure": {"value": "Desabitadas, sem estrutura.", "stability": "estavel", "evidence": "São desabitadas"}
+    }, "extras": {"extensao": "cerca de 120 m cada"}},
+    {"kind": "atrativo", "name": "Praia dos Coqueiros", "municipio": "Anchieta", "fields": {
+      "local_infrastructure": {"value": "Alguns quiosques entre árvores, perto do centro.", "stability": "estavel", "evidence": "alguns quiosques, entre árvores"}
+    }, "extras": {"extensao": "100 m"}},
+    {"kind": "atrativo", "name": "Praia do Quitiba", "municipio": "Anchieta", "fields": {
+      "how_to_get_there": {"value": "Acesso por curta trilha, perto do centro.", "stability": "estavel", "evidence": "O acesso é por uma curta trilha."},
+      "local_infrastructure": {"value": "Apenas uma construção.", "stability": "estavel", "evidence": "com apenas uma construção"}
+    }, "extras": {"extensao": "100 m"}},
+    {"kind": "atrativo", "name": "Praia Central", "municipio": "Anchieta", "fields": {
+      "local_infrastructure": {"value": "A Avenida Beira Mar tem vários restaurantes de gastronomia capixaba.", "stability": "estavel", "evidence": "vários restaurantes com gastronomia típica capixaba"},
+      "tips": {"value": "Não é das melhores para banho; usada para pesca e esportes na areia.", "stability": "estavel", "evidence": "não é uma das melhores para banho"}
+    }, "extras": {"extensao": "3,5 km"}},
+    {"kind": "atrativo", "name": "Praia Bela Vista e Boca da Baleia", "municipio": "Anchieta", "fields": {
+      "how_to_get_there": {"value": "Acesso fácil por estrada de areia que acompanha a orla.", "stability": "estavel", "evidence": "acesso fácil através de uma estrada de areia"},
+      "local_infrastructure": {"value": "Sem infraestrutura.", "stability": "estavel", "evidence": "mas não possuem infraestrutura"}
+    }, "extras": {}},
+    {"kind": "atrativo", "name": "Praia de Castelhanos", "municipio": "Anchieta", "fields": {
+      "local_infrastructure": {"value": "Ampla infraestrutura, sobretudo à direita, com muitos quiosques; há piscinas naturais entre as pedras.", "stability": "estavel", "evidence": "ampla infraestrutura, principalmente na parte da direita, com muitos quiosques"}
+    }, "extras": {"extensao": "mais de 1 km"}},
+    {"kind": "atrativo", "name": "Praia de Guanabara", "municipio": "Anchieta", "fields": {
+      "curiosities": {"value": "Recebe muitas desovas de tartarugas Caretta, com ações do projeto Tamar.", "stability": "estavel", "evidence": "grande incidência de desova de tartarugas da espécie Caretta"}
+    }, "extras": {"extensao": "2,5 km"}},
+    {"kind": "atrativo", "name": "Praia de Parati", "municipio": "Anchieta", "fields": {
+      "local_infrastructure": {"value": "Vila de pescadores; sem hotéis, só camping e casas de aluguel.", "stability": "estavel", "evidence": "Não há hotéis nesta praia, apenas um camping e casas de aluguel."}
+    }, "extras": {"extensao": "1 km"}},
+    {"kind": "atrativo", "name": "Praia de Ubu", "municipio": "Anchieta", "fields": {
+      "local_infrastructure": {"value": "Boa infraestrutura hoteleira e restaurantes de moqueca capixaba.", "stability": "estavel", "evidence": "boa infraestrutura hoteleira, com bons restaurantes que servem a tradicional moqueca capixaba"}
+    }, "extras": {"extensao": "1 km"}},
+    {"kind": "atrativo", "name": "Praia do Além", "municipio": "Anchieta", "fields": {
+      "local_infrastructure": {"value": "Deserta e sem infraestrutura, às margens da Rodovia do Sol.", "stability": "estavel", "evidence": "Não possui infraestrutura, mas fica próxima ao balneário de Ubu."},
+      "tips": {"value": "Mar aberto de ondas fortes, procurado quase só por surfistas.", "stability": "estavel", "evidence": "procurada quase que somente por surfistas"}
+    }, "extras": {}},
+    {"kind": "atrativo", "name": "Praia Mãe Bá", "municipio": "Anchieta", "fields": {
+      "how_to_get_there": {"value": "A Rodovia do Sol passa rente à praia, na divisa com Guarapari.", "stability": "estavel", "evidence": "A rodovia do Sol passa bem rente à praia"},
+      "tips": {"value": "Praticamente deserta, indicada para caminhadas e pesca.", "stability": "estavel", "evidence": "indicada para caminhadas e pesca"}
+    }, "extras": {}}
+  ]
+}
