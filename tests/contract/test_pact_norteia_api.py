@@ -21,7 +21,9 @@ interaction state pollution across tests.
 Contract interactions (bodies built by build_push_payload — F53):
   1. "a valid destination Mar push" — POST /destinations with full Pact shape → 200
   2. "idempotent re-push of same source_ref" — same endpoint + payload → 200 (upsert)
-  3. attraction pushes, one per lane shape (TA per-UF enriched, TA bulk, Places) → 200
+  3. attraction pushes, one per lane shape (TA per-UF enriched, TA bulk, Places, and one
+     carrying the editorial columns of the blog lane) → 200
+  4. "an editorial destination push" — the editorial destination outbox → 200
 
 After the tests run, the combined Pact JSON file is written.
 """
@@ -37,7 +39,9 @@ import pytest
 from pact import Pact  # type: ignore[import-untyped]
 
 from brave.clients.norteia_api import NorteiaApiClient
+from brave.core.mar.publication import editorial_destination_payload
 from brave.core.mar.service import build_push_payload
+from brave.core.models import EditorialDestination
 
 # ---------------------------------------------------------------------------
 # Pact output directory
@@ -162,6 +166,54 @@ ATTRACTION_PLACES_PAYLOAD = _payload(
     91.0,
 )
 
+# Editorial (blog) lane: the stable columns resolved into canonical["editorial"] ride flat;
+# only filled ones (the volatile price here is never pushed).
+ATTRACTION_EDITORIAL_PAYLOAD = _payload(
+    "attraction",
+    "tripadvisor:attraction:2400001",
+    {
+        "name": "Santuario de Sao Jose de Anchieta",
+        "category": "Igrejas",
+        "municipio": "Anchieta",
+        "municipio_id": "3200409",
+        "parent_source_ref": "ibge:ES:3200409",
+        "lat": -20.8031,
+        "lon": -40.6525,
+        "editorial": {
+            "curiosities": "Conjunto do seculo XVI ligado ao padre Anchieta, fundador da povoacao.",
+            "how_to_get_there": "Fica no centro, a cerca de 1h40 do aeroporto de Vitoria pela ES-060.",
+            "local_infrastructure": "Tem museu, loja e estacionamento ao lado.",
+            "tips": "Combine a visita com a praia de Castelhanos, ali perto.",
+            "accessibility": "Rampa na entrada principal.",
+            "price": "R$ 10",
+        },
+    },
+    "ES",
+    88.0,
+)
+
+# The editorial destination outbox (destinations are not in Mar): required keys + only the
+# filled editorial columns — the API upserts by source_ref and an explicit null OVERWRITES.
+DESTINATION_EDITORIAL_PAYLOAD = editorial_destination_payload(
+    EditorialDestination(
+        source_ref="ibge:ES:3200409",
+        uf="ES",
+        municipio_ibge="3200409",
+        tourist_name="Anchieta",
+        fields={
+            "best_time_to_visit": "Verao para praia; fora da temporada ha menos gente.",
+            "seasonality": ["Outubro a janeiro: periodo chuvoso", "Maio a agosto: mais seco"],
+            "how_to_get_there": "Cerca de 1h40 do aeroporto de Vitoria pela ES-060 e BR-101.",
+            "recommended_duration": "2 a 3 dias",
+            "tips": "Iriri e mais agitada; Ubu e mais calma.",
+            "estimated_spending_range": "Medio",
+            "predominant_audience_profile": "Familias e quem busca praia com historia.",
+            "pace_profile": "equilibrado",
+            "connectivity_level": "Boa no centro",
+        },
+    )
+)
+
 # Every key norteia-api's IngestAttractionRequest / IngestDestinationRequest validates. A key
 # outside this set is silently DROPPED by $request->validated() — no 422, just lost data.
 _API_ATTRACTION_KEYS = {
@@ -181,6 +233,10 @@ _API_PLACE_KEYS = {
 _API_DESTINATION_KEYS = {
     "source_ref", "source", "tourist_name", "slug", "municipio_ibge", "description",
     "reliability_score", "provenance", "participates_mtur", "visibility", "published_at",
+    # editorial columns (IngestDestinationRequest, norteia-api origin/develop)
+    "best_time_to_visit", "seasonality", "how_to_get_there", "recommended_duration", "tips",
+    "estimated_spending_range", "predominant_audience_profile", "pace_profile",
+    "connectivity_level", "safety_alerts",
 }
 
 
@@ -265,6 +321,7 @@ def test_push_destination_idempotent_contract():
         ("a TripAdvisor bulk attraction Mar push (no place, UF-derived destino)",
          ATTRACTION_BULK_PAYLOAD),
         ("a Places-lane attraction Mar push", ATTRACTION_PLACES_PAYLOAD),
+        ("an attraction Mar push carrying the editorial columns", ATTRACTION_EDITORIAL_PAYLOAD),
     ],
 )
 def test_push_attraction_contract(description, payload):
@@ -295,7 +352,9 @@ def test_push_attraction_contract(description, payload):
 
 
 @pytest.mark.parametrize(
-    "payload", [ATTRACTION_PAYLOAD, ATTRACTION_BULK_PAYLOAD, ATTRACTION_PLACES_PAYLOAD]
+    "payload",
+    [ATTRACTION_PAYLOAD, ATTRACTION_BULK_PAYLOAD, ATTRACTION_PLACES_PAYLOAD,
+     ATTRACTION_EDITORIAL_PAYLOAD],
 )
 def test_every_produced_attraction_key_is_one_the_api_validates(payload):
     assert set(payload) <= _API_ATTRACTION_KEYS
@@ -306,6 +365,50 @@ def test_every_produced_attraction_key_is_one_the_api_validates(payload):
 
 def test_every_produced_destination_key_is_one_the_api_validates():
     assert set(DESTINATION_PAYLOAD) <= _API_DESTINATION_KEYS
+    assert set(DESTINATION_EDITORIAL_PAYLOAD) <= _API_DESTINATION_KEYS
+
+
+# ---------------------------------------------------------------------------
+# Test 4: the editorial destination outbox (POST /destinations with editorial columns)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.enable_socket  # pact-python mock server binds to localhost
+def test_push_editorial_destination_contract():
+    """Pact: the editorial destination push upserts by source_ref → 200."""
+    pact = Pact("norteia-brave", "norteia-api")
+    (
+        pact.upon_receiving("an editorial destination push")
+        .with_request("POST", "/api/internal/territorial/destinations")
+        .with_header("Authorization", "Bearer test-service-token")
+        .with_body(DESTINATION_EDITORIAL_PAYLOAD)
+        .will_respond_with(200)
+        .with_body({"id": 42, "created": False})
+    )
+
+    with pact.serve() as mock:
+        client = NorteiaApiClient(base_url=str(mock.url), service_token="test-service-token")
+
+        async def _run():
+            async with client as c:
+                return await c.push_destination(DESTINATION_EDITORIAL_PAYLOAD)
+
+        result = asyncio.run(_run())
+
+    pact.write_file(str(PACT_DIR))
+
+    assert "id" in result
+
+
+def test_editorial_payloads_carry_only_filled_stable_columns():
+    editorial = {"curiosities", "how_to_get_there", "local_infrastructure", "tips", "accessibility"}
+    assert editorial <= set(ATTRACTION_EDITORIAL_PAYLOAD)
+    assert "price" not in ATTRACTION_EDITORIAL_PAYLOAD  # volatile: held, never pushed
+    assert "editorial" not in ATTRACTION_EDITORIAL_PAYLOAD
+    assert None not in DESTINATION_EDITORIAL_PAYLOAD.values()  # a null would OVERWRITE
+    assert DESTINATION_EDITORIAL_PAYLOAD["source"] == "ibge"
+    assert isinstance(DESTINATION_EDITORIAL_PAYLOAD["seasonality"], list)
+    assert "safety_alerts" not in DESTINATION_EDITORIAL_PAYLOAD
 
 
 def test_lane_shapes_carry_the_contract_fixes():
