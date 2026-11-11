@@ -153,6 +153,12 @@ def maintenance_beat_entries() -> dict:
       - ``push-pending-media-15min`` → the photo outbox (brave.push_pending_media): sends
         entity_images whose entity is already on norteia-api. No-op offline / API down /
         while images_push_enabled is off (photos held for review).
+      - ``editorial-collect-15min`` → collect/apply the ended editorial extraction batches
+        (and reap stale claims). Not gated on editorial_enabled: batches in flight must still
+        land. Submit and crawl are NOT scheduled (paid / slow: operator-dispatched).
+      - ``editorial-push-destinations-15min`` → the editorial destination outbox
+        (brave.push_editorial_destinations). No-op offline / API down / while
+        editorial_push_enabled is off.
       - ``refresh-places-daily`` → re-fetches Place Details (by cached place_id, never a
         Text Search) for atrativos whose Places data is older than 60 days, capped by
         places_refresh_daily_limit. No-op while externals or Places enrichment are off.
@@ -211,7 +217,20 @@ def maintenance_beat_entries() -> dict:
             "schedule": crontab(minute="*/15"),
             "args": (),
             "kwargs": {},
-        },        "refresh-places-daily": {
+        },
+        "editorial-collect-15min": {
+            "task": "brave.editorial_collect_batches",
+            "schedule": crontab(minute="*/15"),
+            "args": (),
+            "kwargs": {},
+        },
+        "editorial-push-destinations-15min": {
+            "task": "brave.push_editorial_destinations",
+            "schedule": crontab(minute="*/15"),
+            "args": (),
+            "kwargs": {},
+        },
+        "refresh-places-daily": {
             "task": "brave.refresh_places",
             "schedule": crontab(hour=5, minute=0),  # 5 AM UTC, after the 4 AM prune
             "args": (),

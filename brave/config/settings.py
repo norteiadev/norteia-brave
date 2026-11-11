@@ -501,6 +501,26 @@ class AppConfig(BaseSettings):
     # ``images_push_enabled``.
     images_push_enabled: bool = False
 
+    # editorial_enabled gates the editorial lane's crawl and paid extraction
+    # (brave.editorial_crawl_uf / brave.editorial_submit_batches): blog posts → LLM → the
+    # attraction/destination editorial columns. Collect, resolve and the destination outbox
+    # are not gated by it (batches already in flight must still land). Off by default.
+    # Overlay key ``editorial_enabled`` (brave.config.runtime).
+    editorial_enabled: bool = False
+
+    # editorial_push_enabled gates brave.push_editorial_destinations, the outbox of the
+    # destination editorial columns: while False the rows stay pending, nothing is POSTed.
+    # Off by default. Overlay key ``editorial_push_enabled``.
+    editorial_push_enabled: bool = False
+
+    # Pinned Anthropic slug of the editorial extraction (Message Batches); defaults to the
+    # same Sonnet the copywriter uses. editorial_batch_size caps the posts per batch and
+    # editorial_est_usd_per_post is the batch-rate USD reserved per post at submit (settled
+    # against the real bill at collect) — see brave/domains/editorial/extract_batch.py.
+    editorial_model_slug: str = "claude-sonnet-5-5"
+    editorial_batch_size: int = 50
+    editorial_est_usd_per_post: float = 0.06
+
     # atrativo_description_batch_enabled moves description writing off the synchronous
     # path: when True the INLINE copywriter is switched off and descriptions are instead
     # written asynchronously by the Message Batches lane (50% off tokens, up to 24h

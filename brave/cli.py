@@ -16,10 +16,18 @@ Commands:
                    TripAdvisor backfill as an engine run — same path as
                    POST /api/v1/tripadvisor/backfill. Exit 2 when the motor is busy.
 
+    editorial-load    Editorial lane: crawl the blog posts of a UF (or every UF, one after
+                      another) and then submit the paid extraction batch:
+                      editorial-load <UF>|--all [--crawl-only]
+    editorial-status  The editorial funnel (posts → claims → matches → destinations → cost):
+                      editorial-status [UF]
+
 Usage:
     python -m brave.cli run-fixture
     python -m brave.cli sweep BA [--lane destinos|atrativos|both]
     python -m brave.cli backfill-ta
+    python -m brave.cli editorial-load ES [--crawl-only]
+    python -m brave.cli editorial-status [ES]
 """
 
 import os
@@ -204,6 +212,51 @@ def _run_images_repush() -> int:
     return 0
 
 
+def _run_editorial_load(ufs: list[str], submit: bool) -> int:
+    """Dispatch the editorial crawl (then the paid submit unless ``submit`` is False).
+
+    The UFs are crawled ONE AT A TIME (each task chains the next): the site is slow and the
+    lane caps itself at 3 parallel fetches in total. No inline fallback — a crawl takes
+    minutes to hours; without a broker this says so and exits 2.
+    """
+    from brave.tasks.pipeline import editorial_crawl_uf
+
+    first, rest = ufs[0], ufs[1:]
+    try:
+        editorial_crawl_uf.delay(first, submit=submit, rest=rest)
+    except Exception as exc:
+        print(f"editorial-load: could not dispatch the crawl (is the Celery broker up?): {exc}")
+        return 2
+    more = f", then {len(rest)} more UF(s), one at a time" if rest else ""
+    paid = "" if submit else " (crawl only: no paid extraction)"
+    print(f"editorial-load: dispatched the crawl of {first}{more}{paid}")
+    try:
+        from brave.tasks.pipeline import _get_session, _load_config
+
+        session, _ = _get_session()
+        try:
+            if not _load_config(session).editorial_enabled:
+                print("editorial-load: editorial_enabled is off, so the crawl will be skipped")
+        finally:
+            session.close()
+    except Exception:  # noqa: BLE001 — a hint only
+        pass
+    return 0
+
+
+def _run_editorial_status(uf: str | None) -> int:
+    from brave.domains.editorial.status import format_funnel, funnel
+    from brave.tasks.pipeline import _get_session, _load_config
+
+    session, _ = _get_session()
+    try:
+        est = _load_config(session).editorial_est_usd_per_post
+        print(format_funnel(funnel(session, uf, est_usd_per_post=est)))
+    finally:
+        session.close()
+    return 0
+
+
 def _parse_lane(args: list[str]) -> str:
     """Parse an optional `--lane <value>` from the remaining argv (plain slicing, D-05).
 
@@ -237,6 +290,8 @@ def main() -> None:
         print("  sweep <UF> [--lane destinos|atrativos|both]   Kick an on-demand UF sweep")
         print("  backfill-ta   Start/resume the TripAdvisor backfill engine run")
         print("  images-repush Re-send every archived photo to norteia-api (after an API wipe)")
+        print("  editorial-load <UF>|--all [--crawl-only]   Crawl the editorial blog, then extract")
+        print("  editorial-status [UF]   The editorial lane funnel")
         sys.exit(1)
 
     command = args[0]
@@ -246,6 +301,19 @@ def main() -> None:
         sys.exit(_run_backfill_ta())
     elif command == "images-repush":
         sys.exit(_run_images_repush())
+    elif command == "editorial-status":
+        sys.exit(_run_editorial_status(args[1].upper() if len(args) > 1 else None))
+    elif command == "editorial-load":
+        from brave.domains.editorial.crawler import UF_SLUGS
+
+        rest = args[1:]
+        ufs = sorted(UF_SLUGS) if "--all" in rest else [a.upper() for a in rest if not a.startswith("--")]
+        bad = [u for u in ufs if u not in UF_SLUGS]
+        if not ufs or bad:
+            print(f"editorial-load: {'unknown UF ' + ', '.join(bad) if bad else 'a UF or --all is required'}")
+            print("Usage: brave editorial-load <UF>|--all [--crawl-only]")
+            sys.exit(1)
+        sys.exit(_run_editorial_load(ufs, submit="--crawl-only" not in rest))
     elif command == "sweep":
         rest = args[1:]
         # The UF is the first non-flag positional after the command.

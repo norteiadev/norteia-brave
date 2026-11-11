@@ -194,6 +194,7 @@ def submit_batch(
     model: str,
     uf: str | None = None,
     limit: int = EXTRACT_BATCH_SIZE,
+    est_usd: float = EST_USD_PER_POST,
 ) -> str | None:
     """Submit one extraction batch; returns its id, or None when nothing was sent.
 
@@ -202,14 +203,14 @@ def submit_batch(
     UPDATE SKIP LOCKED → write the claim and COMMIT → ``batches.create`` → stamp the id.
     """
     now = datetime.now(UTC)
-    reserved = limit * EST_USD_PER_POST
+    reserved = limit * est_usd
     booked_by_others = record_spend(redis_client, reserved) - reserved
     remaining = max(0.0, llm_config.usd_daily_budget - booked_by_others)
-    sized = min(limit, int(remaining // EST_USD_PER_POST))
+    sized = min(limit, int(remaining // est_usd))
 
     docs = list(session.scalars(_candidates(sized, uf))) if sized > 0 else []
     requests = [build_request(d, model) for d in docs]
-    used = len(requests) * EST_USD_PER_POST
+    used = len(requests) * est_usd
     if used < reserved:
         reconcile_spend(redis_client, reserved - used, 0.0, reserved_at=now)
     if sized <= 0:
@@ -353,6 +354,7 @@ def apply_result(
     batch_id: str,
     model: str,
     redis_client: Any = None,
+    est_usd: float = EST_USD_PER_POST,
 ) -> bool:
     """Apply one batch result line to ``doc``. Returns True when it wrote claims.
 
@@ -419,7 +421,7 @@ def apply_result(
     doc.batch_id = doc.batch_submitted_at = None
     session.commit()
     if redis_client is not None:
-        reconcile_spend(redis_client, EST_USD_PER_POST, usd, reserved_at=reserved_at)
+        reconcile_spend(redis_client, est_usd, usd, reserved_at=reserved_at)
     return extracted
 
 
@@ -430,6 +432,7 @@ def collect_batches(
     redis_client: Any = None,
     model: str,
     now: datetime | None = None,
+    est_usd: float = EST_USD_PER_POST,
 ) -> set[str]:
     """Reap stale claims, then apply every ENDED batch. Returns the UFs that got claims
     (the ones to resolve). One un-retrievable batch never stops the others."""
@@ -459,7 +462,7 @@ def collect_batches(
                     continue
                 if apply_result(
                     session, doc, entry.result, batch_id=batch_id, model=model,
-                    redis_client=redis_client,
+                    redis_client=redis_client, est_usd=est_usd,
                 ):  # fmt: skip
                     ufs.add(doc.uf)
                 session.commit()

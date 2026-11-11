@@ -2943,6 +2943,204 @@ def collect_description_batches_task(self) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Editorial lane (brave/domains/editorial): blog posts → LLM extraction (Message Batches) →
+# attraction columns in rio_records.normalized["editorial"] + the destination outbox.
+# All the logic lives in the domain; these are transport. Crawl and submit are operator-
+# dispatched (brave editorial-load): slow and paid, never on a timer. Collect and the
+# destination outbox ride the 15-min beat.
+# ---------------------------------------------------------------------------
+
+_EDITORIAL_MAX_BATCHES_PER_CALL = 20
+
+
+# time_limit 2h: a UF is ~20-70 posts at ~75 s a page, 3 at a time (~25 min); every post is
+# committed as it lands, so a hard kill only costs the posts still in flight. It must stay
+# under the broker visibility_timeout (3h, tests/unit/tasks/test_celery_broker_options.py).
+# A long producer: lower broker priority, so a freed slot takes a queued keep-alive first.
+@shared_task(
+    name="brave.editorial_crawl_uf",
+    time_limit=7200,
+    soft_time_limit=6900,
+    priority=_LONG_TASK_PRIORITY,
+)
+def editorial_crawl_uf(
+    uf: str, submit: bool = True, rest: list[str] | None = None
+) -> dict[str, Any]:
+    """Crawl the blog posts (and KML maps) of ``uf`` into editorial_documents.
+
+    Blocked while editorial_enabled is off. ``submit`` dispatches the paid extraction when
+    something new arrived; ``rest`` is the UFs still to crawl AFTER this one — they run one
+    after another (even when this one fails), because the site answers in ~75 s a page and
+    the lane caps itself at 3 parallel fetches in total.
+    """
+    from brave.domains.editorial.crawler import crawl_uf  # noqa: PLC0415
+
+    summary: dict[str, Any] = {"uf": uf, "skipped": True}
+    chain = False
+    session, _ = _get_session()
+    try:
+        effective = _load_config(session)
+        if not effective.editorial_enabled:
+            logger.warning("editorial_crawl_disabled", uf=uf)
+            return summary
+        chain = True
+        clients = clients_for(effective)
+        try:
+            result = asyncio.run(_using(clients, crawl_uf(session, clients.editorial, uf)))
+        except Exception as exc:  # noqa: BLE001 — a failing UF must not strand the next ones
+            session.rollback()
+            logger.warning("editorial_crawl_failed", uf=uf, error=str(exc))
+            return {"uf": uf, "error": str(exc)}
+        summary = {
+            "uf": uf, "fetched": result.fetched, "unchanged": result.unchanged,
+            "in_flight": result.in_flight, "failed": result.failed,
+        }  # fmt: skip
+        if submit and result.fetched:
+            editorial_submit_batches.delay(uf)
+        return summary
+    finally:
+        session.close()
+        if chain and rest:
+            try:
+                editorial_crawl_uf.delay(rest[0], submit=submit, rest=rest[1:])
+            except Exception as exc:  # noqa: BLE001
+                logger.error("editorial_crawl_chain_failed", next_uf=rest[0], error=str(exc))
+
+
+@shared_task(name="brave.editorial_submit_batches", acks_late=True, reject_on_worker_lost=True, time_limit=900)
+def editorial_submit_batches(uf: str | None = None) -> list[str]:
+    """Submit the pending posts as Message Batches (capped per batch). Returns the batch ids.
+
+    Needs editorial_enabled AND run_real_externals. Claims before it spends (see
+    extract_batch.submit_batch), so the acks_late redelivery bills nothing twice. A failure
+    is logged and swallowed: a retry storm on a task that COMMITS spend is the wrong shape —
+    the operator re-dispatches.
+    """
+    import redis as _redis_lib  # noqa: PLC0415
+
+    from brave.domains.editorial.extract_batch import submit_batch  # noqa: PLC0415
+
+    ids: list[str] = []
+    session, _ = _get_session()
+    try:
+        effective = _load_config(session)
+        if not (effective.editorial_enabled and effective.run_real_externals):
+            return ids
+        client = clients_for(effective).batch
+        redis_client = _redis_lib.from_url(
+            os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+        )
+        for _ in range(_EDITORIAL_MAX_BATCHES_PER_CALL):
+            batch_id = submit_batch(
+                session, client, redis_client=redis_client, llm_config=effective.llm,
+                model=effective.editorial_model_slug, uf=uf,
+                limit=effective.editorial_batch_size, est_usd=effective.editorial_est_usd_per_post,
+            )  # fmt: skip
+            if batch_id is None:
+                break
+            ids.append(batch_id)
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.warning("editorial_submit_failed", error=str(exc), submitted=ids)
+    finally:
+        session.close()
+    return ids
+
+
+@shared_task(name="brave.editorial_collect_batches", acks_late=True, reject_on_worker_lost=True, time_limit=900)
+def editorial_collect_batches() -> list[str]:
+    """Apply every ENDED editorial batch and reap stale claims (beat: every 15 min); then
+    resolve each UF that got new claims. Returns those UFs.
+
+    NOT gated on editorial_enabled (batches in flight must still land). With
+    run_real_externals off nothing may call Anthropic: only the claim placeholders are
+    reaped (no client to probe a real batch id with).
+    """
+    import redis as _redis_lib  # noqa: PLC0415
+
+    from brave.domains.editorial import extract_batch  # noqa: PLC0415
+
+    ufs: set[str] = set()
+    session, _ = _get_session()
+    try:
+        effective = _load_config(session)
+        if not effective.run_real_externals:
+            extract_batch.reap_stale_claims(session, None)
+        else:
+            ufs = extract_batch.collect_batches(
+                session,
+                clients_for(effective).batch,
+                redis_client=_redis_lib.from_url(
+                    os.environ.get("BRAVE_DB_REDIS_URL", "redis://localhost:6379/0")
+                ),
+                model=effective.editorial_model_slug,
+                est_usd=effective.editorial_est_usd_per_post,
+            )
+        _beat_health("brave.editorial_collect_batches")
+    except Exception as exc:  # noqa: BLE001 — beat retries on the next tick
+        session.rollback()
+        logger.warning("editorial_collect_failed", error=str(exc))
+        _beat_health("brave.editorial_collect_batches", exc)
+    finally:
+        session.close()
+    for uf in sorted(ufs):
+        try:
+            editorial_resolve.delay(uf)
+        except Exception as exc:  # noqa: BLE001 — the next collect or an operator re-resolves
+            logger.error("editorial_resolve_dispatch_failed", uf=uf, error=str(exc))
+    return sorted(ufs)
+
+
+@shared_task(name="brave.editorial_resolve", time_limit=900)
+def editorial_resolve(uf: str) -> dict[str, Any]:
+    """Match the UF's claims to Brave records and resolve one value per column
+    (brave.domains.editorial.resolver). Idempotent; not gated."""
+    from brave.domains.editorial.resolver import resolve_uf  # noqa: PLC0415
+
+    session, _ = _get_session()
+    try:
+        r = resolve_uf(session, uf)
+    finally:
+        session.close()
+    return {
+        "uf": uf, "claims": r.claims, "attractions_written": r.attractions_written,
+        "attractions_cleared": r.attractions_cleared, "destinations_changed": r.destinations_changed,
+    }  # fmt: skip
+
+
+@shared_task(name="brave.push_editorial_destinations", time_limit=900, soft_time_limit=840)
+def push_editorial_destinations(limit: int = 100) -> int:
+    """Beat (15 min): the destination outbox — POST pending editorial_destinations rows.
+
+    No-op while externals are off or norteia-api is down; held (rows stay pending, nothing
+    POSTed) while editorial_push_enabled is off. Returns how many were pushed.
+    """
+    from brave.core.mar.publication import push_editorial_destinations as _push  # noqa: PLC0415
+
+    session, _ = _get_session()
+    try:
+        effective = _load_config(session)
+        if not effective.run_real_externals or _norteia_api_down():
+            return 0
+        out = _push(
+            session, clients_for(effective).norteia_api,
+            enabled=effective.editorial_push_enabled, limit=limit,
+        )  # fmt: skip
+        if out.held:
+            logger.info("push_editorial_destinations_held")
+    except Exception as exc:
+        session.rollback()
+        _beat_health("brave.push_editorial_destinations", exc)
+        raise
+    finally:
+        session.close()
+    _beat_health("brave.push_editorial_destinations")  # a hold is not a failure
+    if out.pushed or out.rejected:
+        logger.info("push_editorial_destinations", pushed=out.pushed, rejected=out.rejected)
+    return out.pushed
+
+
+# ---------------------------------------------------------------------------
 # Phase 3 — Atrativos WhatsApp conversation tasks (D-08/D-10, 03-04).
 #
 # These tasks replace the stubs added in 03-02. The gate router
