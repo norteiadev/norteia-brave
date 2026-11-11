@@ -32,9 +32,16 @@ from brave.clients.llm import (
     _CACHE_WRITE_MULTIPLIER,
     _usage_int,
     anthropic_prices,
+    anthropic_thinking,
 )
 from brave.core.models import EditorialClaim, EditorialDocument, LLMGeneration
-from brave.domains.editorial.schema import Extraction, claim_drafts, parse_extraction
+from brave.domains.editorial.schema import (
+    WireError,
+    claim_drafts,
+    from_wire,
+    parse_extraction,
+    wire_json_schema,
+)
 from brave.observability.cost_guard import reconcile_spend, record_spend
 
 if TYPE_CHECKING:
@@ -60,27 +67,28 @@ _MAX_TOKENS = 16000
 EXTRACT_SYSTEM = """\
 Você lê posts de um blog de viagem (texto limpo) e extrai fatos para as colunas editoriais \
 da norteia-api. O autor visitou os lugares; o blog é a fonte. Não use web, não invente, não \
-infira: só o que o texto do post afirma. Responda SEMPRE chamando a ferramenta \
+infira: só o que o texto do post afirma. Registre o resultado na ferramenta \
 `registrar_extracao`, com uma entidade por lugar citado.
 
 ## Entidades
 - kind `destino` = o município do post (nome do município em `name` e em `municipio`).
 - kind `atrativo` = ponto turístico concreto (praia, pedra, gruta, igreja, parque, trilha, \
-mirante, museu). Bairro ou região não é atrativo. `municipio` = onde fica, ou null se o post \
-não deixar claro (atrativo de divisa: só o que o texto diz).
+mirante, museu). Bairro ou região não é atrativo. `municipio` = onde fica, ou "" (texto \
+vazio) se o post não deixar claro (atrativo de divisa: só o que o texto diz).
 - Posts-lista ("10 pedras", "18 cidades"): extraia cada item.
-- Entidade sem nenhuma coluna: liste mesmo assim com `fields` vazio.
+- Entidade sem nenhuma coluna: liste mesmo assim com `facts` vazio.
 
 ## Colunas (omita a coluna se o post não traz o fato)
-destino: best_time_to_visit, seasonality (LISTA de textos curtos), how_to_get_there, \
+destino: best_time_to_visit, seasonality (períodos curtos separados por ";"), how_to_get_there, \
 recommended_duration (até 100 caracteres), tips, safety_alerts, estimated_spending_range \
 (até 100), predominant_audience_profile (até 200), pace_profile (só `lento`, `equilibrado` \
 ou `intenso`), connectivity_level (até 50).
-atrativo: free_entry (true/false), price, opening_hours, how_to_get_there, tips, \
+atrativo: free_entry ("sim" ou "não"), price, opening_hours, how_to_get_there, tips, \
 local_infrastructure, curiosities, accessibility, safety_alerts, estimated_capacity, \
 conservation_level.
 
-Cada coluna é `{"value": ..., "evidence": ...}`.
+Cada fato é um item de `facts`: `{"field": <coluna>, "value": <texto>, "evidence": <trecho>}`, \
+no máximo um por coluna em cada entidade.
 
 ## Regras
 1. `value` nunca é cópia: reescreva o fato com suas palavras, em PT-BR, conciso. A cópia só \
@@ -94,24 +102,19 @@ restaurante, centro de visitantes). "Pouca infraestrutura" também conta.
 5. `tips` = dicas de experiência. Não ponha preço em R$, horário de funcionamento nem limite de \
 pessoas em `tips`: isso vai em price / opening_hours / estimated_capacity.
 6. O post pode ter mais de uma versão de um número (ex.: extensão): use o do corpo do texto.
+
+Responda sempre chamando a ferramenta `registrar_extracao` exatamente uma vez, nunca com texto.
 """
 
 
-def _strip(node: Any) -> Any:
-    """The JSON schema without the keys the tool schema does not need (titles, OpenAPI
-    ``discriminator``): they only cost input tokens."""
-    if isinstance(node, dict):
-        return {k: _strip(v) for k, v in node.items() if k not in {"title", "discriminator"}}
-    if isinstance(node, list):
-        return [_strip(v) for v in node]
-    return node
-
-
 def extraction_tool() -> dict[str, Any]:
+    """strict: the tool input always validates against the wire schema (schema.WireExtraction:
+    every property required, no unions, no string limits — what strict mode accepts)."""
     return {
         "name": TOOL_NAME,
-        "description": "Registra as entidades (destinos e atrativos) e as colunas extraídas do post.",
-        "input_schema": _strip(Extraction.model_json_schema()),
+        "description": "Registra as entidades (destinos e atrativos) e os fatos extraídos do post.",
+        "strict": True,
+        "input_schema": wire_json_schema(),
     }
 
 
@@ -128,10 +131,17 @@ def build_request(doc: EditorialDocument, model: str) -> dict[str, Any]:
         "system": EXTRACT_SYSTEM,
         "messages": [{"role": "user", "content": user}],
         "tools": [extraction_tool()],
-        "tool_choice": {"type": "tool", "name": TOOL_NAME},
+        # NEVER a forced tool_choice ({"type": "tool"} / {"type": "any"}): Sonnet 5.5 (and the
+        # 5.1+ Fable/Mythos, Opus 5.5) answer 400 "tool_choice: type "tool" and "any" are not
+        # supported for this model." — Batches included. auto + strict + the prompt's last line
+        # get the call; apply_result records an answer without it as an error.
+        "tool_choice": {"type": "auto", "disable_parallel_tool_use": True},
     }
-    # NO thinking param: the API answers 400 to a forced tool_choice next to one (every
-    # request of the batch would error), and a deterministic extraction does not need it.
+    # The model's thinking-off switch (between_tools on Sonnet 5.5, sent alone): omitted,
+    # every post is billed adaptive thinking.
+    thinking = anthropic_thinking(model)
+    if thinking is not None:
+        params["thinking"] = thinking
     return {"custom_id": custom_id(doc.url), "params": params}
 
 
@@ -364,6 +374,29 @@ def _tool_input(message: Any) -> Any:
     return None
 
 
+def _replace_claims(session: Session, doc: EditorialDocument, entities: list[Any]) -> None:
+    """The post's claims, replaced wholesale (a re-extracted post never keeps stale ones)."""
+    session.execute(delete(EditorialClaim).where(EditorialClaim.document_url == doc.url))
+    for entity in entities:
+        for draft in claim_drafts(entity):
+            session.add(
+                EditorialClaim(
+                    id=uuid.uuid4(),
+                    document_url=doc.url,
+                    source=doc.source,
+                    entity_kind=entity.kind,
+                    entity_name=entity.name,
+                    municipio_text=entity.municipio,
+                    field=draft.field,
+                    value=draft.value,
+                    stability=draft.stability,
+                    evidence=draft.evidence,
+                    published_time=doc.published_time,
+                    status="held_volatile" if draft.stability == "volatil" else "unmatched",
+                )
+            )
+
+
 def apply_result(
     session: Session,
     doc: EditorialDocument,
@@ -393,41 +426,28 @@ def apply_result(
         message = result.message
         usd = _record_generation(session, message, model)
         entities, errors = [], []
-        if getattr(message, "stop_reason", None) == "max_tokens":
-            doc.error = "max_tokens: the extraction was cut off"
-        elif (raw := _tool_input(message)) is None:
-            doc.error = "the model did not call the extraction tool"
+        stop = getattr(message, "stop_reason", None)
+        raw = _tool_input(message)
+        if stop == "max_tokens":
+            doc.error = "max_tokens: stop_reason=max_tokens (the extraction was cut off)"
+        elif stop == "refusal":
+            category = getattr(getattr(message, "stop_details", None), "category", None)
+            doc.error = f"refusal: stop_reason=refusal category={category}"
+        elif raw is None:
+            doc.error = f"no_tool_use: stop_reason={stop}"
         else:
-            entities, errors = parse_extraction(raw)
-            if errors and not entities:
-                doc.error = "; ".join(errors)[:1000]
+            try:
+                entities, errors = parse_extraction(from_wire(raw))
+            except WireError as exc:
+                doc.error = f"invalid_tool_input: {exc}"[:1000]
             else:
-                if errors:
-                    logger.warning("editorial_entities_dropped", url=doc.url, errors=errors)
-                session.execute(
-                    delete(EditorialClaim).where(EditorialClaim.document_url == doc.url)
-                )
-                for entity in entities:
-                    for draft in claim_drafts(entity):
-                        session.add(
-                            EditorialClaim(
-                                id=uuid.uuid4(),
-                                document_url=doc.url,
-                                source=doc.source,
-                                entity_kind=entity.kind,
-                                entity_name=entity.name,
-                                municipio_text=entity.municipio,
-                                field=draft.field,
-                                value=draft.value,
-                                stability=draft.stability,
-                                evidence=draft.evidence,
-                                published_time=doc.published_time,
-                                status="held_volatile"
-                                if draft.stability == "volatil"
-                                else "unmatched",
-                            )
-                        )
-                doc.extracted_at, doc.error, extracted = datetime.now(UTC), None, True
+                if errors and not entities:
+                    doc.error = "; ".join(errors)[:1000]
+                else:
+                    if errors:
+                        logger.warning("editorial_entities_dropped", url=doc.url, errors=errors)
+                    _replace_claims(session, doc, entities)
+                    doc.extracted_at, doc.error, extracted = datetime.now(UTC), None, True
     elif rtype == "errored":
         doc.error = _error_text(result)
         logger.warning("editorial_result_errored", url=doc.url, error=doc.error)

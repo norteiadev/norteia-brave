@@ -10,10 +10,13 @@ import pytest
 
 from brave.domains.editorial.schema import (
     DESTINATION_PUSHED,
+    WireError,
     claim_drafts,
+    from_wire,
     parse_extraction,
     stability_of,
     strip_volatile_tips,
+    wire_json_schema,
 )
 
 FIX = Path(__file__).resolve().parents[3] / "fixtures" / "editorial"
@@ -154,3 +157,97 @@ def test_a_tip_left_empty_by_the_clean_up_yields_no_claim() -> None:
     assert [d.field for d in claim_drafts(parse_extraction({"entities": [raw]})[0][0])] == [
         "curiosities"
     ]
+
+
+# -- the wire schema of the strict extraction tool (fix-2) ---------------------------------
+
+_UNSUPPORTED_IN_STRICT = {
+    "oneOf", "minLength", "maxLength", "maxItems", "minimum", "maximum", "exclusiveMinimum",
+    "exclusiveMaximum", "multipleOf", "discriminator",
+}  # fmt: skip
+
+
+def _walk(node, out):
+    if isinstance(node, dict):
+        out.append(node)
+        for v in node.values():
+            _walk(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _walk(v, out)
+    return out
+
+
+def test_the_wire_schema_fits_strict_tool_use() -> None:
+    """strict: true wants additionalProperties false + required on every object, none of the
+    unsupported keywords, and stays under the request-wide caps (24 optional parameters, 16
+    union-typed parameters) — over those the API answers 400 "Schema is too complex"."""
+    schema = wire_json_schema()
+    nodes = _walk(schema, [])
+    objects = [n for n in nodes if n.get("type") == "object"]
+    assert objects
+    optional = unions = 0
+    for obj in objects:
+        assert obj.get("additionalProperties") is False, obj
+        assert "required" in obj, obj
+        optional += len(set(obj.get("properties", {})) - set(obj["required"]))
+    for n in nodes:
+        assert not _UNSUPPORTED_IN_STRICT & set(n), n
+        unions += "anyOf" in n or isinstance(n.get("type"), list)
+        if "minItems" in n:
+            assert n["minItems"] in (0, 1)
+    assert optional == 0 and unions == 0  # well under the 24 / 16 caps
+    fact = next(o for o in objects if "field" in o.get("properties", {}))
+    field_enum = set(fact["properties"]["field"]["enum"])
+    assert {"curiosities", "pace_profile", "free_entry", "seasonality"} <= field_enum
+
+
+def _wire(kind="atrativo", name="Pedra do Frade", municipio="Pancas", **facts):
+    return {"entities": [{"kind": kind, "name": name, "municipio": municipio,
+                          "facts": [{"field": f, "value": v, "evidence": "e"} for f, v in facts.items()]}]}  # fmt: skip
+
+
+def test_from_wire_rebuilds_the_column_shape_parse_extraction_validates() -> None:
+    entities, errors = parse_extraction(from_wire(_wire(curiosities="Tombada em 1940.")))
+    assert errors == []
+    assert entities[0].fields.curiosities.value == "Tombada em 1940."
+    assert entities[0].fields.curiosities.evidence == "e"
+
+
+def test_from_wire_types_free_entry_and_seasonality_and_empty_municipio() -> None:
+    raw = from_wire(_wire(municipio="", free_entry="Sim"))
+    assert raw["entities"][0]["municipio"] is None
+    assert raw["entities"][0]["fields"]["free_entry"]["value"] is True
+    assert (
+        from_wire(_wire(free_entry="não"))["entities"][0]["fields"]["free_entry"]["value"] is False
+    )
+    assert "free_entry" not in from_wire(_wire(free_entry="depende"))["entities"][0]["fields"]
+    dest = from_wire(
+        _wire("destino", "Anchieta", "Anchieta", seasonality="out a jan: chuva; mai a ago: seco;")
+    )
+    assert dest["entities"][0]["fields"]["seasonality"]["value"] == [
+        "out a jan: chuva",
+        "mai a ago: seco",
+    ]
+
+
+def test_from_wire_keeps_the_first_of_a_repeated_column() -> None:
+    raw = _wire(curiosities="Primeiro.")
+    raw["entities"][0]["facts"].append(
+        {"field": "curiosities", "value": "Segundo.", "evidence": "e"}
+    )
+    assert from_wire(raw)["entities"][0]["fields"]["curiosities"]["value"] == "Primeiro."
+
+
+def test_from_wire_rejects_what_the_strict_schema_would_not_produce() -> None:
+    with pytest.raises(WireError):
+        from_wire({"entities": [{"kind": "atrativo", "name": "x"}]})  # facts missing
+    with pytest.raises(WireError):
+        from_wire({"entities": "nope"})
+
+
+def test_the_api_limits_still_apply_after_the_wire() -> None:
+    _, errors = parse_extraction(
+        from_wire(_wire("destino", "Anchieta", "Anchieta", pace_profile="moderado"))
+    )
+    assert errors and "pace_profile" in errors[0]

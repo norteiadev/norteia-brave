@@ -18,6 +18,7 @@ from anthropic import BadRequestError, InternalServerError, NotFoundError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from brave.clients.llm import anthropic_thinking
 from brave.config.settings import AppConfig, LLMConfig
 from brave.core.models import EditorialClaim, EditorialDocument, LLMGeneration
 from brave.domains.editorial.extract_batch import (
@@ -31,6 +32,7 @@ from brave.domains.editorial.extract_batch import (
     retry_errored,
     submit_batch,
 )
+from brave.domains.editorial.schema import wire_json_schema
 from brave.observability.cost_guard import daily_spend
 
 pytestmark = pytest.mark.integration
@@ -118,8 +120,12 @@ class FakeClient:
 
 def _ok(doc_url: str, entities: list[dict], *, stop: str = "tool_use", usage=None):
     block = SimpleNamespace(type="tool_use", name=TOOL_NAME, input={"entities": entities})
+    return _answer(doc_url, [block], stop=stop, usage=usage)
+
+
+def _answer(doc_url: str, content: list, *, stop: str, usage=None):
     msg = SimpleNamespace(
-        content=[block],
+        content=content,
         stop_reason=stop,
         usage=usage or SimpleNamespace(input_tokens=10_000, output_tokens=2_000),
     )
@@ -136,11 +142,12 @@ def _errored(kind="invalid_request_error", message="tool_choice forced while thi
 
 
 def _entity(kind="atrativo", name="Pedra do Frade", municipio="Pancas", **fields):
+    """One entity as the strict tool returns it (the wire shape: a flat list of facts)."""
     return {
         "kind": kind,
         "name": name,
         "municipio": municipio,
-        "fields": {k: {"value": v, "evidence": "trecho"} for k, v in fields.items()},
+        "facts": [{"field": k, "value": v, "evidence": "trecho"} for k, v in fields.items()],
     }
 
 
@@ -167,7 +174,7 @@ def test_build_request_contract(session) -> None:
     assert re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", req["custom_id"])  # a URL would not fit
     p = req["params"]
     assert p["model"] == MODEL and "stream" not in p
-    assert p["tool_choice"] == {"type": "tool", "name": TOOL_NAME}
+    assert p["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": True}
     schema = p["tools"][0]["input_schema"]
     assert p["tools"][0]["name"] == TOOL_NAME and "entities" in schema["properties"]
     assert "discriminator" not in str(schema)  # an OpenAPI-ism the tool schema does not need
@@ -176,13 +183,40 @@ def test_build_request_contract(session) -> None:
     assert "evidence" in p["system"] and "reescrev" in p["system"].lower()
 
 
-@pytest.mark.parametrize("model", ["claude-sonnet-5-5", "claude-haiku-5-5", "claude-sonnet-4-5"])
-def test_a_forced_tool_never_rides_with_thinking(session, model) -> None:
-    """The API answers 400 to a forced tool_choice next to a thinking param: every request
-    of the batch would error. Extraction is deterministic and needs no thinking anyway."""
+MODELS = ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-sonnet-4-5"]
+
+
+@pytest.mark.parametrize("model", MODELS)
+def test_tool_choice_is_never_forced(session, model) -> None:
+    """Regression: claude-sonnet-5-5 answers 400 'tool_choice: type "tool" and "any" are not
+    supported for this model.' to a forced tool_choice, with or without thinking and in
+    Message Batches too — so every request of the batch errored."""
     p = build_request(_doc(session, "x-es"), model)["params"]
-    assert p["tool_choice"]["type"] == "tool"
-    assert "thinking" not in p
+    assert p["tool_choice"]["type"] not in ("tool", "any")
+    assert p["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": True}
+
+
+@pytest.mark.parametrize("model", MODELS)
+def test_thinking_is_the_models_own_off_switch(session, model) -> None:
+    """between_tools on Sonnet 5.5 (sent alone): without it every post is billed adaptive
+    thinking."""
+    p = build_request(_doc(session, "x-es"), model)["params"]
+    assert p.get("thinking") == anthropic_thinking(model)
+    if model == "claude-sonnet-5-5":
+        assert p["thinking"] == {"type": "between_tools"}
+
+
+def test_the_tool_is_strict_with_the_wire_schema(session) -> None:
+    p = build_request(_doc(session, "x-es"), MODEL)["params"]
+    (tool,) = p["tools"]
+    assert tool["strict"] is True and tool["name"] == TOOL_NAME
+    assert tool["input_schema"] == wire_json_schema()
+
+
+def test_the_prompt_ends_by_asking_for_exactly_one_tool_call(session) -> None:
+    system = build_request(_doc(session, "x-es"), MODEL)["params"]["system"]
+    last = system.strip().splitlines()[-1]
+    assert TOOL_NAME in last and "exatamente uma vez" in last and "texto" in last
 
 
 # -- submit -------------------------------------------------------------------------------
@@ -281,7 +315,7 @@ def test_collect_turns_a_finished_batch_into_claims(session, redis) -> None:
                 _entity(
                     curiosities="Tombada em 1940.",
                     opening_hours="Das 8h às 18h.",
-                    free_entry=True,
+                    free_entry="sim",
                     tips="Entrada R$ 10. Leve água.",
                 ),
                 _entity("destino", "Pancas", "Pancas", seasonality="Chove de outubro a janeiro."),
@@ -398,6 +432,41 @@ def test_nothing_valid_in_the_output_is_an_error_not_an_extraction(session, redi
     _collect(session, client, redis)
     session.refresh(d)
     assert d.extracted_at is None and "pace_profile" in d.error and d.batch_id is None
+
+
+@pytest.mark.parametrize(
+    ("stop", "content", "reason"),
+    [
+        (
+            "end_turn",
+            [SimpleNamespace(type="text", text="Aqui está a extração.")],
+            "no_tool_use: stop_reason=end_turn",
+        ),
+        (
+            "tool_use",
+            [SimpleNamespace(type="tool_use", name="outra", input={})],
+            "no_tool_use: stop_reason=tool_use",
+        ),
+        ("refusal", [], "refusal: stop_reason=refusal"),
+    ],
+)
+def test_an_answer_without_the_tool_call_is_an_error_with_its_reason(
+    session, redis, stop, content, reason
+) -> None:
+    (d,), client, bid = _submitted(session, redis, "a-es")
+    _finish(client, bid, _answer(d.url, content, stop=stop))
+    _collect(session, client, redis)
+    session.refresh(d)
+    assert d.extracted_at is None and d.batch_id is None and d.error.startswith(reason)
+    assert retry_errored(session, "ES") == 1  # editorial-retry re-arms it
+
+
+def test_a_tool_input_off_the_wire_schema_is_an_error(session, redis) -> None:
+    (d,), client, bid = _submitted(session, redis, "a-es")
+    _finish(client, bid, _ok(d.url, [{"kind": "atrativo", "name": "x"}]))
+    _collect(session, client, redis)
+    session.refresh(d)
+    assert d.extracted_at is None and d.error.startswith("invalid_tool_input")
 
 
 def test_a_truncated_answer_is_an_error(session, redis) -> None:

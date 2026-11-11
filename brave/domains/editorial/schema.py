@@ -1,6 +1,6 @@
 """What the extraction model returns, validated against norteia-api's limits.
 
-One ``Extraction`` = the entities of one post, each with only the columns the post states
+One extraction = the entities of one post, each with only the columns the post states
 (``Fact`` = a rewritten ``value`` + a short literal ``evidence`` kept for audit, never
 published). Limits and the ``pace_profile`` enum mirror the API's destination ingest, so a
 value the API would 422 is rejected here, per entity, instead of poisoning a push.
@@ -107,10 +107,6 @@ class AtrativoEntity(BaseModel):
 Entity = Annotated[DestinoEntity | AtrativoEntity, Field(discriminator="kind")]
 
 
-class Extraction(BaseModel):
-    entities: list[Entity]
-
-
 _ENTITY = TypeAdapter(Entity)
 
 
@@ -197,3 +193,96 @@ def claim_drafts(entity: DestinoEntity | AtrativoEntity) -> list[ClaimDraft]:
                 continue
         drafts.append(ClaimDraft(name, value, stability_of(name), fact.evidence))
     return drafts
+
+
+# -- the wire format of the strict extraction tool ------------------------------------------
+#
+# What the MODEL fills, not what the code validates. strict: true caps a request at 24 optional
+# parameters and 16 union-typed ones (over that: 400 "Schema is too complex for compilation")
+# and supports neither minLength/maxLength nor oneOf. One optional, nullable field per column
+# (the shape above) blows both caps, so the tool takes a flat list of facts: every property
+# required, no unions, no string limits. ``from_wire`` turns it back into the column shape,
+# and ``parse_extraction`` applies the API's limits and enum to it as before.
+
+COLUMNS: tuple[str, ...] = tuple(
+    sorted(set(DestinoFields.model_fields) | set(AtrativoFields.model_fields))
+)
+
+
+class WireFact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field: Literal[COLUMNS]  # type: ignore[valid-type]
+    value: str
+    evidence: str
+
+
+class WireEntity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["destino", "atrativo"]
+    name: str
+    municipio: str  # "" when the post does not say
+    facts: list[WireFact]
+
+
+class WireExtraction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entities: list[WireEntity]
+
+
+class WireError(ValueError):
+    """The tool input does not match the wire schema."""
+
+
+def _strict(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {k: _strict(v) for k, v in node.items() if k != "title"}
+    if isinstance(node, list):
+        return [_strict(v) for v in node]
+    return node
+
+
+def wire_json_schema() -> dict[str, Any]:
+    """The extraction tool's input_schema (strict mode: see the section comment)."""
+    return _strict(WireExtraction.model_json_schema())
+
+
+_YES = {"sim", "true", "yes", "gratuito", "gratuita", "gratis", "grátis"}
+_NO = {"não", "nao", "false", "no", "pago", "paga"}
+
+
+def from_wire(raw: Any) -> dict[str, Any]:
+    """The column shape ``parse_extraction`` reads (``{"entities": [{kind, name, municipio,
+    fields: {column: {value, evidence}}}]}``). Typed columns: ``free_entry`` sim/não → bool
+    (anything else dropped), ``seasonality`` ";"-separated → list. A repeated column keeps
+    its first value. Raises ``WireError`` when ``raw`` is not the wire schema."""
+    try:
+        wire = WireExtraction.model_validate(raw)
+    except ValidationError as exc:
+        raise WireError(str(exc)[:500]) from exc
+    entities: list[dict[str, Any]] = []
+    for e in wire.entities:
+        fields: dict[str, Any] = {}
+        for fact in e.facts:
+            if fact.field in fields:
+                continue
+            value: Any = fact.value
+            if fact.field == "free_entry":
+                word = value.strip().lower()
+                if word not in _YES | _NO:
+                    continue
+                value = word in _YES
+            elif fact.field == "seasonality":
+                value = [p.strip() for p in value.split(";") if p.strip()]
+            fields[fact.field] = {"value": value, "evidence": fact.evidence}
+        entities.append(
+            {
+                "kind": e.kind,
+                "name": e.name,
+                "municipio": e.municipio.strip() or None,
+                "fields": fields,
+            }
+        )
+    return {"entities": entities}

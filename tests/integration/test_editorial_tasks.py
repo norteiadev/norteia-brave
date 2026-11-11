@@ -63,9 +63,13 @@ class Batches:
                                             "kind": "atrativo",
                                             "name": "Pedra",
                                             "municipio": "Pancas",
-                                            "fields": {
-                                                "curiosities": {"value": "Fato.", "evidence": "e"}
-                                            },
+                                            "facts": [
+                                                {
+                                                    "field": "curiosities",
+                                                    "value": "Fato.",
+                                                    "evidence": "e",
+                                                }
+                                            ],
                                         }
                                     ]
                                 },
