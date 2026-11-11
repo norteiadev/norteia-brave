@@ -2994,9 +2994,12 @@ def editorial_crawl_uf(
         summary = {
             "uf": uf, "fetched": result.fetched, "unchanged": result.unchanged,
             "in_flight": result.in_flight, "failed": result.failed,
+            "other_uf": result.other_uf, "kml_refreshed": result.kml_refreshed,
         }  # fmt: skip
         if submit and result.fetched:
             editorial_submit_batches.delay(uf)
+        if result.kml_refreshed:  # new map points: the coordinate matching may change
+            editorial_resolve.delay(uf)
         return summary
     finally:
         session.close()

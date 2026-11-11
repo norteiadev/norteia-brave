@@ -302,3 +302,31 @@ def test_destination_push_does_nothing_offline_or_with_the_api_down(h, monkeypat
     monkeypatch.setattr(pipeline, "_norteia_api_down", lambda: True)
     assert pipeline.push_editorial_destinations.run() == 0
     assert h.api.calls == []
+
+
+def test_a_crawl_that_read_a_missing_map_again_re_resolves_the_uf(h, monkeypatch) -> None:
+    from brave.domains.editorial.crawler import content_hash, kml_url
+
+    body = '<div class="td-post-content"><p>Texto do post.</p></div>'
+    page = body + '<iframe src="https://www.google.com/maps/d/embed?mid=MapX"></iframe>'
+    kml = "<kml><Placemark><name>Pedra</name><Point><coordinates>-40.1,-20.2,0</coordinates></Point></Placemark></kml>"
+    pages = {
+        category_url("ES", 1): f'<h3 class="entry-title"><a href="{POST}">x</a></h3>',
+        POST: page,
+        kml_url("MapX"): kml,
+    }
+
+    async def get_text(url):
+        return pages.get(url)
+
+    h.fetcher.get_text = get_text
+    d = _doc(h, "p-es", kml_error="MapX: timeout", extracted_at=datetime.now(UTC))
+    d.content_hash = content_hash("Texto do post.")  # the text did not change
+    h.session.flush()
+    h.configure(editorial_enabled=True)
+    resolve, submit = MagicMock(), MagicMock()
+    monkeypatch.setattr(pipeline.editorial_resolve, "delay", resolve)
+    monkeypatch.setattr(pipeline.editorial_submit_batches, "delay", submit)
+    pipeline.editorial_crawl_uf.run("ES")
+    resolve.assert_called_once_with("ES")
+    assert submit.call_count == 0  # same text: nothing to pay for

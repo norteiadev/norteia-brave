@@ -30,6 +30,7 @@ def upgrade() -> None:
         sa.Column("content_hash", sa.String(64), nullable=False),
         sa.Column("body_text", sa.Text, nullable=False),
         sa.Column("kml_points", sa.JSON, nullable=False),
+        sa.Column("kml_error", sa.Text, nullable=True),
         sa.Column(
             "fetched_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
         ),

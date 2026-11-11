@@ -22,6 +22,7 @@ from typing import Any, Protocol
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from brave.core.models import EditorialDocument
@@ -209,6 +210,8 @@ class CrawlResult:
     unchanged: int = 0  # same content_hash: not re-extracted
     in_flight: int = 0  # changed, but its batch is still running: left for the next crawl
     failed: int = 0
+    other_uf: int = 0  # listed under this UF too, but stored under the UF that crawled it first
+    kml_refreshed: int = 0  # same text, maps read again (a previous KML failure): re-resolve
     urls: list[str] = field(default_factory=list)
 
 
@@ -219,6 +222,8 @@ class _Fetched:
     hash: str
     published: date | None
     points: list[dict[str, Any]]
+    kml_error: str | None = None
+    kml_read: bool = True  # False: unchanged text, maps not downloaded this time
 
 
 async def _list_posts(fetcher: EditorialFetcher, uf: str) -> list[str]:
@@ -232,27 +237,39 @@ async def _list_posts(fetcher: EditorialFetcher, uf: str) -> list[str]:
     return urls
 
 
-async def _fetch_post(fetcher: EditorialFetcher, url: str, known_hash: str | None) -> _Fetched:
-    """The parsed post; with ``known_hash`` matching, a stub (no KML download). Raises when
-    the page has no body."""
-    html = await fetcher.get_text(url)
-    body = extract_body(html or "")
+def _wants_kml(doc: EditorialDocument | None, mids: list[str]) -> bool:
+    """Read the maps again for an UNCHANGED post: a map failed last time, or the post embeds
+    maps and we still hold no point (matching by coordinate depends on them)."""
+    return doc is not None and bool(doc.kml_error or (mids and not doc.kml_points))
+
+
+async def _fetch_post(
+    fetcher: EditorialFetcher, url: str, known: EditorialDocument | None
+) -> _Fetched:
+    """The parsed post. Unchanged text (same hash as ``known``): a stub, maps downloaded only
+    when ``_wants_kml``. Raises when the page has no body."""
+    html = await fetcher.get_text(url) or ""
+    body = extract_body(html)
     if not body:
         raise ValueError("no div.td-post-content in the page")
     digest = content_hash(body)
-    if digest == known_hash:
-        return _Fetched(url, body, digest, None, [])  # unchanged: no KML download
+    mids = extract_kml_mids(html)
+    if known is not None and digest == known.content_hash and not _wants_kml(known, mids):
+        return _Fetched(url, body, digest, None, [], kml_read=False)
     points: list[dict[str, Any]] = []
-    for mid in extract_kml_mids(html or ""):
+    errors: list[str] = []
+    for mid in mids:
         try:
             kml = await fetcher.get_text(kml_url(mid))
         except Exception as exc:  # noqa: BLE001 — a post without its map is still a post
             logger.warning("editorial_kml_failed", url=url, mid=mid, error=str(exc))
+            errors.append(f"{mid}: {exc}")
             continue
         for p in parse_kml(kml or ""):
             if p not in points:
                 points.append(p)
-    return _Fetched(url, body, digest, extract_published_time(html or ""), points)
+    kml_error = "; ".join(errors)[:1000] or None
+    return _Fetched(url, body, digest, extract_published_time(html), points, kml_error)
 
 
 async def crawl_uf(
@@ -264,24 +281,33 @@ async def crawl_uf(
 ) -> CrawlResult:
     """Download every post of ``uf`` and upsert ``editorial_documents``.
 
-    A post whose body hash is unchanged is left untouched (no re-extraction, no KML fetch);
-    a changed one is reset to "not extracted" — unless its batch is still running, then it
-    waits for the next crawl. One failing post is counted and logged, never stops the UF.
+    A post whose body hash is unchanged is not re-extracted (its maps are read again only
+    when one failed before); a changed one is reset to "not extracted" — unless its batch is
+    still running, then it waits for the next crawl. A post also listed under another UF
+    stays with the UF that stored it first (skipped here, logged). One failing post is
+    counted and logged, never stops the UF.
     """
     uf = uf.upper()
     result = CrawlResult()
-    urls = await _list_posts(fetcher, uf)
+    listed = await _list_posts(fetcher, uf)
     gate = asyncio.Semaphore(concurrency)
     known = {
         d.url: d
-        for d in session.scalars(select(EditorialDocument).where(EditorialDocument.uf == uf))
+        for d in session.scalars(select(EditorialDocument).where(EditorialDocument.url.in_(listed)))
     }
+    urls: list[str] = []
+    for url in listed:
+        doc = known.get(url)
+        if doc is not None and doc.uf != uf:
+            result.other_uf += 1
+            logger.info("editorial_post_in_two_ufs", url=url, kept_uf=doc.uf, skipped_uf=uf)
+        else:
+            urls.append(url)
 
     async def one(url: str) -> tuple[str, _Fetched | Exception]:
         async with gate:
             try:
-                prev = known.get(url)
-                fetched = await _fetch_post(fetcher, url, prev.content_hash if prev else None)
+                fetched = await _fetch_post(fetcher, url, known.get(url))
                 return url, fetched
             except Exception as exc:  # noqa: BLE001
                 return url, exc
@@ -297,6 +323,10 @@ async def crawl_uf(
         if doc is not None and doc.content_hash == fetched.hash:
             doc.fetched_at = now
             result.unchanged += 1
+            if fetched.kml_read:
+                if fetched.points != (doc.kml_points or []):
+                    result.kml_refreshed += 1
+                doc.kml_points, doc.kml_error = fetched.points, fetched.kml_error
         elif doc is not None and doc.batch_id is not None:
             result.in_flight += 1
         else:
@@ -305,13 +335,23 @@ async def crawl_uf(
                 session.add(doc)
             doc.body_text, doc.content_hash = fetched.body, fetched.hash
             doc.published_time, doc.kml_points = fetched.published, fetched.points
-            doc.fetched_at = now
+            doc.kml_error, doc.fetched_at = fetched.kml_error, now
             doc.batch_id = doc.batch_submitted_at = doc.extracted_at = doc.error = None
             result.fetched += 1
             result.urls.append(url)
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:
+            # Another UF's crawl stored this URL meanwhile: it keeps it (first UF wins).
+            session.rollback()
+            if url in result.urls:
+                result.urls.remove(url)
+                result.fetched -= 1
+            result.other_uf += 1
+            logger.info("editorial_post_in_two_ufs", url=url, skipped_uf=uf, race=True)
     logger.info(
-        "editorial_crawl_uf", uf=uf, posts=len(urls), fetched=result.fetched,
+        "editorial_crawl_uf", uf=uf, posts=len(listed), fetched=result.fetched,
         unchanged=result.unchanged, in_flight=result.in_flight, failed=result.failed,
+        other_uf=result.other_uf, kml_refreshed=result.kml_refreshed,
     )  # fmt: skip
     return result

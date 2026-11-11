@@ -148,3 +148,102 @@ def test_at_most_three_fetches_run_at_once(session) -> None:
     result = asyncio.run(crawl_uf(session, fetcher, "ES"))
     assert result.fetched == 8
     assert 1 < fetcher.peak <= 3
+
+
+# -- review-1: the KML is retried; a post listed under two UFs ------------------------------
+
+
+def test_a_failed_kml_is_fetched_again_on_the_next_crawl_without_re_extraction(session) -> None:
+    pages = _pages()
+    pages[kml_url(MID)] = RuntimeError("google 503")
+    asyncio.run(crawl_uf(session, FakeFetcher(pages), "ES"))
+    doc = session.get(EditorialDocument, POST)
+    assert doc.kml_points == [] and "503" in doc.kml_error
+    stamp = datetime(2026, 1, 1, tzinfo=UTC)
+    doc.extracted_at = stamp
+    session.flush()
+
+    fetcher = FakeFetcher(_pages())  # same body, the map answers now
+    result = asyncio.run(crawl_uf(session, fetcher, "ES"))
+    assert kml_url(MID) in fetcher.calls
+    assert (result.unchanged, result.kml_refreshed) == (1, 1)
+    session.refresh(doc)
+    assert len(doc.kml_points) == 22 and doc.kml_error is None
+    assert doc.extracted_at == stamp  # the text did not change: no new paid extraction
+
+
+def test_a_post_with_maps_but_no_points_retries_the_kml(session) -> None:
+    pages = _pages()
+    pages[kml_url(MID)] = None  # the map answered 404 the first time
+    asyncio.run(crawl_uf(session, FakeFetcher(pages), "ES"))
+    assert session.get(EditorialDocument, POST).kml_points == []
+    fetcher = FakeFetcher(_pages())
+    asyncio.run(crawl_uf(session, fetcher, "ES"))
+    assert kml_url(MID) in fetcher.calls
+    assert len(session.get(EditorialDocument, POST).kml_points) == 22
+
+
+def test_a_partial_kml_failure_is_retried_too(session) -> None:
+    html = (
+        (FIX / "anchieta-es.html")
+        .read_text(encoding="utf-8")
+        .replace(
+            "</body>",
+            '<iframe src="https://www.google.com/maps/d/embed?mid=SecondMap123"></iframe></body>',
+        )
+    )
+    pages = _pages(html)
+    pages[kml_url("SecondMap123")] = RuntimeError("timeout")
+    asyncio.run(crawl_uf(session, FakeFetcher(pages), "ES"))
+    doc = session.get(EditorialDocument, POST)
+    assert len(doc.kml_points) == 22 and doc.kml_error  # one map in, the other failed
+    pages[kml_url("SecondMap123")] = (
+        "<kml><Placemark><name>Pedra Nova</name><Point><coordinates>-40.1,-20.2,0"
+        "</coordinates></Point></Placemark></kml>"
+    )
+    asyncio.run(crawl_uf(session, FakeFetcher(pages), "ES"))
+    session.refresh(doc)
+    assert len(doc.kml_points) == 23 and doc.kml_error is None
+
+
+def test_a_post_listed_under_two_ufs_keeps_the_first_uf_and_the_crawl_goes_on(session) -> None:
+    first = EditorialDocument(
+        url=POST, source="viagensecaminhos", uf="MG", content_hash="x" * 64, body_text="mg",
+        kml_points=[],
+    )  # fmt: skip
+    session.add(first)
+    session.flush()
+    other = "https://www.viagensecaminhos.com/so-es/"
+    pages = _pages()
+    pages[category_url("ES", 1)] += f'<h3 class="entry-title"><a href="{other}">x</a></h3>'
+    pages[other] = '<div class="td-post-content"><p>Só no ES.</p></div>'
+    fetcher = FakeFetcher(pages)
+    result = asyncio.run(crawl_uf(session, fetcher, "ES"))
+    assert (result.other_uf, result.fetched, result.failed) == (1, 1, 0)
+    assert POST not in fetcher.calls  # not even downloaded
+    session.refresh(first)
+    assert first.uf == "MG" and first.body_text == "mg"
+    assert session.get(EditorialDocument, other).uf == "ES"
+
+
+def test_a_concurrent_crawl_that_stored_the_post_first_does_not_bring_the_uf_down(session) -> None:
+    from sqlalchemy import insert
+
+    class Racing(FakeFetcher):
+        async def get_text(self, url):
+            text = await super().get_text(url)
+            if url == POST:  # another UF's crawl commits the same URL meanwhile
+                session.execute(
+                    insert(EditorialDocument).values(
+                        url=POST,
+                        source="viagensecaminhos",
+                        uf="MG",
+                        content_hash="y" * 64,
+                        body_text="mg",
+                        kml_points=[],
+                    )  # fmt: skip
+                )
+            return text
+
+    result = asyncio.run(crawl_uf(session, Racing(_pages()), "ES"))
+    assert result.other_uf == 1 and result.fetched == 0
