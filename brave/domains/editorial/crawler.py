@@ -243,6 +243,15 @@ def _wants_kml(doc: EditorialDocument | None, mids: list[str]) -> bool:
     return doc is not None and bool(doc.kml_error or (mids and not doc.kml_points))
 
 
+def _merged_points(doc: EditorialDocument | None, fetched: _Fetched) -> list[dict[str, Any]]:
+    """The points to store. Every map read: exactly what the maps hold now. A map failed: the
+    stored points stay and the new ones join them — a partial refetch must never erase what
+    an earlier, successful read found (matching by coordinate depends on it)."""
+    if not fetched.kml_error or doc is None or not doc.kml_points:
+        return fetched.points
+    return list(doc.kml_points) + [p for p in fetched.points if p not in doc.kml_points]
+
+
 async def _fetch_post(
     fetcher: EditorialFetcher, url: str, known: EditorialDocument | None
 ) -> _Fetched:
@@ -324,9 +333,10 @@ async def crawl_uf(
             doc.fetched_at = now
             result.unchanged += 1
             if fetched.kml_read:
-                if fetched.points != (doc.kml_points or []):
+                points = _merged_points(doc, fetched)
+                if points != (doc.kml_points or []):
                     result.kml_refreshed += 1
-                doc.kml_points, doc.kml_error = fetched.points, fetched.kml_error
+                doc.kml_points, doc.kml_error = points, fetched.kml_error
         elif doc is not None and doc.batch_id is not None:
             result.in_flight += 1
         else:
@@ -334,7 +344,7 @@ async def crawl_uf(
                 doc = EditorialDocument(url=url, source=SOURCE, uf=uf)
                 session.add(doc)
             doc.body_text, doc.content_hash = fetched.body, fetched.hash
-            doc.published_time, doc.kml_points = fetched.published, fetched.points
+            doc.published_time, doc.kml_points = fetched.published, _merged_points(doc, fetched)
             doc.kml_error, doc.fetched_at = fetched.kml_error, now
             doc.batch_id = doc.batch_submitted_at = doc.extracted_at = doc.error = None
             result.fetched += 1

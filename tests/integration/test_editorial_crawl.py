@@ -247,3 +247,50 @@ def test_a_concurrent_crawl_that_stored_the_post_first_does_not_bring_the_uf_dow
 
     result = asyncio.run(crawl_uf(session, Racing(_pages()), "ES"))
     assert result.other_uf == 1 and result.fetched == 0
+
+
+def test_a_map_that_used_to_work_and_fails_now_keeps_its_stored_points(session) -> None:
+    """review-2: a refetch with one mid failing must not overwrite good points with partial
+    ones. Points are merged while a map fails; replaced only when every map was read."""
+    html = (
+        (FIX / "anchieta-es.html")
+        .read_text(encoding="utf-8")
+        .replace(
+            "</body>",
+            '<iframe src="https://www.google.com/maps/d/embed?mid=SecondMap123"></iframe></body>',
+        )
+    )
+    second = (
+        "<kml><Placemark><name>Pedra Nova</name><Point><coordinates>-40.1,-20.2,0"
+        "</coordinates></Point></Placemark></kml>"
+    )
+    pages = _pages(html)
+    pages[kml_url("SecondMap123")] = RuntimeError("timeout")  # crawl 1: Anchieta map ok, 2nd fails
+    asyncio.run(crawl_uf(session, FakeFetcher(pages), "ES"))
+    doc = session.get(EditorialDocument, POST)
+    assert len(doc.kml_points) == 22 and doc.kml_error
+
+    pages[kml_url(MID)] = RuntimeError("google 503")  # crawl 2: the map that worked fails now
+    pages[kml_url("SecondMap123")] = second
+    asyncio.run(crawl_uf(session, FakeFetcher(pages), "ES"))
+    session.refresh(doc)
+    assert len(doc.kml_points) == 23  # the 22 kept + the new one
+    assert MID in doc.kml_error and "SecondMap123" not in doc.kml_error
+
+    pages[kml_url(MID)] = (FIX / "anchieta-es.kml").read_text(encoding="utf-8")
+    pages[kml_url("SecondMap123")] = None  # crawl 3: every map read (one is gone: 404)
+    asyncio.run(crawl_uf(session, FakeFetcher(pages), "ES"))
+    session.refresh(doc)
+    assert len(doc.kml_points) == 22 and doc.kml_error is None  # now replaced, exactly
+
+
+def test_a_changed_post_whose_map_fails_keeps_the_stored_points(session) -> None:
+    asyncio.run(crawl_uf(session, FakeFetcher(_pages()), "ES"))
+    changed = (
+        (FIX / "anchieta-es.html").read_text(encoding="utf-8").replace("Anchieta", "Anchieta!")
+    )
+    pages = _pages(changed)
+    pages[kml_url(MID)] = RuntimeError("google 503")
+    asyncio.run(crawl_uf(session, FakeFetcher(pages), "ES"))
+    doc = session.get(EditorialDocument, POST)
+    assert "Anchieta!" in doc.body_text and len(doc.kml_points) == 22 and doc.kml_error
