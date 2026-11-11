@@ -110,22 +110,46 @@ Entity = Annotated[DestinoEntity | AtrativoEntity, Field(discriminator="kind")]
 _ENTITY = TypeAdapter(Entity)
 
 
+def _where(exc: ValidationError) -> list[tuple[str | None, str]]:
+    """(column or None, "loc: msg") per error; column when the error sits under fields.<col>."""
+    out: list[tuple[str | None, str]] = []
+    for e in exc.errors():
+        loc = [str(p) for p in e["loc"]]
+        column = loc[loc.index("fields") + 1] if "fields" in loc[:-1] else None
+        out.append((column, f"{'.'.join(loc)}: {e['msg']}"))
+    return out
+
+
 def parse_extraction(raw: Any) -> tuple[list[DestinoEntity | AtrativoEntity], list[str]]:
-    """Validate entity by entity: ``(valid entities, one error line per rejected entity)``."""
+    """Validate entity by entity: ``(valid entities, one error line per dropped fact/entity)``.
+
+    A value outside the API's limits or enum drops ONLY that fact (the entity and its other
+    columns stay, like an unreadable free_entry in ``from_wire``); an entity is dropped only
+    when something outside its columns is invalid (e.g. an empty name).
+    """
     items = raw.get("entities") if isinstance(raw, dict) else None
     if not isinstance(items, list):
         return [], ["no 'entities' list in the model output"]
     entities: list[DestinoEntity | AtrativoEntity] = []
     errors: list[str] = []
     for i, item in enumerate(items):
-        try:
-            entities.append(_ENTITY.validate_python(item))
-        except ValidationError as exc:
-            name = item.get("name") if isinstance(item, dict) else None
-            where = "; ".join(
-                f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()
-            )
-            errors.append(f"entity {i} {name!r}: {where}")
+        name = item.get("name") if isinstance(item, dict) else None
+        current = item
+        for _ in range(2):  # the second pass validates what is left after dropping facts
+            try:
+                entities.append(_ENTITY.validate_python(current))
+                break
+            except ValidationError as exc:
+                where = _where(exc)
+                bad = {col: msg for col, msg in where if col is not None}
+                fields = current.get("fields") if isinstance(current, dict) else None
+                if not bad or len(bad) < len(where) or not isinstance(fields, dict):
+                    errors.append(f"entity {i} {name!r}: " + "; ".join(m for _, m in where))
+                    break
+                errors.extend(
+                    f"entity {i} {name!r}: dropped {col}: {msg}" for col, msg in bad.items()
+                )
+                current = {**current, "fields": {k: v for k, v in fields.items() if k not in bad}}
     return entities, errors
 
 
@@ -242,6 +266,28 @@ def _strict(node: Any) -> Any:
     if isinstance(node, list):
         return [_strict(v) for v in node]
     return node
+
+
+def wire_rules() -> str:
+    """The API's limits and enum, in words, for the tool description: the strict wire schema
+    cannot carry string limits, so the model reads them here (generated from the column
+    models: one source). A value outside them is dropped as a fact by parse_extraction."""
+    rules: dict[str, str] = {}
+    for model in (DestinoFields, AtrativoFields):
+        schema = model.model_json_schema()
+        for column, prop in schema["properties"].items():
+            ref = next((a["$ref"] for a in prop.get("anyOf", []) if "$ref" in a), None)
+            if ref is None:
+                continue
+            value = schema["$defs"][ref.rsplit("/", 1)[-1]]["properties"]["value"]
+            if value.get("enum"):
+                rules[column] = " | ".join(value["enum"])
+            elif value.get("maxLength", 2000) < 2000:
+                rules[column] = f"até {value['maxLength']} caracteres"
+    rules["free_entry"] = "sim | não"
+    rules["seasonality"] = 'períodos curtos separados por ";"'
+    body = "; ".join(f"{c}: {r}" for c, r in sorted(rules.items()))
+    return f"Limites da norteia-api (um valor fora deles é descartado): {body}."
 
 
 def wire_json_schema() -> dict[str, Any]:

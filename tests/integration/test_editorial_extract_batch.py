@@ -32,7 +32,7 @@ from brave.domains.editorial.extract_batch import (
     retry_errored,
     submit_batch,
 )
-from brave.domains.editorial.schema import wire_json_schema
+from brave.domains.editorial.schema import wire_json_schema, wire_rules
 from brave.observability.cost_guard import daily_spend
 
 pytestmark = pytest.mark.integration
@@ -211,6 +211,7 @@ def test_the_tool_is_strict_with_the_wire_schema(session) -> None:
     (tool,) = p["tools"]
     assert tool["strict"] is True and tool["name"] == TOOL_NAME
     assert tool["input_schema"] == wire_json_schema()
+    assert wire_rules() in tool["description"]  # the limits strict mode cannot carry
 
 
 def test_the_prompt_ends_by_asking_for_exactly_one_tool_call(session) -> None:
@@ -426,12 +427,24 @@ def test_an_invalid_entity_is_dropped_and_the_rest_is_kept(session, redis) -> No
 
 def test_nothing_valid_in_the_output_is_an_error_not_an_extraction(session, redis) -> None:
     (d,), client, bid = _submitted(session, redis, "a-es")
-    _finish(
-        client, bid, _ok(d.url, [_entity("destino", "Pancas", "Pancas", pace_profile="moderado")])
-    )
+    # only an entity-level failure (no valid name) drops an entity; a bad fact drops the fact
+    _finish(client, bid, _ok(d.url, [_entity("destino", "", "Pancas", pace_profile="lento")]))
     _collect(session, client, redis)
     session.refresh(d)
-    assert d.extracted_at is None and "pace_profile" in d.error and d.batch_id is None
+    assert d.extracted_at is None and "name" in d.error and d.batch_id is None
+
+
+def test_a_bad_fact_costs_only_that_column(session, redis) -> None:
+    (d,), client, bid = _submitted(session, redis, "a-es")
+    entity = _entity("destino", "Pancas", "Pancas", pace_profile="moderado", tips="Chegue cedo.")
+    _finish(client, bid, _ok(d.url, [entity]))
+    _collect(session, client, redis)
+    session.refresh(d)
+    assert d.error is None and d.extracted_at is not None
+    fields = session.scalars(
+        select(EditorialClaim.field).where(EditorialClaim.document_url == d.url)
+    ).all()
+    assert fields == ["tips"]
 
 
 @pytest.mark.parametrize(

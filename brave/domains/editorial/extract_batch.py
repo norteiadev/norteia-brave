@@ -41,6 +41,7 @@ from brave.domains.editorial.schema import (
     from_wire,
     parse_extraction,
     wire_json_schema,
+    wire_rules,
 )
 from brave.observability.cost_guard import reconcile_spend, record_spend
 
@@ -112,7 +113,8 @@ def extraction_tool() -> dict[str, Any]:
     every property required, no unions, no string limits — what strict mode accepts)."""
     return {
         "name": TOOL_NAME,
-        "description": "Registra as entidades (destinos e atrativos) e os fatos extraídos do post.",
+        "description": "Registra as entidades (destinos e atrativos) e os fatos extraídos do post. "
+        + wire_rules(),
         "strict": True,
         "input_schema": wire_json_schema(),
     }

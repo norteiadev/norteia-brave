@@ -53,9 +53,13 @@ def test_the_spike_output_for_anchieta_validates_as_is() -> None:
         ("predominant_audience_profile", "x" * 201),
     ],
 )
-def test_destination_values_outside_the_api_limits_are_rejected(field, value) -> None:
-    entities, errors = parse_extraction({"entities": [_entity(**{field: value})]})
-    assert entities == [] and len(errors) == 1 and field in errors[0]
+def test_a_value_outside_the_api_limits_drops_only_that_fact(field, value) -> None:
+    """review-2: the fact goes, the entity and its other columns stay (as free_entry in from_wire)."""
+    raw = {"entities": [_entity(**{field: value}, tips="Chegue cedo.")]}
+    entities, errors = parse_extraction(raw)
+    assert len(entities) == 1 and getattr(entities[0].fields, field) is None
+    assert entities[0].fields.tips.value == "Chegue cedo."
+    assert len(errors) == 1 and field in errors[0]
 
 
 def test_at_the_limit_is_accepted_and_pace_enum_values_pass() -> None:
@@ -78,7 +82,7 @@ def test_seasonality_list_stays_a_list_and_empty_values_are_rejected() -> None:
     assert errors
 
 
-def test_one_bad_entity_does_not_drop_the_good_ones() -> None:
+def test_one_bad_fact_does_not_drop_its_entity_nor_the_others() -> None:
     raw = {
         "entities": [
             _entity(pace_profile="rapido"),
@@ -86,7 +90,28 @@ def test_one_bad_entity_does_not_drop_the_good_ones() -> None:
         ]
     }
     entities, errors = parse_extraction(raw)
-    assert [e.kind for e in entities] == ["atrativo"] and len(errors) == 1
+    assert [e.kind for e in entities] == ["destino", "atrativo"] and len(errors) == 1
+    assert entities[0].fields.pace_profile is None
+
+
+def test_an_entity_without_a_valid_name_is_still_dropped() -> None:
+    bad = _entity("atrativo", curiosities="Fato.")
+    bad["name"] = ""
+    entities, errors = parse_extraction({"entities": [bad, _entity("atrativo", tips="Dica.")]})
+    assert len(entities) == 1 and entities[0].fields.tips.value == "Dica."
+    assert len(errors) == 1 and "name" in errors[0]
+
+
+def test_several_bad_facts_are_each_dropped_and_reported() -> None:
+    raw = {
+        "entities": [
+            _entity(pace_profile="x", connectivity_level="y" * 51, seasonality=[], tips="Ok.")
+        ]
+    }
+    entities, errors = parse_extraction(raw)
+    f = entities[0].fields
+    assert (f.pace_profile, f.connectivity_level, f.seasonality) == (None, None, None)
+    assert f.tips.value == "Ok." and len(errors) == 3
 
 
 def test_unknown_columns_and_stability_hints_are_ignored() -> None:
@@ -247,7 +272,22 @@ def test_from_wire_rejects_what_the_strict_schema_would_not_produce() -> None:
 
 
 def test_the_api_limits_still_apply_after_the_wire() -> None:
-    _, errors = parse_extraction(
-        from_wire(_wire("destino", "Anchieta", "Anchieta", pace_profile="moderado"))
-    )
-    assert errors and "pace_profile" in errors[0]
+    raw = from_wire(_wire("destino", "Anchieta", "Anchieta", pace_profile="moderado", tips="Ok."))
+    entities, errors = parse_extraction(raw)
+    assert entities[0].fields.pace_profile is None and entities[0].fields.tips.value == "Ok."
+    assert len(errors) == 1 and "pace_profile" in errors[0]
+
+
+def test_the_tool_description_states_the_api_limits_and_enum() -> None:
+    from brave.domains.editorial.schema import wire_rules
+
+    text = wire_rules()
+    for column, rule in (
+        ("recommended_duration", "100"),
+        ("estimated_spending_range", "100"),
+        ("predominant_audience_profile", "200"),
+        ("connectivity_level", "50"),
+    ):
+        assert f"{column}: até {rule} caracteres" in text
+    assert "pace_profile: lento | equilibrado | intenso" in text
+    assert "free_entry: sim | não" in text and "seasonality" in text and ";" in text
