@@ -25,6 +25,10 @@ Commands:
                       destinations → cost): editorial-status [UF]
     editorial-retry   Make the errored posts eligible again (then --submit-only):
                       editorial-retry <UF>|--all
+    editorial-validate  Web check (Gemini + Google Search, paid) of the perishable facts of
+                      posts over a year old: editorial-validate <UF>|--all. Cost gate: the
+                      "validation" line of editorial-status, then turn on
+                      editorial_validate_enabled.
 
 Usage:
     python -m brave.cli run-fixture
@@ -33,6 +37,7 @@ Usage:
     python -m brave.cli editorial-load ES [--crawl-only | --submit-only]
     python -m brave.cli editorial-status [ES]
     python -m brave.cli editorial-retry ES
+    python -m brave.cli editorial-validate ES
 """
 
 import os
@@ -247,6 +252,46 @@ def _lane_open(command: str) -> bool:
     return True
 
 
+def _editorial_validate_enabled() -> bool | None:
+    """editorial_validate_enabled from the effective config; None when it cannot be read."""
+    try:
+        from brave.tasks.pipeline import _get_session, _load_config
+
+        session, _ = _get_session()
+        try:
+            return bool(_load_config(session).editorial_validate_enabled)
+        finally:
+            session.close()
+    except Exception:  # noqa: BLE001 — unreadable: the task re-reads it and decides
+        return None
+
+
+def _run_editorial_validate(ufs: list[str]) -> int:
+    """Re-resolve each UF: the resolver parks the perishable facts of old posts as
+    ``pending_validation`` and, with the paid web check on, hands them to
+    ``brave.editorial_validate`` (which re-resolves what it confirms). Exits 3 while
+    editorial_validate_enabled is off — the estimate to approve is in ``editorial-status``."""
+    from brave.tasks.pipeline import editorial_resolve
+
+    enabled = _editorial_validate_enabled()
+    if enabled is False:
+        print(
+            "editorial-validate: editorial_validate_enabled is off, so nothing would be checked —"
+            " read the cost in the 'validation' line of editorial-status, then turn it on"
+        )
+        return _LANE_OFF
+    if enabled is None:
+        print("editorial-validate: could not read editorial_validate_enabled; dispatching")
+    for uf in ufs:
+        try:
+            editorial_resolve.delay(uf)
+        except Exception as exc:
+            print(f"editorial-validate: could not dispatch (is the Celery broker up?): {exc}")
+            return 2
+        print(f"editorial-validate: dispatched the resolve of {uf}; pending facts go to the check")
+    return 0
+
+
 def _run_editorial_load(ufs: list[str], submit: bool) -> int:
     """Dispatch the editorial crawl (then the paid submit unless ``submit`` is False).
 
@@ -328,6 +373,7 @@ def _run_editorial_status(uf: str | None) -> int:
         f = funnel(
             session, uf, est_usd_per_post=cfg.editorial_est_usd_per_post,
             expected_usd_per_post=cfg.editorial_expected_usd_per_post,
+            est_usd_per_entity=cfg.editorial_validate_est_usd_per_entity,
         )  # fmt: skip
         print(format_funnel(f))
     finally:
@@ -371,6 +417,7 @@ def main() -> None:
         print("  editorial-load <UF>|--all [--crawl-only|--submit-only]   Crawl the blog, then extract")
         print("  editorial-status [UF]   The editorial lane funnel")
         print("  editorial-retry <UF>|--all   Make the errored editorial posts eligible again")
+        print("  editorial-validate <UF>|--all   Web check (paid) of the perishable editorial facts")
         sys.exit(1)
 
     command = args[0]
@@ -386,6 +433,10 @@ def main() -> None:
         rest = args[1:]
         ufs = _editorial_ufs(command, rest)
         sys.exit(_run_editorial_retry([None] if "--all" in rest else list(ufs)))
+    elif command == "editorial-validate":
+        rest = args[1:]
+        ufs = _editorial_ufs(command, rest)
+        sys.exit(_run_editorial_validate(list(ufs)))
     elif command == "editorial-load":
         rest = args[1:]
         if "--crawl-only" in rest and "--submit-only" in rest:

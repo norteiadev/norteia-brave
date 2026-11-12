@@ -15,8 +15,10 @@ claim of the UF is re-matched each time):
      are not in Mar). Its ``source_ref`` is the one the API already has: the most common
      ``parent_source_ref`` of the município's attractions, else ``ibge:<UF>:<ibge>``.
 
-Claims in any other status (``held_volatile``, ``superseded``, …) are never matched, resolved
-or pushed.
+A matched claim of a PERISHABLE column whose post is over a year old turns
+``pending_validation`` instead (``schema.needs_validation``) and is not written until the web
+check (``validate.py``) confirms it. Claims in any other status (``held_volatile``,
+``superseded``, ``outdated``, …) are never matched, resolved or pushed.
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ from brave.domains.editorial.schema import (
     ATTRACTION_PUSHED,
     DESTINATION_PUSHED,
     RESOLVABLE_STATUSES,
+    needs_validation,
 )
 
 logger = structlog.get_logger(__name__)
@@ -147,8 +150,9 @@ def _match_group(
     return m
 
 
-def resolve_uf(session: Session, uf: str) -> ResolveResult:
+def resolve_uf(session: Session, uf: str, *, today: date | None = None) -> ResolveResult:
     uf = uf.upper()
+    today = today or date.today()
     result = ResolveResult()
     loaded = _load_candidates(session, uf)
     candidates = [c for c, _, _ in loaded]
@@ -176,10 +180,17 @@ def resolve_uf(session: Session, uf: str) -> ResolveResult:
     for (url, kind, name), claims in groups.items():
         m = _match_group(kind, name, claims[0].municipio_text, docs[url], candidates, municipios)
         for c in claims:
-            c.status, c.canonical_key, c.match_method = m.status, m.canonical_key, m.method
+            status = m.status
+            if (
+                status == "matched"
+                and c.validation_verdict != "confirmado"
+                and needs_validation(c.entity_kind, c.field, c.published_time, today)
+            ):
+                status = "pending_validation"  # matched, but not sent on an old post's word
+            c.status, c.canonical_key, c.match_method = status, m.canonical_key, m.method
             c.match_score = m.score if m.status == "matched" else None
             c.lat, c.lon = m.lat, m.lon
-            result.claims[m.status] = result.claims.get(m.status, 0) + 1
+            result.claims[status] = result.claims.get(status, 0) + 1
     session.flush()
 
     # 2. attractions → normalized["editorial"]

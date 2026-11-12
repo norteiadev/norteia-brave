@@ -528,6 +528,21 @@ class AppConfig(BaseSettings):
     editorial_est_usd_per_post: float = 0.06
     editorial_expected_usd_per_post: float = 0.026
 
+    # Web validation of the PERISHABLE editorial facts of posts over a year old
+    # (brave/domains/editorial/validate.py): Gemini 2.5 Flash direct (Google AI Studio) with
+    # Grounding with Google Search, one call per entity. Off by default: it is paid, and the
+    # resolver holds those facts as ``pending_validation`` (never sent) until it runs.
+    # editorial_validate_est_usd_per_entity is the single source of the cost gate that
+    # editorial-status prints before anyone turns this on: ~6k tokens in + 0.5k out
+    # (~$0.003 at $0.30/$2.50 per MTok) + the grounding fee ($35 per 1,000 grounded prompts =
+    # $0.035; the 1,500 free requests a day are not counted on) ≈ $0.038, rounded up.
+    # editorial_validate_batch_size caps the entities one task run checks. Overlay key
+    # ``editorial_validate_enabled``.
+    editorial_validate_enabled: bool = False
+    editorial_validate_model_slug: str = "gemini-2.5-flash"
+    editorial_validate_batch_size: int = 40
+    editorial_validate_est_usd_per_entity: float = 0.04
+
     # atrativo_description_batch_enabled moves description writing off the synchronous
     # path: when True the INLINE copywriter is switched off and descriptions are instead
     # written asynchronously by the Message Batches lane (50% off tokens, up to 24h

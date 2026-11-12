@@ -542,8 +542,11 @@ class EditorialClaim(Base):
     is the literal excerpt kept for audit only and NEVER published.
 
     status: matched | unmatched | ambiguous | held_volatile (volatile columns are stored,
-    never pushed) | superseded (a later extraction of the post replaced it). ``unmatched`` is
-    also the state of a fresh claim before the resolver ran. Nothing here is ever deleted.
+    never pushed) | superseded (a later extraction of the post replaced it) | held_copied (the
+    value repeats the post: never pushed) | pending_validation (a perishable fact of a post
+    over a year old, waiting for the web check) | outdated / unverified (the check said it is
+    out of date / found no evidence: never pushed). ``unmatched`` is also the state of a fresh
+    claim before the resolver ran. Nothing here is ever deleted.
     """
 
     __tablename__ = "editorial_claims"
@@ -576,7 +579,13 @@ class EditorialClaim(Base):
     stability: Mapped[str] = mapped_column(String(8), nullable=False)  # estavel | volatil
     evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     published_time: Mapped[date | None] = mapped_column(Date, nullable=True)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    # Web check of a perishable fact from an old post (validate.py): the verdict, where it
+    # came from and when. Written once per claim; the claim's status moves with it.
+    validation_verdict: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    validation_sources: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    validation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

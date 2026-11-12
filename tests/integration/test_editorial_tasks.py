@@ -253,8 +253,8 @@ def test_resolve_task_runs_without_the_lane_switch(h) -> None:
             entity_kind="destino",
             entity_name="Pancas",
             municipio_text="Pancas",
-            field="tips",
-            value="Chegue cedo.",
+            field="best_time_to_visit",
+            value="De maio a setembro.",
             stability="estavel",
             status="unmatched",
             published_time=d.published_time,
@@ -262,7 +262,134 @@ def test_resolve_task_runs_without_the_lane_switch(h) -> None:
     )
     h.session.flush()
     pipeline.editorial_resolve.run("ES")
-    assert h.session.get(EditorialDestination, "ibge:ES:9990009").fields == {"tips": "Chegue cedo."}
+    assert h.session.get(EditorialDestination, "ibge:ES:9990009").fields == {
+        "best_time_to_visit": "De maio a setembro."
+    }
+
+
+# -- web validation -----------------------------------------------------------------------
+
+
+class Gemini:
+    """Stands in for the grounded Gemini client: confirms every fact it is sent."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def generate_grounded(self, messages, model, *, system=None):
+        import json
+        import re
+
+        from brave.clients.base import GroundedAnswer
+
+        self.calls.append((model, messages[0]["content"]))
+        ids = re.findall(r"id=(\S+) \|", messages[0]["content"])
+        facts = [{"id": i, "verdict": "confirmado", "sources": [], "note": "ok"} for i in ids]
+        return GroundedAnswer(
+            text=json.dumps({"facts": facts}), sources=({"uri": "https://x", "title": "x"},)
+        )
+
+
+def _pending_claim(h, d=None):
+    d = d or _doc(h, "old-es", extracted_at=datetime.now(UTC))
+    c = EditorialClaim(
+        document_url=d.url, source=d.source, entity_kind="destino", entity_name="Pancas",
+        municipio_text="Pancas", field="tips", value="Chegue cedo.", stability="estavel",
+        status="pending_validation", canonical_key="9990009", published_time=d.published_time,
+    )  # fmt: skip
+    h.session.add(c)
+    h.session.add(Municipio(ibge_code="9990009", nome="Pancas", uf="ES", lat=0.0, lng=0.0))
+    h.session.flush()
+    return c
+
+
+def _with_gemini(h, monkeypatch, gemini):
+    monkeypatch.setattr(
+        pipeline,
+        "clients_for",
+        lambda c, **k: Clients(c, llm=gemini, editorial=h.fetcher, norteia_api=h.api),
+    )
+
+
+@pytest.mark.parametrize(
+    "off",
+    [
+        {"editorial_enabled": False},
+        {"editorial_validate_enabled": False},
+        {"run_real_externals": False},
+    ],
+)
+def test_validate_is_blocked_by_any_of_its_three_switches(h, monkeypatch, off) -> None:
+    c = _pending_claim(h)
+    on = {"editorial_enabled": True, "editorial_validate_enabled": True, "run_real_externals": True}
+    h.configure(**{**on, **off})
+    gemini = Gemini()
+    _with_gemini(h, monkeypatch, gemini)
+    assert pipeline.editorial_validate.run("ES")["skipped"] is True
+    h.session.expire(c)
+    assert gemini.calls == [] and c.status == "pending_validation"
+
+
+def test_validate_checks_the_pending_claims_then_re_resolves_the_uf(h, monkeypatch) -> None:
+    c = _pending_claim(h)
+    h.configure(editorial_enabled=True, editorial_validate_enabled=True)
+    gemini = Gemini()
+    _with_gemini(h, monkeypatch, gemini)
+    resolve = MagicMock()
+    monkeypatch.setattr(pipeline.editorial_resolve, "delay", resolve)
+    out = pipeline.editorial_validate.run("ES")
+    h.session.expire(c)
+    assert c.status == "matched" and c.validation_verdict == "confirmado"
+    assert gemini.calls[0][0] == "gemini-2.5-flash" and out["confirmed"] == 1
+    resolve.assert_called_once_with("ES")  # the confirmed fact is written by the resolver
+
+
+def test_validate_stops_quietly_at_the_budget_wall(h, monkeypatch) -> None:
+    from brave.shared.exceptions import CostGuardError
+
+    c = _pending_claim(h)
+    h.configure(editorial_enabled=True, editorial_validate_enabled=True)
+    gemini = Gemini()
+
+    async def wall(*a, **k):
+        raise CostGuardError("budget")
+
+    gemini.generate_grounded = wall
+    _with_gemini(h, monkeypatch, gemini)
+    out = pipeline.editorial_validate.run("ES")
+    h.session.expire(c)
+    assert "budget" in out["error"] and c.status == "pending_validation"
+
+
+def test_resolve_hands_the_pending_claims_to_the_validation_when_it_is_on(h, monkeypatch) -> None:
+    d = _doc(h, "old-es", extracted_at=datetime.now(UTC))
+    h.session.add(Municipio(ibge_code="9990009", nome="Pancas", uf="ES", lat=0.0, lng=0.0))
+    h.session.add(
+        EditorialClaim(
+            document_url=d.url,
+            source=d.source,
+            entity_kind="destino",
+            entity_name="Pancas",
+            municipio_text="Pancas",
+            field="tips",
+            value="Chegue cedo.",
+            stability="estavel",
+            status="unmatched",
+            published_time=date(2020, 1, 1),
+        )  # fmt: skip
+    )
+    h.session.flush()
+    validate = MagicMock()
+    monkeypatch.setattr(pipeline.editorial_validate, "delay", validate)
+
+    h.configure(editorial_enabled=True, editorial_validate_enabled=False)
+    out = pipeline.editorial_resolve.run("ES")
+    assert out["claims"] == {"pending_validation": 1} and validate.call_count == 0  # gate: off
+
+    h.configure(editorial_enabled=True, editorial_validate_enabled=True)
+    pipeline.editorial_resolve.run("ES")
+    validate.assert_called_once_with("ES")
+    assert h.session.get(EditorialDestination, "ibge:ES:9990009") is None  # not sent meanwhile
 
 
 # -- destination outbox -------------------------------------------------------------------

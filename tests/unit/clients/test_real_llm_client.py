@@ -765,3 +765,115 @@ async def test_generate_gemini_429_waits_retry_delay_and_logs_quota(
     assert [kw["tier"] for kw in limited] == ["flex", "standard", "standard"]
     assert limited[0]["quota_id"] == "GenerateRequestsPerMinutePerProjectPerModel"
     assert limited[0]["quota_value"] == "1000"
+
+
+# ---------------------------------------------------------------------------
+# generate_grounded() — Gemini 2.5 + Grounding with Google Search (editorial validation)
+# ---------------------------------------------------------------------------
+
+
+def _grounded_reply(
+    text: str = '{"facts": []}',
+    *,
+    queries: tuple[str, ...] = ("praia de setiba estacionamento",),
+    chunks: tuple[tuple[str, str], ...] = (("https://vertex.example/r/1", "parquesetiba.es.gov.br"),),
+    prompt: int = 6_000,
+    out: int = 500,
+) -> dict[str, Any]:
+    reply = _gemini_reply(text, tier="standard", prompt=prompt, out=out)
+    metadata: dict[str, Any] = {}
+    if queries:
+        metadata["webSearchQueries"] = list(queries)
+    if chunks:
+        metadata["groundingChunks"] = [{"web": {"uri": u, "title": t}} for u, t in chunks]
+    if metadata:
+        reply["candidates"][0]["groundingMetadata"] = metadata
+    return reply
+
+
+def _grounded_usd(prompt: int = 6_000, out: int = 500, *, searched: bool = True) -> float:
+    tokens = (prompt * 0.30 + out * 2.50) / 1_000_000
+    return tokens + (0.035 if searched else 0.0)  # $35 / 1,000 grounded prompts (Gemini 2.5)
+
+
+@respx.mock
+async def test_generate_grounded_sends_google_search_and_no_response_schema(
+    monkeypatch, fake_redis, sqlite_session
+):
+    """Gemini 2.5 cannot combine google_search with a response schema / JSON mime type (only
+    Gemini 3+ can): the body carries the tool and nothing that forces JSON."""
+    import json
+
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    route = respx.post(GEMINI_URL).mock(return_value=httpx.Response(200, json=_grounded_reply()))
+
+    answer = await client.generate_grounded(
+        [{"role": "user", "content": "x"}], model="gemini-2.5-flash", system="sys"
+    )
+
+    body = json.loads(route.calls.last.request.content)
+    assert body["tools"] == [{"google_search": {}}]
+    config = body["generationConfig"]
+    assert "responseMimeType" not in config and "responseSchema" not in config
+    assert "responseJsonSchema" not in config
+    assert config["thinkingConfig"] == {"thinkingBudget": 0}
+    assert config["maxOutputTokens"] > 2048  # room for one verdict per fact
+    assert answer.text == '{"facts": []}'
+    assert answer.queries == ("praia de setiba estacionamento",)
+    assert answer.sources == (
+        {"uri": "https://vertex.example/r/1", "title": "parquesetiba.es.gov.br"},
+    )
+
+
+@respx.mock
+async def test_generate_grounded_bills_the_grounding_fee_per_prompt(
+    monkeypatch, fake_redis, sqlite_session
+):
+    from brave.observability.cost_guard import _daily_key
+
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session, gemini_service_tier="standard")
+    respx.post(GEMINI_URL).mock(return_value=httpx.Response(200, json=_grounded_reply(
+        queries=("a", "b", "c")  # three queries in one prompt: still ONE grounded prompt
+    )))
+
+    await client.generate_grounded([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
+
+    (row,) = sqlite_session.query(LLMGeneration).all()
+    assert float(row.usd_cost) == pytest.approx(_grounded_usd())
+    assert float(fake_redis.get(_daily_key())) == pytest.approx(_grounded_usd())
+
+
+@respx.mock
+async def test_generate_grounded_is_not_billed_the_fee_when_the_model_did_not_search(
+    monkeypatch, fake_redis, sqlite_session
+):
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session, gemini_service_tier="standard")
+    respx.post(GEMINI_URL).mock(
+        return_value=httpx.Response(200, json=_grounded_reply(queries=(), chunks=()))
+    )
+
+    answer = await client.generate_grounded(
+        [{"role": "user", "content": "x"}], model="gemini-2.5-flash"
+    )
+
+    assert answer.sources == () and answer.queries == ()
+    (row,) = sqlite_session.query(LLMGeneration).all()
+    assert float(row.usd_cost) == pytest.approx(_grounded_usd(searched=False))
+
+
+@respx.mock
+async def test_plain_generate_still_refuses_server_tools_for_gemini(
+    monkeypatch, fake_redis, sqlite_session
+):
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    with pytest.raises(ValueError, match="Anthropic-only"):
+        await client.generate(
+            [{"role": "user", "content": "x"}], model="gemini-2.5-flash", tools=[{"x": 1}]
+        )
+
+
+@respx.mock
+async def test_generate_grounded_only_speaks_gemini_direct(monkeypatch, fake_redis, sqlite_session):
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
+    with pytest.raises(ValueError, match="gemini"):
+        await client.generate_grounded([{"role": "user", "content": "x"}], model="claude-sonnet-5-5")

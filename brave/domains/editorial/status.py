@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from brave.core.models import EditorialClaim, EditorialDestination, EditorialDocument, LLMGeneration
 from brave.domains.editorial.extract_batch import LANE, pending_posts
+from brave.domains.editorial.validate import LANE as VALIDATE_LANE
+from brave.domains.editorial.validate import PENDING, pending_entities
 
 _FIELDS_WRITTEN = text(
     """
@@ -46,11 +48,18 @@ _ATTRACTION_PUSH = text(
 
 
 def funnel(
-    session: Session, uf: str | None, *, est_usd_per_post: float, expected_usd_per_post: float
+    session: Session,
+    uf: str | None,
+    *,
+    est_usd_per_post: float,
+    expected_usd_per_post: float,
+    est_usd_per_entity: float,
 ) -> dict[str, Any]:
-    """Both per-post figures come from settings (the single source):
+    """The per-post and per-entity figures come from settings (the single source):
     ``editorial_est_usd_per_post`` is the reservation ceiling submit books per post,
-    ``editorial_expected_usd_per_post`` what a post is expected to cost."""
+    ``editorial_expected_usd_per_post`` what a post is expected to cost and
+    ``editorial_validate_est_usd_per_entity`` what the web check of one entity costs (the cost
+    gate before ``editorial_validate_enabled`` is turned on)."""
     uf = uf.upper() if uf else None
     docs = EditorialDocument
     in_uf = [docs.uf == uf] if uf else []
@@ -84,6 +93,29 @@ def funnel(
         select(func.coalesce(func.sum(LLMGeneration.usd_cost), 0)).where(LLMGeneration.lane == LANE)
     )
     pending = pending_posts(session, uf)
+    pending_claims = (
+        session.scalar(
+            select(func.count())
+            .select_from(EditorialClaim)
+            .join(docs, docs.url == EditorialClaim.document_url)
+            .where(
+                *in_uf, EditorialClaim.status == PENDING, EditorialClaim.canonical_key.isnot(None)
+            )
+        )
+        or 0
+    )
+    pending_ents = len(pending_entities(session, uf))
+    verdicts = session.execute(
+        select(EditorialClaim.validation_verdict, func.count())
+        .join(docs, docs.url == EditorialClaim.document_url)
+        .where(*in_uf, EditorialClaim.validation_verdict.isnot(None))
+        .group_by(EditorialClaim.validation_verdict)
+    ).all()
+    validation_cost = session.scalar(
+        select(func.coalesce(func.sum(LLMGeneration.usd_cost), 0)).where(
+            LLMGeneration.lane == VALIDATE_LANE
+        )
+    )
     return {
         "uf": uf,
         "documents": {
@@ -110,6 +142,14 @@ def funnel(
             "not_in_mar": with_editorial - in_mar,
         },
         "llm_cost_usd": float(cost or 0),
+        "validation": {
+            "pending_claims": pending_claims,
+            "pending_entities": pending_ents,
+            "pending_usd": round(pending_ents * est_usd_per_entity, 4),
+            "est_usd_per_entity": est_usd_per_entity,
+            "verdicts": {v: n for v, n in verdicts},
+            "cost_usd": float(validation_cost or 0),
+        },
         "pending_expected_usd": round(pending * expected_usd_per_post, 4),
         "pending_ceiling_usd": round(pending * est_usd_per_post, 4),
         "expected_usd_per_post": expected_usd_per_post,
@@ -119,7 +159,8 @@ def funnel(
 
 def format_funnel(f: dict[str, Any]) -> str:
     d, c, e, dst = f["documents"], f["claims"], f["editorial"], f["destinations"]
-    ap = f["attraction_push"]
+    ap, v = f["attraction_push"], f["validation"]
+    verdicts = ", ".join(f"{k} {n}" for k, n in sorted(v["verdicts"].items())) or "none yet"
     claims = ", ".join(f"{k} {v}" for k, v in sorted(c.items())) or "none"
     return "\n".join(
         [
@@ -136,6 +177,10 @@ def format_funnel(f: dict[str, Any]) -> str:
             f"  attr. push   with editorial {ap['with_editorial']} | in Mar {ap['in_mar']}"
             f" | pushed with editorial {ap['pushed']} | pending {ap['pending']}"
             f" | push_error {ap['error']} | not in Mar {ap['not_in_mar']} (DLQ: waits for Promoção)",
+            f"  validation   pending {v['pending_claims']} claim(s) in {v['pending_entities']}"
+            f" entity(ies): expected ${v['pending_usd']:.2f} (${v['est_usd_per_entity']:.2f}/entity,"
+            " Gemini tokens + $0.035 grounding per prompt) — the cost gate before turning"
+            f" editorial_validate_enabled on | verdicts: {verdicts} | spent ${v['cost_usd']:.2f}",
             f"  destinations pending {dst['pending']} | pushed {dst['pushed']} | error {dst['error']}",
             f"  LLM cost     ${f['llm_cost_usd']:.4f} (editorial lane, all UFs)",
         ]

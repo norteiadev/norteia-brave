@@ -34,6 +34,7 @@ from brave.core.models import RioRecord
 from brave.core.nascente.service import get_nascente
 from brave.core.rio.routing import process_nascente_record, reprocess_record
 from brave.shared.exceptions import (  # noqa: F401 (PermanentError/TransientError re-export)
+    CostGuardError,
     PermanentError,
     ProviderBalanceError,
     TransientError,
@@ -3098,17 +3099,87 @@ def editorial_collect_batches() -> list[str]:
 @shared_task(name="brave.editorial_resolve", time_limit=900)
 def editorial_resolve(uf: str) -> dict[str, Any]:
     """Match the UF's claims to Brave records and resolve one value per column
-    (brave.domains.editorial.resolver). Idempotent; not gated."""
+    (brave.domains.editorial.resolver). Idempotent; not gated. When it leaves perishable facts
+    ``pending_validation`` and the web validation is on, hands them to it (the validation then
+    re-resolves the UF, so the chain ends when a pass changes nothing)."""
     from brave.domains.editorial.resolver import resolve_uf  # noqa: PLC0415
 
     session, _ = _get_session()
     try:
         r = resolve_uf(session, uf)
+        effective = _load_config(session)
     finally:
         session.close()
+    if r.claims.get("pending_validation") and _editorial_validate_on(effective):
+        try:
+            editorial_validate.delay(uf)
+        except Exception as exc:  # noqa: BLE001 — the next resolve or an operator re-dispatches
+            logger.error("editorial_validate_dispatch_failed", uf=uf, error=str(exc))
     return {
         "uf": uf, "claims": r.claims, "attractions_written": r.attractions_written,
         "attractions_cleared": r.attractions_cleared, "destinations_changed": r.destinations_changed,
+    }  # fmt: skip
+
+
+def _editorial_validate_on(effective: Any) -> bool:
+    """The three switches of the paid web validation: the lane, the validation, real externals."""
+    return bool(
+        effective.editorial_enabled
+        and effective.editorial_validate_enabled
+        and effective.run_real_externals
+    )
+
+
+@shared_task(name="brave.editorial_validate", time_limit=3600, soft_time_limit=3300)
+def editorial_validate(uf: str | None = None) -> dict[str, Any]:
+    """Check the perishable facts of old posts on the web (Gemini 2.5 Flash + Google Search
+    grounding, one paid call per entity) — brave.domains.editorial.validate.
+
+    Needs editorial_enabled AND editorial_validate_enabled AND run_real_externals. Chained
+    after ``editorial_resolve`` (never on a timer): up to ``editorial_validate_batch_size``
+    entities per run, each committed as it is answered. A budget wall ends the run quietly;
+    every UF whose claims changed is re-resolved so a confirmed fact is written.
+    """
+    from brave.clients.llm import gemini_is_priced  # noqa: PLC0415
+    from brave.domains.editorial.validate import LANE, validate_pending  # noqa: PLC0415
+
+    session, _ = _get_session()
+    try:
+        effective = _load_config(session)
+        if not _editorial_validate_on(effective):
+            return {"uf": uf, "skipped": True}
+        model = effective.editorial_validate_model_slug
+        if not gemini_is_priced(model):
+            logger.error("editorial_validate_model_unpriced", model=model)
+            return {"uf": uf, "error": f"no Gemini price for {model!r}"}
+        clients = clients_for(effective)
+        try:
+            r = asyncio.run(
+                _using(
+                    clients,
+                    validate_pending(
+                        session, clients.llm(LANE, session=session), model=model, uf=uf,
+                        limit=effective.editorial_validate_batch_size,
+                    ),  # fmt: skip
+                )
+            )
+        except (CostGuardError, ProviderBalanceError) as exc:
+            logger.warning("editorial_validate_stopped", uf=uf, error=str(exc))
+            return {"uf": uf, "error": f"stopped: {exc}"}
+        except Exception as exc:  # noqa: BLE001 — a paid task: the operator re-dispatches
+            session.rollback()
+            logger.warning("editorial_validate_failed", uf=uf, error=str(exc))
+            return {"uf": uf, "error": str(exc)}
+    finally:
+        session.close()
+    for changed in sorted(r.ufs):
+        try:
+            editorial_resolve.delay(changed)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("editorial_resolve_dispatch_failed", uf=changed, error=str(exc))
+    return {
+        "uf": uf, "entities": r.entities, "confirmed": r.confirmed, "outdated": r.outdated,
+        "unverified": r.unverified, "failed": r.failed, "unanswered": r.unanswered,
     }  # fmt: skip
 
 

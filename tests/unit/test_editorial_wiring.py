@@ -16,6 +16,7 @@ TASKS = [
     "brave.editorial_submit_batches",
     "brave.editorial_collect_batches",
     "brave.editorial_resolve",
+    "brave.editorial_validate",
     "brave.push_editorial_destinations",
 ]
 
@@ -29,7 +30,21 @@ def test_settings_defaults_keep_the_lane_off_and_pin_the_model() -> None:
     assert cfg.editorial_batch_size > 0 and cfg.editorial_est_usd_per_post > 0
 
 
-@pytest.mark.parametrize("key", ["editorial_enabled", "editorial_push_enabled"])
+def test_the_web_validation_is_off_by_default_on_gemini_flash_with_a_priced_model() -> None:
+    from brave.clients.llm import gemini_is_priced
+
+    cfg = AppConfig()
+    assert cfg.editorial_validate_enabled is False
+    assert cfg.editorial_validate_model_slug == "gemini-2.5-flash"
+    assert gemini_is_priced(cfg.editorial_validate_model_slug)  # the cost guard can price it
+    assert cfg.editorial_validate_batch_size > 0
+    # per entity: ~6k tokens in + 0.5k out (~$0.003) plus the $0.035 grounding fee, rounded up
+    assert 0.038 <= cfg.editorial_validate_est_usd_per_entity <= 0.06
+
+
+@pytest.mark.parametrize(
+    "key", ["editorial_enabled", "editorial_push_enabled", "editorial_validate_enabled"]
+)
 def test_both_switches_can_be_toggled_at_runtime_from_the_config_overlay(key) -> None:
     entry = CONFIG_KEYS[key]
     assert entry.kind == "bool" and entry.read(AppConfig()) is False
@@ -57,6 +72,7 @@ def test_beat_runs_collect_and_the_destination_outbox_every_15_minutes_on_the_de
     assert (
         "brave.editorial_crawl_uf" not in by_task
         and "brave.editorial_submit_batches" not in by_task
+        and "brave.editorial_validate" not in by_task  # paid: chained after the resolve
     )
 
 
@@ -137,3 +153,36 @@ def test_an_unreadable_config_does_not_block_the_dispatch(monkeypatch, capsys) -
     crawl, code = _cli(monkeypatch, "editorial-load", "ES", enabled=None)
     assert code == 0 and crawl.call_count == 1
     assert "could not read editorial_enabled" in capsys.readouterr().out
+
+
+def _validate_cli(monkeypatch, *argv, enabled=True):
+    from brave import cli
+    from brave.tasks import pipeline
+
+    monkeypatch.setattr(cli, "_editorial_validate_enabled", lambda: enabled)
+    resolve = MagicMock()
+    monkeypatch.setattr(pipeline.editorial_resolve, "delay", resolve)
+    monkeypatch.setattr(sys, "argv", ["brave", *argv])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    return resolve, exc.value.code
+
+
+def test_editorial_validate_re_resolves_each_uf_which_hands_the_pending_facts_to_the_check(
+    monkeypatch,
+) -> None:
+    resolve, code = _validate_cli(monkeypatch, "editorial-validate", "es", "mg")
+    assert code == 0
+    assert [c.args for c in resolve.call_args_list] == [("ES",), ("MG",)]
+
+
+def test_editorial_validate_is_refused_while_the_paid_check_is_off(monkeypatch, capsys) -> None:
+    resolve, code = _validate_cli(monkeypatch, "editorial-validate", "ES", enabled=False)
+    assert code == 3 and resolve.call_count == 0
+    out = capsys.readouterr().out
+    assert "editorial_validate_enabled" in out and "editorial-status" in out  # where the cost is
+
+
+def test_editorial_validate_rejects_a_bad_uf(monkeypatch) -> None:
+    resolve, code = _validate_cli(monkeypatch, "editorial-validate", "XX")
+    assert code == 1 and resolve.call_count == 0

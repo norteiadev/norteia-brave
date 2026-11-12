@@ -25,6 +25,9 @@ from brave.domains.editorial.resolver import resolve_uf
 pytestmark = pytest.mark.integration
 
 UF = "ZZ"
+# Today, pinned just before every post of the older tests: none of them is "over a year old",
+# so the perishable-fact gate stays out of what they check (the gate has its own tests below).
+EARLY = date(2019, 12, 1)
 IBGE = "9990001"
 LAT, LON = -20.1000, -40.5000
 NEAR = (LAT - 0.0009, LON)  # ~100 m
@@ -103,7 +106,7 @@ def test_a_claim_is_matched_by_coordinate_and_written_under_the_editorial_key(se
     r = rio(session, "ta:1", "Pedra do Frade")
     d = doc(session, "p1")
     c = claim(session, d, "curiosities", "Tombada em 1940.")
-    result = resolve_uf(session, UF)
+    result = resolve_uf(session, UF, today=EARLY)
 
     fresh(session, c)
     assert (c.status, c.canonical_key, c.match_method, c.match_score) == (
@@ -127,23 +130,87 @@ def test_a_superseded_claim_is_never_resolved_nor_re_matched(session) -> None:
     d = doc(session, "p1")
     old = claim(session, d, "curiosities", "Fato antigo.", status="superseded")
     claim(session, d, "curiosities", "Fato novo.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     fresh(session, r)
     fresh(session, old)
     assert r.normalized["editorial"] == {"curiosities": "Fato novo."}
     assert old.status == "superseded" and old.canonical_key is None
 
 
+# -- perishable facts of an old post wait for the web check ---------------------------------
+
+TODAY = date(2026, 11, 12)
+
+
+def test_a_perishable_fact_of_an_old_post_waits_for_validation_and_is_not_written(session) -> None:
+    r = rio(session, "ta:1", "Pedra do Frade")
+    d = doc(session, "old", published=date(2024, 5, 1))
+    tips = claim(session, d, "tips", "Leve água e lanche.")
+    cur = claim(session, d, "curiosities", "Tombada em 1940.")  # perennial: travels
+    result = resolve_uf(session, UF, today=TODAY)
+    fresh(session, r)
+    fresh(session, tips)
+    fresh(session, cur)
+    assert (tips.status, tips.canonical_key) == ("pending_validation", "ta:1")  # matched, held
+    assert cur.status == "matched"
+    assert r.normalized["editorial"] == {"curiosities": "Tombada em 1940."}
+    assert result.claims == {"matched": 1, "pending_validation": 1}
+
+
+def test_a_perishable_fact_of_a_recent_post_travels_straight_away(session) -> None:
+    r = rio(session, "ta:1", "Pedra do Frade")
+    claim(session, doc(session, "new", published=date(2025, 12, 1)), "tips", "Leve água.")
+    resolve_uf(session, UF, today=TODAY)
+    fresh(session, r)
+    assert r.normalized["editorial"] == {"tips": "Leve água."}
+
+
+def test_a_confirmed_fact_is_resolved_even_from_an_old_post(session) -> None:
+    r = rio(session, "ta:1", "Pedra do Frade")
+    c = claim(session, doc(session, "old", published=date(2024, 5, 1)), "tips", "Leve água.")
+    c.validation_verdict = "confirmado"  # what validate.py leaves: confirmed, back to matched
+    c.status = "matched"
+    session.flush()
+    resolve_uf(session, UF, today=TODAY)
+    fresh(session, r)
+    fresh(session, c)
+    assert c.status == "matched"  # the next run does not put it back to pending
+    assert r.normalized["editorial"] == {"tips": "Leve água."}
+
+
+def test_outdated_and_unverified_facts_are_never_resolved_nor_re_matched(session) -> None:
+    r = rio(session, "ta:1", "Pedra do Frade")
+    d = doc(session, "old", published=date(2024, 5, 1))
+    out = claim(session, d, "tips", "Dica velha.", status="outdated")
+    unv = claim(session, d, "how_to_get_there", "Pela estrada velha.", status="unverified")
+    resolve_uf(session, UF, today=TODAY)
+    fresh(session, r)
+    assert "editorial" not in r.normalized
+    assert (fresh(session, out).status, fresh(session, unv).status) == ("outdated", "unverified")
+
+
+def test_a_pending_destination_fact_is_not_queued_for_the_outbox(session) -> None:
+    municipio(session)
+    d = doc(session, "old", published=date(2024, 5, 1))
+    claim(session, d, "estimated_spending_range", "R$ 100 a R$ 200", kind="destino",
+          name="Pancas", municipio="Pancas")  # fmt: skip
+    claim(session, d, "best_time_to_visit", "De maio a setembro.", kind="destino",
+          name="Pancas", municipio="Pancas")  # fmt: skip
+    resolve_uf(session, UF, today=TODAY)
+    (dest,) = session.scalars(select(EditorialDestination)).all()
+    assert dest.fields == {"best_time_to_visit": "De maio a setembro."}
+
+
 def test_the_resolver_is_idempotent_and_leaves_the_mar_alone(session) -> None:
     r = rio(session, "ta:1", "Pedra do Frade")
     claim(session, doc(session, "p1"), "curiosities", "Tombada em 1940.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     fresh(session, r)
     stamp = r.processed_at
     mar = upsert_mar_snapshot(session, r)
     assert mar.canonical["editorial"] == {"curiosities": "Tombada em 1940."}
 
-    second = resolve_uf(session, UF)
+    second = resolve_uf(session, UF, today=EARLY)
     fresh(session, r)
     assert r.processed_at == stamp and second.attractions_written == 0
     assert upsert_mar_snapshot(session, r).id == mar.id  # no supersession: nothing to republish
@@ -157,7 +224,7 @@ def test_the_newest_post_wins_per_column_and_a_change_bumps_processed_at(session
     claim(session, old, "curiosities", "Fato antigo.")
     claim(session, old, "tips", "Dica só do post antigo.")
     claim(session, new, "curiosities", "Fato recente.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     fresh(session, r)
     assert r.normalized["editorial"] == {
         "curiosities": "Fato recente.",
@@ -166,7 +233,7 @@ def test_the_newest_post_wins_per_column_and_a_change_bumps_processed_at(session
 
     first = r.processed_at
     claim(session, doc(session, "newest", published=date(2024, 1, 1)), "tips", "Dica nova.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     fresh(session, r)
     assert r.normalized["editorial"]["tips"] == "Dica nova." and r.processed_at > first
 
@@ -176,7 +243,7 @@ def test_volatile_claims_are_held_and_never_written(session) -> None:
     d = doc(session, "p1")
     held = claim(session, d, "price", "R$ 10", stability="volatil", status="held_volatile")
     claim(session, d, "curiosities", "Fato.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     fresh(session, r)
     fresh(session, held)
     assert r.normalized["editorial"] == {"curiosities": "Fato."}
@@ -187,7 +254,7 @@ def test_two_candidates_make_the_claims_ambiguous_and_nothing_is_written(session
     a = rio(session, "ta:a", "Pedra do Frade", at=NEAR)
     b = rio(session, "ta:b", "Pedra do Frade", at=(LAT - 0.002, LON))
     c = claim(session, doc(session, "p1"), "curiosities", "Fato.")
-    result = resolve_uf(session, UF)
+    result = resolve_uf(session, UF, today=EARLY)
     fresh(session, c)
     assert c.status == "ambiguous" and c.canonical_key is None
     assert (
@@ -199,7 +266,7 @@ def test_two_candidates_make_the_claims_ambiguous_and_nothing_is_written(session
 
 def test_no_candidate_is_unmatched_and_kept_for_discovery(session) -> None:
     c = claim(session, doc(session, "p1"), "curiosities", "Fato.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     fresh(session, c)
     assert c.status == "unmatched" and c.canonical_key is None and (c.lat, c.lon) == (LAT, LON)
 
@@ -208,14 +275,14 @@ def test_the_municipality_in_the_text_never_decides_alone(session) -> None:
     # same name, right municipality text, but the map point is 5 km from the Brave record
     rio(session, "ta:far", "Pedra do Frade", at=(LAT - 0.045, LON))
     c = claim(session, doc(session, "p1"), "curiosities", "Fato.", municipio="Pancas")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     assert fresh(session, c).status == "unmatched"
 
 
 def test_name_only_inside_the_municipality_when_the_post_has_no_map(session) -> None:
     r = rio(session, "ta:1", "Pedra do Frade", at=None)
     c = claim(session, doc(session, "nomap", points=[]), "curiosities", "Fato.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     assert fresh(session, c).match_method == "name_municipio"
     assert fresh(session, r).normalized["editorial"] == {"curiosities": "Fato."}
 
@@ -223,26 +290,26 @@ def test_name_only_inside_the_municipality_when_the_post_has_no_map(session) -> 
 def test_discarded_records_are_not_candidates(session) -> None:
     rio(session, "ta:gone", "Pedra do Frade", routing="descarte")
     c = claim(session, doc(session, "p1"), "curiosities", "Fato.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     assert fresh(session, c).status == "unmatched"
 
 
 def test_a_dlq_record_gets_the_field_too_so_it_travels_when_promoted(session) -> None:
     r = rio(session, "ta:dlq", "Pedra do Frade", routing="dlq")
     claim(session, doc(session, "p1"), "curiosities", "Fato.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     assert fresh(session, r).normalized["editorial"] == {"curiosities": "Fato."}
 
 
 def test_editorial_that_no_longer_has_support_is_removed_and_the_change_is_stamped(session) -> None:
     r = rio(session, "ta:1", "Pedra do Frade")
     c = claim(session, doc(session, "p1"), "curiosities", "Fato.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     fresh(session, r)
     first = r.processed_at
     session.delete(c)
     session.flush()
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     fresh(session, r)
     assert "editorial" not in r.normalized and r.normalized["name"] == "Pedra do Frade"
     assert r.processed_at > first
@@ -253,7 +320,7 @@ def test_records_of_other_ufs_are_never_touched(session) -> None:
     other.uf = "ZY"
     session.flush()
     claim(session, doc(session, "p1"), "curiosities", "Fato.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     assert "editorial" not in fresh(session, other).normalized
 
 
@@ -279,7 +346,7 @@ def test_destination_fields_land_in_the_outbox_with_the_api_source_ref(session) 
                 pace_profile="lento")  # fmt: skip
     claim(session, d, "safety_alerts", "Cuidado.", kind="destino", name="Pancas",
           stability="volatil", status="held_volatile")  # fmt: skip
-    result = resolve_uf(session, UF)
+    result = resolve_uf(session, UF, today=EARLY)
 
     row = session.get(EditorialDestination, "ibge:ZZ:9990001")
     assert row.fields == {"best_time_to_visit": "De maio a agosto.", "seasonality": ["chuva de out a jan"],
@@ -297,7 +364,7 @@ def test_destination_source_ref_prefers_what_the_attractions_carry_else_the_ibge
     municipio(session)
     rio(session, "ta:1", "Pedra do Frade", parent="mtur:ZZ:42")
     dest_claims(session, doc(session, "pancas"), tips="Chegue cedo.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     assert session.get(EditorialDestination, "mtur:ZZ:42") is not None
     assert session.get(EditorialDestination, "ibge:ZZ:9990001") is None
 
@@ -305,7 +372,7 @@ def test_destination_source_ref_prefers_what_the_attractions_carry_else_the_ibge
     municipio(session, "9990002", "Colatina")
     d2 = doc(session, "colatina")
     claim(session, d2, "tips", "Leve água.", kind="destino", name="Colatina", municipio="Colatina")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     only = session.get(EditorialDestination, "ibge:ZZ:9990002")
     assert only is not None and only.tourist_name == "Colatina"  # the municipios table name
 
@@ -314,19 +381,19 @@ def test_destination_resolver_is_idempotent_and_a_change_makes_it_pending_again(
     municipio(session)
     d = doc(session, "pancas", published=date(2020, 1, 1))
     dest_claims(session, d, tips="Chegue cedo.")
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     row = session.get(EditorialDestination, "ibge:ZZ:9990001")
     row.pushed_at, row.push_hash = datetime.now(UTC), "abc"
     session.flush()
     stamp, updated = row.pushed_at, row.updated_at
 
-    again = resolve_uf(session, UF)
+    again = resolve_uf(session, UF, today=EARLY)
     fresh(session, row)
     assert again.destinations_changed == 0 and row.pushed_at == stamp and row.updated_at == updated
 
     claim(session, doc(session, "newer", published=date(2023, 1, 1)), "tips", "Vá no inverno.",
           kind="destino", name="Pancas")  # fmt: skip
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     fresh(session, row)
     assert (
         row.fields == {"tips": "Vá no inverno."}
@@ -340,7 +407,7 @@ def test_a_destination_with_no_pushable_field_gets_no_outbox_row(session) -> Non
     d = doc(session, "pancas")
     claim(session, d, "safety_alerts", "Cuidado.", kind="destino", name="Pancas",
           stability="volatil", status="held_volatile")  # fmt: skip
-    resolve_uf(session, UF)
+    resolve_uf(session, UF, today=EARLY)
     assert (
         session.scalars(select(EditorialDestination).where(EditorialDestination.uf == UF)).all()
         == []

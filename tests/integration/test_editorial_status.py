@@ -25,10 +25,14 @@ pytestmark = pytest.mark.integration
 NOW = datetime.now(UTC)
 EST = AppConfig().editorial_est_usd_per_post  # reservation ceiling per post (settings)
 EXPECTED = AppConfig().editorial_expected_usd_per_post  # expected cost per post (settings)
+PER_ENTITY = AppConfig().editorial_validate_est_usd_per_entity  # web validation, per entity
 
 
 def _funnel(session, uf):
-    return funnel(session, uf, est_usd_per_post=EST, expected_usd_per_post=EXPECTED)
+    return funnel(
+        session, uf, est_usd_per_post=EST, expected_usd_per_post=EXPECTED,
+        est_usd_per_entity=PER_ENTITY,
+    )  # fmt: skip
 
 
 @pytest.fixture
@@ -127,6 +131,46 @@ def test_funnel_counts_each_stage_of_the_uf(session) -> None:
     assert EXPECTED < EST
 
 
+def test_funnel_counts_every_claim_status_including_the_ones_that_are_held(session) -> None:
+    d = _doc(session, "st", extracted_at=NOW)
+    for status in ("superseded", "held_copied", "pending_validation", "outdated", "unverified"):
+        _claim(session, d, "tips", status, key="k9")
+    session.flush()
+    f = _funnel(session, "ZZ")
+    assert {
+        s: f["claims"][s]
+        for s in ("superseded", "held_copied", "pending_validation", "outdated", "unverified")
+    } == dict.fromkeys(
+        ("superseded", "held_copied", "pending_validation", "outdated", "unverified"), 1
+    )
+    text = format_funnel(f)
+    for status in ("superseded", "held_copied", "pending_validation", "outdated", "unverified"):
+        assert status in text
+
+
+def test_the_validation_gate_prices_the_entities_waiting_not_the_claims(session) -> None:
+    d = _doc(session, "gate", extracted_at=NOW)
+    _claim(session, d, "tips", "pending_validation", key="e1")
+    _claim(session, d, "accessibility", "pending_validation", key="e1")  # same entity
+    _claim(session, d, "tips", "pending_validation", key="e2")
+    _claim(session, d, "tips", "pending_validation", key=None)  # unmatched: nothing to check
+    done = EditorialClaim(
+        id=uuid.uuid4(), document_url=d.url, source=d.source, entity_kind="atrativo", entity_name="X",
+        field="tips", value="v", stability="estavel", status="outdated", canonical_key="e3",
+        validation_verdict="desatualizado",
+    )  # fmt: skip
+    session.add(done)
+    session.add(LLMGeneration(id=uuid.uuid4(), lane="editorial_validate", model_slug="gemini-2.5-flash",
+                              prompt_tokens=1, completion_tokens=1, usd_cost=0.07))  # fmt: skip
+    session.flush()
+    v = _funnel(session, "ZZ")["validation"]
+    assert (v["pending_claims"], v["pending_entities"]) == (3, 2)
+    assert v["pending_usd"] == pytest.approx(2 * PER_ENTITY)
+    assert v["est_usd_per_entity"] == PER_ENTITY
+    assert v["verdicts"] == {"desatualizado": 1}
+    assert v["cost_usd"] >= 0.07
+
+
 def test_without_a_uf_it_spans_every_uf(session) -> None:
     _seed(session)
     f = _funnel(session, None)
@@ -155,6 +199,14 @@ def test_format_is_a_readable_funnel() -> None:
             "pending_ceiling_usd": 0.18,
             "expected_usd_per_post": 0.026,
             "est_usd_per_post": 0.06,
+            "validation": {
+                "pending_claims": 7,
+                "pending_entities": 3,
+                "pending_usd": 0.12,
+                "est_usd_per_entity": 0.04,
+                "verdicts": {"confirmado": 5, "desatualizado": 2},
+                "cost_usd": 0.31,
+            },
         }
     )
     for needle in ("ES", "17", "74", "190", "held_volatile", "0.81", "pending"):
@@ -162,6 +214,9 @@ def test_format_is_a_readable_funnel() -> None:
     # the cost gate of Passo 7: the expected cost AND the reservation ceiling, both labelled
     assert "expected $0.08 ($0.026/post)" in text
     assert "ceiling/reserva $0.18 ($0.06/post)" in text
+    # the cost gate of the web validation: entities waiting x the per-entity estimate
+    assert "7 claim(s) in 3 entity(ies)" in text and "expected $0.12 ($0.04/entity" in text
+    assert "confirmado 5" in text and "desatualizado 2" in text and "$0.31" in text
     assert "pushed with editorial 50" in text and "push_error 1" in text and "not in Mar 10" in text
 
 

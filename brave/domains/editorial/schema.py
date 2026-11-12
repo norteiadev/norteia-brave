@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -173,10 +174,52 @@ DESTINATION_PUSHED: tuple[str, ...] = tuple(
 )
 
 
+# Perishable vs perennial (user decision). A PERISHABLE column of a post more than a year old is
+# not pushed on the post's word: it waits as ``pending_validation`` until a web check
+# (validate.py) says it still holds. Perennial columns travel as they are. ``safety_alerts`` is
+# also volatile (held before it gets here); ``structure_level`` / ``flow_level`` are listed for
+# when the extraction learns them. Age is measured against today's date, not the post's.
+PERISHABLE_FIELDS: dict[str, frozenset[str]] = {
+    "atrativo": frozenset(
+        {"local_infrastructure", "tips", "how_to_get_there", "safety_alerts", "accessibility"}
+    ),
+    "destino": frozenset(
+        {
+            "tips",
+            "how_to_get_there",
+            "safety_alerts",
+            "connectivity_level",
+            "structure_level",
+            "estimated_spending_range",
+            "flow_level",
+        }
+    ),
+}
+PERENNIAL_FIELDS = frozenset(
+    {
+        "curiosities",
+        "best_time_to_visit",
+        "seasonality",
+        "recommended_duration",
+        "pace_profile",
+        "predominant_audience_profile",
+    }
+)
+MAX_POST_AGE = timedelta(days=365)
+
+
+def needs_validation(kind: str, field: str, published: date | None, today: date) -> bool:
+    """True when the fact is perishable and its post is more than a year old (an undated post
+    counts as old: nothing shows it is fresh)."""
+    if field not in PERISHABLE_FIELDS.get(kind, frozenset()):
+        return False
+    return published is None or today - published > MAX_POST_AGE
+
+
 # The claim statuses the resolver (re-)matches on every run. Every other status is a state a
 # claim was moved to (``held_volatile``, ``superseded``, …): the row stays — nothing collected
 # is deleted — and is never matched, resolved nor pushed.
-RESOLVABLE_STATUSES: tuple[str, ...] = ("unmatched", "ambiguous", "matched")
+RESOLVABLE_STATUSES: tuple[str, ...] = ("unmatched", "ambiguous", "matched", "pending_validation")
 
 
 def stability_of(field: str) -> Literal["estavel", "volatil"]:

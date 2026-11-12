@@ -13,7 +13,7 @@ Usage:
 
 from typing import Any
 
-from brave.clients.base import LLMClientProtocol
+from brave.clients.base import GroundedAnswer, LLMClientProtocol
 
 
 class FakeLLMClient:
@@ -30,6 +30,7 @@ class FakeLLMClient:
         fixture_result: Any = None,
         raise_on_call: Exception | None = None,
         generate_result: str = "Olá! Da Norteia. Poderia confirmar mais detalhes?",
+        grounded_result: GroundedAnswer | None = None,
     ) -> None:
         """Initialize with a fixture result to return on extract().
 
@@ -41,6 +42,8 @@ class FakeLLMClient:
         self._fixture_result = fixture_result
         self._raise_on_call = raise_on_call
         self._generate_result = generate_result
+        self._grounded_result = grounded_result or GroundedAnswer(text="")
+        self.grounded_calls: list[dict[str, Any]] = []
         self.calls: list[dict[str, Any]] = []
         self.generate_calls: list[dict[str, Any]] = []
 
@@ -63,11 +66,13 @@ class FakeLLMClient:
         Raises:
             raise_on_call if set at construction time.
         """
-        self.calls.append({
-            "prompt": prompt,
-            "schema": schema.__name__ if hasattr(schema, "__name__") else str(schema),
-            "mode": mode,
-        })
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "schema": schema.__name__ if hasattr(schema, "__name__") else str(schema),
+                "mode": mode,
+            }
+        )
         if self._raise_on_call is not None:
             raise self._raise_on_call
         return self._fixture_result
@@ -100,6 +105,19 @@ class FakeLLMClient:
         if self._raise_on_call is not None:
             raise self._raise_on_call
         return self._generate_result
+
+    async def generate_grounded(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        *,
+        system: str | None = None,
+    ) -> GroundedAnswer:
+        """Record the call and return ``grounded_result`` (or raise)."""
+        self.grounded_calls.append({"messages": messages, "model": model, "system": system})
+        if self._raise_on_call is not None:
+            raise self._raise_on_call
+        return self._grounded_result
 
 
 # Structural type check: FakeLLMClient must satisfy LLMClientProtocol

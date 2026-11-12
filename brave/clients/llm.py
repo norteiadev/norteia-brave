@@ -45,7 +45,7 @@ from openai import (
 )
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-from brave.clients.base import DEFAULT_ANTHROPIC_MODEL
+from brave.clients.base import DEFAULT_ANTHROPIC_MODEL, GroundedAnswer
 from brave.clients.tavily import _is_retryable as _is_httpx_retryable
 from brave.clients.tavily import _wait as _httpx_wait
 from brave.config.settings import LLMConfig
@@ -133,6 +133,13 @@ _GEMINI_PRICES_USD_PER_MTOK: dict[tuple[str, str], tuple[float, float, float]] =
     ("gemini-2.5-flash-lite", "flex"): (0.05, 0.20, 0.01),
 }
 
+# Grounding with Google Search on Gemini 2.5: $35 per 1,000 grounded prompts (ai.google.dev
+# pricing, 2026-11-12), billed per PROMPT whatever the number of queries the model ran, and only
+# when the answer is grounded. Charged here from the first prompt: the 1,500 free requests a day
+# are not counted on (over-count rather than guess low, as with the tier below).
+_GEMINI_GROUNDING_USD_PER_PROMPT: float = 0.035
+_GROUNDED_MAX_OUTPUT_TOKENS = 8192  # one verdict + sources + note per fact
+
 # Flex sheds load with these; the same body is re-sent at the standard tier right away.
 _GEMINI_FLEX_FALLBACK_STATUS: frozenset[int] = frozenset({429, 503})
 _GEMINI_TIMEOUT_S: float = 60.0
@@ -174,6 +181,12 @@ def _gemini_wait(retry_state: Any) -> float:
         if delay is not None:
             return min(delay, _GEMINI_MAX_RETRY_DELAY_S)
     return float(_httpx_wait(retry_state))
+
+
+def _grounding_metadata(data: dict[str, Any]) -> dict[str, Any]:
+    candidates = data.get("candidates") or [{}]
+    meta = candidates[0].get("groundingMetadata")
+    return meta if isinstance(meta, dict) else {}
 
 
 def gemini_is_priced(model: str) -> bool:
@@ -700,7 +713,54 @@ class RealLLMClient:
         system: str | None,
         tools: list[dict[str, Any]] | None,
     ) -> str:
-        """generate() for bare gemini-* slugs — Google AI Studio ``:generateContent`` (§30).
+        """generate() for bare gemini-* slugs (see ``_gemini_run``)."""
+        if tools:
+            raise ValueError(f"generate(): server-side tools are Anthropic-only; got {model!r}")
+        text, _ = await self._gemini_run(messages, model, system=system)
+        return text
+
+    async def generate_grounded(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        *,
+        system: str | None = None,
+    ) -> GroundedAnswer:
+        """Gemini 2.5 + Grounding with Google Search: the answer text, the pages it was
+        grounded on and the queries it ran.
+
+        Gemini 2.5 cannot combine the search tool with a response schema or a JSON mime type
+        (that is a Gemini 3 feature): the caller asks for JSON in the prompt and validates the
+        text itself. The grounding fee (per grounded prompt) is added to the cost recorded in
+        ``llm_generations`` and the daily counter. Same cost guard, tiers and retries as
+        ``generate``.
+        """
+        if not model.startswith("gemini-") or "/" in model:
+            raise ValueError(f"generate_grounded(): Gemini direct only (a gemini-* slug); got {model!r}")
+        if self._redis_client is not None:
+            pre_dispatch_check(self._redis_client, self._config)
+        text, data = await self._gemini_run(messages, model, system=system, grounded=True)
+        meta = _grounding_metadata(data)
+        return GroundedAnswer(
+            text=text,
+            sources=tuple(
+                {"uri": str(w.get("uri", "")), "title": str(w.get("title", ""))}
+                for c in meta.get("groundingChunks") or []
+                if (w := c.get("web"))
+            ),
+            queries=tuple(str(q) for q in meta.get("webSearchQueries") or []),
+        )
+
+    async def _gemini_run(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        *,
+        system: str | None,
+        grounded: bool = False,
+    ) -> tuple[str, dict[str, Any]]:
+        """The Gemini-direct call behind generate() and generate_grounded(): ``(text, raw
+        response) for bare gemini-* slugs — Google AI Studio ``:generateContent`` (§30).
 
         Flex tier (-50%) when configured: ONE attempt capped at gemini_flex_timeout_s; on 503,
         429 or timeout the same body is re-sent right away at the standard tier (with the usual
@@ -713,8 +773,6 @@ class RealLLMClient:
 
         No D-04 here: the paid AI Studio tier does not use prompts to improve Google products.
         """
-        if tools:
-            raise ValueError(f"generate(): server-side tools are Anthropic-only; got {model!r}")
         if not gemini_is_priced(model):
             raise ValueError(f"generate(): no Gemini price for {model!r}")
         if not self._config.gemini_api_key:
@@ -728,8 +786,13 @@ class RealLLMClient:
                 }
                 for m in messages
             ],
-            "generationConfig": {"maxOutputTokens": 2048, "thinkingConfig": {"thinkingBudget": 0}},
+            "generationConfig": {
+                "maxOutputTokens": _GROUNDED_MAX_OUTPUT_TOKENS if grounded else 2048,
+                "thinkingConfig": {"thinkingBudget": 0},
+            },
         }
+        if grounded:
+            body["tools"] = [{"google_search": {}}]
         if system is not None:
             body["systemInstruction"] = {"parts": [{"text": system}]}
         url = f"{self._config.gemini_base_url}/models/{model}:generateContent"
@@ -768,6 +831,8 @@ class RealLLMClient:
             usd_cost = _gemini_cost(model, "standard", usage)
         else:
             usd_cost = _gemini_cost(model, billed, usage)
+        if grounded and _grounding_metadata(data).get("webSearchQueries"):
+            usd_cost += _GEMINI_GROUNDING_USD_PER_PROMPT
         prompt_tokens = int(usage.get("promptTokenCount") or 0)
         completion_tokens = int(usage.get("candidatesTokenCount") or 0) + int(
             usage.get("thoughtsTokenCount") or 0
@@ -808,7 +873,7 @@ class RealLLMClient:
         if finish != "STOP":
             raise PermanentError(f"generate(): {model} finishReason={finish!r}")
         parts = (candidates[0].get("content") or {}).get("parts") or []
-        return "".join(p.get("text", "") for p in parts)
+        return "".join(p.get("text", "") for p in parts), data
 
 
 # ---------------------------------------------------------------------------

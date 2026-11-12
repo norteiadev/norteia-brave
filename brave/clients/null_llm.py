@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from brave.clients.base import DEFAULT_ANTHROPIC_MODEL
+from brave.clients.base import DEFAULT_ANTHROPIC_MODEL, GroundedAnswer
 
 
 class NullLLMClient:
@@ -69,6 +69,16 @@ class NullLLMClient:
             Fixed canned PT-BR follow-up string.
         """
         return "Olá! Da Norteia. Poderia confirmar mais detalhes?"
+
+    async def generate_grounded(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        *,
+        system: str | None = None,
+    ) -> GroundedAnswer:
+        """Empty answer, no sources — offline stub never searches the web."""
+        return GroundedAnswer(text="")
 
 
 # Structural type check: NullLLMClient must satisfy LLMClientProtocol
