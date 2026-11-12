@@ -91,6 +91,24 @@ conservation_level.
 Cada fato é um item de `facts`: `{"field": <coluna>, "value": <texto>, "evidence": <trecho>}`, \
 no máximo um por coluna em cada entidade.
 
+## Voz do autor
+O `value` é uma recomendação ao visitante, nunca o relato do autor do post. Escreva em \
+terceira pessoa ou de forma impessoal (infinitivo ou imperativo: "Reserve", "Chegue cedo", "O \
+acesso é pela BR-101"). Nunca use primeira pessoa (eu, nós, meu, nosso), "os autores", "o \
+autor", "ficamos", "fomos", "passamos", "gastamos", "achamos" nem a narrativa da viagem dele.
+- `recommended_duration`: o tempo que o visitante deve reservar ("2 dias", "meio dia"), só \
+quando o post sugere ou recomenda. Se o post só relata quanto tempo o autor ficou ("ficamos 6 \
+dias"), omita a coluna.
+- `estimated_spending_range`: faixa de gasto geral do visitante. O que o autor gastou na \
+viagem dele não conta: omita.
+- `pace_profile`: o ritmo que o destino pede de quem visita, não o ritmo da viagem do autor. \
+Sem base além do roteiro do autor, omita.
+- `predominant_audience_profile`: quem o lugar atende (famílias, casais, aventureiros), nunca \
+o perfil do autor ("viajamos em casal"). Sem base além disso, omita.
+- `how_to_get_there`, `tips`, `local_infrastructure`, `accessibility`, `safety_alerts`: \
+instrução ou fato sobre o lugar, no impessoal ("Dá para ir de carro até o estacionamento"), \
+não "fomos de carro".
+
 ## Regras
 1. `value` nunca é cópia: reescreva o fato com suas palavras, em PT-BR, conciso. A cópia só \
 vai em `evidence`: trecho literal curto do post (no máximo 20 palavras), apenas para auditoria.
