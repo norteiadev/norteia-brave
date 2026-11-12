@@ -732,8 +732,8 @@ class RealLLMClient:
         Gemini 2.5 cannot combine the search tool with a response schema or a JSON mime type
         (that is a Gemini 3 feature): the caller asks for JSON in the prompt and validates the
         text itself. The grounding fee (per grounded prompt) is added to the cost recorded in
-        ``llm_generations`` and the daily counter. Same cost guard, tiers and retries as
-        ``generate``.
+        ``llm_generations`` and the daily counter. Always the Standard tier (a Flex timeout could
+        bill the search twice). Same cost guard and retries as ``generate``.
         """
         if not model.startswith("gemini-") or "/" in model:
             raise ValueError(f"generate_grounded(): Gemini direct only (a gemini-* slug); got {model!r}")
@@ -797,7 +797,10 @@ class RealLLMClient:
             body["systemInstruction"] = {"parts": [{"text": system}]}
         url = f"{self._config.gemini_base_url}/models/{model}:generateContent"
 
-        tier = self._config.gemini_service_tier
+        # A grounded call is always Standard: a Flex attempt that times out may already have run
+        # (and been billed for) the search, and the Standard re-send would bill it a second time
+        # with only one row recorded.
+        tier = "standard" if grounded else self._config.gemini_service_tier
         data: dict[str, Any] | None = None
         if tier == "flex":
             reason: str | None = None

@@ -877,3 +877,23 @@ async def test_generate_grounded_only_speaks_gemini_direct(monkeypatch, fake_red
     client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
     with pytest.raises(ValueError, match="gemini"):
         await client.generate_grounded([{"role": "user", "content": "x"}], model="claude-sonnet-5-5")
+
+
+@respx.mock
+async def test_generate_grounded_is_always_standard_even_when_flex_is_configured(
+    monkeypatch, fake_redis, sqlite_session
+):
+    """A Flex attempt that times out may have billed the search already; the Standard re-send
+    would bill it again with one cost row. So a grounded call never tries Flex."""
+    import json
+
+    client = _gemini_client(monkeypatch, fake_redis, sqlite_session, gemini_service_tier="flex")
+    route = respx.post(GEMINI_URL).mock(return_value=httpx.Response(200, json=_grounded_reply()))
+
+    await client.generate_grounded([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
+
+    assert route.call_count == 1
+    assert "serviceTier" not in json.loads(route.calls[0].request.content)
+    (row,) = sqlite_session.query(LLMGeneration).all()
+    assert row.resolved_provider == "google-ai-studio:standard"
+    assert float(row.usd_cost) == pytest.approx(_grounded_usd())
