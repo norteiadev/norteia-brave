@@ -65,6 +65,14 @@ app.conf.update(
     task_default_queue="celery",  # Explicit default — matches worker start cmd and beat dispatch
 )
 
+# The GLOBAL default app, not just the thread-local "current" one (Celery sets only that):
+# every `@shared_task` (brave/tasks/pipeline.py) resolves `.delay()` through the default app,
+# and a thread that never imported this module — a FastAPI sync handler, `python -m brave.cli`
+# — would otherwise publish through Celery's stock amqp://localhost app ("Connection refused").
+# brave/tasks/pipeline.py imports this module, so importing the tasks is enough for any caller.
+# Connection-free (kombu connects lazily).
+app.set_default()
+
 # Auto-discover tasks in brave.tasks.pipeline.
 # related_name MUST be "pipeline": the @shared_task definitions live in
 # brave/tasks/pipeline.py, not the Celery default brave/tasks/tasks.py. Without

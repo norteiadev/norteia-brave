@@ -38,6 +38,7 @@ from brave.shared.exceptions import (  # noqa: F401 (PermanentError/TransientErr
     ProviderBalanceError,
     TransientError,
 )
+from brave.tasks import celery_app as _celery_app  # noqa: F401 — binds the Redis app (see there)
 from brave.tasks.failure_policy import task_failure_policy
 
 logger = structlog.get_logger(__name__)
