@@ -568,6 +568,8 @@ class EditorialClaim(Base):
         nullable=True,
     )
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The status the claim had when it was superseded (matched, outdated, held_copied, …).
+    superseded_from_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     entity_kind: Mapped[str] = mapped_column(String(16), nullable=False)  # destino | atrativo
     entity_name: Mapped[str] = mapped_column(String(256), nullable=False)

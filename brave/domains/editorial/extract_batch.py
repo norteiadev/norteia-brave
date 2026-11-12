@@ -405,12 +405,16 @@ def _initial_status(draft: ClaimDraft, body: str) -> str:
 
 
 def _supersede_claims(session: Session, doc: EditorialDocument, entities: list[Any]) -> None:
-    """The post's previous claims turn ``superseded`` (stamped, kept: nothing collected is
-    deleted) and the new ones are linked to the version they were read from."""
+    """The post's previous claims turn ``superseded`` (stamped, the status they had kept in ``superseded_from_status``;
+    nothing collected is deleted) and the new ones are linked to the version they were read from."""
     session.execute(
         update(EditorialClaim)
         .where(EditorialClaim.document_url == doc.url, EditorialClaim.status != "superseded")
-        .values(status="superseded", superseded_at=datetime.now(UTC))
+        .values(
+            superseded_from_status=EditorialClaim.status,  # the right side reads the OLD row
+            status="superseded",
+            superseded_at=datetime.now(UTC),
+        )
     )
     for entity in entities:
         for draft in claim_drafts(entity):

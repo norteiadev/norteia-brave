@@ -421,6 +421,23 @@ def test_re_extraction_supersedes_the_old_claims_and_deletes_nothing(session, re
     old, new = by_value["Velho fato."], by_value["Fato novo."]
     assert (old.status, new.status) == ("superseded", "unmatched")
     assert old.superseded_at is not None and new.superseded_at is None
+    assert old.superseded_from_status == "unmatched" and new.superseded_from_status is None
+
+
+def test_a_superseded_claim_remembers_the_status_it_had(session, redis) -> None:
+    (d,), client, bid = _submitted(session, redis, "a-es")
+    _finish(client, bid, _ok(d.url, [_entity(curiosities="Velho fato.")]))
+    _collect(session, client, redis)
+    (claim,) = session.scalars(select(EditorialClaim)).all()
+    claim.status = "matched"  # the resolver matched it before the post changed
+    d.extracted_at = None
+    session.flush()
+    client2 = FakeClient()
+    bid2 = _submit(session, client2, redis)
+    _finish(client2, bid2, _ok(d.url, [_entity(curiosities="Fato novo.")]))
+    _collect(session, client2, redis)
+    session.refresh(claim)
+    assert (claim.status, claim.superseded_from_status) == ("superseded", "matched")
 
 
 def test_a_value_copied_from_the_post_is_held_not_sent(session, redis) -> None:
