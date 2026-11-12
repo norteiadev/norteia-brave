@@ -129,7 +129,9 @@ def funnel(
         "attractions_matched": matched_attractions or 0,
         "editorial": {"attractions": written_records or 0, "fields": written_fields or 0},
         "destinations": {
-            "pending": dest_count(dest.pushed_at.is_(None), dest.push_error.is_(None)),
+            "pending": dest_count(
+                dest.pushed_at.is_(None), dest.push_error.is_(None), dest.has_fields()
+            ),
             "pushed": dest_count(dest.pushed_at.isnot(None)),
             "error": dest_count(dest.push_error.isnot(None)),
         },

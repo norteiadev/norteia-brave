@@ -36,8 +36,10 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    cast,
     event,
     func,
+    literal_column,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -618,6 +620,12 @@ class EditorialDestination(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+    @classmethod
+    def has_fields(cls) -> Any:
+        """SQL: the row still carries at least one column (the resolver empties ``fields`` of a
+        row whose claims are no longer matched: it stays, but is never pending nor sent)."""
+        return cast(cls.fields, JSONB) != literal_column("'{}'::jsonb")
 
 
 # ---------------------------------------------------------------------------

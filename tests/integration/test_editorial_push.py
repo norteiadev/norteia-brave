@@ -189,3 +189,20 @@ def test_a_row_with_no_filled_column_sends_nothing(session) -> None:
     api = FakeApi()
     out = push(session, api)
     assert api.calls == [] and out.pushed == 0
+
+
+def test_a_row_with_no_column_left_is_never_selected_nor_sent(session) -> None:
+    dest(session, fields={})
+    api = FakeApi()
+    out = push_editorial_destinations(session, api, enabled=True)
+    assert api.calls == [] and (out.pushed, out.unchanged, out.rejected) == (0, 0, 0)
+    from sqlalchemy import func, select
+
+    assert (
+        session.scalar(
+            select(func.count())
+            .select_from(EditorialDestination)
+            .where(EditorialDestination.has_fields(), EditorialDestination.pushed_at.is_(None))
+        )
+        == 0
+    )

@@ -249,7 +249,11 @@ def push_editorial_destinations(
         return DestinationPushes(held=True)
     rows = session.scalars(
         select(EditorialDestination)
-        .where(EditorialDestination.pushed_at.is_(None), EditorialDestination.push_error.is_(None))
+        .where(
+            EditorialDestination.pushed_at.is_(None),
+            EditorialDestination.push_error.is_(None),
+            EditorialDestination.has_fields(),  # an emptied row has nothing to say
+        )
         .order_by(EditorialDestination.updated_at)
         .limit(limit)
     ).all()

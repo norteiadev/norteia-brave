@@ -201,6 +201,37 @@ def test_a_pending_destination_fact_is_not_queued_for_the_outbox(session) -> Non
     assert dest.fields == {"best_time_to_visit": "De maio a setembro."}
 
 
+def test_a_destination_row_keeps_only_the_columns_whose_claims_are_still_matched(session) -> None:
+    municipio(session)
+    d = doc(session, "pancas", published=date(2025, 12, 1))
+    dest_claims(session, d, tips="Chegue cedo.", best_time_to_visit="De maio a setembro.")
+    resolve_uf(session, UF, today=date(2026, 6, 1))  # the post is recent: both travel
+    row = session.get(EditorialDestination, "ibge:ZZ:9990001")
+    assert row.fields == {"tips": "Chegue cedo.", "best_time_to_visit": "De maio a setembro."}
+    row.pushed_at, row.push_hash = datetime.now(UTC), "abc"
+    session.flush()
+
+    resolve_uf(session, UF, today=date(2027, 6, 1))  # a year on: the perishable tip waits
+    fresh(session, row)
+    assert row.fields == {"best_time_to_visit": "De maio a setembro."}  # no stale tip
+    assert row.pushed_at is None  # pending again with the smaller payload
+
+
+def test_a_destination_row_that_lost_every_claim_is_emptied_not_deleted(session) -> None:
+    municipio(session)
+    d = doc(session, "pancas", published=date(2025, 12, 1))
+    dest_claims(session, d, tips="Chegue cedo.")
+    resolve_uf(session, UF, today=date(2026, 6, 1))
+    row = session.get(EditorialDestination, "ibge:ZZ:9990001")
+    row.pushed_at, row.push_hash = datetime.now(UTC), "abc"
+    session.flush()
+
+    resolve_uf(session, UF, today=date(2027, 6, 1))
+    fresh(session, row)
+    assert session.get(EditorialDestination, "ibge:ZZ:9990001") is row  # the row stays
+    assert row.fields == {}
+
+
 def test_the_resolver_is_idempotent_and_leaves_the_mar_alone(session) -> None:
     r = rio(session, "ta:1", "Pedra do Frade")
     claim(session, doc(session, "p1"), "curiosities", "Tombada em 1940.")

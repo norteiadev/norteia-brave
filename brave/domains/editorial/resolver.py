@@ -264,6 +264,21 @@ def resolve_uf(session: Session, uf: str, *, today: date | None = None) -> Resol
             continue
         result.destinations_changed += 1
 
+    # A row no longer backed by a matched claim (its columns went to pending_validation /
+    # outdated / …, or the municipality lost them all) must not keep — nor re-send — the old
+    # values. It is emptied, never deleted (retention): the claims hold the history, and an
+    # empty row is neither pending nor sent.
+    current = {top(parents.get(ibge)) or f"ibge:{uf}:{ibge}" for ibge in by_ibge}
+    for stale in session.scalars(
+        select(EditorialDestination).where(
+            EditorialDestination.uf == uf, EditorialDestination.has_fields()
+        )
+    ):
+        if stale.source_ref not in current:
+            stale.fields, stale.push_error = {}, None
+            stale.updated_at = datetime.now(UTC)
+            result.destinations_changed += 1
+
     session.commit()
     logger.info(
         "editorial_resolved", uf=uf, claims=result.claims, written=result.attractions_written,
