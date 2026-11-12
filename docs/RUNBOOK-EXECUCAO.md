@@ -310,6 +310,16 @@ ssh norteia-dev 'docker exec dev-norteia-api php artisan tinker --execute="echo 
 ssh norteia-dev 'gunzip -c /opt/norteia-dev/backups/pre-brave-prod-20261019-1452.sql.gz | docker exec -i dev-norteia-mysql sh -c "mysql -uroot -p\$MYSQL_ROOT_PASSWORD \$MYSQL_DATABASE"'
 ```
 
+## 11b. Lane editorial: deploy das migrations 0024 a 0027
+
+Depois do `alembic upgrade head` (para a 0026 em diante) e do restart de worker/beat, **rode `editorial-resolve` em cada UF que já tem claims antes de qualquer Publicação**:
+
+```bash
+docker compose exec worker python -m brave.cli editorial-resolve --all     # ou: editorial-resolve ES
+```
+
+O motivo: o `normalized["editorial"]` do Rio e as linhas de `editorial_destinations` ainda guardam colunas perecíveis de posts com mais de 1 ano (carga anterior à regra). Só o resolvedor as reclassifica (`pending_validation`) e as tira do Rio e do outbox; o beat de 15 min reenvia o que estiver no Mar sem passar por ele. O resolve é idempotente e sem custo. Depois, o custo da validação na web está na linha `validation` de `editorial-status`; só então ligue `editorial_validate_enabled` e use `editorial-validate <UF>`. Claims que falharam 3 vezes ficam em `validation_failed`; `editorial-retry <UF>` as reabre.
+
 ## 12. Encerrar
 
 ```bash

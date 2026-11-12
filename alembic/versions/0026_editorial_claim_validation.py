@@ -10,6 +10,10 @@ editorial_claims  + ``validation_verdict`` (confirmado | desatualizado | sem_evi
 
 Nothing is deleted: a claim the validation rejects changes status and keeps its row.
 
+DEPLOY: the rule that parks perishable facts of old posts lives in the resolver, not here.
+Run ``python -m brave.cli editorial-resolve --all`` after this upgrade and before any
+Publicação, or the Rio / destination outbox keep sending the old values (docs/RUNBOOK-EXECUCAO.md).
+
 Revision ID: 0026
 Revises: 0025
 Create Date: 2026-11-12

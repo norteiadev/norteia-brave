@@ -26,6 +26,9 @@ Commands:
     editorial-retry   Make the errored posts (and the claims whose web check kept failing)
                       eligible again (then --submit-only):
                       editorial-retry <UF>|--all
+    editorial-resolve Re-resolve the claims of a UF (free, idempotent): editorial-resolve
+                      <UF>|--all. Run it after deploying the migration that adds a rule
+                      (0026: perishable facts of old posts), BEFORE any Publicação.
     editorial-validate  Web check (Gemini + Google Search, paid) of the perishable facts of
                       posts over a year old: editorial-validate <UF>|--all. Cost gate: the
                       "validation" line of editorial-status, then turn on
@@ -38,6 +41,7 @@ Usage:
     python -m brave.cli editorial-load ES [--crawl-only | --submit-only]
     python -m brave.cli editorial-status [ES]
     python -m brave.cli editorial-retry ES
+    python -m brave.cli editorial-resolve ES
     python -m brave.cli editorial-validate ES
 """
 
@@ -267,6 +271,23 @@ def _editorial_validate_enabled() -> bool | None:
         return None
 
 
+def _run_editorial_resolve(ufs: list[str]) -> int:
+    """Dispatch ``brave.editorial_resolve`` for each UF: free and idempotent. It re-matches every
+    claim and applies the current rules (e.g. perishable facts of posts over a year old become
+    ``pending_validation`` and leave ``normalized["editorial"]`` and the destination outbox) —
+    run it after a deploy that adds a rule, before any Publicação."""
+    from brave.tasks.pipeline import editorial_resolve
+
+    for uf in ufs:
+        try:
+            editorial_resolve.delay(uf)
+        except Exception as exc:
+            print(f"editorial-resolve: could not dispatch (is the Celery broker up?): {exc}")
+            return 2
+        print(f"editorial-resolve: dispatched the resolve of {uf}")
+    return 0
+
+
 def _run_editorial_validate(ufs: list[str]) -> int:
     """Re-resolve each UF: the resolver parks the perishable facts of old posts as
     ``pending_validation`` and, with the paid web check on, hands them to
@@ -426,6 +447,7 @@ def main() -> None:
         print("  editorial-load <UF>|--all [--crawl-only|--submit-only]   Crawl the blog, then extract")
         print("  editorial-status [UF]   The editorial lane funnel")
         print("  editorial-retry <UF>|--all   Make the errored editorial posts eligible again")
+        print("  editorial-resolve <UF>|--all   Re-resolve the editorial claims (free, idempotent)")
         print("  editorial-validate <UF>|--all   Web check (paid) of the perishable editorial facts")
         sys.exit(1)
 
@@ -442,6 +464,9 @@ def main() -> None:
         rest = args[1:]
         ufs = _editorial_ufs(command, rest)
         sys.exit(_run_editorial_retry([None] if "--all" in rest else list(ufs)))
+    elif command == "editorial-resolve":
+        rest = args[1:]
+        sys.exit(_run_editorial_resolve(list(_editorial_ufs(command, rest))))
     elif command == "editorial-validate":
         rest = args[1:]
         ufs = _editorial_ufs(command, rest)

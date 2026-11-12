@@ -187,3 +187,20 @@ def test_editorial_validate_is_refused_while_the_paid_check_is_off(monkeypatch, 
 def test_editorial_validate_rejects_a_bad_uf(monkeypatch) -> None:
     resolve, code = _validate_cli(monkeypatch, "editorial-validate", "XX")
     assert code == 1 and resolve.call_count == 0
+
+
+def test_editorial_resolve_dispatches_the_free_resolve_of_each_uf_without_any_switch(
+    monkeypatch,
+) -> None:
+    """The post-deploy step: it must work with the paid validation (and the lane) off."""
+    from brave import cli
+    from brave.tasks import pipeline
+
+    resolve = MagicMock()
+    monkeypatch.setattr(pipeline.editorial_resolve, "delay", resolve)
+    monkeypatch.setattr(cli, "_editorial_validate_enabled", lambda: False)
+    monkeypatch.setattr(cli, "_editorial_enabled", lambda: False)
+    monkeypatch.setattr(sys, "argv", ["brave", "editorial-resolve", "--all"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 0 and resolve.call_count == 27
