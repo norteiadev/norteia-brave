@@ -38,6 +38,7 @@ def test_the_web_validation_is_off_by_default_on_gemini_flash_with_a_priced_mode
     assert cfg.editorial_validate_model_slug == "gemini-2.5-flash"
     assert gemini_is_priced(cfg.editorial_validate_model_slug)  # the cost guard can price it
     assert cfg.editorial_validate_batch_size > 0
+    assert cfg.editorial_validate_max_attempts == 3  # then validation_failed: never re-paid
     # per entity: ~6k tokens in + 0.5k out (~$0.003) plus the $0.035 grounding fee, rounded up
     assert 0.038 <= cfg.editorial_validate_est_usd_per_entity <= 0.06
 

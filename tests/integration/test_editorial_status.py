@@ -295,3 +295,25 @@ def test_funnel_shows_the_attraction_push_of_the_editorial_write(session) -> Non
         "error": 1,
         "not_in_mar": 1,
     }
+
+
+def test_cli_retry_also_reopens_the_claims_whose_web_check_kept_failing(
+    session, monkeypatch, capsys
+) -> None:
+    import sys
+
+    from brave import cli
+    from brave.tasks import pipeline
+
+    d = _doc(session, "vf", uf="AC", extracted_at=NOW)
+    _claim(session, d, "tips", "validation_failed", key="k1")
+    session.flush()
+    monkeypatch.setattr(pipeline, "_get_session", lambda: (session, None))
+    session.close = lambda: None
+    monkeypatch.setattr(sys, "argv", ["brave", "editorial-retry", "ac"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 0
+    status = session.query(EditorialClaim.status).filter_by(document_url=d.url).scalar()
+    assert status == "pending_validation"
+    assert "web check" in capsys.readouterr().out

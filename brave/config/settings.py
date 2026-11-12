@@ -542,6 +542,9 @@ class AppConfig(BaseSettings):
     editorial_validate_model_slug: str = "gemini-2.5-flash"
     editorial_validate_batch_size: int = 40
     editorial_validate_est_usd_per_entity: float = 0.04
+    # Failed attempts (call error, unreadable answer, a skipped fact) a claim tolerates before it
+    # becomes ``validation_failed``: kept, never sent, not paid for again until reopened.
+    editorial_validate_max_attempts: int = 3
 
     # atrativo_description_batch_enabled moves description writing off the synchronous
     # path: when True the INLINE copywriter is switched off and descriptions are instead

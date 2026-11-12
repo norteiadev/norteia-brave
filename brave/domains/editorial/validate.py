@@ -31,7 +31,7 @@ from typing import Annotated, Any, Literal
 
 import structlog
 from pydantic import BaseModel, BeforeValidator, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from brave.core.models import EditorialClaim, EditorialDocument, Municipio, RioRecord
@@ -41,9 +41,11 @@ logger = structlog.get_logger(__name__)
 
 LANE = "editorial_validate"
 PENDING = "pending_validation"
+FAILED = "validation_failed"
 MAX_SOURCES = 3
 MAX_NOTE = 300
 
+_NEVER = datetime(1970, 1, 1, tzinfo=UTC)  # "never tried" sorts before every real attempt
 _STATUS = {"confirmado": "matched", "desatualizado": "outdated", "sem_evidencia": "unverified"}
 
 VALIDATE_SYSTEM = """\
@@ -143,8 +145,9 @@ class ValidateResult:
     confirmed: int = 0
     outdated: int = 0
     unverified: int = 0
-    failed: int = 0  # entities whose call or answer failed: claims stay pending
-    unanswered: int = 0  # facts the model skipped: they stay pending
+    failed: int = 0  # entities whose call or answer failed: one attempt spent on each claim
+    unanswered: int = 0  # facts the model skipped: one attempt spent, they stay pending
+    exhausted: int = 0  # claims that reached the attempt limit (validation_failed)
     ufs: set[str] = field(default_factory=set)  # UFs whose claims changed (to resolve)
 
 
@@ -156,16 +159,53 @@ def _pending(uf: str | None) -> tuple[Any, ...]:
 
 
 def pending_entities(session: Session, uf: str | None = None) -> list[tuple[str, str]]:
-    """``(entity_kind, canonical_key)`` of every entity with a claim waiting for the check,
-    in a stable order: the unit of one paid call."""
+    """``(entity_kind, canonical_key)`` of every entity with a claim waiting for the check: the
+    unit of one paid call. The least tried first, then the one whose last attempt is oldest (a
+    never-tried entity before all), then a stable order — an entity that keeps failing cannot
+    hold the whole batch."""
+    attempts = func.max(EditorialClaim.validation_attempts)
+    last = func.min(func.coalesce(EditorialClaim.last_attempt_at, _NEVER))
     rows = session.execute(
         select(EditorialClaim.entity_kind, EditorialClaim.canonical_key)
         .join(EditorialDocument, EditorialDocument.url == EditorialClaim.document_url)
         .where(*_pending(uf))
-        .distinct()
-        .order_by(EditorialClaim.entity_kind, EditorialClaim.canonical_key)
+        .group_by(EditorialClaim.entity_kind, EditorialClaim.canonical_key)
+        .order_by(attempts, last, EditorialClaim.entity_kind, EditorialClaim.canonical_key)
     ).all()
     return [(k, c) for k, c in rows]
+
+
+def reopen_failed(session: Session, uf: str | None = None) -> int:
+    """Put the ``validation_failed`` claims of ``uf`` (every UF when None) back in line for the
+    check: status ``pending_validation``, attempts back to 0 (the last error stays). Returns how
+    many. The explicit way out of the attempt limit (``brave editorial-retry``)."""
+    where: list[Any] = [EditorialClaim.status == FAILED]
+    if uf:
+        where.append(EditorialDocument.uf == uf.upper())
+    claims = session.scalars(
+        select(EditorialClaim)
+        .join(EditorialDocument, EditorialDocument.url == EditorialClaim.document_url)
+        .where(*where)
+    ).all()
+    for c in claims:
+        c.status, c.validation_attempts = PENDING, 0
+    session.commit()
+    logger.info("editorial_validate_reopened", uf=uf, claims=len(claims))
+    return len(claims)
+
+
+def _spend_attempt(
+    claims: list[EditorialClaim], error: str, *, max_attempts: int, now: datetime
+) -> int:
+    """One failed attempt on each of ``claims``; returns how many hit the limit."""
+    exhausted = 0
+    for c in claims:
+        c.validation_attempts += 1
+        c.last_validation_error, c.last_attempt_at = error[:500], now
+        if c.validation_attempts >= max_attempts:
+            c.status = FAILED
+            exhausted += 1
+    return exhausted
 
 
 def _place(session: Session, kind: str, key: str, claim: EditorialClaim) -> tuple[str, str | None]:
@@ -187,11 +227,14 @@ async def validate_pending(
     model: str,
     uf: str | None = None,
     limit: int,
+    max_attempts: int,
     today: date | None = None,
 ) -> ValidateResult:
     """Check up to ``limit`` entities. Each is committed as soon as it is answered (a paid call
     is never lost to a later failure). One failing entity is counted and skipped; the budget
-    wall (``CostGuardError``) and a provider balance wall stop the run and propagate."""
+    wall (``CostGuardError``) and a provider balance wall stop the run and propagate (not an
+    attempt). Every other failure spends one attempt on the entity's claims; at ``max_attempts``
+    a claim becomes ``validation_failed`` and is never paid for again by itself."""
     today = today or date.today()
     result = ValidateResult()
     for kind, key in pending_entities(session, uf)[:limit]:
@@ -226,7 +269,12 @@ async def validate_pending(
             session.commit()  # the generation rows of the calls already paid for
             raise
         except Exception as exc:  # noqa: BLE001 — one entity must not stop the others
-            session.commit()  # a billed call that came back unusable still has its cost row
+            # a billed call that came back unusable still has its cost row: commit, not rollback
+            result.exhausted += _spend_attempt(
+                claims, f"{type(exc).__name__}: {exc}", max_attempts=max_attempts,
+                now=datetime.now(UTC),
+            )  # fmt: skip
+            session.commit()
             result.failed += 1
             logger.warning("editorial_validate_failed", kind=kind, key=key, error=str(exc)[:300])
             continue
@@ -238,6 +286,9 @@ async def validate_pending(
             fact = by_id.get(str(c.id))
             if fact is None:
                 result.unanswered += 1
+                result.exhausted += _spend_attempt(
+                    [c], "the model skipped this fact", max_attempts=max_attempts, now=now
+                )
                 continue
             verdict, note = fact.verdict, fact.note
             if verdict == "confirmado" and not answer.sources:

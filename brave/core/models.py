@@ -545,7 +545,8 @@ class EditorialClaim(Base):
     never pushed) | superseded (a later extraction of the post replaced it) | held_copied (the
     value repeats the post: never pushed) | pending_validation (a perishable fact of a post
     over a year old, waiting for the web check) | outdated / unverified (the check said it is
-    out of date / found no evidence: never pushed). ``unmatched`` is also the state of a fresh
+    out of date / found no evidence: never pushed) | validation_failed (the check kept failing:
+    never pushed, not retried by itself). ``unmatched`` is also the state of a fresh
     claim before the resolver ran. Nothing here is ever deleted.
     """
 
@@ -586,6 +587,14 @@ class EditorialClaim(Base):
     validation_sources: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     validation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Failed web-check attempts (call error, unreadable answer, a fact the model skipped): after
+    # ``editorial_validate_max_attempts`` the claim becomes ``validation_failed`` — kept, never
+    # sent, not paid for again until an operator reopens it (``brave editorial-retry``).
+    validation_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_validation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

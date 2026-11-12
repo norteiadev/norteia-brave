@@ -23,7 +23,8 @@ Commands:
                       then --submit-only.
     editorial-status  The editorial funnel (posts → claims → matches → attraction push →
                       destinations → cost): editorial-status [UF]
-    editorial-retry   Make the errored posts eligible again (then --submit-only):
+    editorial-retry   Make the errored posts (and the claims whose web check kept failing)
+                      eligible again (then --submit-only):
                       editorial-retry <UF>|--all
     editorial-validate  Web check (Gemini + Google Search, paid) of the perishable facts of
                       posts over a year old: editorial-validate <UF>|--all. Cost gate: the
@@ -334,17 +335,25 @@ def _run_editorial_submit(ufs: list[str | None]) -> int:
 
 
 def _run_editorial_retry(ufs: list[str | None]) -> int:
-    """Re-arm the errored posts of each UF (``[None]`` = every UF)."""
+    """Re-arm the errored posts of each UF (``[None]`` = every UF), and the claims whose web check
+    hit the attempt limit (``validation_failed`` → ``pending_validation``, attempts back to 0)."""
     from brave.domains.editorial.extract_batch import retry_errored
+    from brave.domains.editorial.validate import reopen_failed
     from brave.tasks.pipeline import _get_session
 
     session, _ = _get_session()
     try:
         n = sum(retry_errored(session, uf) for uf in ufs)
+        reopened = sum(reopen_failed(session, uf) for uf in ufs)
     finally:
         session.close()
     target = " ".join(u for u in ufs if u) or "every UF"
     print(f"editorial-retry: {n} errored post(s) of {target} are eligible again")
+    if reopened:
+        print(
+            f"editorial-retry: {reopened} claim(s) of {target} back in line for the web check"
+            " (paid again if editorial_validate_enabled is on)"
+        )
     if n:
         again = "--all" if ufs == [None] else target
         print(f"editorial-retry: send them with: brave editorial-load {again} --submit-only")

@@ -27,6 +27,7 @@ from brave.domains.editorial.validate import (
     build_prompt,
     parse_answer,
     pending_entities,
+    reopen_failed,
     validate_pending,
 )
 from brave.shared.exceptions import CostGuardError
@@ -140,7 +141,14 @@ def run(session, llm, **kw):
 
     return asyncio.run(
         validate_pending(
-            session, llm, model=MODEL, uf=UF, limit=kw.pop("limit", 50), today=TODAY, **kw
+            session,
+            llm,
+            model=MODEL,
+            uf=UF,
+            limit=kw.pop("limit", 50),
+            max_attempts=kw.pop("max_attempts", 3),
+            today=TODAY,
+            **kw,
         )
     )
 
@@ -360,3 +368,93 @@ def test_pending_entities_counts_distinct_entities_not_claims(session) -> None:
     claim(session, other, "tips", "D.", key="ta:1")  # same entity, another post: still one
     assert len(pending_entities(session, UF)) == 2
     assert len(pending_entities(session, "XX")) == 0
+
+
+# -- an entity that keeps failing is not paid for forever ---------------------------------------
+
+
+def test_a_failed_attempt_is_written_on_the_claim(session) -> None:
+    rio(session, "ta:1", "Pedra do Frade")
+    c = claim(session, doc(session), "tips", "Leve água.")
+    run(session, ScriptedLLM(text="desculpe, não consegui"))
+    fresh(session, c)
+    assert c.status == "pending_validation" and c.validation_attempts == 1
+    assert "JSON" in c.last_validation_error and c.last_attempt_at is not None
+
+
+def test_after_the_limit_the_claim_is_kept_but_never_paid_for_again(session) -> None:
+    rio(session, "ta:1", "Pedra do Frade")
+    c = claim(session, doc(session), "tips", "Leve água.")
+    broken = ScriptedLLM(text="RECITATION")
+    for _ in range(2):
+        run(session, broken, max_attempts=3)
+    assert fresh(session, c).status == "pending_validation" and c.validation_attempts == 2
+    result = run(session, broken, max_attempts=3)
+    assert (fresh(session, c).status, c.validation_attempts) == ("validation_failed", 3)
+    assert result.exhausted == 1 and session.get(EditorialClaim, c.id) is not None
+
+    calls = len(broken.calls)
+    run(session, broken, max_attempts=3)
+    assert len(broken.calls) == calls  # nothing pending: no new paid call
+
+
+def test_a_call_that_raises_counts_as_an_attempt_too(session) -> None:
+    rio(session, "ta:1", "Pedra do Frade")
+    c = claim(session, doc(session), "tips", "Leve água.")
+    run(session, ScriptedLLM(error=RuntimeError("finishReason=SAFETY")))
+    assert fresh(session, c).validation_attempts == 1 and "SAFETY" in c.last_validation_error
+
+
+def test_a_skipped_fact_counts_as_an_attempt(session) -> None:
+    rio(session, "ta:1", "Pedra do Frade")
+    d = doc(session)
+    a = claim(session, d, "tips", "A.")
+    b = claim(session, d, "accessibility", "B.")
+    only_a = json.dumps(
+        {"facts": [{"id": str(a.id), "verdict": "confirmado", "sources": [], "note": ""}]}
+    )
+    run(session, ScriptedLLM(text=only_a))
+    assert fresh(session, b).validation_attempts == 1 and fresh(session, a).validation_attempts == 0
+
+
+def test_the_budget_wall_is_not_an_attempt(session) -> None:
+    rio(session, "ta:1", "Pedra do Frade")
+    c = claim(session, doc(session), "tips", "Leve água.")
+    with pytest.raises(CostGuardError):
+        run(session, ScriptedLLM(fail_on=1))
+    assert fresh(session, c).validation_attempts == 0
+
+
+def test_the_batch_takes_the_least_tried_entities_first(session) -> None:
+    d = doc(session)
+    rio(session, "ta:1", "Lugar 1")
+    rio(session, "ta:2", "Lugar 2")
+    tried = claim(session, d, "tips", "A.", key="ta:1", name="Lugar 1")
+    tried.validation_attempts, tried.last_attempt_at = 2, datetime(2026, 11, 1, tzinfo=UTC)
+    claim(session, d, "tips", "B.", key="ta:2", name="Lugar 2")  # sorts later, never tried
+    assert pending_entities(session, UF) == [("atrativo", "ta:2"), ("atrativo", "ta:1")]
+    llm = ScriptedLLM()
+    run(session, llm, limit=1)
+    assert "Lugar 2" in llm.calls[0]["messages"][0]["content"]
+
+
+def test_among_equally_tried_entities_the_oldest_attempt_goes_first(session) -> None:
+    d = doc(session)
+    newer = claim(session, d, "tips", "A.", key="ta:1")
+    newer.validation_attempts, newer.last_attempt_at = 1, datetime(2026, 11, 10, tzinfo=UTC)
+    older = claim(session, d, "tips", "B.", key="ta:2")
+    older.validation_attempts, older.last_attempt_at = 1, datetime(2026, 11, 2, tzinfo=UTC)
+    session.flush()
+    assert pending_entities(session, UF) == [("atrativo", "ta:2"), ("atrativo", "ta:1")]
+
+
+def test_reopen_failed_puts_the_exhausted_claims_back_in_line(session) -> None:
+    d = doc(session)
+    dead = claim(session, d, "tips", "A.", status="validation_failed")
+    dead.validation_attempts, dead.last_validation_error = 3, "RECITATION"
+    other = claim(session, doc(session, "p2"), "tips", "B.", status="outdated")
+    assert reopen_failed(session, UF) == 1
+    assert fresh(session, dead).status == "pending_validation" and dead.validation_attempts == 0
+    assert dead.last_validation_error == "RECITATION"  # the history stays
+    assert fresh(session, other).status == "outdated"
+    assert reopen_failed(session, "XX") == 0

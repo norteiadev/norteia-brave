@@ -3160,6 +3160,7 @@ def editorial_validate(uf: str | None = None) -> dict[str, Any]:
                     validate_pending(
                         session, clients.llm(LANE, session=session), model=model, uf=uf,
                         limit=effective.editorial_validate_batch_size,
+                        max_attempts=effective.editorial_validate_max_attempts,
                     ),  # fmt: skip
                 )
             )
@@ -3180,6 +3181,7 @@ def editorial_validate(uf: str | None = None) -> dict[str, Any]:
     return {
         "uf": uf, "entities": r.entities, "confirmed": r.confirmed, "outdated": r.outdated,
         "unverified": r.unverified, "failed": r.failed, "unanswered": r.unanswered,
+        "exhausted": r.exhausted,
     }  # fmt: skip
 
 
