@@ -8,9 +8,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brave.core.models import EditorialDocument
+from brave.core.models import EditorialDocument, EditorialDocumentVersion
 from brave.domains.editorial.crawler import category_url, crawl_uf, kml_url
 
 pytestmark = pytest.mark.integration
@@ -294,3 +295,64 @@ def test_a_changed_post_whose_map_fails_keeps_the_stored_points(session) -> None
     asyncio.run(crawl_uf(session, FakeFetcher(pages), "ES"))
     doc = session.get(EditorialDocument, POST)
     assert "Anchieta!" in doc.body_text and len(doc.kml_points) == 22 and doc.kml_error
+
+
+# -- append-only raw per version (retention rule: what entered Brave stays) ----------------
+
+
+def _versions(session) -> list[EditorialDocumentVersion]:
+    return list(
+        session.scalars(
+            select(EditorialDocumentVersion)
+            .where(EditorialDocumentVersion.document_url == POST)
+            .order_by(EditorialDocumentVersion.fetched_at, EditorialDocumentVersion.id)
+        )
+    )
+
+
+def test_the_first_crawl_keeps_the_raw_html_the_raw_kml_and_the_dates(session) -> None:
+    html = (FIX / "anchieta-es.html").read_text(encoding="utf-8")
+    asyncio.run(crawl_uf(session, FakeFetcher(_pages()), "ES"))
+    doc = session.get(EditorialDocument, POST)
+    (v,) = _versions(session)
+    assert doc.current_version_id == v.id
+    assert v.html == html
+    assert v.kml_raw == {MID: (FIX / "anchieta-es.kml").read_text(encoding="utf-8")}
+    assert v.body_text == doc.body_text and v.content_hash == doc.content_hash
+    assert (str(v.published_time), str(v.modified_time)) == ("2020-02-17", "2025-12-09")
+
+
+def test_a_changed_post_adds_a_version_and_never_touches_the_old_one(session) -> None:
+    asyncio.run(crawl_uf(session, FakeFetcher(_pages()), "ES"))
+    (old,) = _versions(session)
+    before = (old.html, old.kml_raw, old.body_text, old.content_hash, old.fetched_at)
+    changed = (
+        (FIX / "anchieta-es.html").read_text(encoding="utf-8").replace("Anchieta", "Anchieta!")
+    )
+    asyncio.run(crawl_uf(session, FakeFetcher(_pages(changed)), "ES"))
+    session.expire_all()
+    versions = _versions(session)
+    assert len(versions) == 2
+    assert (old.html, old.kml_raw, old.body_text, old.content_hash, old.fetched_at) == before
+    doc = session.get(EditorialDocument, POST)
+    new = next(v for v in versions if v.id != old.id)
+    assert doc.current_version_id == new.id
+    assert new.html == changed and "Anchieta!" in new.body_text
+
+
+def test_an_unchanged_post_adds_no_version(session) -> None:
+    asyncio.run(crawl_uf(session, FakeFetcher(_pages()), "ES"))
+    asyncio.run(crawl_uf(session, FakeFetcher(_pages()), "ES"))
+    assert len(_versions(session)) == 1
+
+
+def test_a_late_kml_fills_the_missing_raw_of_the_current_version(session) -> None:
+    pages = _pages()
+    pages[kml_url(MID)] = RuntimeError("google 503")
+    asyncio.run(crawl_uf(session, FakeFetcher(pages), "ES"))
+    (v,) = _versions(session)
+    assert v.kml_raw == {}
+    asyncio.run(crawl_uf(session, FakeFetcher(_pages()), "ES"))
+    session.expire_all()
+    versions = _versions(session)
+    assert len(versions) == 1 and MID in versions[0].kml_raw

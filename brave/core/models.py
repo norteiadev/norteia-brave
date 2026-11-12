@@ -499,6 +499,42 @@ class EditorialDocument(Base):
     batch_submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The version this row mirrors (body_text / content_hash / published_time above are the
+    # current version's, kept here because the extraction reads them): NULL only on a row
+    # that no crawl has written yet.
+    current_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "editorial_document_versions.id",
+            use_alter=True,
+            name="fk_editorial_documents_current_version",
+        ),
+        nullable=True,
+    )
+
+
+class EditorialDocumentVersion(Base):
+    """One download of a post whose text differs from the one before: APPEND-ONLY (a version
+    is never updated once the next one exists, never deleted). Holds the raw page and the raw
+    KML of every map so a re-parse never needs the network. ``modified_time`` is the page's
+    ``article:modified_time`` / JSON-LD ``dateModified``: informative only — nearly every post
+    carries the same mass-update date, so it is never used to age a fact."""
+
+    __tablename__ = "editorial_document_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_url: Mapped[str] = mapped_column(
+        String(512), ForeignKey("editorial_documents.url"), nullable=False, index=True
+    )
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    html: Mapped[str | None] = mapped_column(Text, nullable=True)  # NULL: backfilled version
+    kml_raw: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)  # mid → KML
+    body_text: Mapped[str] = mapped_column(Text, nullable=False)
+    published_time: Mapped[date | None] = mapped_column(Date, nullable=True)
+    modified_time: Mapped[date | None] = mapped_column(Date, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class EditorialClaim(Base):

@@ -1,12 +1,13 @@
 """Migration 0023 (editorial lane): up and down, in a rolled-back transaction.
 
 Postgres DDL is transactional, so the test never leaves the shared test DB changed: whatever
-state it started in (tables there or not), it ends in it.
+state it started in (tables there or not), it ends in it. The later editorial migrations are
+undone first and redone after 0023 (see ``editorial_migrations``), and the model comparison
+runs at head, where the models live.
 """
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import pytest
@@ -17,19 +18,12 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import inspect
 
 from brave.core.models import Base
+from tests.integration.editorial_migrations import chain, downgrade_to, upgrade_from
 
 pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[2]
 _TABLES = {"editorial_documents", "editorial_claims", "editorial_destinations"}
-
-
-def _migration():
-    path = next((_ROOT / "alembic" / "versions").glob("0023_*.py"))
-    spec = importlib.util.spec_from_file_location("m0023", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 def test_revision_chain() -> None:
@@ -41,16 +35,16 @@ def test_revision_chain() -> None:
 
 
 def test_up_down_is_clean_and_matches_models(db_engine) -> None:
-    mod = _migration()
+    steps = chain()
     with db_engine.connect() as conn:
         trans = conn.begin()
         try:
             with Operations.context(MigrationContext.configure(conn)):
                 if _TABLES & set(inspect(conn).get_table_names()):
-                    mod.downgrade()  # the test DB is already at head: start from 0022
+                    downgrade_to(steps, 23)  # the test DB is already at head: start from 0022
                 assert not _TABLES & set(inspect(conn).get_table_names())
 
-                mod.upgrade()
+                upgrade_from(steps, 23)
                 assert set(inspect(conn).get_table_names()) >= _TABLES
                 diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
                 ours = [
@@ -58,7 +52,7 @@ def test_up_down_is_clean_and_matches_models(db_engine) -> None:
                 ]
                 assert ours == [], ours
 
-                mod.downgrade()
+                downgrade_to(steps, 23)
                 assert not _TABLES & set(inspect(conn).get_table_names())
         finally:
             trans.rollback()

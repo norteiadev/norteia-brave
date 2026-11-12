@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -25,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from brave.core.models import EditorialDocument
+from brave.core.models import EditorialDocument, EditorialDocumentVersion
 
 logger = structlog.get_logger(__name__)
 
@@ -146,6 +147,15 @@ def extract_published_time(html: str) -> date | None:
     return date(int(m[1]), int(m[2]), int(m[3])) if m else None
 
 
+def extract_modified_time(html: str) -> date | None:
+    """``article:modified_time`` (meta) or JSON-LD ``dateModified``. Informative only: a mass
+    plugin update gave nearly every post the same value, so it says nothing about the text."""
+    m = re.search(r'article:modified_time" content="(\d{4})-(\d{2})-(\d{2})', html) or re.search(
+        r'"dateModified"\s*:\s*"(\d{4})-(\d{2})-(\d{2})', html
+    )
+    return date(int(m[1]), int(m[2]), int(m[3])) if m else None
+
+
 def extract_kml_mids(html: str) -> list[str]:
     """Google My Maps ids embedded in the post, in page order, deduplicated."""
     found = re.findall(r"google\.com/maps/d/[^\"'\s]*?[?&;]mid=([A-Za-z0-9_-]+)", html)
@@ -223,6 +233,9 @@ class _Fetched:
     published: date | None
     points: list[dict[str, Any]]
     kml_error: str | None = None
+    html: str = ""
+    modified: date | None = None
+    kml_raw: dict[str, str] = field(default_factory=dict)  # mid -> KML text, as downloaded
     kml_read: bool = True  # False: unchanged text, maps not downloaded this time
 
 
@@ -267,6 +280,7 @@ async def _fetch_post(
         return _Fetched(url, body, digest, None, [], kml_read=False)
     points: list[dict[str, Any]] = []
     errors: list[str] = []
+    raw: dict[str, str] = {}
     for mid in mids:
         try:
             kml = await fetcher.get_text(kml_url(mid))
@@ -274,11 +288,27 @@ async def _fetch_post(
             logger.warning("editorial_kml_failed", url=url, mid=mid, error=str(exc))
             errors.append(f"{mid}: {exc}")
             continue
+        if kml:
+            raw[mid] = kml
         for p in parse_kml(kml or ""):
             if p not in points:
                 points.append(p)
     kml_error = "; ".join(errors)[:1000] or None
-    return _Fetched(url, body, digest, extract_published_time(html), points, kml_error)
+    return _Fetched(
+        url, body, digest, extract_published_time(html), points, kml_error,
+        html=html, modified=extract_modified_time(html), kml_raw=raw,
+    )  # fmt: skip
+
+
+def _fill_missing_kml(session: Session, doc: EditorialDocument, raw: dict[str, str]) -> None:
+    """A map that failed on the first download and answers now: its raw KML joins the CURRENT
+    version (same text, so same version) — only mids it lacks, never overwriting one."""
+    version = session.get(EditorialDocumentVersion, doc.current_version_id)
+    if version is None:
+        return
+    missing = {mid: kml for mid, kml in raw.items() if mid not in (version.kml_raw or {})}
+    if missing:
+        version.kml_raw = {**(version.kml_raw or {}), **missing}
 
 
 async def crawl_uf(
@@ -329,27 +359,38 @@ async def crawl_uf(
             continue
         doc = known.get(url)
         now = datetime.now(UTC)
-        if doc is not None and doc.content_hash == fetched.hash:
-            doc.fetched_at = now
-            result.unchanged += 1
-            if fetched.kml_read:
-                points = _merged_points(doc, fetched)
-                if points != (doc.kml_points or []):
-                    result.kml_refreshed += 1
-                doc.kml_points, doc.kml_error = points, fetched.kml_error
-        elif doc is not None and doc.batch_id is not None:
-            result.in_flight += 1
-        else:
-            if doc is None:
-                doc = EditorialDocument(url=url, source=SOURCE, uf=uf)
-                session.add(doc)
-            doc.body_text, doc.content_hash = fetched.body, fetched.hash
-            doc.published_time, doc.kml_points = fetched.published, _merged_points(doc, fetched)
-            doc.kml_error, doc.fetched_at = fetched.kml_error, now
-            doc.batch_id = doc.batch_submitted_at = doc.extracted_at = doc.error = None
-            result.fetched += 1
-            result.urls.append(url)
         try:
+            if doc is not None and doc.content_hash == fetched.hash:
+                doc.fetched_at = now
+                result.unchanged += 1
+                if fetched.kml_read:
+                    _fill_missing_kml(session, doc, fetched.kml_raw)
+                    points = _merged_points(doc, fetched)
+                    if points != (doc.kml_points or []):
+                        result.kml_refreshed += 1
+                    doc.kml_points, doc.kml_error = points, fetched.kml_error
+            elif doc is not None and doc.batch_id is not None:
+                result.in_flight += 1
+            else:
+                points = _merged_points(doc, fetched)
+                if doc is None:
+                    doc = EditorialDocument(url=url, source=SOURCE, uf=uf)
+                    session.add(doc)
+                doc.body_text, doc.content_hash = fetched.body, fetched.hash
+                doc.published_time, doc.kml_points = fetched.published, points
+                doc.kml_error, doc.fetched_at = fetched.kml_error, now
+                doc.batch_id = doc.batch_submitted_at = doc.extracted_at = doc.error = None
+                session.flush()  # the version's FK needs the document row
+                version = EditorialDocumentVersion(
+                    id=uuid.uuid4(), document_url=url, content_hash=fetched.hash, html=fetched.html,
+                    kml_raw=fetched.kml_raw, body_text=fetched.body, published_time=fetched.published,
+                    modified_time=fetched.modified, fetched_at=now,
+                )  # fmt: skip
+                session.add(version)
+                session.flush()
+                doc.current_version_id = version.id
+                result.fetched += 1
+                result.urls.append(url)
             session.commit()
         except IntegrityError:
             # Another UF's crawl stored this URL meanwhile: it keeps it (first UF wins).

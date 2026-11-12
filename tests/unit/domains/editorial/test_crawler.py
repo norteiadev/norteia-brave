@@ -11,6 +11,7 @@ from brave.domains.editorial.crawler import (
     content_hash,
     extract_body,
     extract_kml_mids,
+    extract_modified_time,
     extract_published_time,
     kml_url,
     parse_kml,
@@ -126,3 +127,10 @@ def test_category_links_and_urls() -> None:
 def test_content_hash_ignores_whitespace_noise_only() -> None:
     assert content_hash("a  b\n") == content_hash("a b")
     assert content_hash("a b") != content_hash("a c")
+
+
+def test_modified_time_comes_from_the_meta_tag_or_the_json_ld() -> None:
+    assert extract_modified_time(_html("anchieta-es.html")) == date(2025, 12, 9)
+    ld = '<script type="application/ld+json">{"dateModified":"2024-03-02T10:00:00+00:00"}</script>'
+    assert extract_modified_time(ld) == date(2024, 3, 2)
+    assert extract_modified_time("<html></html>") is None
