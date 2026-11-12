@@ -182,7 +182,7 @@ def format_funnel(f: dict[str, Any]) -> str:
             f"  validation   pending {v['pending_claims']} claim(s) in {v['pending_entities']}"
             f" entity(ies): expected ${v['pending_usd']:.2f} (${v['est_usd_per_entity']:.2f}/entity,"
             " Gemini tokens + $0.035 grounding per prompt) — the cost gate before turning"
-            f" editorial_validate_enabled on | verdicts: {verdicts} | spent ${v['cost_usd']:.2f}",
+            f" editorial_validate_enabled on | verdicts: {verdicts} | spent ${v['cost_usd']:.2f} (all UFs)",
             f"  destinations pending {dst['pending']} | pushed {dst['pushed']} | error {dst['error']}",
             f"  LLM cost     ${f['llm_cost_usd']:.4f} (editorial lane, all UFs)",
         ]

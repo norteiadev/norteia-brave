@@ -216,7 +216,7 @@ def test_format_is_a_readable_funnel() -> None:
     assert "ceiling/reserva $0.18 ($0.06/post)" in text
     # the cost gate of the web validation: entities waiting x the per-entity estimate
     assert "7 claim(s) in 3 entity(ies)" in text and "expected $0.12 ($0.04/entity" in text
-    assert "confirmado 5" in text and "desatualizado 2" in text and "$0.31" in text
+    assert "confirmado 5" in text and "desatualizado 2" in text and "$0.31 (all UFs)" in text
     assert "pushed with editorial 50" in text and "push_error 1" in text and "not in Mar 10" in text
 
 
