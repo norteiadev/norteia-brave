@@ -538,6 +538,13 @@ class AppConfig(BaseSettings):
     # $0.035; the 1,500 free requests a day are not counted on) ≈ $0.038, rounded up.
     # editorial_validate_batch_size caps the entities one task run checks. Overlay key
     # ``editorial_validate_enabled``.
+    # NOTE (2026-11-12): Google lists gemini-2.5-flash as deprecated — from 2026-12-01 requests
+    # route to Gemini 3.5 Flash-Lite, and Gemini 3+ bills grounding per search QUERY ($14 per
+    # 1,000) instead of per prompt ($35 per 1,000). The slug is configurable on purpose and is
+    # NOT changed here (a model swap is the user's call): a new slug needs a row in
+    # brave/clients/llm.py ``_GEMINI_PRICES_USD_PER_MTOK`` (else the task refuses to run:
+    # ``gemini_is_priced``), the new grounding fee in ``_GEMINI_GROUNDING_USD_PER_PROMPT`` (and
+    # a per-query count if it is a Gemini 3 model) and a fresh editorial_validate_est_usd_per_entity.
     editorial_validate_enabled: bool = False
     editorial_validate_model_slug: str = "gemini-2.5-flash"
     editorial_validate_batch_size: int = 40
