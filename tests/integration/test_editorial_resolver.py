@@ -122,6 +122,18 @@ def test_a_claim_is_matched_by_coordinate_and_written_under_the_editorial_key(se
     assert result.attractions_written == 1
 
 
+def test_a_superseded_claim_is_never_resolved_nor_re_matched(session) -> None:
+    r = rio(session, "ta:1", "Pedra do Frade")
+    d = doc(session, "p1")
+    old = claim(session, d, "curiosities", "Fato antigo.", status="superseded")
+    claim(session, d, "curiosities", "Fato novo.")
+    resolve_uf(session, UF)
+    fresh(session, r)
+    fresh(session, old)
+    assert r.normalized["editorial"] == {"curiosities": "Fato novo."}
+    assert old.status == "superseded" and old.canonical_key is None
+
+
 def test_the_resolver_is_idempotent_and_leaves_the_mar_alone(session) -> None:
     r = rio(session, "ta:1", "Pedra do Frade")
     claim(session, doc(session, "p1"), "curiosities", "Tombada em 1940.")

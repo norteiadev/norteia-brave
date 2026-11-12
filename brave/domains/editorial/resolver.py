@@ -15,7 +15,8 @@ claim of the UF is re-matched each time):
      are not in Mar). Its ``source_ref`` is the one the API already has: the most common
      ``parent_source_ref`` of the município's attractions, else ``ibge:<UF>:<ibge>``.
 
-Volatile claims (``held_volatile``) are never matched, resolved or pushed.
+Claims in any other status (``held_volatile``, ``superseded``, …) are never matched, resolved
+or pushed.
 """
 
 from __future__ import annotations
@@ -46,7 +47,11 @@ from brave.domains.editorial.matching import (
 from brave.domains.editorial.matching import (
     Municipio as MunicipioRef,
 )
-from brave.domains.editorial.schema import ATTRACTION_PUSHED, DESTINATION_PUSHED
+from brave.domains.editorial.schema import (
+    ATTRACTION_PUSHED,
+    DESTINATION_PUSHED,
+    RESOLVABLE_STATUSES,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -157,7 +162,7 @@ def resolve_uf(session: Session, uf: str) -> ResolveResult:
     rows = session.execute(
         select(EditorialClaim, EditorialDocument)
         .join(EditorialDocument, EditorialDocument.url == EditorialClaim.document_url)
-        .where(EditorialDocument.uf == uf, EditorialClaim.status != "held_volatile")
+        .where(EditorialDocument.uf == uf, EditorialClaim.status.in_(RESOLVABLE_STATUSES))
     ).all()
 
     # 1. match (post, entity) groups

@@ -12,8 +12,8 @@ not import its sibling, so the small helpers are restated here):
   - a reaper frees claims whose batch is genuinely gone.
 
 One request per post; the answer is a forced tool call validated by ``schema.parse_extraction``
-(entity by entity: one bad entity does not cost the post). Claims of a re-extracted post are
-replaced wholesale.
+(entity by entity: one bad entity does not cost the post). The claims of a re-extracted post
+turn ``superseded`` (never deleted) and the new ones are linked to the post version.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 from anthropic import APIConnectionError, APIStatusError, APITimeoutError, NotFoundError
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import Select, func, select, update
 
 from brave.clients.llm import (
     _CACHE_READ_MULTIPLIER,
@@ -376,15 +376,21 @@ def _tool_input(message: Any) -> Any:
     return None
 
 
-def _replace_claims(session: Session, doc: EditorialDocument, entities: list[Any]) -> None:
-    """The post's claims, replaced wholesale (a re-extracted post never keeps stale ones)."""
-    session.execute(delete(EditorialClaim).where(EditorialClaim.document_url == doc.url))
+def _supersede_claims(session: Session, doc: EditorialDocument, entities: list[Any]) -> None:
+    """The post's previous claims turn ``superseded`` (stamped, kept: nothing collected is
+    deleted) and the new ones are linked to the version they were read from."""
+    session.execute(
+        update(EditorialClaim)
+        .where(EditorialClaim.document_url == doc.url, EditorialClaim.status != "superseded")
+        .values(status="superseded", superseded_at=datetime.now(UTC))
+    )
     for entity in entities:
         for draft in claim_drafts(entity):
             session.add(
                 EditorialClaim(
                     id=uuid.uuid4(),
                     document_url=doc.url,
+                    version_id=doc.current_version_id,
                     source=doc.source,
                     entity_kind=entity.kind,
                     entity_name=entity.name,
@@ -448,7 +454,7 @@ def apply_result(
                 else:
                     if errors:
                         logger.warning("editorial_entities_dropped", url=doc.url, errors=errors)
-                    _replace_claims(session, doc, entities)
+                    _supersede_claims(session, doc, entities)
                     doc.extracted_at, doc.error, extracted = datetime.now(UTC), None, True
     elif rtype == "errored":
         doc.error = _error_text(result)

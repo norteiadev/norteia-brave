@@ -542,19 +542,26 @@ class EditorialClaim(Base):
     is the literal excerpt kept for audit only and NEVER published.
 
     status: matched | unmatched | ambiguous | held_volatile (volatile columns are stored,
-    never pushed). ``unmatched`` is also the state of a fresh claim before the resolver ran.
+    never pushed) | superseded (a later extraction of the post replaced it). ``unmatched`` is
+    also the state of a fresh claim before the resolver ran. Nothing here is ever deleted.
     """
 
     __tablename__ = "editorial_claims"
     __table_args__ = (Index("ix_editorial_claims_canonical_key", "canonical_key"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # No ON DELETE CASCADE: a claim outlives every other row (retention rule).
     document_url: Mapped[str] = mapped_column(
-        String(512),
-        ForeignKey("editorial_documents.url", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
+        String(512), ForeignKey("editorial_documents.url"), nullable=False, index=True
     )
+    # The post version the claim was read from; ``superseded_at`` is set (status
+    # ``superseded``) when a later extraction replaced it — the row itself stays.
+    version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("editorial_document_versions.id", name="fk_editorial_claims_version"),
+        nullable=True,
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     entity_kind: Mapped[str] = mapped_column(String(16), nullable=False)  # destino | atrativo
     entity_name: Mapped[str] = mapped_column(String(256), nullable=False)

@@ -172,6 +172,12 @@ DESTINATION_PUSHED: tuple[str, ...] = tuple(
 )
 
 
+# The claim statuses the resolver (re-)matches on every run. Every other status is a state a
+# claim was moved to (``held_volatile``, ``superseded``, …): the row stays — nothing collected
+# is deleted — and is never matched, resolved nor pushed.
+RESOLVABLE_STATUSES: tuple[str, ...] = ("unmatched", "ambiguous", "matched")
+
+
 def stability_of(field: str) -> Literal["estavel", "volatil"]:
     return "volatil" if field in VOLATILE_FIELDS else "estavel"
 

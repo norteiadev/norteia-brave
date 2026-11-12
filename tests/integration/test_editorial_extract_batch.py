@@ -7,6 +7,7 @@ budget is reserved at submit and reconciled at collect; collecting twice writes 
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -20,7 +21,12 @@ from sqlalchemy.orm import Session
 
 from brave.clients.llm import anthropic_thinking
 from brave.config.settings import AppConfig, LLMConfig
-from brave.core.models import EditorialClaim, EditorialDocument, LLMGeneration
+from brave.core.models import (
+    EditorialClaim,
+    EditorialDocument,
+    EditorialDocumentVersion,
+    LLMGeneration,
+)
 from brave.domains.editorial.extract_batch import (
     AMBIGUOUS_BATCH_ID,
     CLAIM_BATCH_ID,
@@ -399,7 +405,7 @@ def test_a_batch_still_running_is_left_alone(session, redis) -> None:
     assert d.batch_id == bid and d.extracted_at is None
 
 
-def test_re_extraction_replaces_the_old_claims_of_the_post(session, redis) -> None:
+def test_re_extraction_supersedes_the_old_claims_and_deletes_nothing(session, redis) -> None:
     (d,), client, bid = _submitted(session, redis, "a-es")
     _finish(client, bid, _ok(d.url, [_entity(curiosities="Velho fato.")]))
     _collect(session, client, redis)
@@ -409,10 +415,30 @@ def test_re_extraction_replaces_the_old_claims_of_the_post(session, redis) -> No
     bid2 = _submit(session, client2, redis)
     _finish(client2, bid2, _ok(d.url, [_entity(curiosities="Fato novo.")]))
     _collect(session, client2, redis)
-    values = session.scalars(
-        select(EditorialClaim.value).where(EditorialClaim.document_url == d.url)
-    ).all()
-    assert values == ["Fato novo."]
+    rows = session.scalars(select(EditorialClaim).where(EditorialClaim.document_url == d.url)).all()
+    by_value = {c.value: c for c in rows}
+    assert set(by_value) == {"Velho fato.", "Fato novo."}  # the old one is still there
+    old, new = by_value["Velho fato."], by_value["Fato novo."]
+    assert (old.status, new.status) == ("superseded", "unmatched")
+    assert old.superseded_at is not None and new.superseded_at is None
+
+
+def test_a_claim_is_linked_to_the_version_it_was_extracted_from(session, redis) -> None:
+    version = EditorialDocumentVersion(
+        id=uuid.uuid4(), document_url="https://www.viagensecaminhos.com/a-es/",
+        content_hash="a" * 64, body_text="Texto do post a-es.", kml_raw={},
+    )  # fmt: skip
+    doc = _doc(session, "a-es")
+    session.add(version)
+    session.flush()
+    doc.current_version_id = version.id
+    session.flush()
+    client = FakeClient()
+    bid = _submit(session, client, redis)
+    _finish(client, bid, _ok(doc.url, [_entity(curiosities="Fato.")]))
+    _collect(session, client, redis)
+    (claim,) = session.scalars(select(EditorialClaim)).all()
+    assert claim.version_id == version.id
 
 
 def test_an_invalid_entity_is_dropped_and_the_rest_is_kept(session, redis) -> None:
