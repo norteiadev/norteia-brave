@@ -36,9 +36,11 @@ from brave.clients.llm import (
 )
 from brave.core.models import EditorialClaim, EditorialDocument, LLMGeneration
 from brave.domains.editorial.schema import (
+    ClaimDraft,
     WireError,
     claim_drafts,
     from_wire,
+    is_copied,
     parse_extraction,
     wire_json_schema,
     wire_rules,
@@ -394,6 +396,14 @@ def _tool_input(message: Any) -> Any:
     return None
 
 
+def _initial_status(draft: ClaimDraft, body: str) -> str:
+    """Where a fresh claim starts: volatile columns are held; a ``value`` that repeats the post
+    word for word is held too (``held_copied``, never sent); the rest waits for the resolver."""
+    if draft.stability == "volatil":
+        return "held_volatile"
+    return "held_copied" if is_copied(draft.value, body) else "unmatched"
+
+
 def _supersede_claims(session: Session, doc: EditorialDocument, entities: list[Any]) -> None:
     """The post's previous claims turn ``superseded`` (stamped, kept: nothing collected is
     deleted) and the new ones are linked to the version they were read from."""
@@ -418,7 +428,7 @@ def _supersede_claims(session: Session, doc: EditorialDocument, entities: list[A
                     stability=draft.stability,
                     evidence=draft.evidence,
                     published_time=doc.published_time,
-                    status="held_volatile" if draft.stability == "volatil" else "unmatched",
+                    status=_initial_status(draft, doc.body_text),
                 )
             )
 

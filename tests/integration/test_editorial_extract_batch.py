@@ -423,6 +423,39 @@ def test_re_extraction_supersedes_the_old_claims_and_deletes_nothing(session, re
     assert old.superseded_at is not None and new.superseded_at is None
 
 
+def test_a_value_copied_from_the_post_is_held_not_sent(session, redis) -> None:
+    sentence = "Quem vai de manhã cedo encontra a trilha vazia com sombra até a metade do caminho"
+    (d,), client, bid = _submitted(session, redis, "a-es")
+    d.body_text = f"Texto do post. {sentence}. Fim."
+    session.flush()
+    _finish(
+        client,
+        bid,
+        _ok(
+            d.url,
+            [
+                _entity(
+                    tips=sentence + " e vale a pena",
+                    curiosities="Tombada em 1940 pelo estado.",
+                    how_to_get_there="Rua das Flores, 120, Centro",
+                    opening_hours=sentence,
+                )
+            ],
+        ),
+    )
+    _collect(session, client, redis)
+    status = {
+        c.field: c.status
+        for c in session.scalars(select(EditorialClaim).where(EditorialClaim.document_url == d.url))
+    }
+    assert status == {
+        "tips": "held_copied",  # >= 10 words in a row
+        "curiosities": "unmatched",  # a rewrite goes on to the resolver
+        "how_to_get_there": "unmatched",
+        "opening_hours": "held_volatile",  # volatile stays volatile
+    }
+
+
 def test_a_claim_is_linked_to_the_version_it_was_extracted_from(session, redis) -> None:
     version = EditorialDocumentVersion(
         id=uuid.uuid4(), document_url="https://www.viagensecaminhos.com/a-es/",

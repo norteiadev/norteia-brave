@@ -12,6 +12,7 @@ cleaned of prices, opening hours and people limits before it is stored (D3).
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
@@ -199,6 +200,68 @@ def strip_volatile_tips(text: str) -> str:
     """``text`` minus every sentence that states a price, opening hours or a people limit."""
     sentences = re.split(r"(?<=[.!?])\s+", text.strip())
     return " ".join(s for s in sentences if s and not _VOLATILE_TIP.search(s))
+
+
+# -- literal copy -------------------------------------------------------------------------
+#
+# ``value`` must be a rewrite of the post (the blog's text is not ours to republish): only
+# ``evidence`` may quote it. A value sharing this many consecutive words with the post is
+# held (status ``held_copied``): kept for audit, never sent.
+
+COPY_RUN_LIMIT = 10
+_WORD = re.compile(r"\w+")
+_ADDRESS = re.compile(
+    r"^\s*(?:rua|r\.|avenida|av\.?|pra[cç]a|p[cç]a\.?|travessa|alameda|rodovia|estrada)\b",
+    re.IGNORECASE,
+)
+_ADDRESS_NUMBER = re.compile(r"\d|\bs/n\b", re.IGNORECASE)
+_ADDRESS_MAX_WORDS = 15
+
+
+def _words(text: str) -> list[str]:
+    folded = unicodedata.normalize("NFKD", text.casefold())
+    return _WORD.findall("".join(c for c in folded if not unicodedata.combining(c)))
+
+
+def _as_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return " ".join(str(v) for v in value)
+    return ""  # a boolean carries no wording
+
+
+def longest_shared_run(value: Any, body: str) -> int:
+    """Most consecutive words ``value`` shares, in order, with ``body`` (case, accents and
+    punctuation ignored)."""
+    mine, theirs = _words(_as_text(value)), _words(body)
+    where: dict[str, list[int]] = {}
+    for i, word in enumerate(theirs):
+        where.setdefault(word, []).append(i)
+    best = 0
+    previous: dict[int, int] = {}  # body index -> run ending there, for the previous value word
+    for word in mine:
+        current = {i: previous.get(i - 1, 0) + 1 for i in where.get(word, ())}
+        best = max(best, *current.values(), 0)
+        previous = current
+    return best
+
+
+def is_address(value: Any) -> bool:
+    """A street address (rua / av. / praça… + a number or ``s/n``): a place's address is a
+    fact that can only be written one way, so quoting it is not a copy."""
+    text = _as_text(value)
+    return bool(
+        _ADDRESS.match(text)
+        and _ADDRESS_NUMBER.search(text)
+        and len(_words(text)) <= _ADDRESS_MAX_WORDS
+    )
+
+
+def is_copied(value: Any, body: str, *, limit: int = COPY_RUN_LIMIT) -> bool:
+    """True when ``value`` repeats ``limit`` or more consecutive words of ``body`` and is not
+    an address."""
+    return not is_address(value) and longest_shared_run(value, body) >= limit
 
 
 @dataclass(frozen=True)
