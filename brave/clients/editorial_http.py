@@ -11,7 +11,7 @@ import httpx
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_exponential
 
 TIMEOUT_S = 180.0
-_USER_AGENT = "norteia-brave-editorial/1.0 (territorial research; respects robots.txt)"
+_USER_AGENT = "territorial-research-bot/1.0 (respects robots.txt)"  # no company name (project rule)
 
 
 def _retryable(exc: BaseException) -> bool:

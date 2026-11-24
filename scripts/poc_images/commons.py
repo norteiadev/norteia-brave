@@ -21,9 +21,7 @@ from typing import Any, Iterator
 import httpx
 
 API = "https://commons.wikimedia.org/w/api.php"
-USER_AGENT = (
-    "NorteiaBrave-POC/0.1 (https://norteia.com.br; leandro.freire08@gmail.com)"
-)
+USER_AGENT = "territorial-research-poc/0.1"  # no company name in crawl calls (project rule)
 
 # Files whose names look like page chrome rather than photographs.
 _CHROME = ("flag of", "-logo", "commons-logo", "disambig", "icon", "coat of arms")

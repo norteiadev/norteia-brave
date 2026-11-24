@@ -71,7 +71,8 @@ async def test_busy_error_in_200_is_retried(client) -> None:
     assert route.call_count == 3
     f = info["File:Praia.jpg"]
     assert (f.width, f.license_code, f.license, f.artist) == (4000, "cc-by-sa-4.0", "CC BY-SA 4.0", "Fulano")
-    assert route.calls.last.request.headers["User-Agent"].startswith("norteia-brave/")
+    ua = route.calls.last.request.headers["User-Agent"]
+    assert ua and "norteia" not in ua.lower()  # descriptive, no company name
 
 
 async def test_busy_error_that_never_clears_raises(client) -> None:

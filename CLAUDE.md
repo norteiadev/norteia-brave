@@ -168,6 +168,16 @@ Not covered (no collected data): Redis keys and caches, operational telemetry
 for (the `reset-brave-db` skill, a legal/LGPD erasure request).
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
+## Crawl identity — no company name
+
+No crawl or fetch call to a third-party site or API carries the Norteia name: not in the
+User-Agent, a header, a URL or a payload. Defaults are generic (`territorial-research-bot/1.0`,
+`territorial-geocoder/1.0`, `territorial-research-images/1.0`); a service whose policy asks for a
+contact gets it through its env var (`BRAVE_NOMINATIM_USER_AGENT`, `BRAVE_IMAGES_USER_AGENT`),
+set by the user. A generic name is never a disguise: no browser User-Agent to get past a block —
+a site that blocks the crawler is asked for access instead. Guarded by
+`tests/unit/test_crawl_identity.py`.
+
 ## Architecture
 
 - `brave/core/` — entity-agnostic pipeline: `nascente/` → `rio/` (dedup/normalize/route) → `score/` → `mar/` / `dlq/`, plus `engine.py`, `models.py`, `repositories/`.
