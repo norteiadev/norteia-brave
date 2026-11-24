@@ -16,10 +16,33 @@ Commands:
                    TripAdvisor backfill as an engine run — same path as
                    POST /api/v1/tripadvisor/backfill. Exit 2 when the motor is busy.
 
+    editorial-load    Editorial lane: crawl the blog posts of a UF (or every UF, one after
+                      another) and then submit the paid extraction batch:
+                      editorial-load <UF>|--all [--crawl-only | --submit-only]
+                      Cost gate: --crawl-only, read the estimate in editorial-status,
+                      then --submit-only.
+    editorial-status  The editorial funnel (posts → claims → matches → attraction push →
+                      destinations → cost): editorial-status [UF]
+    editorial-retry   Make the errored posts (and the claims whose web check kept failing)
+                      eligible again (then --submit-only):
+                      editorial-retry <UF>|--all
+    editorial-resolve Re-resolve the claims of a UF (free, idempotent): editorial-resolve
+                      <UF>|--all. Run it after deploying the migration that adds a rule
+                      (0026: perishable facts of old posts), BEFORE any Publicação.
+    editorial-validate  Web check (Gemini + Google Search, paid) of the perishable facts of
+                      posts over a year old: editorial-validate <UF>|--all. Cost gate: the
+                      "validation" line of editorial-status, then turn on
+                      editorial_validate_enabled.
+
 Usage:
     python -m brave.cli run-fixture
     python -m brave.cli sweep BA [--lane destinos|atrativos|both]
     python -m brave.cli backfill-ta
+    python -m brave.cli editorial-load ES [--crawl-only | --submit-only]
+    python -m brave.cli editorial-status [ES]
+    python -m brave.cli editorial-retry ES
+    python -m brave.cli editorial-resolve ES
+    python -m brave.cli editorial-validate ES
 """
 
 import os
@@ -204,6 +227,190 @@ def _run_images_repush() -> int:
     return 0
 
 
+def _editorial_enabled() -> bool | None:
+    """editorial_enabled from the effective config; None when it cannot be read."""
+    try:
+        from brave.tasks.pipeline import _get_session, _load_config
+
+        session, _ = _get_session()
+        try:
+            return bool(_load_config(session).editorial_enabled)
+        finally:
+            session.close()
+    except Exception:  # noqa: BLE001 — unreadable: the caller decides
+        return None
+
+
+# Exit code of a load/submit refused because the lane is off (the task would skip it).
+_LANE_OFF = 3
+
+
+def _lane_open(command: str) -> bool:
+    """False (and why) when editorial_enabled is off: the dispatched task would just skip.
+    An unreadable config only warns — the task re-reads it and decides."""
+    enabled = _editorial_enabled()
+    if enabled is False:
+        print(f"{command}: editorial_enabled is off, so nothing would run — turn it on first")
+        return False
+    if enabled is None:
+        print(f"{command}: could not read editorial_enabled; dispatching (the task checks it)")
+    return True
+
+
+def _editorial_validate_enabled() -> bool | None:
+    """editorial_validate_enabled from the effective config; None when it cannot be read."""
+    try:
+        from brave.tasks.pipeline import _get_session, _load_config
+
+        session, _ = _get_session()
+        try:
+            return bool(_load_config(session).editorial_validate_enabled)
+        finally:
+            session.close()
+    except Exception:  # noqa: BLE001 — unreadable: the task re-reads it and decides
+        return None
+
+
+def _run_editorial_resolve(ufs: list[str]) -> int:
+    """Dispatch ``brave.editorial_resolve`` for each UF: free and idempotent. It re-matches every
+    claim and applies the current rules (e.g. perishable facts of posts over a year old become
+    ``pending_validation`` and leave ``normalized["editorial"]`` and the destination outbox) —
+    run it after a deploy that adds a rule, before any Publicação."""
+    from brave.tasks.pipeline import editorial_resolve
+
+    for uf in ufs:
+        try:
+            editorial_resolve.delay(uf)
+        except Exception as exc:
+            print(f"editorial-resolve: could not dispatch (is the Celery broker up?): {exc}")
+            return 2
+        print(f"editorial-resolve: dispatched the resolve of {uf}")
+    return 0
+
+
+def _run_editorial_validate(ufs: list[str]) -> int:
+    """Re-resolve each UF: the resolver parks the perishable facts of old posts as
+    ``pending_validation`` and, with the paid web check on, hands them to
+    ``brave.editorial_validate`` (which re-resolves what it confirms). Exits 3 while
+    editorial_validate_enabled is off — the estimate to approve is in ``editorial-status``."""
+    from brave.tasks.pipeline import editorial_resolve
+
+    enabled = _editorial_validate_enabled()
+    if enabled is False:
+        print(
+            "editorial-validate: editorial_validate_enabled is off, so nothing would be checked —"
+            " read the cost in the 'validation' line of editorial-status, then turn it on"
+        )
+        return _LANE_OFF
+    if enabled is None:
+        print("editorial-validate: could not read editorial_validate_enabled; dispatching")
+    for uf in ufs:
+        try:
+            editorial_resolve.delay(uf)
+        except Exception as exc:
+            print(f"editorial-validate: could not dispatch (is the Celery broker up?): {exc}")
+            return 2
+        print(f"editorial-validate: dispatched the resolve of {uf}; pending facts go to the check")
+    return 0
+
+
+def _run_editorial_load(ufs: list[str], submit: bool) -> int:
+    """Dispatch the editorial crawl (then the paid submit unless ``submit`` is False).
+
+    The UFs are crawled ONE AT A TIME (each task chains the next): the site is slow and the
+    lane caps itself at 3 parallel fetches in total. No inline fallback — a crawl takes
+    minutes to hours; without a broker this says so and exits 2. Exits 3 while
+    editorial_enabled is off.
+    """
+    from brave.tasks.pipeline import editorial_crawl_uf
+
+    if not _lane_open("editorial-load"):
+        return _LANE_OFF
+    first, rest = ufs[0], ufs[1:]
+    try:
+        editorial_crawl_uf.delay(first, submit=submit, rest=rest)
+    except Exception as exc:
+        print(f"editorial-load: could not dispatch the crawl (is the Celery broker up?): {exc}")
+        return 2
+    more = f", then {len(rest)} more UF(s), one at a time" if rest else ""
+    paid = "" if submit else " (crawl only: no paid extraction)"
+    print(f"editorial-load: dispatched the crawl of {first}{more}{paid}")
+    return 0
+
+
+def _run_editorial_submit(ufs: list[str | None]) -> int:
+    """Dispatch the paid extraction of the posts already crawled, one submit per UF
+    (``[None]`` = every UF in one submit). Exits 3 while editorial_enabled is off."""
+    from brave.tasks.pipeline import editorial_submit_batches
+
+    if not _lane_open("editorial-load"):
+        return _LANE_OFF
+    for uf in ufs:
+        try:
+            editorial_submit_batches.delay(uf)
+        except Exception as exc:
+            print(f"editorial-load: could not dispatch the submit (is the Celery broker up?): {exc}")
+            return 2
+        print(f"editorial-load: dispatched the extraction submit of {uf or 'every UF'} (paid)")
+    return 0
+
+
+def _run_editorial_retry(ufs: list[str | None]) -> int:
+    """Re-arm the errored posts of each UF (``[None]`` = every UF), and the claims whose web check
+    hit the attempt limit (``validation_failed`` → ``pending_validation``, attempts back to 0)."""
+    from brave.domains.editorial.extract_batch import retry_errored
+    from brave.domains.editorial.validate import reopen_failed
+    from brave.tasks.pipeline import _get_session
+
+    session, _ = _get_session()
+    try:
+        n = sum(retry_errored(session, uf) for uf in ufs)
+        reopened = sum(reopen_failed(session, uf) for uf in ufs)
+    finally:
+        session.close()
+    target = " ".join(u for u in ufs if u) or "every UF"
+    print(f"editorial-retry: {n} errored post(s) of {target} are eligible again")
+    if reopened:
+        print(
+            f"editorial-retry: {reopened} claim(s) of {target} back in line for the web check"
+            " (paid again if editorial_validate_enabled is on)"
+        )
+    if n:
+        again = "--all" if ufs == [None] else target
+        print(f"editorial-retry: send them with: brave editorial-load {again} --submit-only")
+    return 0
+
+
+def _editorial_ufs(command: str, rest: list[str]) -> list[str]:
+    """The UFs named after ``command`` (``--all`` = every UF); exits 1 on a bad/missing UF."""
+    from brave.domains.editorial.crawler import UF_SLUGS
+
+    ufs = sorted(UF_SLUGS) if "--all" in rest else [a.upper() for a in rest if not a.startswith("--")]
+    bad = [u for u in ufs if u not in UF_SLUGS]
+    if not ufs or bad:
+        print(f"{command}: {'unknown UF ' + ', '.join(bad) if bad else 'a UF or --all is required'}")
+        sys.exit(1)
+    return ufs
+
+
+def _run_editorial_status(uf: str | None) -> int:
+    from brave.domains.editorial.status import format_funnel, funnel
+    from brave.tasks.pipeline import _get_session, _load_config
+
+    session, _ = _get_session()
+    try:
+        cfg = _load_config(session)
+        f = funnel(
+            session, uf, est_usd_per_post=cfg.editorial_est_usd_per_post,
+            expected_usd_per_post=cfg.editorial_expected_usd_per_post,
+            est_usd_per_entity=cfg.editorial_validate_est_usd_per_entity,
+        )  # fmt: skip
+        print(format_funnel(f))
+    finally:
+        session.close()
+    return 0
+
+
 def _parse_lane(args: list[str]) -> str:
     """Parse an optional `--lane <value>` from the remaining argv (plain slicing, D-05).
 
@@ -237,6 +444,11 @@ def main() -> None:
         print("  sweep <UF> [--lane destinos|atrativos|both]   Kick an on-demand UF sweep")
         print("  backfill-ta   Start/resume the TripAdvisor backfill engine run")
         print("  images-repush Re-send every archived photo to norteia-api (after an API wipe)")
+        print("  editorial-load <UF>|--all [--crawl-only|--submit-only]   Crawl the blog, then extract")
+        print("  editorial-status [UF]   The editorial lane funnel")
+        print("  editorial-retry <UF>|--all   Make the errored editorial posts eligible again")
+        print("  editorial-resolve <UF>|--all   Re-resolve the editorial claims (free, idempotent)")
+        print("  editorial-validate <UF>|--all   Web check (paid) of the perishable editorial facts")
         sys.exit(1)
 
     command = args[0]
@@ -246,6 +458,28 @@ def main() -> None:
         sys.exit(_run_backfill_ta())
     elif command == "images-repush":
         sys.exit(_run_images_repush())
+    elif command == "editorial-status":
+        sys.exit(_run_editorial_status(args[1].upper() if len(args) > 1 else None))
+    elif command == "editorial-retry":
+        rest = args[1:]
+        ufs = _editorial_ufs(command, rest)
+        sys.exit(_run_editorial_retry([None] if "--all" in rest else list(ufs)))
+    elif command == "editorial-resolve":
+        rest = args[1:]
+        sys.exit(_run_editorial_resolve(list(_editorial_ufs(command, rest))))
+    elif command == "editorial-validate":
+        rest = args[1:]
+        ufs = _editorial_ufs(command, rest)
+        sys.exit(_run_editorial_validate(list(ufs)))
+    elif command == "editorial-load":
+        rest = args[1:]
+        if "--crawl-only" in rest and "--submit-only" in rest:
+            print("editorial-load: --crawl-only and --submit-only are exclusive")
+            sys.exit(1)
+        ufs = _editorial_ufs(command, rest)
+        if "--submit-only" in rest:
+            sys.exit(_run_editorial_submit([None] if "--all" in rest else list(ufs)))
+        sys.exit(_run_editorial_load(ufs, submit="--crawl-only" not in rest))
     elif command == "sweep":
         rest = args[1:]
         # The UF is the first non-flag positional after the command.

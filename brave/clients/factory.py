@@ -32,7 +32,8 @@ class Clients:
                      every key and the cascade flag. None → AppConfig() (env only).
         ibge_lookup: Zero-arg loader of the name→IBGE map for the real Places client; only
                      called when that client is built.
-        places, llm, search, tripadvisor, geocoder, whatsapp, norteia_api, batch, wikimedia:
+        places, llm, search, tripadvisor, geocoder, whatsapp, norteia_api, batch, wikimedia,
+                     editorial:
                      Explicit adapters (tests). Returned as-is, never closed.
     """
 
@@ -50,6 +51,7 @@ class Clients:
         norteia_api: Any = None,
         batch: Any = None,
         wikimedia: Any = None,
+        editorial: Any = None,
         places_api_key_env: str = "BRAVE_PLACES_API_KEY",
     ) -> None:
         self._cfg = config if config is not None else AppConfig()
@@ -62,7 +64,7 @@ class Clients:
             for k, v in {
                 "places": places, "llm": llm, "search": search, "tripadvisor": tripadvisor,
                 "geocoder": geocoder, "whatsapp": whatsapp, "norteia_api": norteia_api,
-                "batch": batch, "wikimedia": wikimedia,
+                "batch": batch, "wikimedia": wikimedia, "editorial": editorial,
             }.items()
             if v is not None
         }
@@ -280,6 +282,21 @@ class Clients:
             return WikimediaClient(config=self._cfg.images, redis=self._redis())
 
         return self._get("wikimedia", build)
+
+    @property
+    def editorial(self) -> Any:
+        """Blog + KML fetcher of the editorial lane (Null offline: every page is a 404)."""
+
+        def build() -> Any:
+            if not self._real:
+                from brave.clients.null_editorial_http import NullEditorialFetcher  # noqa: PLC0415
+
+                return NullEditorialFetcher()
+            from brave.clients.editorial_http import RealEditorialFetcher  # noqa: PLC0415
+
+            return RealEditorialFetcher()
+
+        return self._get("editorial", build)
 
     @property
     def batch(self) -> Any:

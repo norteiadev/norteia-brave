@@ -19,13 +19,14 @@ Key design decisions implemented here:
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -35,8 +36,10 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    cast,
     event,
     func,
+    literal_column,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -460,6 +463,171 @@ class EntityImage(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     image: Mapped["Image"] = relationship("Image")
+
+
+# ---------------------------------------------------------------------------
+# Editorial lane — blog columns for attractions and destinations (brave/domains/editorial)
+# ---------------------------------------------------------------------------
+
+
+class EditorialDocument(Base):
+    """One blog post. Batch state lives in COLUMNS (as rio_records.descricao_batch_id):
+    ``batch_id`` is the claim / Anthropic id, ``extracted_at`` the applied-marker."""
+
+    __tablename__ = "editorial_documents"
+    __table_args__ = (
+        Index(
+            "ix_editorial_documents_batch_id",
+            "batch_id",
+            postgresql_where=text("batch_id IS NOT NULL"),
+        ),
+    )
+
+    url: Mapped[str] = mapped_column(String(512), primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    uf: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    published_time: Mapped[date | None] = mapped_column(Date, nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    body_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # [{"name": ..., "lat": ..., "lon": ...}] from the post's Google My Maps KML.
+    kml_points: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    # Why a map of the post could not be read (NULL = every map read): the next crawl fetches
+    # the KML again even when the text is unchanged — matching depends on it.
+    kml_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    batch_submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The version this row mirrors (body_text / content_hash / published_time above are the
+    # current version's, kept here because the extraction reads them): NULL only on a row
+    # that no crawl has written yet.
+    current_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "editorial_document_versions.id",
+            use_alter=True,
+            name="fk_editorial_documents_current_version",
+        ),
+        nullable=True,
+    )
+
+
+class EditorialDocumentVersion(Base):
+    """One download of a post whose text differs from the one before: APPEND-ONLY (a version
+    is never updated once the next one exists, never deleted). Holds the raw page and the raw
+    KML of every map so a re-parse never needs the network. ``modified_time`` is the page's
+    ``article:modified_time`` / JSON-LD ``dateModified``: informative only — nearly every post
+    carries the same mass-update date, so it is never used to age a fact."""
+
+    __tablename__ = "editorial_document_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_url: Mapped[str] = mapped_column(
+        String(512), ForeignKey("editorial_documents.url"), nullable=False, index=True
+    )
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    html: Mapped[str | None] = mapped_column(Text, nullable=True)  # NULL: backfilled version
+    kml_raw: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)  # mid → KML
+    body_text: Mapped[str] = mapped_column(Text, nullable=False)
+    published_time: Mapped[date | None] = mapped_column(Date, nullable=True)
+    modified_time: Mapped[date | None] = mapped_column(Date, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EditorialClaim(Base):
+    """One extracted fact: (post, entity, column). ``value`` is always a rewrite; ``evidence``
+    is the literal excerpt kept for audit only and NEVER published.
+
+    status: matched | unmatched | ambiguous | held_volatile (volatile columns are stored,
+    never pushed) | superseded (a later extraction of the post replaced it) | held_copied (the
+    value repeats the post: never pushed) | pending_validation (a perishable fact of a post
+    over a year old, waiting for the web check) | outdated / unverified (the check said it is
+    out of date / found no evidence: never pushed) | validation_failed (the check kept failing:
+    never pushed, not retried by itself). ``unmatched`` is also the state of a fresh
+    claim before the resolver ran. Nothing here is ever deleted.
+    """
+
+    __tablename__ = "editorial_claims"
+    __table_args__ = (Index("ix_editorial_claims_canonical_key", "canonical_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # No ON DELETE CASCADE: a claim outlives every other row (retention rule).
+    document_url: Mapped[str] = mapped_column(
+        String(512), ForeignKey("editorial_documents.url"), nullable=False, index=True
+    )
+    # The post version the claim was read from; ``superseded_at`` is set (status
+    # ``superseded``) when a later extraction replaced it — the row itself stays.
+    version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("editorial_document_versions.id", name="fk_editorial_claims_version"),
+        nullable=True,
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The status the claim had when it was superseded (matched, outdated, held_copied, …).
+    superseded_from_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    entity_kind: Mapped[str] = mapped_column(String(16), nullable=False)  # destino | atrativo
+    entity_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    municipio_text: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    canonical_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    match_method: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    field: Mapped[str] = mapped_column(String(48), nullable=False)
+    value: Mapped[Any] = mapped_column(JSON, nullable=False)
+    stability: Mapped[str] = mapped_column(String(8), nullable=False)  # estavel | volatil
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_time: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    # Web check of a perishable fact from an old post (validate.py): the verdict, where it
+    # came from and when. Written once per claim; the claim's status moves with it.
+    validation_verdict: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    validation_sources: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    validation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Failed web-check attempts (call error, unreadable answer, a fact the model skipped): after
+    # ``editorial_validate_max_attempts`` the claim becomes ``validation_failed`` — kept, never
+    # sent, not paid for again until an operator reopens it (``brave editorial-retry``).
+    validation_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_validation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EditorialDestination(Base):
+    """Outbox of the destination editorial columns. Destinations are not in Mar, so this
+    table plays the Mar row for them: ``pushed_at`` NULL (and no ``push_error``) = pending;
+    ``push_hash`` is the digest of the last payload the API accepted."""
+
+    __tablename__ = "editorial_destinations"
+
+    source_ref: Mapped[str] = mapped_column(String(256), primary_key=True)
+    uf: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    municipio_ibge: Mapped[str] = mapped_column(String(7), nullable=False)
+    tourist_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    fields: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    push_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    push_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    @classmethod
+    def has_fields(cls) -> Any:
+        """SQL: the row still carries at least one column (the resolver empties ``fields`` of a
+        row whose claims are no longer matched: it stays, but is never pending nor sent)."""
+        return cast(cls.fields, JSONB) != literal_column("'{}'::jsonb")
 
 
 # ---------------------------------------------------------------------------

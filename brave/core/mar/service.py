@@ -222,6 +222,17 @@ def promote_to_mar(
     return upsert_mar_snapshot(session, rio_record)
 
 
+# Editorial attraction columns the push payload carries, read from ``canonical["editorial"]``
+# (written by the editorial lane's resolver). Stable columns only: the volatile ones
+# (price, opening_hours, free_entry, …) are held in editorial_claims and never pushed.
+EDITORIAL_ATTRACTION_FIELDS: tuple[str, ...] = (
+    "how_to_get_there",
+    "tips",
+    "local_infrastructure",
+    "curiosities",
+    "accessibility",
+)
+
 # Internal/board-only normalized keys, never part of the Mar canonical: the five reliability
 # *_value criteria, recency evidence, the masked WhatsApp contact (Phase F) and its window
 # state, the Places/TA backfill markers (C1 google_enriched / ta_backfilled_at / ta_uf,
@@ -522,5 +533,14 @@ def build_push_payload(
         payload["opening_hours"] = hours_map
     elif "opening_hours" in cleared:
         payload["opening_hours"] = {}  # the cleared hours overwrite the API's map
+
+    # Editorial columns (blog lane, canonical["editorial"]): only the filled STABLE ones, so
+    # an attraction with no editorial data keeps today's payload — and push_hash — exactly.
+    editorial = canonical.get("editorial")
+    if isinstance(editorial, dict):
+        for column in EDITORIAL_ATTRACTION_FIELDS:
+            text = editorial.get(column)
+            if isinstance(text, str) and text.strip():
+                payload[column] = text
 
     return payload

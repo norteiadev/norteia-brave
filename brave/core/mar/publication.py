@@ -8,6 +8,9 @@
   accepted, updated after the last attempt, or its Rio left Mar and the API still shows
   it) — the outbox. The 15-min beat and the Painel "Reenviar" drain it via
   ``republish_pending``; ``publish`` is the single reconciliation point.
+- Editorial destinations (``push_editorial_destinations``): destinations are not in Mar, so
+  ``editorial_destinations`` is their own outbox (pending = ``pushed_at`` NULL, no error),
+  behind ``editorial_push_enabled``. Same digest rule as ``publish``.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from brave.config.settings import ScoreConfig
 from brave.core.dlq.service import validate_and_promote_rio
 from brave.core.mar import sync
 from brave.core.mar.service import build_push_payload, upsert_mar_snapshot
-from brave.core.models import MarRecord, RioRecord
+from brave.core.models import EditorialDestination, MarRecord, RioRecord
 from brave.observability.audit import write_audit
 from brave.shared.exceptions import ApiDown
 
@@ -196,3 +199,99 @@ def republish_pending(session: Session, enqueue: Enqueue) -> int:
     for rio_id, _entity_type in rows:
         enqueue(str(rio_id))
     return len(rows)
+
+
+def editorial_destination_payload(row: EditorialDestination) -> dict[str, Any]:
+    """The destination upsert body: required keys + ONLY the filled editorial columns.
+
+    The API upserts by ``source_ref`` and an explicit null OVERWRITES what it holds, so a
+    null / empty / blank column is dropped here, never sent. ``source`` is the prefix of the
+    source_ref — what the attraction push's ``destino`` block already sends for it.
+    """
+    payload: dict[str, Any] = {
+        "source_ref": row.source_ref,
+        "source": row.source_ref.split(":")[0],
+        "tourist_name": row.tourist_name,
+        "municipio_ibge": row.municipio_ibge,
+    }
+    for column, value in (row.fields or {}).items():
+        if value is None or (isinstance(value, (str, list)) and not "".join(map(str, value)).strip()):
+            continue
+        payload[column] = value
+    return payload
+
+
+@dataclass(frozen=True)
+class DestinationPushes:
+    pushed: int = 0
+    unchanged: int = 0  # pending, but the API already holds exactly this payload
+    rejected: int = 0  # permanent 4xx / missing required key: ``push_error`` set
+    not_sent: int = 0  # the Null adapter: nothing stamped
+    held: bool = False  # editorial_push_enabled is off
+    api_down: bool = False
+
+
+def push_editorial_destinations(
+    session: Session,
+    api: NorteiaApiClientProtocol,
+    *,
+    enabled: bool,
+    limit: int = 100,
+) -> DestinationPushes:
+    """Send the pending editorial destination rows (``POST /destinations``), oldest first.
+
+    ``enabled`` False holds everything untouched. A row whose payload digest equals the last
+    accepted one is only stamped (never re-sent); stamped on a real 2xx only. A permanent 4xx
+    is recorded in ``push_error`` and NOT raised (the row waits for a change: the resolver
+    clears it); auth/transient 4xx and 5xx propagate so the task retries, like ``publish``.
+    """
+    if not enabled:
+        return DestinationPushes(held=True)
+    rows = session.scalars(
+        select(EditorialDestination)
+        .where(
+            EditorialDestination.pushed_at.is_(None),
+            EditorialDestination.push_error.is_(None),
+            EditorialDestination.has_fields(),  # an emptied row has nothing to say
+        )
+        .order_by(EditorialDestination.updated_at)
+        .limit(limit)
+    ).all()
+    pushed = unchanged = rejected = not_sent = 0
+    for row in rows:
+        payload = editorial_destination_payload(row)
+        columns = set(payload) - {"source_ref", "source", "tourist_name", "municipio_ibge"}
+        if not columns:
+            continue  # nothing to say: never send a bare upsert
+        missing = [k for k in ("tourist_name", "municipio_ibge") if not payload.get(k)]
+        if missing:
+            row.push_error = f"missing required key(s): {', '.join(missing)}"
+            session.commit()
+            rejected += 1
+            continue
+        digest = _digest(payload)
+        if row.push_hash == digest:
+            row.pushed_at = datetime.now(UTC)
+            session.commit()
+            unchanged += 1
+            continue
+        try:
+            sent = asyncio.run(api.push("destination", payload))
+        except ApiDown:
+            return DestinationPushes(pushed, unchanged, rejected, not_sent, api_down=True)
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if not 400 <= status < 500 or status in _TRANSIENT_4XX:
+                raise
+            row.push_error = f"{status}: {exc.response.text[:500]}"
+            session.commit()
+            logger.error("editorial_destination_rejected", source_ref=row.source_ref, status=status)
+            rejected += 1
+            continue
+        if not sent:
+            not_sent += 1  # the Null adapter sent nothing: stamping would hide the first real push
+            break
+        row.push_hash, row.pushed_at, row.push_error = digest, datetime.now(UTC), None
+        session.commit()
+        pushed += 1
+    return DestinationPushes(pushed, unchanged, rejected, not_sent)

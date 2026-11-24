@@ -154,6 +154,19 @@ the schedule (including options) in Redis and only resyncs entry definitions on 
 head-of-line-blocking is observed (long sweeps starving outreach/push under a single worker pool).
 <!-- GSD:conventions-end -->
 
+## Data retention — whatever enters Brave stays in Brave
+
+Data that entered Brave is never physically deleted by pipeline code: Nascente payloads,
+Rio/Mar/DLQ records, crawled documents, extracted claims, image lookups and the image store.
+A fact that is replaced, rejected, outdated or withheld from the API changes **state**
+(a `status`, `removed_at`, `superseded_at`, …) and its row stays, so the provenance of
+everything Brave ever said can be audited and reprocessed. Not sending something to
+norteia-api is a filter on the push, never a delete in Brave.
+
+Not covered (no collected data): Redis keys and caches, operational telemetry
+(`brave.prune_record_events` on ok/skip `record_events`), and explicit wipes the user asks
+for (the `reset-brave-db` skill, a legal/LGPD erasure request).
+
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
 ## Architecture
 

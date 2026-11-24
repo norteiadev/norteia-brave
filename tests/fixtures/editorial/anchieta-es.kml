@@ -1,0 +1,388 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Mapa das Praias de Anchieta – ES</name>
+    <description>https://www.viagensecaminhos.com/anchieta-es/</description>
+    <Style id="icon-1521-0288D1-nodesc-normal">
+      <IconStyle>
+        <color>ffd18802</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>0</scale>
+      </LabelStyle>
+      <BalloonStyle>
+        <text><![CDATA[<h3>$[name]</h3>]]></text>
+      </BalloonStyle>
+    </Style>
+    <Style id="icon-1521-0288D1-nodesc-highlight">
+      <IconStyle>
+        <color>ffd18802</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>1</scale>
+      </LabelStyle>
+      <BalloonStyle>
+        <text><![CDATA[<h3>$[name]</h3>]]></text>
+      </BalloonStyle>
+    </Style>
+    <StyleMap id="icon-1521-0288D1-nodesc">
+      <Pair>
+        <key>normal</key>
+        <styleUrl>#icon-1521-0288D1-nodesc-normal</styleUrl>
+      </Pair>
+      <Pair>
+        <key>highlight</key>
+        <styleUrl>#icon-1521-0288D1-nodesc-highlight</styleUrl>
+      </Pair>
+    </StyleMap>
+    <Style id="icon-1636-0288D1-nodesc-normal">
+      <IconStyle>
+        <color>ffd18802</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>0</scale>
+      </LabelStyle>
+      <BalloonStyle>
+        <text><![CDATA[<h3>$[name]</h3>]]></text>
+      </BalloonStyle>
+    </Style>
+    <Style id="icon-1636-0288D1-nodesc-highlight">
+      <IconStyle>
+        <color>ffd18802</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>1</scale>
+      </LabelStyle>
+      <BalloonStyle>
+        <text><![CDATA[<h3>$[name]</h3>]]></text>
+      </BalloonStyle>
+    </Style>
+    <StyleMap id="icon-1636-0288D1-nodesc">
+      <Pair>
+        <key>normal</key>
+        <styleUrl>#icon-1636-0288D1-nodesc-normal</styleUrl>
+      </Pair>
+      <Pair>
+        <key>highlight</key>
+        <styleUrl>#icon-1636-0288D1-nodesc-highlight</styleUrl>
+      </Pair>
+    </StyleMap>
+    <Style id="icon-1671-0288D1-nodesc-normal">
+      <IconStyle>
+        <color>ffd18802</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>0</scale>
+      </LabelStyle>
+      <BalloonStyle>
+        <text><![CDATA[<h3>$[name]</h3>]]></text>
+      </BalloonStyle>
+    </Style>
+    <Style id="icon-1671-0288D1-nodesc-highlight">
+      <IconStyle>
+        <color>ffd18802</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>1</scale>
+      </LabelStyle>
+      <BalloonStyle>
+        <text><![CDATA[<h3>$[name]</h3>]]></text>
+      </BalloonStyle>
+    </Style>
+    <StyleMap id="icon-1671-0288D1-nodesc">
+      <Pair>
+        <key>normal</key>
+        <styleUrl>#icon-1671-0288D1-nodesc-normal</styleUrl>
+      </Pair>
+      <Pair>
+        <key>highlight</key>
+        <styleUrl>#icon-1671-0288D1-nodesc-highlight</styleUrl>
+      </Pair>
+    </StyleMap>
+    <Style id="icon-1720-0288D1-nodesc-normal">
+      <IconStyle>
+        <color>ffd18802</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>0</scale>
+      </LabelStyle>
+      <BalloonStyle>
+        <text><![CDATA[<h3>$[name]</h3>]]></text>
+      </BalloonStyle>
+    </Style>
+    <Style id="icon-1720-0288D1-nodesc-highlight">
+      <IconStyle>
+        <color>ffd18802</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>1</scale>
+      </LabelStyle>
+      <BalloonStyle>
+        <text><![CDATA[<h3>$[name]</h3>]]></text>
+      </BalloonStyle>
+    </Style>
+    <StyleMap id="icon-1720-0288D1-nodesc">
+      <Pair>
+        <key>normal</key>
+        <styleUrl>#icon-1720-0288D1-nodesc-normal</styleUrl>
+      </Pair>
+      <Pair>
+        <key>highlight</key>
+        <styleUrl>#icon-1720-0288D1-nodesc-highlight</styleUrl>
+      </Pair>
+    </StyleMap>
+    <Folder>
+      <name>Camada sem título</name>
+      <Placemark>
+        <name>Santuário de São José de Anchieta
+</name>
+        <styleUrl>#icon-1671-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6524609,-20.8031251,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Museu Nacional de Anchieta
+</name>
+        <styleUrl>#icon-1636-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6537617,-20.8041531,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praça das Garças
+</name>
+        <styleUrl>#icon-1720-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6556889,-20.8038124,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Casa da Cultura
+</name>
+        <styleUrl>#icon-1636-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6549991,-20.8038889,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Centro cultural de Anchieta
+</name>
+        <styleUrl>#icon-1636-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6529195,-20.8052131,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia da Areia Preta
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6970939,-20.8331853,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia dos Namorados
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6908658,-20.8286272,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia de Santa Helena
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6871696,-20.8272274,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia de Inhaúma
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6827817,-20.8232567,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia do Tombo, Sapê, e Juca da Mata</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6757584,-20.8208399,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia de Marvila e Praia do Balanço
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6650082,-20.812037,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia dos Coqueiros
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6611454,-20.81029,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia do Quitiba
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6558459,-20.8094539,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia Central
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6486047,-20.8074314,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia Bela Vista e Boca da Baleia
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6312503,-20.8382447,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia de Castelhanos
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6262918,-20.836426,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia de Guanabara
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6188369,-20.8290888,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia de Parati
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6043261,-20.804964,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia de Ubu
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.5925775,-20.8020065,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia do Além
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.5793181,-20.7922716,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia Mãe Bá
+</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.5732766,-20.7682583,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Praia Costa Azul</name>
+        <styleUrl>#icon-1521-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>
+            -40.6933192,-20.8305559,0
+          </coordinates>
+        </Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>

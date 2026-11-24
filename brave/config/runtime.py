@@ -105,6 +105,9 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
         ConfigKey("places_enrichment_enabled", ("places_enrichment_enabled",), "bool"),
         ConfigKey("images_enrichment_enabled", ("images_enrichment_enabled",), "bool"),
         ConfigKey("images_push_enabled", ("images_push_enabled",), "bool"),
+        ConfigKey("editorial_enabled", ("editorial_enabled",), "bool"),
+        ConfigKey("editorial_push_enabled", ("editorial_push_enabled",), "bool"),
+        ConfigKey("editorial_validate_enabled", ("editorial_validate_enabled",), "bool"),
         ConfigKey(
             "atrativo_description_batch_enabled", ("atrativo_description_batch_enabled",), "bool"
         ),

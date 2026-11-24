@@ -18,11 +18,22 @@ Seven protocols (CORE-11 + TA-01 + TA-14):
 """
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 # claude-sonnet-4-5 retires on 2026-11-30 (Anthropic deprecation), so the default moved to
 # Sonnet 5.5 (~30% more tokens for the same text, cheaper per token).
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5"
+
+
+@dataclass(frozen=True)
+class GroundedAnswer:
+    """A Gemini answer grounded on Google Search: the text, the pages it rests on
+    (``{"uri", "title"}``, from ``groundingMetadata.groundingChunks``) and the queries run."""
+
+    text: str
+    sources: tuple[dict[str, str], ...] = ()
+    queries: tuple[str, ...] = ()
 
 
 class LLMClientProtocol(Protocol):
@@ -79,6 +90,18 @@ class LLMClientProtocol(Protocol):
         """
         ...
 
+    async def generate_grounded(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        *,
+        system: str | None = None,
+    ) -> GroundedAnswer:
+        """Gemini 2.5 + Grounding with Google Search (editorial validation): the text, the
+        pages the answer rests on and the queries run. The grounding fee is part of the cost
+        the client records."""
+        ...
+
 
 class NorteiaApiClientProtocol(Protocol):
     """Client for pushing canonical records to norteia-api (D-15, D-16).
@@ -124,9 +147,7 @@ class PlacesClientProtocol(Protocol):
         """
         ...
 
-    async def place_details(
-        self, place_id: str, *, include_reviews: bool = True
-    ) -> dict[str, Any]:
+    async def place_details(self, place_id: str, *, include_reviews: bool = True) -> dict[str, Any]:
         """Fetch full details for a Google Place.
 
         Args:
@@ -352,7 +373,6 @@ class TripAdvisorClientProtocol(Protocol):
         """
         ...
 
-
     async def fetch_attraction_address(self, location_id: int) -> dict[str, Any]:
         """TA's own address block for one attraction (LocalBusiness JSON-LD of its page).
 
@@ -375,9 +395,7 @@ class GeocoderClientProtocol(Protocol):
     or stored (decision #8, 14-CONTEXT.md).
     """
 
-    async def geocode(
-        self, location_id: str, name: str, uf: str
-    ) -> dict[str, Any] | None:
+    async def geocode(self, location_id: str, name: str, uf: str) -> dict[str, Any] | None:
         """Forward-geocode `name + UF + Brazil` → geo dict or None.
 
         Returns on hit: {"lat": float, "lon": float, "osm_id": int | None,
@@ -388,9 +406,7 @@ class GeocoderClientProtocol(Protocol):
         """
         ...
 
-    async def geocode_national(
-        self, location_id: str, name: str
-    ) -> dict[str, Any] | None:
+    async def geocode_national(self, location_id: str, name: str) -> dict[str, Any] | None:
         """Forward-geocode `name + Brazil` (no UF) → geo dict or None (Phase 15).
 
         The all-Brazil bulk attractions lane (geoId 294280) has no per-UF context —

@@ -55,12 +55,13 @@ async def lifespan(_app):
 # `set_as_current=True` (Celery's default) only pushes the app onto a THREAD-LOCAL stack —
 # which the import thread has, but FastAPI's sync request handlers run in a threadpool
 # worker thread where that stack is empty, so `current_app` falls back to the (unset)
-# global default → the amqp app. `set_default()` sets the GLOBAL default app, so shared
-# tasks resolve to Redis from any thread. The call is connection-free (Kombu connects
-# lazily), so it adds no broker I/O at startup.
-from brave.tasks.celery_app import app as _celery_app
+# global default → the amqp app. `brave.tasks.celery_app` calls `set_default()` on import (the
+# GLOBAL default app), so shared tasks resolve to Redis from any thread — in the API, the CLI
+# and everywhere else. Connection-free (Kombu connects lazily): no broker I/O at startup.
+# isort: split
+from brave.tasks import celery_app as _celery_app  # noqa: E402, F401 — binds the Redis app
 
-_celery_app.set_default()
+# isort: split
 from brave.api.routers.atrativos_gate import router as atrativos_gate_router
 from brave.api.routers.audit import router as audit_router
 from brave.api.routers.dashboard import router as dashboard_router

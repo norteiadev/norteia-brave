@@ -501,6 +501,58 @@ class AppConfig(BaseSettings):
     # ``images_push_enabled``.
     images_push_enabled: bool = False
 
+    # editorial_enabled gates the editorial lane's crawl and paid extraction
+    # (brave.editorial_crawl_uf / brave.editorial_submit_batches): blog posts → LLM → the
+    # attraction/destination editorial columns. Collect, resolve and the destination outbox
+    # are not gated by it (batches already in flight must still land). Off by default.
+    # Overlay key ``editorial_enabled`` (brave.config.runtime).
+    editorial_enabled: bool = False
+
+    # editorial_push_enabled gates brave.push_editorial_destinations, the outbox of the
+    # destination editorial columns: while False the rows stay pending, nothing is POSTed.
+    # Off by default. Overlay key ``editorial_push_enabled``.
+    editorial_push_enabled: bool = False
+
+    # Pinned Anthropic slug of the editorial extraction (Message Batches); defaults to the
+    # same Sonnet the copywriter uses. editorial_batch_size caps the posts per batch and
+    # editorial_est_usd_per_post is the batch-rate USD reserved per post at submit (settled
+    # against the real bill at collect) — see brave/domains/editorial/extract_batch.py. These
+    # are the single source of both values (the lane, the tasks and editorial-status read
+    # them from here). Sizing: a post body is ~3k tokens; with the system prompt + tool schema
+    # ~6k in and up to ~4k out ≈ $0.026 at batch rates on claude-sonnet-5-5 ($2/$10 per MTok).
+    # 0.06 rounds UP on purpose (under-reserving lets a batch commit past the daily budget);
+    # 50 posts reserve $3.00, well inside a default-budget day. editorial_expected_usd_per_post
+    # is that ~$0.026 expectation, shown by editorial-status next to the reservation ceiling.
+    editorial_model_slug: str = "claude-sonnet-5-5"
+    editorial_batch_size: int = 50
+    editorial_est_usd_per_post: float = 0.06
+    editorial_expected_usd_per_post: float = 0.026
+
+    # Web validation of the PERISHABLE editorial facts of posts over a year old
+    # (brave/domains/editorial/validate.py): Gemini 2.5 Flash direct (Google AI Studio) with
+    # Grounding with Google Search, one call per entity. Off by default: it is paid, and the
+    # resolver holds those facts as ``pending_validation`` (never sent) until it runs.
+    # editorial_validate_est_usd_per_entity is the single source of the cost gate that
+    # editorial-status prints before anyone turns this on: ~6k tokens in + 0.5k out
+    # (~$0.003 at $0.30/$2.50 per MTok) + the grounding fee ($35 per 1,000 grounded prompts =
+    # $0.035; the 1,500 free requests a day are not counted on) ≈ $0.038, rounded up.
+    # editorial_validate_batch_size caps the entities one task run checks. Overlay key
+    # ``editorial_validate_enabled``.
+    # NOTE (2026-11-12): Google lists gemini-2.5-flash as deprecated — from 2026-12-01 requests
+    # route to Gemini 3.5 Flash-Lite, and Gemini 3+ bills grounding per search QUERY ($14 per
+    # 1,000) instead of per prompt ($35 per 1,000). The slug is configurable on purpose and is
+    # NOT changed here (a model swap is the user's call): a new slug needs a row in
+    # brave/clients/llm.py ``_GEMINI_PRICES_USD_PER_MTOK`` (else the task refuses to run:
+    # ``gemini_is_priced``), the new grounding fee in ``_GEMINI_GROUNDING_USD_PER_PROMPT`` (and
+    # a per-query count if it is a Gemini 3 model) and a fresh editorial_validate_est_usd_per_entity.
+    editorial_validate_enabled: bool = False
+    editorial_validate_model_slug: str = "gemini-2.5-flash"
+    editorial_validate_batch_size: int = 40
+    editorial_validate_est_usd_per_entity: float = 0.04
+    # Failed attempts (call error, unreadable answer, a skipped fact) a claim tolerates before it
+    # becomes ``validation_failed``: kept, never sent, not paid for again until reopened.
+    editorial_validate_max_attempts: int = 3
+
     # atrativo_description_batch_enabled moves description writing off the synchronous
     # path: when True the INLINE copywriter is switched off and descriptions are instead
     # written asynchronously by the Message Batches lane (50% off tokens, up to 24h
