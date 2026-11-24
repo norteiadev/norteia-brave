@@ -111,6 +111,7 @@ def anthropic_thinking(model: str) -> dict[str, str] | None:
     """The thinking param that keeps ``model`` from thinking, or None when none is needed."""
     return _THINKING_OFF.get(model)
 
+
 # Prompt-caching multipliers on the input rate. Nothing sends cache_control today, so both
 # counters are always 0 — priced anyway because a cache hit MOVES tokens out of input_tokens,
 # so without these the day someone enables caching we would under-count instead of measure it.
@@ -131,7 +132,21 @@ _GEMINI_PRICES_USD_PER_MTOK: dict[tuple[str, str], tuple[float, float, float]] =
     ("gemini-2.5-flash", "flex"): (0.15, 1.25, 0.03),
     ("gemini-2.5-flash-lite", "standard"): (0.10, 0.40, 0.01),
     ("gemini-2.5-flash-lite", "flex"): (0.05, 0.20, 0.01),
+    # Where gemini-2.5-flash calls are routed from 2026-12-01 (same text rates, Gemini API release
+    # notes of 2026-11-02). Flex assumed at half, like every other Gemini model; an unexpected
+    # billed tier is priced at standard anyway.
+    ("gemini-3.5-flash-lite", "standard"): (0.30, 2.50, 0.03),
+    ("gemini-3.5-flash-lite", "flex"): (0.15, 1.25, 0.03),
 }
+
+
+def gemini_thinking_off(model: str) -> dict[str, Any]:
+    """The lowest thinking a Gemini model accepts. 2.x takes ``thinkingBudget: 0`` (off);
+    Gemini 3+ rejects it with a 400 and takes ``thinkingLevel: "minimal"`` instead."""
+    if model.startswith("gemini-2"):
+        return {"thinkingBudget": 0}
+    return {"thinkingLevel": "minimal"}
+
 
 # Grounding with Google Search on Gemini 2.5: $35 per 1,000 grounded prompts (ai.google.dev
 # pricing, 2026-11-12), billed per PROMPT whatever the number of queries the model ran, and only
@@ -429,9 +444,7 @@ class RealLLMClient:
         prompt_tokens: int = usage.prompt_tokens if usage else 0
         completion_tokens: int = usage.completion_tokens if usage else 0
         usd_cost: float = (
-            float(usage.model_extra.get("cost", 0.0))
-            if usage and usage.model_extra
-            else 0.0
+            float(usage.model_extra.get("cost", 0.0)) if usage and usage.model_extra else 0.0
         )
 
         logger.info(
@@ -746,7 +759,9 @@ class RealLLMClient:
         bill the search twice). Same cost guard and retries as ``generate``.
         """
         if not model.startswith("gemini-") or "/" in model:
-            raise ValueError(f"generate_grounded(): Gemini direct only (a gemini-* slug); got {model!r}")
+            raise ValueError(
+                f"generate_grounded(): Gemini direct only (a gemini-* slug); got {model!r}"
+            )
         if self._redis_client is not None:
             pre_dispatch_check(self._redis_client, self._config)
         text, data = await self._gemini_run(messages, model, system=system, grounded=True)
@@ -799,7 +814,7 @@ class RealLLMClient:
             ],
             "generationConfig": {
                 "maxOutputTokens": _GROUNDED_MAX_OUTPUT_TOKENS if grounded else 2048,
-                "thinkingConfig": {"thinkingBudget": 0},
+                "thinkingConfig": gemini_thinking_off(model),
             },
         }
         if grounded:
