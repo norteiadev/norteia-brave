@@ -478,6 +478,7 @@ class RealLLMClient:
         *,
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> str:
         """Generate a free-form text response (D-05a).
 
@@ -495,6 +496,8 @@ class RealLLMClient:
             tools:    Optional tool defs, e.g. the server-side web_search tool. When passed,
                       the server-side sampling loop may stop_reason=="pause_turn"; we resume
                       up to _MAX_TOOL_TURNS times, then extract text from all text blocks.
+            response_schema: Gemini direct only — a Gemini ``responseSchema`` (OpenAPI subset):
+                      the reply is JSON in that shape (editorial validation).
 
         Returns:
             Generated text (concatenated text blocks; empty string if none).
@@ -510,10 +513,14 @@ class RealLLMClient:
 
         # An OpenRouter slug ("vendor/model") never reaches Anthropic; a bare gemini-* slug
         # goes to Google AI Studio direct.
+        if response_schema is not None and (not model.startswith("gemini-") or "/" in model):
+            raise ValueError(f"generate(): response_schema is Gemini-direct only; got {model!r}")
         if "/" in model:
             return await self._generate_openrouter(messages, model, system=system, tools=tools)
         if model.startswith("gemini-"):
-            return await self._generate_gemini(messages, model, system=system, tools=tools)
+            return await self._generate_gemini(
+                messages, model, system=system, tools=tools, response_schema=response_schema
+            )
 
         create_kwargs: dict[str, Any] = {
             "model": model,
@@ -712,11 +719,14 @@ class RealLLMClient:
         *,
         system: str | None,
         tools: list[dict[str, Any]] | None,
+        response_schema: dict[str, Any] | None = None,
     ) -> str:
         """generate() for bare gemini-* slugs (see ``_gemini_run``)."""
         if tools:
             raise ValueError(f"generate(): server-side tools are Anthropic-only; got {model!r}")
-        text, _ = await self._gemini_run(messages, model, system=system)
+        text, _ = await self._gemini_run(
+            messages, model, system=system, response_schema=response_schema
+        )
         return text
 
     async def generate_grounded(
@@ -758,6 +768,7 @@ class RealLLMClient:
         *,
         system: str | None,
         grounded: bool = False,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """The Gemini-direct call behind generate() and generate_grounded(): ``(text, raw
         response) for bare gemini-* slugs — Google AI Studio ``:generateContent`` (§30).
@@ -793,6 +804,10 @@ class RealLLMClient:
         }
         if grounded:
             body["tools"] = [{"google_search": {}}]
+        if response_schema is not None:
+            body["generationConfig"]["responseMimeType"] = "application/json"
+            body["generationConfig"]["responseSchema"] = response_schema
+            body["generationConfig"]["maxOutputTokens"] = _GROUNDED_MAX_OUTPUT_TOKENS
         if system is not None:
             body["systemInstruction"] = {"parts": [{"text": system}]}
         url = f"{self._config.gemini_base_url}/models/{model}:generateContent"

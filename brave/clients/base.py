@@ -74,6 +74,7 @@ class LLMClientProtocol(Protocol):
         *,
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> str:
         """Generate a free-form text response (Sonnet PT-BR conversation, D-08).
 

@@ -26,10 +26,12 @@ Commands:
     editorial-retry   Make the errored posts (and the claims whose web check kept failing)
                       eligible again (then --submit-only):
                       editorial-retry <UF>|--all
+                      --revalidate: every JUDGED claim of the UF back to the web check
+                      (after a search/prompt change), the old verdict kept on the claim.
     editorial-resolve Re-resolve the claims of a UF (free, idempotent): editorial-resolve
                       <UF>|--all. Run it after deploying the migration that adds a rule
                       (0026: perishable facts of old posts), BEFORE any Publicação.
-    editorial-validate  Web check (Gemini + Google Search, paid) of the perishable facts of
+    editorial-validate  Web check (Parallel search + Gemini, paid) of the perishable facts of
                       posts over a year old: editorial-validate <UF>|--all. Cost gate: the
                       "validation" line of editorial-status, then turn on
                       editorial_validate_enabled.
@@ -349,7 +351,9 @@ def _run_editorial_submit(ufs: list[str | None]) -> int:
         try:
             editorial_submit_batches.delay(uf)
         except Exception as exc:
-            print(f"editorial-load: could not dispatch the submit (is the Celery broker up?): {exc}")
+            print(
+                f"editorial-load: could not dispatch the submit (is the Celery broker up?): {exc}"
+            )
             return 2
         print(f"editorial-load: dispatched the extraction submit of {uf or 'every UF'} (paid)")
     return 0
@@ -381,14 +385,35 @@ def _run_editorial_retry(ufs: list[str | None]) -> int:
     return 0
 
 
+def _run_editorial_revalidate(ufs: list[str]) -> int:
+    """Every judged claim of each UF back in line for the web check, the old verdict kept on the
+    claim (``validation_sources["previous"]``). Paid again once editorial-validate runs."""
+    from brave.domains.editorial.validate import reopen_validated
+    from brave.tasks.pipeline import _get_session
+
+    session, _ = _get_session()
+    try:
+        for uf in ufs:
+            n = reopen_validated(session, uf)
+            print(f"editorial-retry: {n} judged claim(s) of {uf} back in line (old verdict kept)")
+    finally:
+        session.close()
+    print("editorial-retry: check them with: brave editorial-validate " + " ".join(ufs))
+    return 0
+
+
 def _editorial_ufs(command: str, rest: list[str]) -> list[str]:
     """The UFs named after ``command`` (``--all`` = every UF); exits 1 on a bad/missing UF."""
     from brave.domains.editorial.crawler import UF_SLUGS
 
-    ufs = sorted(UF_SLUGS) if "--all" in rest else [a.upper() for a in rest if not a.startswith("--")]
+    ufs = (
+        sorted(UF_SLUGS) if "--all" in rest else [a.upper() for a in rest if not a.startswith("--")]
+    )
     bad = [u for u in ufs if u not in UF_SLUGS]
     if not ufs or bad:
-        print(f"{command}: {'unknown UF ' + ', '.join(bad) if bad else 'a UF or --all is required'}")
+        print(
+            f"{command}: {'unknown UF ' + ', '.join(bad) if bad else 'a UF or --all is required'}"
+        )
         sys.exit(1)
     return ufs
 
@@ -444,11 +469,15 @@ def main() -> None:
         print("  sweep <UF> [--lane destinos|atrativos|both]   Kick an on-demand UF sweep")
         print("  backfill-ta   Start/resume the TripAdvisor backfill engine run")
         print("  images-repush Re-send every archived photo to norteia-api (after an API wipe)")
-        print("  editorial-load <UF>|--all [--crawl-only|--submit-only]   Crawl the blog, then extract")
+        print(
+            "  editorial-load <UF>|--all [--crawl-only|--submit-only]   Crawl the blog, then extract"
+        )
         print("  editorial-status [UF]   The editorial lane funnel")
         print("  editorial-retry <UF>|--all   Make the errored editorial posts eligible again")
         print("  editorial-resolve <UF>|--all   Re-resolve the editorial claims (free, idempotent)")
-        print("  editorial-validate <UF>|--all   Web check (paid) of the perishable editorial facts")
+        print(
+            "  editorial-validate <UF>|--all   Web check (paid) of the perishable editorial facts"
+        )
         sys.exit(1)
 
     command = args[0]
@@ -463,6 +492,8 @@ def main() -> None:
     elif command == "editorial-retry":
         rest = args[1:]
         ufs = _editorial_ufs(command, rest)
+        if "--revalidate" in rest:
+            sys.exit(_run_editorial_revalidate(list(ufs)))
         sys.exit(_run_editorial_retry([None] if "--all" in rest else list(ufs)))
     elif command == "editorial-resolve":
         rest = args[1:]

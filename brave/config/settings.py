@@ -545,10 +545,15 @@ class AppConfig(BaseSettings):
     # brave/clients/llm.py ``_GEMINI_PRICES_USD_PER_MTOK`` (else the task refuses to run:
     # ``gemini_is_priced``), the new grounding fee in ``_GEMINI_GROUNDING_USD_PER_PROMPT`` (and
     # a per-query count if it is a Gemini 3 model) and a fresh editorial_validate_est_usd_per_entity.
+    # editorial_validate_search picks the web search (validate.py): "parallel" (default) is one
+    # Parallel /v1/search per entity ($0.001) + Gemini without a search tool (~5k tokens in,
+    # ~0.5k out ≈ $0.003) ≈ $0.004, rounded up to $0.008; "google" is the grounded call above
+    # (≈ $0.04 per entity). Measured on the ES pilot, 2026-11-24 (113 grounded calls, $4.52).
     editorial_validate_enabled: bool = False
+    editorial_validate_search: Literal["parallel", "google"] = "parallel"
     editorial_validate_model_slug: str = "gemini-2.5-flash"
     editorial_validate_batch_size: int = 40
-    editorial_validate_est_usd_per_entity: float = 0.04
+    editorial_validate_est_usd_per_entity: float = 0.008
     # Failed attempts (call error, unreadable answer, a skipped fact) a claim tolerates before it
     # becomes ``validation_failed``: kept, never sent, not paid for again until reopened.
     editorial_validate_max_attempts: int = 3
