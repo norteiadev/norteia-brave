@@ -124,7 +124,12 @@ def h(db_engine, monkeypatch):
     )
 
     def configure(**over):
-        x.cfg = AppConfig().model_copy(update={"run_real_externals": True, **over})
+        # the blog pipeline is what these tests drive: resolve its claims too (prod: web only)
+        base = {
+            "run_real_externals": True,
+            "editorial_sources": ["viagensecaminhos", "web_parallel"],
+        }
+        x.cfg = AppConfig().model_copy(update={**base, **over})
         client = SimpleNamespace(messages=SimpleNamespace(batches=x.batches))
         monkeypatch.setattr(pipeline, "_load_config", lambda s: x.cfg)
         monkeypatch.setattr(
@@ -360,7 +365,7 @@ def test_validate_checks_the_pending_claims_then_re_resolves_the_uf(h, monkeypat
     out = pipeline.editorial_validate.run("ES")
     h.session.expire(c)
     assert c.status == "matched" and c.validation_verdict == "confirmado"
-    assert gemini.calls[0][0] == "gemini-2.5-flash" and out["confirmed"] == 1
+    assert gemini.calls[0][0] == "gemini-3.5-flash-lite" and out["confirmed"] == 1
     resolve.assert_called_once_with("ES")  # the confirmed fact is written by the resolver
 
 
@@ -481,3 +486,21 @@ def test_a_crawl_that_read_a_missing_map_again_re_resolves_the_uf(h, monkeypatch
     pipeline.editorial_crawl_uf.run("ES")
     resolve.assert_called_once_with("ES")
     assert submit.call_count == 0  # same text: nothing to pay for
+
+
+@pytest.mark.parametrize(
+    "cfg",
+    [
+        {"editorial_web_enabled": True, "editorial_web_ufs": []},  # flag on, UF not allowlisted
+        {"editorial_web_enabled": True, "editorial_web_ufs": ["BA"]},
+        {"editorial_web_enabled": False, "editorial_web_ufs": ["ES"]},
+        {"editorial_web_enabled": True, "editorial_web_ufs": ["ES"], "run_real_externals": False},
+    ],
+)
+def test_the_web_fill_never_runs_outside_the_allowlist(h, monkeypatch, cfg) -> None:
+    h.configure(**{"run_real_externals": True, **cfg})
+    gemini = Gemini()
+    _with_gemini(h, monkeypatch, gemini)
+    assert pipeline.editorial_web_fill.run("ES") == {"uf": "ES", "skipped": True}
+    assert pipeline.editorial_web_sweep.run() == []
+    assert gemini.calls == []

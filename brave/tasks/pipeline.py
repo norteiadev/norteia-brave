@@ -3106,8 +3106,8 @@ def editorial_resolve(uf: str) -> dict[str, Any]:
 
     session, _ = _get_session()
     try:
-        r = resolve_uf(session, uf)
         effective = _load_config(session)
+        r = resolve_uf(session, uf, sources=effective.editorial_sources)
     finally:
         session.close()
     if r.claims.get("pending_validation") and _editorial_validate_on(effective):
@@ -3188,6 +3188,94 @@ def editorial_validate(uf: str | None = None) -> dict[str, Any]:
         "unverified": r.unverified, "failed": r.failed, "unanswered": r.unanswered,
         "exhausted": r.exhausted,
     }  # fmt: skip
+
+
+def _editorial_web_on(effective: Any, uf: str) -> bool:
+    """The web source runs only with the flag, real externals AND the UF in the allowlist."""
+    return bool(
+        effective.editorial_web_enabled
+        and effective.run_real_externals
+        and uf.upper() in {u.upper() for u in effective.editorial_web_ufs}
+    )
+
+
+@shared_task(name="brave.editorial_web_fill", time_limit=3600, soft_time_limit=3300)
+def editorial_web_fill(uf: str, limit: int | None = None) -> dict[str, Any]:
+    """Write the pushed editorial columns of up to ``limit`` Mar attractions of ``uf`` from public
+    pages (one Parallel search + one Gemini call each) — brave.domains.editorial.web.
+
+    Paid. Needs editorial_web_enabled, run_real_externals AND ``uf`` in editorial_web_ufs: a UF
+    outside the allowlist is never filled. Then re-resolves the UF so the values reach Mar.
+    """
+    from brave.clients.llm import gemini_is_priced  # noqa: PLC0415
+    from brave.domains.editorial.web import LANE, fill, pending_attractions  # noqa: PLC0415
+
+    uf = uf.upper()
+    session, _ = _get_session()
+    try:
+        effective = _load_config(session)
+        if not _editorial_web_on(effective, uf):
+            return {"uf": uf, "skipped": True}
+        model = effective.editorial_web_model_slug
+        if not gemini_is_priced(model):
+            logger.error("editorial_web_model_unpriced", model=model)
+            return {"uf": uf, "error": f"no Gemini price for {model!r}"}
+        targets = pending_attractions(
+            session, uf, refresh_days=effective.editorial_web_refresh_days,
+            limit=limit or effective.editorial_web_batch_size,
+        )  # fmt: skip
+        if not targets:
+            return {"uf": uf, "attractions": 0}
+        clients = clients_for(effective)
+        try:
+            r = asyncio.run(
+                _using(
+                    clients,
+                    fill(
+                        session, clients.llm(LANE, session=session), clients.parallel(),
+                        model=model, targets=targets,
+                    ),  # fmt: skip
+                )
+            )
+        except (CostGuardError, ProviderBalanceError) as exc:
+            logger.warning("editorial_web_stopped", uf=uf, error=str(exc))
+            return {"uf": uf, "error": f"stopped: {exc}"}
+    finally:
+        session.close()
+    if r.ufs:
+        try:
+            editorial_resolve.delay(uf)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("editorial_resolve_dispatch_failed", uf=uf, error=str(exc))
+    return {
+        "uf": uf, "attractions": r.attractions, "written": r.written, "held": r.held,
+        "empty": r.empty, "failed": r.failed,
+    }  # fmt: skip
+
+
+@shared_task(name="brave.editorial_web_sweep", time_limit=300)
+def editorial_web_sweep() -> list[str]:
+    """Beat (30 min): one ``editorial_web_fill`` per allowlisted UF that still has Mar
+    attractions to fill — how newly synced attractions get their editorial columns. No-op while
+    the flag is off or the allowlist is empty."""
+    from brave.domains.editorial.web import pending_attractions  # noqa: PLC0415
+
+    session, _ = _get_session()
+    try:
+        effective = _load_config(session)
+        due = [
+            uf.upper()
+            for uf in effective.editorial_web_ufs
+            if _editorial_web_on(effective, uf)
+            and pending_attractions(
+                session, uf, refresh_days=effective.editorial_web_refresh_days, limit=1
+            )
+        ]
+    finally:
+        session.close()
+    for uf in due:
+        editorial_web_fill.delay(uf)
+    return due
 
 
 @shared_task(name="brave.push_editorial_destinations", time_limit=900, soft_time_limit=840)

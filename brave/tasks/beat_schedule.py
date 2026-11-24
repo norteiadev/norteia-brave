@@ -36,9 +36,33 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 UF_LIST = [
-    "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO",
-    "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR",
-    "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO",
+    "AC",
+    "AL",
+    "AM",
+    "AP",
+    "BA",
+    "CE",
+    "DF",
+    "ES",
+    "GO",
+    "MA",
+    "MG",
+    "MS",
+    "MT",
+    "PA",
+    "PB",
+    "PE",
+    "PI",
+    "PR",
+    "RJ",
+    "RN",
+    "RO",
+    "RR",
+    "RS",
+    "SC",
+    "SE",
+    "SP",
+    "TO",
 ]
 
 # ---------------------------------------------------------------------------
@@ -156,6 +180,9 @@ def maintenance_beat_entries() -> dict:
       - ``editorial-collect-15min`` → collect/apply the ended editorial extraction batches
         (and reap stale claims). Not gated on editorial_enabled: batches in flight must still
         land. Submit and crawl are NOT scheduled (paid / slow: operator-dispatched).
+      - ``editorial-web-sweep-30min`` → fill the editorial columns of Mar attractions from public
+        pages (brave.editorial_web_sweep), only for the UFs in editorial_web_ufs and only while
+        editorial_web_enabled is on.
       - ``editorial-push-destinations-15min`` → the editorial destination outbox
         (brave.push_editorial_destinations). No-op offline / API down / while
         editorial_push_enabled is off.
@@ -221,6 +248,12 @@ def maintenance_beat_entries() -> dict:
         "editorial-collect-15min": {
             "task": "brave.editorial_collect_batches",
             "schedule": crontab(minute="*/15"),
+            "args": (),
+            "kwargs": {},
+        },
+        "editorial-web-sweep-30min": {
+            "task": "brave.editorial_web_sweep",
+            "schedule": crontab(minute="*/30"),
             "args": (),
             "kwargs": {},
         },

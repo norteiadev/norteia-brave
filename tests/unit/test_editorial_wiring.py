@@ -35,7 +35,7 @@ def test_the_web_validation_is_off_by_default_on_gemini_flash_with_a_priced_mode
 
     cfg = AppConfig()
     assert cfg.editorial_validate_enabled is False
-    assert cfg.editorial_validate_model_slug == "gemini-2.5-flash"
+    assert cfg.editorial_validate_model_slug == "gemini-3.5-flash-lite"
     assert gemini_is_priced(cfg.editorial_validate_model_slug)  # the cost guard can price it
     assert cfg.editorial_validate_batch_size > 0
     assert cfg.editorial_validate_max_attempts == 3  # then validation_failed: never re-paid
@@ -205,3 +205,13 @@ def test_editorial_resolve_dispatches_the_free_resolve_of_each_uf_without_any_sw
     with pytest.raises(SystemExit) as exc:
         cli.main()
     assert exc.value.code == 0 and resolve.call_count == 27
+
+
+def test_the_web_source_is_off_by_default_and_only_the_web_backs_values() -> None:
+    from brave.clients.llm import gemini_is_priced
+
+    cfg = AppConfig()
+    assert cfg.editorial_web_enabled is False
+    assert cfg.editorial_web_ufs == []  # nothing runs until a UF is allowlisted
+    assert cfg.editorial_sources == ["web_parallel"]  # the blog is no longer used
+    assert gemini_is_priced(cfg.editorial_web_model_slug)
