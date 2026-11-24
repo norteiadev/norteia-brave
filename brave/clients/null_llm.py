@@ -53,6 +53,7 @@ class NullLLMClient:
         *,
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> str:
         """Return canned PT-BR string — offline stub performs no generation.
 

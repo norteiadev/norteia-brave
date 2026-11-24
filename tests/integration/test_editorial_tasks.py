@@ -271,10 +271,17 @@ def test_resolve_task_runs_without_the_lane_switch(h) -> None:
 
 
 class Gemini:
-    """Stands in for the grounded Gemini client: confirms every fact it is sent."""
+    """Stands in for Gemini (grounded or fed the search excerpts): confirms every fact sent."""
 
     def __init__(self):
         self.calls = []
+
+    async def generate(self, messages, model, *, system=None, tools=None, response_schema=None):
+        import json
+
+        answer = await self.generate_grounded(messages, model, system=system)
+        facts = [{**f, "sources": ["https://x"]} for f in json.loads(answer.text)["facts"]]
+        return json.dumps({"facts": facts})
 
     async def generate_grounded(self, messages, model, *, system=None):
         import json
@@ -288,6 +295,17 @@ class Gemini:
         return GroundedAnswer(
             text=json.dumps({"facts": facts}), sources=({"uri": "https://x", "title": "x"},)
         )
+
+
+class _OneResultSearch:
+    async def search(self, queries, objective):
+        from brave.clients.parallel import ParallelSearch
+
+        return ParallelSearch(
+            search_id="s", mode="turbo", objective=objective, queries=list(queries),
+            results=[{"url": "https://x", "excerpts": ["ok"]}], usage=None, warnings=None,
+            usd=0.001, latency_ms=1,
+        )  # fmt: skip
 
 
 def _pending_claim(h, d=None):
@@ -307,7 +325,9 @@ def _with_gemini(h, monkeypatch, gemini):
     monkeypatch.setattr(
         pipeline,
         "clients_for",
-        lambda c, **k: Clients(c, llm=gemini, editorial=h.fetcher, norteia_api=h.api),
+        lambda c, **k: Clients(
+            c, llm=gemini, editorial=h.fetcher, norteia_api=h.api, search=_OneResultSearch()
+        ),
     )
 
 

@@ -3132,8 +3132,9 @@ def _editorial_validate_on(effective: Any) -> bool:
 
 @shared_task(name="brave.editorial_validate", time_limit=3600, soft_time_limit=3300)
 def editorial_validate(uf: str | None = None) -> dict[str, Any]:
-    """Check the perishable facts of old posts on the web (Gemini 2.5 Flash + Google Search
-    grounding, one paid call per entity) — brave.domains.editorial.validate.
+    """Check the perishable facts of old posts on the web (a Parallel search + Gemini 2.5 Flash,
+    or Gemini with Google Search grounding: ``editorial_validate_search``; one entity per
+    call) — brave.domains.editorial.validate.
 
     Needs editorial_enabled AND editorial_validate_enabled AND run_real_externals. Chained
     after ``editorial_resolve`` (never on a timer): up to ``editorial_validate_batch_size``
@@ -3161,6 +3162,10 @@ def editorial_validate(uf: str | None = None) -> dict[str, Any]:
                         session, clients.llm(LANE, session=session), model=model, uf=uf,
                         limit=effective.editorial_validate_batch_size,
                         max_attempts=effective.editorial_validate_max_attempts,
+                        search=(
+                            clients.parallel()
+                            if effective.editorial_validate_search == "parallel" else None
+                        ),
                     ),  # fmt: skip
                 )
             )

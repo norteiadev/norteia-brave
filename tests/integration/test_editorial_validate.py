@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from brave.clients.base import GroundedAnswer
+from brave.clients.parallel import ParallelSearch
 from brave.core.models import (
     EditorialClaim,
     EditorialDocument,
@@ -23,11 +24,13 @@ from brave.core.models import (
     RioRecord,
 )
 from brave.domains.editorial.validate import (
+    ANSWER_SCHEMA,
     FactVerdict,
     build_prompt,
     parse_answer,
     pending_entities,
     reopen_failed,
+    reopen_validated,
     validate_pending,
 )
 from brave.shared.exceptions import CostGuardError
@@ -106,34 +109,68 @@ class ScriptedLLM:
         self.verdicts, self.grounded, self.text, self.error = verdicts or {}, grounded, text, error
         self.fail_on, self.calls = fail_on, []
 
-    async def generate_grounded(self, messages, model, *, system=None) -> GroundedAnswer:
-        self.calls.append({"messages": messages, "model": model, "system": system})
+    cite = "https://exemplo.gov.br/pagina"
+
+    def _answer(self, messages, model, system, **kw) -> str:
+        self.calls.append({"messages": messages, "model": model, "system": system, **kw})
         if self.fail_on is not None and len(self.calls) == self.fail_on:
             raise CostGuardError("budget")
         if self.error:
             raise self.error
         user = messages[0]["content"]
         facts = re.findall(r"id=(\S+) \| coluna=(\w+)", user)
-        text = self.text
-        if text is None:
-            text = json.dumps(
-                {
-                    "facts": [
-                        {
-                            "id": i,
-                            "verdict": self.verdicts.get(col, "confirmado"),
-                            "sources": ["https://exemplo.gov.br/pagina"],
-                            "note": "A página oficial confirma.",
-                        }
-                        for i, col in facts
-                    ]
-                }
-            )
+        if self.text is not None:
+            return self.text
+        return json.dumps(
+            {
+                "facts": [
+                    {
+                        "id": i,
+                        "verdict": self.verdicts.get(col, "confirmado"),
+                        "sources": [self.cite],
+                        "note": "A página oficial confirma.",
+                    }
+                    for i, col in facts
+                ]
+            }
+        )
+
+    async def generate(self, messages, model, *, system=None, tools=None, response_schema=None):
+        return self._answer(messages, model, system, response_schema=response_schema)
+
+    async def generate_grounded(self, messages, model, *, system=None) -> GroundedAnswer:
+        text = self._answer(messages, model, system)
         return GroundedAnswer(
             text=text,
             sources=(SOURCE,) if self.grounded else (),
             queries=("q",) if self.grounded else (),
         )
+
+
+class ScriptedSearch:
+    """Parallel-shaped: returns ``results`` for every search and records the requests."""
+
+    def __init__(self, results=None):
+        self.results = (
+            [
+                {
+                    "url": "https://exemplo.gov.br/pagina/",
+                    "title": "Prefeitura",
+                    "publish_date": "2026-03-01",
+                    "excerpts": ["O parque abre todos os dias e tem estacionamento."],
+                }
+            ]
+            if results is None
+            else results
+        )
+        self.calls = []
+
+    async def search(self, queries, objective):
+        self.calls.append({"queries": queries, "objective": objective})
+        return ParallelSearch(
+            search_id="s1", mode="turbo", objective=objective, queries=list(queries),
+            results=self.results, usage=None, warnings=None, usd=0.001, latency_ms=1,
+        )  # fmt: skip
 
 
 def run(session, llm, **kw):
@@ -458,3 +495,91 @@ def test_reopen_failed_puts_the_exhausted_claims_back_in_line(session) -> None:
     assert dead.last_validation_error == "RECITATION"  # the history stays
     assert fresh(session, other).status == "outdated"
     assert reopen_failed(session, "XX") == 0
+
+
+# -- the Parallel search path ---------------------------------------------------------------------
+
+
+def test_parallel_one_search_then_gemini_in_a_schema_judges_by_the_excerpts(session) -> None:
+    rio(session, "ta:1", "Pedra do Frade")
+    d = doc(session)
+    c = claim(session, d, "tips", "Leve água.")
+    claim(session, d, "how_to_get_there", "Pela BR-259.")
+    llm, search = ScriptedLLM(), ScriptedSearch()
+    result = run(session, llm, search=search)
+    assert len(search.calls) == 1 and len(llm.calls) == 1  # one search + one call per entity
+    (q,) = search.calls
+    assert all("Pedra do Frade" in x and "Pancas" in x for x in q["queries"])
+    assert "como chegar" in q["objective"] and "dicas" in q["objective"]
+    call = llm.calls[0]
+    assert call["response_schema"] is ANSWER_SCHEMA and "Google" not in call["system"]
+    user = call["messages"][0]["content"]
+    assert "estacionamento" in user and "data: 2026-03-01" in user
+    fresh(session, c)
+    assert (c.status, c.validation_verdict) == ("matched", "confirmado")
+    assert c.validation_sources == {
+        "cited": [ScriptedLLM.cite],
+        "search": ["https://exemplo.gov.br/pagina/"],
+        "queries": q["queries"],
+        "search_id": "s1",
+    }
+    assert result.confirmed == 2
+
+
+def test_parallel_a_confirmation_citing_a_page_the_search_did_not_return_is_not_trusted(
+    session,
+) -> None:
+    rio(session, "ta:1", "Pedra do Frade")
+    c = claim(session, doc(session), "tips", "Leve água.")
+    llm = ScriptedLLM()
+    llm.cite = "https://outro-site.com.br/x"
+    run(session, llm, search=ScriptedSearch())
+    fresh(session, c)
+    assert (c.status, c.validation_verdict) == ("unverified", "sem_evidencia")
+    assert "busca" in c.validation_note
+
+
+def test_parallel_an_empty_search_is_no_evidence_without_a_paid_generation(session) -> None:
+    rio(session, "ta:1", "Pedra do Frade")
+    c = claim(session, doc(session), "tips", "Leve água.")
+    llm = ScriptedLLM()
+    result = run(session, llm, search=ScriptedSearch(results=[]))
+    assert llm.calls == []
+    assert (fresh(session, c).status, c.validation_verdict) == ("unverified", "sem_evidencia")
+    assert result.unverified == 1 and c.validation_attempts == 0
+
+
+def test_parallel_the_guide_s_own_site_is_never_evidence(session) -> None:
+    rio(session, "ta:1", "Pedra do Frade")
+    c = claim(session, doc(session), "tips", "Leve água.")
+    own = [{"url": "https://www.viagensecaminhos.com/p1/", "excerpts": ["Leve água."]}]
+    llm = ScriptedLLM()
+    run(session, llm, search=ScriptedSearch(results=own))
+    assert llm.calls == []  # only the post itself came back: nothing to judge by
+    assert fresh(session, c).validation_verdict == "sem_evidencia"
+    assert c.validation_sources["search"] == []
+
+
+def test_revalidating_keeps_the_old_verdict_on_the_claim(session) -> None:
+    rio(session, "ta:1", "Pedra do Frade")
+    c = claim(session, doc(session), "tips", "Leve água.")
+    run(session, ScriptedLLM({"tips": "desatualizado"}))
+    assert fresh(session, c).status == "outdated"
+    first_at = c.validated_at
+
+    assert reopen_validated(session, UF) == 1
+    fresh(session, c)
+    assert (c.status, c.validation_verdict, c.validation_attempts) == (
+        "pending_validation",
+        None,
+        0,
+    )
+    (prev,) = c.validation_sources["previous"]
+    assert prev["verdict"] == "desatualizado" and prev["status"] == "outdated"
+    assert prev["validated_at"] == first_at.isoformat() and prev["sources"]["grounding"] == [SOURCE]
+
+    run(session, ScriptedLLM(), search=ScriptedSearch())
+    fresh(session, c)
+    assert (c.status, c.validation_verdict) == ("matched", "confirmado")
+    assert c.validation_sources["previous"] == [prev]  # the history rides on the new verdict
+    assert reopen_validated(session, "XX") == 0

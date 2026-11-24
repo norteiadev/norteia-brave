@@ -62,9 +62,16 @@ class Clients:
         self._given: dict[str, Any] = {
             k: v
             for k, v in {
-                "places": places, "llm": llm, "search": search, "tripadvisor": tripadvisor,
-                "geocoder": geocoder, "whatsapp": whatsapp, "norteia_api": norteia_api,
-                "batch": batch, "wikimedia": wikimedia, "editorial": editorial,
+                "places": places,
+                "llm": llm,
+                "search": search,
+                "tripadvisor": tripadvisor,
+                "geocoder": geocoder,
+                "whatsapp": whatsapp,
+                "norteia_api": norteia_api,
+                "batch": batch,
+                "wikimedia": wikimedia,
+                "editorial": editorial,
             }.items()
             if v is not None
         }
@@ -162,7 +169,6 @@ class Clients:
         if not self._real:
             return None
         from brave.clients.llm import gemini_is_priced  # noqa: PLC0415
-        from brave.clients.parallel import USD_PER_REQUEST  # noqa: PLC0415
 
         model = self._cfg.atrativo_cascade_model
         if model.startswith("gemini-"):
@@ -170,6 +176,12 @@ class Clients:
                 return f"cascade model {model!r} needs BRAVE_LLM_GEMINI_API_KEY"
             if not gemini_is_priced(model):
                 return f"cascade model {model!r} has no Gemini price"
+        return self.check_parallel()
+
+    def check_parallel(self) -> str | None:
+        """Why the Parallel client can't be built (key, mode), or None — builds nothing."""
+        from brave.clients.parallel import USD_PER_REQUEST  # noqa: PLC0415
+
         if not self._cfg.parallel_api_key:
             return "PARALLEL_API_KEY is empty"
         if self._cfg.parallel_search_mode not in USD_PER_REQUEST:
@@ -183,13 +195,22 @@ class Clients:
             return self._given["search"]
         if not self._cfg.atrativo_description_cascade_enabled:
             return None
+        if self._real and (reason := self.check_search()) is not None:
+            raise RuntimeError(reason)
+        return self.parallel()
+
+    def parallel(self) -> Any:
+        """The Parallel search client whatever the cascade flag says (the editorial web
+        validation searches with it too). Null offline; RuntimeError on a missing key/mode."""
+        if "search" in self._given:
+            return self._given["search"]
 
         def build() -> Any:
             if not self._real:
                 from brave.clients.null_search import NullSearchClient  # noqa: PLC0415
 
                 return NullSearchClient()
-            reason = self.check_search()
+            reason = self.check_parallel()
             if reason is not None:
                 raise RuntimeError(reason)
             from brave.clients.parallel import RealParallelClient  # noqa: PLC0415
@@ -305,7 +326,9 @@ class Clients:
 
         def build() -> Any:
             if not self._real:
-                raise RuntimeError("Clients.batch: run_real_externals=False — no offline batch client.")
+                raise RuntimeError(
+                    "Clients.batch: run_real_externals=False — no offline batch client."
+                )
             from anthropic import Anthropic  # noqa: PLC0415
 
             return Anthropic(api_key=self._cfg.llm.anthropic_api_key)
