@@ -551,12 +551,32 @@ class AppConfig(BaseSettings):
     # (≈ $0.04 per entity). Measured on the ES pilot, 2026-11-24 (113 grounded calls, $4.52).
     editorial_validate_enabled: bool = False
     editorial_validate_search: Literal["parallel", "google"] = "parallel"
-    editorial_validate_model_slug: str = "gemini-2.5-flash"
+    # gemini-3.5-flash-lite since 2026-11-24 (gemini-2.5-flash is routed to it from 2026-12-01):
+    # benchmarked on the ES validation — more conservative (an unsure fact is sem_evidencia).
+    editorial_validate_model_slug: str = "gemini-3.5-flash-lite"
     editorial_validate_batch_size: int = 40
     editorial_validate_est_usd_per_entity: float = 0.008
     # Failed attempts (call error, unreadable answer, a skipped fact) a claim tolerates before it
     # becomes ``validation_failed``: kept, never sent, not paid for again until reopened.
     editorial_validate_max_attempts: int = 3
+
+    # editorial_sources: the document sources whose claims the resolver turns into values (and
+    # so into the push). Since 2026-11-24 only the web source: the blog (viagensecaminhos)
+    # blocks crawlers and is no longer used — its claims stay in Brave, they just back nothing.
+    editorial_sources: list[str] = ["web_parallel"]
+
+    # Editorial source "web" (brave/domains/editorial/web.py): one Parallel search + one Gemini
+    # call per Mar attraction write the pushed editorial columns from public pages. Off by
+    # default, and only ever run for the UFs in editorial_web_ufs (env EDITORIAL_WEB_UFS, a JSON
+    # list): nothing runs for a UF that is not listed, whatever the flag says.
+    # editorial_web_est_usd_per_attraction: $0.001 search + ~$0.002 Gemini (ES pilot), rounded up.
+    # Overlay key ``editorial_web_enabled``.
+    editorial_web_enabled: bool = False
+    editorial_web_ufs: list[str] = []
+    editorial_web_model_slug: str = "gemini-3.5-flash-lite"
+    editorial_web_batch_size: int = 50
+    editorial_web_refresh_days: int = 365
+    editorial_web_est_usd_per_attraction: float = 0.005
 
     # atrativo_description_batch_enabled moves description writing off the synchronous
     # path: when True the INLINE copywriter is switched off and descriptions are instead

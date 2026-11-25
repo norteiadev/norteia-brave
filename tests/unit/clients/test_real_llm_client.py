@@ -174,7 +174,9 @@ async def test_primary_slug_notfound_falls_back_to_next_slug(monkeypatch):
 
     result = await client.extract(prompt="test", schema=schema_mock)
 
-    assert len(call_slugs) == 2, f"Expected 2 _call_slug invocations, got {len(call_slugs)}: {call_slugs}"
+    assert len(call_slugs) == 2, (
+        f"Expected 2 _call_slug invocations, got {len(call_slugs)}: {call_slugs}"
+    )
     assert call_slugs[0] == "primary/slug", f"First call slug mismatch: {call_slugs[0]!r}"
     assert call_slugs[1] == "fallback/slug", f"Second call slug mismatch: {call_slugs[1]!r}"
     assert result is fake_result
@@ -234,9 +236,7 @@ async def test_cost_guard_invoked_and_llm_generation_written(
 
     # T-02-04: no prompt content stored
     row_repr = repr(row)
-    assert "this is a test prompt" not in row_repr, (
-        "Prompt content leaked into LLMGeneration repr"
-    )
+    assert "this is a test prompt" not in row_repr, "Prompt content leaked into LLMGeneration repr"
     # Verify the row fields — none should contain the prompt text
     assert row.model_slug is not None
     assert row.prompt_tokens == 100
@@ -441,7 +441,10 @@ async def test_generate_openrouter_slug_body_cost_and_row(monkeypatch, fake_redi
     assert not client._anthropic_client.messages.create.called
     kw = create.call_args.kwargs
     assert kw["model"] == "google/gemini-2.5-flash" and kw["max_tokens"] == 2048
-    assert kw["messages"] == [{"role": "system", "content": "sys"}, {"role": "user", "content": "x"}]
+    assert kw["messages"] == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "x"},
+    ]
     assert kw["extra_body"]["provider"] == {"data_collection": "deny"}
     assert "reasoning" not in kw["extra_body"]
     (row,) = sqlite_session.query(LLMGeneration).all()
@@ -478,7 +481,9 @@ async def test_generate_openrouter_refuses_server_tools(monkeypatch):
 # generate() via Gemini direct — bare "gemini-*" slugs, Google AI Studio (§30)
 # ---------------------------------------------------------------------------
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+GEMINI_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+)
 
 
 def _gemini_reply(
@@ -496,7 +501,9 @@ def _gemini_reply(
     if tier is not None:
         usage["serviceTier"] = tier
     return {
-        "candidates": [{"content": {"role": "model", "parts": [{"text": text}]}, "finishReason": finish}],
+        "candidates": [
+            {"content": {"role": "model", "parts": [{"text": text}]}, "finishReason": finish}
+        ],
         "usageMetadata": usage,
     }
 
@@ -588,7 +595,10 @@ async def test_generate_gemini_flex_timeout_falls_back_to_standard(
     client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
     # No serviceTier in the standard reply: the tier of the attempt that answered prices it.
     route = respx.post(GEMINI_URL).mock(
-        side_effect=[httpx.ReadTimeout("flex queue"), httpx.Response(200, json=_gemini_reply(tier=None))]
+        side_effect=[
+            httpx.ReadTimeout("flex queue"),
+            httpx.Response(200, json=_gemini_reply(tier=None)),
+        ]
     )
 
     await client.generate([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
@@ -606,7 +616,9 @@ async def test_generate_gemini_billed_tier_is_the_source_of_truth(
 ):
     """Flex requested but Google says standard was billed → standard price."""
     client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
-    respx.post(GEMINI_URL).mock(return_value=httpx.Response(200, json=_gemini_reply(tier="standard")))
+    respx.post(GEMINI_URL).mock(
+        return_value=httpx.Response(200, json=_gemini_reply(tier="standard"))
+    )
 
     await client.generate([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
 
@@ -776,7 +788,9 @@ def _grounded_reply(
     text: str = '{"facts": []}',
     *,
     queries: tuple[str, ...] = ("praia de setiba estacionamento",),
-    chunks: tuple[tuple[str, str], ...] = (("https://vertex.example/r/1", "parquesetiba.es.gov.br"),),
+    chunks: tuple[tuple[str, str], ...] = (
+        ("https://vertex.example/r/1", "parquesetiba.es.gov.br"),
+    ),
     prompt: int = 6_000,
     out: int = 500,
 ) -> dict[str, Any]:
@@ -832,9 +846,14 @@ async def test_generate_grounded_bills_the_grounding_fee_per_prompt(
     from brave.observability.cost_guard import _daily_key
 
     client = _gemini_client(monkeypatch, fake_redis, sqlite_session, gemini_service_tier="standard")
-    respx.post(GEMINI_URL).mock(return_value=httpx.Response(200, json=_grounded_reply(
-        queries=("a", "b", "c")  # three queries in one prompt: still ONE grounded prompt
-    )))
+    respx.post(GEMINI_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=_grounded_reply(
+                queries=("a", "b", "c")  # three queries in one prompt: still ONE grounded prompt
+            ),
+        )
+    )
 
     await client.generate_grounded([{"role": "user", "content": "x"}], model="gemini-2.5-flash")
 
@@ -876,7 +895,9 @@ async def test_plain_generate_still_refuses_server_tools_for_gemini(
 async def test_generate_grounded_only_speaks_gemini_direct(monkeypatch, fake_redis, sqlite_session):
     client = _gemini_client(monkeypatch, fake_redis, sqlite_session)
     with pytest.raises(ValueError, match="gemini"):
-        await client.generate_grounded([{"role": "user", "content": "x"}], model="claude-sonnet-5-5")
+        await client.generate_grounded(
+            [{"role": "user", "content": "x"}], model="claude-sonnet-5-5"
+        )
 
 
 @respx.mock
@@ -897,3 +918,14 @@ async def test_generate_grounded_is_always_standard_even_when_flex_is_configured
     (row,) = sqlite_session.query(LLMGeneration).all()
     assert row.resolved_provider == "google-ai-studio:standard"
     assert float(row.usd_cost) == pytest.approx(_grounded_usd())
+
+
+def test_gemini_3_gets_a_thinking_level_not_the_2x_budget() -> None:
+    """Gemini 3+ answers 400 to thinkingBudget (gemini-2.5-flash is routed to 3.5 Flash-Lite
+    from 2026-12-01): every Gemini 3 call must ask for the minimal thinking level instead."""
+    from brave.clients.llm import gemini_is_priced, gemini_thinking_off
+
+    assert gemini_thinking_off("gemini-2.5-flash") == {"thinkingBudget": 0}
+    assert gemini_thinking_off("gemini-2.5-flash-lite") == {"thinkingBudget": 0}
+    assert gemini_thinking_off("gemini-3.5-flash-lite") == {"thinkingLevel": "minimal"}
+    assert gemini_is_priced("gemini-3.5-flash-lite")

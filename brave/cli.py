@@ -31,6 +31,9 @@ Commands:
     editorial-resolve Re-resolve the claims of a UF (free, idempotent): editorial-resolve
                       <UF>|--all. Run it after deploying the migration that adds a rule
                       (0026: perishable facts of old posts), BEFORE any Publicação.
+    editorial-web     Write the editorial columns of Mar attractions from public pages
+                      (Parallel search + Gemini, paid): editorial-web <UF> [--limit N].
+                      Only UFs in EDITORIAL_WEB_UFS, with editorial_web_enabled on.
     editorial-validate  Web check (Parallel search + Gemini, paid) of the perishable facts of
                       posts over a year old: editorial-validate <UF>|--all. Cost gate: the
                       "validation" line of editorial-status, then turn on
@@ -290,6 +293,39 @@ def _run_editorial_resolve(ufs: list[str]) -> int:
     return 0
 
 
+def _run_editorial_web(ufs: list[str], limit: int | None) -> int:
+    """Dispatch the paid web fill of each UF. A UF outside editorial_web_ufs, or the flag off,
+    is refused here (the task refuses it too)."""
+    from brave.tasks.pipeline import (
+        _editorial_web_on,
+        _get_session,
+        _load_config,
+        editorial_web_fill,
+    )
+
+    session, _ = _get_session()
+    try:
+        cfg = _load_config(session)
+    finally:
+        session.close()
+    refused = [uf for uf in ufs if not _editorial_web_on(cfg, uf)]
+    if refused:
+        print(
+            f"editorial-web: refused {' '.join(refused)} — needs editorial_web_enabled, "
+            f"RUN_REAL_EXTERNALS and the UF in EDITORIAL_WEB_UFS (now {cfg.editorial_web_ufs})"
+        )
+        return _LANE_OFF
+    est = cfg.editorial_web_est_usd_per_attraction * (limit or cfg.editorial_web_batch_size)
+    for uf in ufs:
+        try:
+            editorial_web_fill.delay(uf, limit)
+        except Exception as exc:
+            print(f"editorial-web: could not dispatch (is the Celery broker up?): {exc}")
+            return 2
+        print(f"editorial-web: dispatched {uf} (paid; up to ~US$ {est:.2f} per batch)")
+    return 0
+
+
 def _run_editorial_validate(ufs: list[str]) -> int:
     """Re-resolve each UF: the resolver parks the perishable facts of old posts as
     ``pending_validation`` and, with the paid web check on, hands them to
@@ -498,6 +534,17 @@ def main() -> None:
     elif command == "editorial-resolve":
         rest = args[1:]
         sys.exit(_run_editorial_resolve(list(_editorial_ufs(command, rest))))
+    elif command == "editorial-web":
+        rest = args[1:]
+        if "--all" in rest:
+            print("editorial-web: --all is not accepted — name the UFs (each must be allowlisted)")
+            sys.exit(1)
+        limit = None
+        if "--limit" in rest:
+            i = rest.index("--limit")
+            limit = int(rest[i + 1])
+            rest = rest[:i] + rest[i + 2 :]
+        sys.exit(_run_editorial_web(list(_editorial_ufs(command, rest)), limit))
     elif command == "editorial-validate":
         rest = args[1:]
         ufs = _editorial_ufs(command, rest)

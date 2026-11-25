@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
@@ -57,6 +58,8 @@ from brave.domains.editorial.schema import (
 )
 
 logger = structlog.get_logger(__name__)
+
+DIRECT = "direct"  # match_method of a claim written for a known record (editorial/web.py)
 
 
 @dataclass
@@ -150,7 +153,16 @@ def _match_group(
     return m
 
 
-def resolve_uf(session: Session, uf: str, *, today: date | None = None) -> ResolveResult:
+def resolve_uf(
+    session: Session,
+    uf: str,
+    *,
+    today: date | None = None,
+    sources: Collection[str] | None = None,
+) -> ResolveResult:
+    """``sources`` limits the resolution to the claims of those document sources (None = every
+    source). Claims of another source keep their status and stop backing any value: an
+    attraction or destination only they backed is cleared (never deleted)."""
     uf = uf.upper()
     today = today or date.today()
     result = ResolveResult()
@@ -166,7 +178,11 @@ def resolve_uf(session: Session, uf: str, *, today: date | None = None) -> Resol
     rows = session.execute(
         select(EditorialClaim, EditorialDocument)
         .join(EditorialDocument, EditorialDocument.url == EditorialClaim.document_url)
-        .where(EditorialDocument.uf == uf, EditorialClaim.status.in_(RESOLVABLE_STATUSES))
+        .where(
+            EditorialDocument.uf == uf,
+            EditorialClaim.status.in_(RESOLVABLE_STATUSES),
+            *([EditorialDocument.source.in_(list(sources))] if sources is not None else []),
+        )
     ).all()
 
     # 1. match (post, entity) groups
@@ -178,6 +194,11 @@ def resolve_uf(session: Session, uf: str, *, today: date | None = None) -> Resol
         )
         docs[doc.url] = doc
     for (url, kind, name), claims in groups.items():
+        if all(c.match_method == DIRECT for c in claims):
+            # written for a known record (the web source): nothing to match
+            for c in claims:
+                result.claims[c.status] = result.claims.get(c.status, 0) + 1
+            continue
         m = _match_group(kind, name, claims[0].municipio_text, docs[url], candidates, municipios)
         for c in claims:
             status = m.status
