@@ -19,7 +19,8 @@ async def test_returns_the_text_and_sends_a_user_agent() -> None:
     with respx.mock:
         route = respx.get(URL).mock(return_value=httpx.Response(200, text="<p>oi</p>"))
         assert await f.get_text(URL) == "<p>oi</p>"
-    assert "norteia-brave-editorial" in route.calls.last.request.headers["User-Agent"]
+    ua = route.calls.last.request.headers["User-Agent"]
+    assert ua and "norteia" not in ua.lower()  # no company name in crawl calls
     await f.aclose()
 
 

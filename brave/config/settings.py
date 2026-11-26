@@ -348,7 +348,9 @@ class NominatimConfig(BaseSettings):
         ),
     )
     user_agent: str = Field(
-        default="norteia-brave/1.0 (leandro.freire08@gmail.com)",
+        # No company name in any crawl/fetch identity (project rule); a contact can be added
+        # through the env var when a service's policy asks for one.
+        default="territorial-geocoder/1.0",
         description=(
             "HTTP User-Agent sent to Nominatim (BRAVE_NOMINATIM_USER_AGENT). "
             "Required by Nominatim usage policy — must be identifiable."
@@ -384,8 +386,9 @@ class ImagesConfig(BaseSettings):
     ``store == "r2"``; their values never leave the process (exclude=True).
     """
 
-    # Wikimedia's User-Agent policy: no UA or a library UA gets 403.
-    user_agent: str = "norteia-brave/1.0 (https://norteia.com.br; leandro.freire08@gmail.com)"
+    # Wikimedia's User-Agent policy: no UA or a library UA gets 403. No company name in any
+    # crawl/fetch identity (project rule); BRAVE_IMAGES_USER_AGENT can add a contact.
+    user_agent: str = "territorial-research-images/1.0"
     wdqs_url: str = "https://query.wikidata.org/sparql"
     commons_api: str = "https://commons.wikimedia.org/w/api.php"
     # Requests to each Wikimedia service (WDQS, Commons API, upload) go out in series, this
