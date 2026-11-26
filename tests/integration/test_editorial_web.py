@@ -301,3 +301,31 @@ def test_the_budget_wall_stops_the_run(session) -> None:
     attraction(session)
     with pytest.raises(CostGuardError):
         run(session, LLM(error=CostGuardError("budget")), Search())
+
+
+ROUTE = "pela BR-101 e pela Rodovia do Sol ES-060 passando por Itaoca e Itaipava"  # 13 words
+
+
+def test_a_shared_route_is_not_a_copy_in_how_to_get_there_only() -> None:
+    value = f"O acesso é feito {ROUTE}, com placa na entrada da praia."
+    assert web.drop_reason("how_to_get_there", value, [GOV], ROUTE) is None
+    assert web.drop_reason("curiosities", value, [GOV], ROUTE) == "cópia do trecho"
+    long_copy = " ".join(f"palavra{i}" for i in range(20))
+    assert web.drop_reason("how_to_get_there", long_copy, [GOV], long_copy) == "cópia do trecho"
+
+
+def test_refilter_releases_a_held_column_the_current_filters_pass(session) -> None:
+    attraction(session)
+    route = {"url": GOV, "title": "Turismo", "excerpts": [ROUTE]}
+    run(session, LLM(), Search(results=[route]))
+    held = claims(session)["how_to_get_there"]
+    held.status, held.evidence = "held_web", f"descartado: cópia do trecho | {GOV}"
+    session.flush()
+
+    assert web.refilter(session, UF) == 1
+    session.expire_all()
+    assert session.get(EditorialClaim, held.id).status == "superseded"
+    now = claims(session)["how_to_get_there"]
+    assert (now.status, now.evidence, now.value) == ("matched", GOV, held.value)
+    assert claims(session)["curiosities"].status == "held_web"  # still sem fonte
+    assert web.refilter(session, UF) == 0
