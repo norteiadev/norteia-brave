@@ -601,7 +601,7 @@ def media_fields(row: Any, img: Any) -> dict[str, str]:
         "license": img.license,
         "license_url": img.license_url,
         "credit_line": img.credit_line,
-        "source": "wikimedia_commons",
+        "source": "flickr" if "flickr.com/" in img.source_url else "wikimedia_commons",
         "source_url": img.source_url,
         "wikidata_qid": row.wikidata_qid,
     }
@@ -625,7 +625,6 @@ def push_pending_media(limit: int = _MEDIA_PUSH_BATCH) -> int:
     from datetime import datetime  # noqa: PLC0415
 
     import httpx  # noqa: PLC0415
-
     from sqlalchemy import update  # noqa: PLC0415
 
     from brave.clients.image_store import image_store_for  # noqa: PLC0415
