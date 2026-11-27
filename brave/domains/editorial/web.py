@@ -61,6 +61,9 @@ FIELDS: tuple[str, ...] = (
 )
 MAX_SOURCES = 3
 MIN_CHARS = 40
+# how_to_get_there names roads, exits and landmarks the one way they are written ("pela BR-101 e
+# pela Rodovia do Sol ES-060"): 10 shared words is a route, not a copied paragraph.
+COPY_RUN_LIMIT_BY_COLUMN = {"how_to_get_there": 20}
 
 # Results from these hosts never reach the prompt: the blog that blocks crawlers (not used as a
 # source), and listings / reviews / social pages (low signal, user content).
@@ -184,7 +187,11 @@ def drop_reason(column: str, value: str, sources: list[str], excerpts: str) -> s
         return "enchimento"
     if column == "accessibility" and not _A11Y.search(value):
         return "sem fato de acessibilidade"
-    if is_copied(value, excerpts):
+    if column in COPY_RUN_LIMIT_BY_COLUMN:
+        copied = is_copied(value, excerpts, limit=COPY_RUN_LIMIT_BY_COLUMN[column])
+    else:
+        copied = is_copied(value, excerpts)
+    if copied:
         return "cópia do trecho"
     return None
 
@@ -412,3 +419,51 @@ async def fill(
         held=result.held, empty=result.empty, failed=result.failed,
     )  # fmt: skip
     return result
+
+
+def refilter(session: Session, uf: str) -> int:
+    """Re-apply the current filters to the held columns of ``uf``'s web documents, against the
+    search stored with them (no search, no generation). A column that now passes supersedes its
+    held claim with a ``matched`` one; nothing is deleted. Returns how many were released."""
+    held = session.scalars(
+        select(EditorialClaim)
+        .join(EditorialDocument, EditorialDocument.url == EditorialClaim.document_url)
+        .where(
+            EditorialClaim.source == SOURCE,
+            EditorialClaim.status == "held_web",
+            EditorialDocument.uf == uf.upper(),
+        )
+    ).all()
+    now, released = datetime.now(UTC), 0
+    for c in held:
+        version = session.get(EditorialDocumentVersion, c.version_id)
+        if version is None:
+            continue
+        results = usable_results(json.loads(version.html).get("results") or [])
+        excerpts = "\n".join("\n".join(r.get("excerpts") or []) for r in results)
+        sources = (c.evidence or "").partition("|")[2].split()
+        if drop_reason(c.field, str(c.value), sources, excerpts) is not None:
+            continue
+        c.superseded_from_status, c.status, c.superseded_at = c.status, "superseded", now
+        session.add(
+            EditorialClaim(
+                id=uuid.uuid4(),
+                document_url=c.document_url,
+                version_id=c.version_id,
+                source=SOURCE,
+                entity_kind=c.entity_kind,
+                entity_name=c.entity_name,
+                municipio_text=c.municipio_text,
+                canonical_key=c.canonical_key,
+                match_method="direct",
+                field=c.field,
+                value=c.value,
+                stability=c.stability,
+                evidence=" ".join(sources),
+                published_time=c.published_time,
+                status="matched",
+            )  # fmt: skip
+        )
+        released += 1
+    session.flush()
+    return released
